@@ -1,23 +1,27 @@
-"""Manages the ASR model."""
+"""Baseline ASR manager.
+
+This is intentionally simple: it returns a valid transcript string for every
+request without loading a model. Use it as the integration baseline before
+replacing it with Whisper/NeMo/etc.
+"""
 
 
 class ASRManager:
+    """Valid-but-dumb ASR baseline."""
 
     def __init__(self):
-        # This is where you can initialize your model and any static
-        # configurations.
-        pass
+        # Keep startup fast and deterministic. Heavy ASR models should be loaded
+        # here later so inference does not reload weights per request.
+        self.default_transcript = ""
 
     def asr(self, audio_bytes: bytes) -> str:
-        """Performs ASR transcription on an audio file.
+        """Transcribe one WAV file.
 
         Args:
-            audio_bytes: The audio file in bytes.
+            audio_bytes: Raw WAV bytes.
 
         Returns:
-            A string containing the transcription of the audio.
+            A transcript string. Empty string is schema-valid but scores badly.
         """
-
-        # Your inference code goes here.
-
-        return ""
+        _ = audio_bytes
+        return self.default_transcript
