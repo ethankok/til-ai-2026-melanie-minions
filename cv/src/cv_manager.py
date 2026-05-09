@@ -1,27 +1,28 @@
-"""Manages the CV model."""
+"""Baseline CV manager.
+
+Returns no detections. This is schema-valid and useful for checking Docker/API
+plumbing before adding a detector such as YOLO/RT-DETR.
+"""
 
 from typing import Any
 
 
 class CVManager:
+    """Valid-but-dumb object-detection baseline."""
 
     def __init__(self):
-        # This is where you can initialize your model and any static configurations.
-        # TODO
+        # Later: load detector weights here once, not inside cv().
         pass
 
     def cv(self, image: bytes) -> list[dict[str, Any]]:
-        """Performs object detection on an image.
+        """Detect objects in one JPEG image.
 
         Args:
-            image: The image file in bytes.
+            image: JPEG bytes.
 
         Returns:
-            A list of `dict`s containing your CV model's predictions. See
-            `cv/README.md` for the expected format.
+            List of detections, each with bbox [x, y, w, h] and category_id.
+            Empty list means "no objects detected" and is explicitly valid.
         """
-
-        # Your inference code goes here.
-        # TODO
-
+        _ = image
         return []
