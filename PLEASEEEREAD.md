@@ -63,6 +63,21 @@ Mental model:
 server.py receives request -> manager.py returns prediction
 ```
 
+Plain English:
+
+- The evaluator sends data to our Docker container using HTTP.
+- `*_server.py` handles the web/API part.
+- `*_manager.py` is where our actual AI/model/rules go.
+- The server calls the manager once per input and wraps the answer into JSON.
+- If the JSON shape is wrong, we can get 0 even if the model is smart.
+
+What a "baseline" means:
+
+- A baseline is a simple working version.
+- It is not meant to win.
+- It proves the service starts, accepts input, and returns valid output.
+- Once baselines work, we replace the dumb logic with better models one task at a time.
+
 ---
 
 ## What we need to submit
@@ -93,6 +108,27 @@ Each scored task is roughly:
 ```
 
 First goal: **working valid submissions for everything**. Then optimize.
+
+Important terms:
+
+- **Docker service**: a packaged mini-app for one task. It runs a web server and waits for inputs.
+- **Endpoint/route**: the URL path the evaluator calls, e.g. `/asr` or `/nlp`.
+- **Port**: the network number the service listens on, e.g. ASR uses `5001`.
+- **Schema**: the exact input/output JSON format. Matching schema is non-negotiable.
+- **GCP Workbench**: the official Google Cloud machine where data/submission tools live.
+- **`til build`**: builds a Docker image for one task.
+- **`til test`**: runs official local evaluation against that image.
+- **`til submit`**: uploads/submits that image for scoring.
+
+Task ports/routes:
+
+```text
+ASR    /asr    port 5001
+CV     /cv     port 5002
+Noise  /noise  port 5003
+NLP    /nlp    port 5004
+AE     /ae     port 5005, plus /reset
+```
 
 ---
 
@@ -250,6 +286,26 @@ rule-based planner first, RL only if we have time
 5. Improve **CV**
 6. Improve **ASR**
 7. Improve **Noise** last
+
+Why this order:
+
+- AE is worth the most, so small improvements matter a lot.
+- NLP can improve quickly because retrieval baselines are already useful.
+- CV/ASR may need larger pretrained models and more setup.
+- Noise is useful but not the main qualifier score target.
+
+What "done for now" means for a task:
+
+```text
+1. service starts
+2. endpoint responds
+3. output JSON has correct shape
+4. Docker builds on GCP
+5. til test runs without crashing
+6. til submit succeeds
+```
+
+Only after that should we chase better scores.
 
 ---
 
