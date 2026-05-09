@@ -4,11 +4,68 @@ We need to submit **5 separate Docker services** by:
 
 **24 May 2026, 11:59:59 PM SGT**
 
-This repo already has **valid baselines** for all 5 tasks. They are dumb but useful: they let us build/test/submit something first, then improve task by task.
+The repo looks huge, but most of it is official scaffolding. For now, we mainly edit **5 manager files**.
 
 ---
 
-## What we need to do
+## The only files that matter right now
+
+```text
+PLEASEEEREAD.md              read this
+asr/src/asr_manager.py       ASR baseline / our ASR code
+cv/src/cv_manager.py         CV baseline / our CV code
+noise/src/noise_manager.py   Noise baseline / our noising code
+nlp/src/nlp_manager.py       NLP baseline / our RAG code
+ae/src/ae_manager.py         AE baseline / our agent code
+```
+
+I also patched this once for reset robustness:
+
+```text
+ae/src/ae_server.py
+```
+
+Don't edit the rest unless we specifically need to.
+
+---
+
+## What the important folders/files mean
+
+```text
+asr/       speech recognition task
+cv/        object detection task
+noise/     adversarial image noising task
+nlp/       RAG question-answering task
+ae/        autonomous exploration / Bomberman agent task
+
+test/      official local evaluators used by til test
+README.md  official starter repo instructions
+requirements-dev.txt  dev dependencies
+.gitmodules  submodule config, don't touch
+
+til-26-ae/      official AE environment, don't edit
+til-26-finals/  official finals code, don't edit
+```
+
+Inside each task folder:
+
+```text
+src/*_manager.py  OUR model/inference logic — edit this
+src/*_server.py   HTTP wrapper — usually don't edit
+Dockerfile        packaging for submission — later
+requirements.txt  task-specific Docker deps — later
+README.md         task input/output spec — reference only
+```
+
+Mental model:
+
+```text
+server.py receives request -> manager.py returns prediction
+```
+
+---
+
+## What we need to submit
 
 Submit these 5 tasks:
 
@@ -35,33 +92,11 @@ Each scored task is roughly:
 25% speed
 ```
 
-So first goal: **working valid submissions for everything**. Then optimize.
+First goal: **working valid submissions for everything**. Then optimize.
 
 ---
 
-## Current baseline files
-
-These are the only files we should mainly edit for now:
-
-```text
-asr/src/asr_manager.py
-cv/src/cv_manager.py
-noise/src/noise_manager.py
-nlp/src/nlp_manager.py
-ae/src/ae_manager.py
-```
-
-I also patched:
-
-```text
-ae/src/ae_server.py
-```
-
-for more robust reset handling.
-
----
-
-## What each baseline currently does
+## Current baselines
 
 ### ASR
 
@@ -79,7 +114,7 @@ returns "" for every audio file
 
 Valid but scores badly.
 
-Need to improve with:
+Improve with:
 
 ```text
 Whisper / faster-whisper / multilingual ASR
@@ -103,18 +138,18 @@ returns [] = no detections
 
 Valid but scores 0.
 
-Need to improve with:
-
-```text
-YOLO / RT-DETR / other object detector
-```
-
-Output format must be:
+Output format:
 
 ```python
 [
     {"bbox": [x, y, w, h], "category_id": category_id}
 ]
+```
+
+Improve with:
+
+```text
+YOLO / RT-DETR / other object detector
 ```
 
 ---
@@ -135,13 +170,13 @@ returns the image basically unchanged
 
 Valid and safe.
 
-Need to improve with:
+Improve later with:
 
 ```text
 small bounded perturbations that still pass fairness checks
 ```
 
-Do this later, after scored tasks work.
+Do this after scored tasks work.
 
 ---
 
@@ -161,13 +196,13 @@ loads documents, keyword-matches the question, returns best matching sentence
 
 This is our best starting point.
 
-Need to improve with:
+Improve with:
 
 ```text
 better chunking + embeddings + retrieval + extractive answer
 ```
 
-Maybe later add a small local LLM, but only if it fits Docker/runtime.
+Maybe later use a small local LLM, only if it fits Docker/runtime.
 
 ---
 
@@ -187,12 +222,6 @@ uses action_mask, moves forward when possible, turns when stuck, bombs occasiona
 
 AE is worth the most, so improve this early.
 
-Need to improve with:
-
-```text
-rule-based planner first, RL only if we have time
-```
-
 Actions:
 
 ```text
@@ -204,11 +233,15 @@ Actions:
 5 place bomb
 ```
 
+Improve with:
+
+```text
+rule-based planner first, RL only if we have time
+```
+
 ---
 
-## Our likely plan
-
-Priority:
+## Our priority plan
 
 1. **Get GCP working enough to run official `til test`**
 2. **Submit all 5 baselines early** if allowed
@@ -217,6 +250,20 @@ Priority:
 5. Improve **CV**
 6. Improve **ASR**
 7. Improve **Noise** last
+
+---
+
+## Who edits what
+
+```text
+ASR owner:   asr/src/asr_manager.py
+CV owner:    cv/src/cv_manager.py
+Noise owner: noise/src/noise_manager.py
+NLP owner:   nlp/src/nlp_manager.py
+AE owner:    ae/src/ae_manager.py
+```
+
+If unsure, don't edit server/Docker/submodule files yet.
 
 ---
 
@@ -277,28 +324,13 @@ asr cv noise nlp ae
 
 ## Do not touch unless needed
 
-Avoid editing/deleting:
-
 ```text
 til-26-ae/
 til-26-finals/
 .gitmodules
+src/*_server.py
+Dockerfile
+requirements.txt
 ```
-
-Those are official submodules.
 
 Do not commit huge model weights to Git.
-
----
-
-## Immediate team split
-
-Suggested owners:
-
-```text
-AE: highest score, planner/agent logic
-NLP: retrieval + answering
-CV: detector
-ASR: speech model
-Noise + GCP integration: whoever has bandwidth
-```
