@@ -11,7 +11,7 @@ The repo looks huge, but most of it is official scaffolding. For now, we mainly 
 ## The only files that matter right now
 
 ```text
-PLEASEEEREAD.md              read this
+SUMMARY.md                   read this
 asr/src/asr_manager.py       ASR baseline / our ASR code
 cv/src/cv_manager.py         CV baseline / our CV code
 noise/src/noise_manager.py   Noise baseline / our noising code
@@ -325,13 +325,6 @@ If unsure, don't edit server/Docker/submodule files yet.
 
 ## Local setup
 
-On Ethan's Mac:
-
-```bash
-cd /Users/ethankok/Projects/til
-source .venv/bin/activate
-```
-
 Check imports:
 
 ```bash
@@ -350,17 +343,6 @@ PY
 ---
 
 ## GCP setup later
-
-When Workbench works, clone this repo:
-
-```bash
-cd /home/jupyter
-git clone https://github.com/kushmics/til-ai-2026.git til
-cd til
-git submodule update --init
-micromamba activate env
-pip install -r requirements-dev.txt
-```
 
 Official loop:
 
