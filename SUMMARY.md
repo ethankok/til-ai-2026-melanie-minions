@@ -136,11 +136,10 @@ AE     /ae     port 5005, plus /reset
 
 ### ASR
 
-File:
-
-```text
-asr/src/asr_manager.py
-```
+File: `asr/src/asr_manager.py`
+Endpoint: POST `/asr` on port 5001
+Input: list of `{key, b64}` where b64 is base64 WAV bytes
+Output: `{"predictions": ["transcript1", "transcript2", ...]}` (same order as input)
 
 Current baseline:
 
@@ -150,21 +149,38 @@ returns "" for every audio file
 
 Valid but scores badly.
 
-Improve with:
+What we need to do:
 
-```text
-Whisper / faster-whisper / multilingual ASR
-```
+1. Pick a model. Default: `faster-whisper` (small or medium). Falls back to `openai/whisper` via `transformers` if faster-whisper is a pain.
+2. Load the model **once** in `ASRManager.__init__`. Never load weights inside `asr()` (per-request reload kills the speed score).
+3. In `asr(audio_bytes)`:
+   - Decode WAV bytes from memory (use `io.BytesIO`, soundfile or torchaudio). No tempfiles unless required.
+   - Resample to 16 kHz mono if the model needs it.
+   - Run inference, return the transcript string.
+4. Normalize output: strip whitespace, lowercase only if the eval metric is case-insensitive (check the wiki spec — WER is usually case/punct-insensitive but verify).
+5. Add deps to `asr/requirements.txt`: `faster-whisper`, `soundfile` (or whatever torchaudio you pick).
+6. Test: `til build asr && til test asr`.
+
+Stretch:
+- Try a multilingual checkpoint if data is multilingual.
+- Batch all instances in a single forward pass instead of looping.
+- Use VAD trimming to cut silence and speed up long files.
 
 ---
 
 ### CV
 
-File:
+File: `cv/src/cv_manager.py`
+Endpoint: POST `/cv` on port 5002
+Input: list of `{key, b64}` where b64 is base64 JPEG bytes
+Output:
 
-```text
-cv/src/cv_manager.py
+```python
+{"predictions": [[{"bbox": [x, y, w, h], "category_id": int}, ...], ...]}
 ```
+
+`bbox` is [x, y, w, h] (top-left + width/height, COCO style — NOT [x1, y1, x2, y2]).
+Empty list per image is valid if nothing is detected.
 
 Current baseline:
 
@@ -174,125 +190,173 @@ returns [] = no detections
 
 Valid but scores 0.
 
-Output format:
+What we need to do:
 
-```python
-[
-    {"bbox": [x, y, w, h], "category_id": category_id}
-]
-```
+1. Pick a detector. Default: `ultralytics` YOLOv8/v11 (easiest), or `RT-DETR` if accuracy > speed. Pretrained COCO weights first, then fine-tune on the provided training images if categories don't match COCO.
+2. Confirm category mapping: the eval has its own `category_id` set. Map model class IDs → eval `category_id` (probably needs a lookup table from the dataset metadata).
+3. Load model once in `CVManager.__init__`.
+4. In `cv(image_bytes)`:
+   - Decode JPEG (`PIL.Image.open(io.BytesIO(image_bytes))`).
+   - Run detector.
+   - Convert each detection to `{"bbox": [x, y, w, h], "category_id": id}`. Make sure to convert from xyxy→xywh if the detector returns xyxy.
+   - Apply a confidence threshold (start ~0.25, tune).
+5. Add deps to `cv/requirements.txt`: `ultralytics` (pulls torch), `pillow`. Use a CUDA base image in `cv/Dockerfile` if GPU is available on eval — check what the wiki says about GPU access.
+6. Test: `til build cv && til test cv`.
 
-Improve with:
-
-```text
-YOLO / RT-DETR / other object detector
-```
+Stretch:
+- Fine-tune on the training set rather than relying on COCO weights.
+- TTA (test-time augmentation) if speed budget allows.
+- NMS tuning per class.
 
 ---
 
 ### Noise
 
-File:
-
-```text
-noise/src/noise_manager.py
-```
+File: `noise/src/noise_manager.py`
+Output: base64-encoded JPEG string
 
 Current baseline:
 
 ```text
-returns the image basically unchanged
+re-encodes input as a clean JPEG, returns base64
 ```
 
 Valid and safe.
 
-Improve later with:
+What we need to do (do this last — no qualifier weight):
 
-```text
-small bounded perturbations that still pass fairness checks
-```
-
-Do this after scored tasks work.
+1. Read the noise spec carefully: there's a perturbation budget (likely L∞ or SSIM/PSNR threshold) AND a fairness/validity check.
+2. Pick a method:
+   - **Cheap**: random bounded noise within budget. Easy, modest impact.
+   - **Better**: untargeted FGSM/PGD against a public surrogate classifier (ResNet/ViT), clipped to budget.
+   - **Best**: ensemble attack across multiple surrogates for transferability.
+3. In `noise(image_bytes)`:
+   - Decode → tensor.
+   - Compute perturbation, clip to budget.
+   - Re-encode as JPEG (JPEG re-compression can wipe high-freq adversarial signal — be aware, may need to compensate).
+   - Return base64.
+4. Add deps to `noise/requirements.txt` only if needed (torch, torchvision).
+5. Verify the fairness check still passes locally before submitting.
 
 ---
 
 ### NLP
 
-File:
-
-```text
-nlp/src/nlp_manager.py
-```
+File: `nlp/src/nlp_manager.py`
+Has two methods: `load_corpus(documents)` (called once per round) and `qa(question)` (per question).
 
 Current baseline:
 
 ```text
-loads documents, keyword-matches the question, returns best matching sentence
+sentence-split each doc, lexical token-overlap retrieval with light length normalization,
+return the top-scoring sentence (truncated to 500 chars)
 ```
 
-This is our best starting point.
+This is our best starting point — it's already correct shape and somewhat useful.
 
-Improve with:
+What we need to do:
 
-```text
-better chunking + embeddings + retrieval + extractive answer
-```
+1. **Better chunking**: sliding window of ~2–3 sentences with overlap, not single sentences. Single sentences lose context; full paragraphs dilute retrieval.
+2. **Better retrieval**: replace token-Counter overlap with BM25 (`rank_bm25` package) as a fast win. Then layer dense embeddings (e.g. `sentence-transformers/all-MiniLM-L6-v2`) for hybrid retrieval.
+3. **Better answer extraction**: don't return the whole chunk. Either:
+   - Run an extractive QA model (`distilbert-base-uncased-distilled-squad` or similar) on the top-k chunks, or
+   - Pick the sentence within the chunk with highest overlap/embedding sim to the question.
+4. Cache embeddings in `load_corpus` so `qa()` is fast.
+5. Add deps to `nlp/requirements.txt`: `rank_bm25`, `sentence-transformers`, `transformers`.
+6. Watch the answer length cap — current truncates at 500 chars; verify the eval doesn't penalize too-long answers.
 
-Maybe later use a small local LLM, only if it fits Docker/runtime.
+Stretch:
+- Re-ranker (cross-encoder) on top-k.
+- Tiny local LLM for generative answers, **only** if it fits the runtime budget.
 
 ---
 
 ### AE
 
-File:
-
-```text
-ae/src/ae_manager.py
-```
-
-Current baseline:
-
-```text
-uses action_mask, moves forward when possible, turns when stuck, bombs occasionally
-```
-
-AE is worth the most, so improve this early.
+File: `ae/src/ae_manager.py`
+Endpoint: POST `/ae` (and `/reset`) on port 5005
+Server resets the manager when a fresh round is detected (`step == 0` or empty POST).
 
 Actions:
 
 ```text
 0 forward
 1 backward
-2 left
-3 right
+2 left  (rotate?)
+3 right (rotate?)
 4 stay
 5 place bomb
 ```
 
-Improve with:
+Observation keys we already use: `action_mask`, `frozen_ticks`, `team_bombs`, `step`. There are more — inspect a real observation early.
+
+Current baseline:
 
 ```text
-rule-based planner first, RL only if we have time
+respects action_mask, mostly forward, periodic rotates, bombs every 20 turns if legal,
+stays put while frozen
 ```
+
+AE is **40%** of the qualifier — biggest lever, do this first.
+
+What we need to do:
+
+1. **Inspect observations**: dump one real observation locally (run `til-26-ae`'s env, print keys/shapes). We need the full schema before planning. Likely has: agent position, orientation, occupancy grid, enemy positions, bomb timers, walls, items.
+2. **Phase 1 — rule-based planner**:
+   - Build a grid map from the observation each step.
+   - Pathfind (BFS/A*) toward the nearest unexplored cell or objective.
+   - Translate the next step in the path into the right action given current orientation.
+   - Bomb only when (a) blocked by a destructible wall on the path, or (b) an enemy is in the blast line and we have an escape route. Always plan the escape before placing.
+   - Avoid stepping into bomb blast zones — predict explosions N ticks ahead.
+3. **Phase 2 — heuristic scoring**: score candidate actions by (progress toward goal) + (safety from bombs) + (item pickup) and pick argmax. Easier to tune than a hard rule tree.
+4. **Phase 3 (only if time) — RL**:
+   - Train PPO or DQN against `til_environment.bomberman_env` using `til-26-ae`.
+   - Export policy weights, load in `AEManager.__init__`.
+   - Inference must still be fast — tiny MLP/CNN, not a giant transformer.
+5. Reset hygiene: anything stateful (turn counter, map memory) MUST live on `self` — the server re-instantiates `AEManager` on reset, which already handles this. Don't add module-level globals.
+6. Test: run `python test/test_ae.py` after `til build ae` (it spins up the env and POSTs observations to the live container).
+
+Stretch:
+- Opponent modeling: track the enemy's recent moves and avoid their predicted next position.
+- Bomb-chain planning (chain reactions).
 
 ---
 
-## Our priority plan
+## Rough outline (what to do, in order)
 
-1. **Get GCP working enough to run official `til test`**
-2. **Submit all 5 baselines early** if allowed
-3. Improve **AE** first because it is 40%
-4. Improve **NLP** next because baseline can become decent quickly
-5. Improve **CV**
-6. Improve **ASR**
-7. Improve **Noise** last
+**Week 0 — plumbing (everyone, in parallel)**
+
+1. Get GCP Workbench access working for everyone.
+2. Run `til build <task>` and `til test <task>` for all 5 tasks against the current baselines. Goal: every container starts, every endpoint returns valid-shape JSON, every `til test` exits cleanly.
+3. `til submit` all 5 baselines so we have a non-zero submission on the board.
+
+**Week 1 — first real models**
+
+4. **AE** (40%): replace random-walk baseline with a rule-based planner (BFS over the occupancy grid + bomb safety check). Big jump expected.
+5. **NLP** (20%): swap lexical Counter for BM25 + better chunking. Single afternoon of work, meaningful score gain.
+6. **CV** (20%): drop in pretrained YOLOv8/v11 with COCO weights, map class IDs to the eval's `category_id`. Real work is the class mapping, not the model.
+7. **ASR** (20%): drop in faster-whisper (small), load once in `__init__`, batch instances. Done.
+
+**Week 2 — push scores**
+
+8. **AE**: heuristic scoring or fine-tuned policy. Test against `til-26-ae` env locally.
+9. **NLP**: hybrid retrieval (BM25 + dense embeddings) + extractive QA model on top-k.
+10. **CV**: fine-tune on the provided training set if categories don't match COCO.
+11. **ASR**: try larger Whisper variant if speed budget allows.
+12. **Noise**: bounded perturbation (FGSM against a surrogate classifier).
+
+**Always**
+
+- Re-run `til test` after every change.
+- Don't commit model weights to git — bake them into the Docker image build instead.
+- If a change makes a container fail to start, **revert immediately**. A working bad model > broken good model.
 
 Why this order:
 
-- AE is worth the most, so small improvements matter a lot.
-- NLP can improve quickly because retrieval baselines are already useful.
-- CV/ASR may need larger pretrained models and more setup.
-- Noise is useful but not the main qualifier score target.
+- AE is 40% — every hour spent there is worth ~2x the same hour on a 20% task.
+- NLP's lexical baseline can jump significantly with retrieval upgrades alone.
+- CV/ASR are mostly "swap in a pretrained model" once the plumbing works.
+- Noise has no direct qualifier weight; do it last.
 
 What "done for now" means for a task:
 
@@ -305,7 +369,7 @@ What "done for now" means for a task:
 6. til submit succeeds
 ```
 
-Only after that should we chase better scores.
+Only after all 5 hit "done for now" should anyone chase better scores.
 
 ---
 
