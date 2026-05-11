@@ -6,6 +6,10 @@ uvicorn[standard]==0.34.2
 # Inference stack. faster-whisper >= 1.1 ships BatchedInferencePipeline.
 faster-whisper>=1.1.0
 ctranslate2>=4.5.0
+# CTranslate2 GPU wheels expect CUDA 12 runtime libraries. Some NVIDIA base
+# images expose the GPU but ship CUDA 13 libs, so bake CUDA 12 cuBLAS/cuDNN too.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
 soundfile>=0.12.1
 librosa>=0.10.0
 numpy

@@ -43,17 +43,34 @@ class ASRManager:
 
         default_device = "cuda" if has_cuda else "cpu"
         default_compute = "float16" if has_cuda else "int8"
+        self.initial_prompt = self._load_slang_prompt()
         device = os.environ.get("ASR_DEVICE", default_device)
         compute_type = os.environ.get("ASR_COMPUTE_TYPE", default_compute)
-        print(f"[ASRManager] device={device} compute_type={compute_type}")
+        try:
+            self._load_model(device=device, compute_type=compute_type)
+        except RuntimeError as exc:
+            # CTranslate2 can see libcuda while still missing CUDA runtime libs
+            # such as libcublas.so.12. Fall back to CPU unless the user
+            # explicitly forced ASR_DEVICE.
+            if "ASR_DEVICE" in os.environ or device == "cpu":
+                raise
+            print(
+                f"[ASRManager] CUDA startup failed ({exc}); falling back to cpu/int8",
+                flush=True,
+            )
+            self._load_model(device="cpu", compute_type="int8")
 
+    def _load_model(self, device: str, compute_type: str) -> None:
+        print(
+            f"[ASRManager] device={device} compute_type={compute_type}",
+            flush=True,
+        )
         self.model = WhisperModel(
             self.MODELS_DIR,
             device=device,
             compute_type=compute_type,
         )
         self.batched = BatchedInferencePipeline(model=self.model)
-        self.initial_prompt = self._load_slang_prompt()
         self._warmup()
 
     def _load_slang_prompt(self) -> str | None:
