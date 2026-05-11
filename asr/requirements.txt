@@ -2,3 +2,10 @@
 
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
+
+# Inference stack. faster-whisper >= 1.1 ships BatchedInferencePipeline.
+faster-whisper>=1.1.0
+ctranslate2>=4.5.0
+soundfile>=0.12.1
+librosa>=0.10.0
+numpy

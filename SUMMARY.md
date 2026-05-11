@@ -12,6 +12,7 @@ The repo looks huge, but most of it is official scaffolding. For now, we mainly 
 
 ```text
 SUMMARY.md                   read this
+RESULTS.md                   latest leaderboard/submission scores
 asr/src/asr_manager.py       ASR baseline / our ASR code
 cv/src/cv_manager.py         CV baseline / our CV code
 noise/src/noise_manager.py   Noise baseline / our noising code
@@ -141,30 +142,37 @@ Endpoint: POST `/asr` on port 5001
 Input: list of `{key, b64}` where b64 is base64 WAV bytes
 Output: `{"predictions": ["transcript1", "transcript2", ...]}` (same order as input)
 
-Current baseline:
+What we built (Novice track is English-only, score 12 May = 0.000):
 
 ```text
-returns "" for every audio file
+faster-whisper distil-large-v3 + slang prompt mined from NLP corpus.
+Loaded once at startup, CT2 float16 on GPU (int8 CPU fallback).
+VAD trim, greedy beam, condition_on_previous_text=False, language="en" forced.
 ```
 
-Valid but scores badly.
+Server now passes the whole HTTP batch to `ASRManager.asr_batch(list[bytes])`
+in one call (true GPU batching) — see `asr/src/asr_server.py`.
 
-What we need to do:
+Training (Workbench-only, in `training/asr/`):
 
-1. Pick a model. Default: `faster-whisper` (small or medium). Falls back to `openai/whisper` via `transformers` if faster-whisper is a pain.
-2. Load the model **once** in `ASRManager.__init__`. Never load weights inside `asr()` (per-request reload kills the speed score).
-3. In `asr(audio_bytes)`:
-   - Decode WAV bytes from memory (use `io.BytesIO`, soundfile or torchaudio). No tempfiles unless required.
-   - Resample to 16 kHz mono if the model needs it.
-   - Run inference, return the transcript string.
-4. Normalize output: strip whitespace, lowercase only if the eval metric is case-insensitive (check the wiki spec — WER is usually case/punct-insensitive but verify).
-5. Add deps to `asr/requirements.txt`: `faster-whisper`, `soundfile` (or whatever torchaudio you pick).
-6. Test: `til build asr && til test asr`.
+1. `extract_slang.py` — mines NLP corpus → `slang_prompt.txt`, baked next to model weights and passed as `initial_prompt=` to bias decoding toward in-world vocab.
+2. `prepare_data.py` — reads `/home/jupyter/novice/asr/asr.jsonl`, 90/10 stratified split, oversamples slang-containing clips.
+3. `train_distil_whisper.py` — LoRA fine-tune (decoder attn, encoder frozen), SpecAugment + optional noise mixing + speed perturb, jiwer WER aligned with official scorer transforms.
+4. `export_ct2.py` — merge LoRA → `ct2-transformers-converter` → CT2 float16 dir + slang prompt copied alongside.
+5. Push `asr/models/` to a private GCS bucket; pull before `til build asr`.
+
+See [training/asr/README.md](training/asr/README.md) for end-to-end commands, the smoke-test path (zero-shot CT2 export, no training required), and environment variables (`ASR_DEVICE`, `ASR_COMPUTE_TYPE`) to override device/precision.
+
+Open items to verify on Workbench:
+
+- Is the training manifest also `asr.jsonl` at `/home/jupyter/novice/asr/`, or a separate file? `prepare_data.py` assumes the former.
+- Does the official scorer divide by 4 when only the `english` bucket is populated, and does `jiwer.wer` handle empty lists gracefully?
+- Path to a noise corpus (if any) for the augmentation pass — wire into `--noise-dir`.
 
 Stretch:
-- Try a multilingual checkpoint if data is multilingual.
-- Batch all instances in a single forward pass instead of looping.
-- Use VAD trimming to cut silence and speed up long files.
+- Beam=5 on top of LoRA-FT if speed budget allows.
+- Encoder unfreeze for a final low-LR pass.
+- Ensemble distil-large-v3 + large-v3-turbo (~2× inference cost) if accuracy ceiling becomes the bottleneck.
 
 ---
 

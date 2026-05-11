@@ -15,6 +15,18 @@ torch
 numpy
 scikit-image
 
+# ASR training / inference stack.
+accelerate
+peft
+datasets[audio]
+evaluate
+soundfile
+librosa
+faster-whisper
+ctranslate2
+wordfreq
+nltk
+
 # This is the til_environment package. You'll need this to train and test your
 #AE model. You can import this package using `import til_environment`.
 -e ./til-26-ae

@@ -20,5 +20,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copies your source files.
 COPY src .
 
+# Bakes in CT2-converted model weights + slang prompt. Populated on the GCP
+# Workbench instance via `gsutil cp -r gs://<bucket>/asr-models models` before
+# `til build asr`. The bucket layout mirrors a faster-whisper model dir:
+#   models/{model.bin, config.json, tokenizer.json, ..., slang_prompt.txt}
+COPY models /workspace/models/asr
+
 # Starts your model server.
 CMD uvicorn asr_server:app --port 5001 --host 0.0.0.0

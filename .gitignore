@@ -5,6 +5,8 @@
 # Large files like model weights, training data, and results should be ignored.
 **/models/
 **/results/
+training/asr/data/
+training/asr/runs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
