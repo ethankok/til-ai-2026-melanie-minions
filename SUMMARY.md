@@ -142,7 +142,7 @@ Endpoint: POST `/asr` on port 5001
 Input: list of `{key, b64}` where b64 is base64 WAV bytes
 Output: `{"predictions": ["transcript1", "transcript2", ...]}` (same order as input)
 
-What we built (Novice track is English-only, score 12 May = 0.000):
+What we built (Novice track is English-only, official score 12 May = 0.839, speed = 0.864):
 
 ```text
 faster-whisper distil-large-v3 + slang prompt mined from NLP corpus.
@@ -161,7 +161,7 @@ Training (Workbench-only, in `training/asr/`):
 4. `export_ct2.py` — merge LoRA → `ct2-transformers-converter` → CT2 float16 dir + slang prompt copied alongside.
 5. Push `asr/models/` to a private GCS bucket; pull before `til build asr`.
 
-See [training/asr/README.md](training/asr/README.md) for end-to-end commands, the smoke-test path (zero-shot CT2 export, no training required), and environment variables (`ASR_DEVICE`, `ASR_COMPUTE_TYPE`) to override device/precision.
+See [training/asr/README.md](training/asr/README.md) for end-to-end commands, the smoke-test path (zero-shot CT2 export, no training required), and environment variables (`ASR_DEVICE`, `ASR_COMPUTE_TYPE`) to override device/precision. See [training/asr/ERROR_ANALYSIS.md](training/asr/ERROR_ANALYSIS.md) for current ASR mistakes, numeric-formatting fixes, silence hallucination handling, and the route toward `0.95+` score / `0.90+` speed.
 
 Open items to verify on Workbench:
 
