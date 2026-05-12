@@ -295,7 +295,9 @@ def main() -> None:
         eval_dataset=ds["validation"],
         data_collator=collator,
         compute_metrics=_build_compute_metrics(processor),
-        tokenizer=processor.feature_extractor,
+        # `tokenizer=` was renamed to `processing_class=` in transformers
+        # >= 4.46; the old kwarg raises TypeError instead of warning.
+        processing_class=processor.feature_extractor,
     )
 
     trainer.train()
