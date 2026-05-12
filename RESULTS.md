@@ -51,14 +51,18 @@ Estimated blended qualifier score = 0.4184
 ## Notes
 
 - All 5 tasks have been submitted successfully at least once.
-- ASR is now a strong contributor: official score `0.877`, speed `0.864`, errors `0 / 400` after the faster-whisper/CTranslate2 container plus numeric-transcript normalization.
+- ASR norm-v1 (12 May 16:23) official `0.877 / 0.864` is the second submission. **Two newer builds exist locally but are not yet submitted**:
+  - `vad-off-v1` — local English WER **0.0554** (down from norm-v1's 0.0759). Adds `vad_filter=False`, hallucination guards (`no_speech_threshold=0.6`, `log_prob_threshold=-1.0`, `compression_ratio_threshold=2.4`, `temperature=0.0`), spoken-form ordinals (`23rd` → `twenty third`), coordinate-safe decimal regex, tighter silence guard for short noisy clips. Predicted official ≈ 0.90.
+  - `vad-off-v2` — adds slang-prompt truncation fix in [training/asr/extract_slang.py](training/asr/extract_slang.py): writes the high-frequency in-world vocabulary (cyanite, sarento, phyrexis, mewan, kestrelian, ...) at the END of the prompt so Whisper's `[-(max_length // 2 - 1):]` truncation keeps it. Test in progress; predicted local English WER ~0.04-0.05, predicted official ≈ 0.91-0.92.
+- The local `1 - MER` number is a **scoring artifact** of the local manifest being English-only (three other language buckets contribute 0 to the divide-by-4 mean). Track the bare `english error rate (WER)` line instead.
 - Noise scored `1.000`, but appears required/useful rather than directly weighted for qualifiers.
 - CV submitted but had `4 / 500` errors and score `0.000`; fix robustness/schema edge cases before improving model quality.
 - AE submitted cleanly with score `0.051`; because AE is 40% of qualifiers, this is the highest-priority improvement target.
 
 ## Next priority
 
-1. Improve AE rule-based planner.
-2. Improve NLP retrieval/chunking.
-3. Fix CV errors before adding a detector.
-4. Optional ASR speed tuning only after higher-weight tasks improve.
+1. Submit ASR `vad-off-v2` (or whichever local-WER-≤-0.045 build lands first).
+2. ASR LoRA fine-tune via [training/asr/](training/asr/) — target official 0.92-0.95. See [training/asr/ERROR_ANALYSIS.md](training/asr/ERROR_ANALYSIS.md).
+3. Improve AE rule-based planner.
+4. Improve NLP retrieval/chunking.
+5. Fix CV errors before adding a detector.

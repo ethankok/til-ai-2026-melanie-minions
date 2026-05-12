@@ -11,9 +11,9 @@ tooling.
 
 - **Base model**: `distil-whisper/distil-large-v3` — English-only distillation of large-v3. Same encoder quality, ~6× faster decoder. Right call for the Novice (English-only) track; avoids paying for a multilingual decoder we don't need.
 - **Fine-tune**: LoRA (rank 32, alpha 64) on decoder attention projections only. Encoder frozen (distil-v3 inherits a strong large-v3 encoder; budget should go to the decoder, which distillation shrank).
-- **Slang prior**: tokens rare in standard English but frequent in the NLP corpus are mined into a single-line prompt baked next to the model weights. Passed as `initial_prompt=` to bias decoding; same set is used to oversample slang-containing audio clips during fine-tune.
-- **Augmentation** (noisy-audio robustness): SpecAugment, optional online noise mixing at SNR 5–20 dB, optional ×0.9/×1.1 speed perturbation.
-- **Inference**: faster-whisper with CT2 float16 (CPU fallback int8), greedy beam, VAD trim, `condition_on_previous_text=False`, `language="en"` forced. Server passes the whole HTTP batch to `manager.asr_batch(list[bytes])` for true GPU batching.
+- **Slang prior**: tokens rare in standard English but frequent in the NLP corpus are mined into a single-line prompt baked next to the model weights. Passed as `initial_prompt=` to bias decoding; same set is used to oversample slang-containing audio clips during fine-tune. **Order matters**: faster-whisper truncates `initial_prompt` to the LAST ~223 tokens (via `previous_tokens[-(max_length // 2 - 1):]`), so `extract_slang.py` writes the list reversed — highest-frequency in-world vocabulary ends up at the END of the prompt and survives truncation.
+- **Augmentation** (noisy-audio robustness): SpecAugment, optional online noise mixing at SNR 5–20 dB (requires `--noise-dir`), optional ×0.9/×1.1 speed perturbation.
+- **Inference**: faster-whisper plain `model.transcribe()` with CT2 float16 (CPU fallback int8), greedy beam, `vad_filter=False` (VAD was eating speech on long clips), `condition_on_previous_text=False`, `language="en"` forced, `without_timestamps=True`, hallucination guards (`no_speech_threshold=0.6`, `log_prob_threshold=-1.0`, `compression_ratio_threshold=2.4`, `temperature=0.0`). Audio-level RMS/peak silence guard with a sub-1.5s aggressive threshold handles the empty-clip hallucination case. Output post-processed by `_digits_to_words()` (ints, decimals, comma-thousands, military times, four-digit codes, niner callsigns, spoken ordinals, coordinate-safe decimals). Server passes the whole HTTP batch to `manager.asr_batch(list[bytes])`.
 
 See [../../asr/src/asr_manager.py](../../asr/src/asr_manager.py) for the inference flags and [../../asr/src/asr_server.py](../../asr/src/asr_server.py) for the batched server path.
 
@@ -51,11 +51,10 @@ time on fine-tuning.
 ## End-to-end
 
 ```bash
-# 1. Mine in-world slang from the NLP corpus.
+# 1. Mine in-world slang from the NLP corpus. Defaults: --top-k 200 --min-count 2.
 python training/asr/extract_slang.py \
     --nlp-dir /home/jupyter/novice/nlp \
-    --out asr/models/slang_prompt.txt \
-    --top-k 80
+    --out asr/models/slang_prompt.txt
 
 # 2. Build the dataset with slang oversampling.
 python training/asr/prepare_data.py \
@@ -105,24 +104,29 @@ ENV ASR_SLANG_PROMPT_PATH=/workspace/models/asr/slang_prompt.txt
 
 ## Notes
 
-- `asr.jsonl` is the official novice ASR manifest at
-  `/home/jupyter/novice/asr/asr.jsonl`. `prepare_data.py` reads `audio` /
-  `path` and `transcript` fields. **Confirm on Workbench whether a separate
-  training manifest exists** — `asr.jsonl` may be eval-only.
+- `asr.jsonl` (4110 entries) is the **only** ASR manifest on Workbench, at
+  `/home/jupyter/novice/asr/asr.jsonl`. The same file is what `test_asr.py`
+  evaluates against — there is no separate `train.jsonl`. Fine-tuning on it
+  leaks into local eval, so post-FT local WER will be inflated by
+  memorization. **Treat the official submission as the only real validator.**
+  (Strategy: **Option B** — train on all 4110, hold out 10% only for early
+  stopping / overfitting detection.)
 - WER on the held-out 10% val split is what `train_distil_whisper.py` reports;
   it uses the same `jiwer` transforms as the official scorer
   ([test/test_asr.py:24-33](../../test/test_asr.py)).
-- The official scorer averages error rate across four language buckets
-  (en/zh/ms/ta) even on Novice. Verify that empty non-English buckets
-  contribute 0 to the sum (rather than raising in `jiwer`) before relying on
-  the score target.
+- The official scorer divides per-language error rates by 4 unconditionally.
+  Local manifest has only `english`-labeled samples, so the three empty
+  buckets return WER=0 from `jiwer` and the local `1 - MER` is inflated 4×
+  vs. real WER. **Track the bare `english error rate (WER)` line**, not
+  `1 - MER`. See [ERROR_ANALYSIS.md](ERROR_ANALYSIS.md) for details.
 - Don't commit `asr/models/` or `training/asr/runs/` — they're in
   `.gitignore`.
 
 ## Iteration knobs (after first successful submission)
 
-- `--per-device-batch-size`, `--grad-accum` — fit the GPU.
-- `--lora-rank` 32 → 64 if val WER underfits.
-- `--noise-dir <path>` — wire in MUSAN-style noise if the augment doesn't run by default.
-- Try `beam_size=5` in `asr_manager.py` if speed budget allows after a fast pass.
+- `--per-device-batch-size`, `--grad-accum` — fit the T4 (16 GB).
+- `--lora-rank` 32 → 64 (+ `--lora-alpha` 64 → 128, `--lr` 1e-4 → 5e-5, `--epochs` 3 → 5) if val WER is still falling at epoch 3.
+- `--noise-dir <path>` — wire in noise corpus if/when one is available on Workbench (none found 12 May).
+- Try `beam_size=2` (not 5) in `asr_manager.py` only if speed has margin after `int8_float16` re-export.
 - Unfreeze encoder for one low-LR pass at the end if WER plateau persists.
+- Re-export `--quantization int8_float16` after FT lands for the speed score (expect ~0.86 → 0.90+, accuracy delta ≤ 0.005).

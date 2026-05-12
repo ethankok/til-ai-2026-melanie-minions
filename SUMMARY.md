@@ -142,37 +142,44 @@ Endpoint: POST `/asr` on port 5001
 Input: list of `{key, b64}` where b64 is base64 WAV bytes
 Output: `{"predictions": ["transcript1", "transcript2", ...]}` (same order as input)
 
-What we built (Novice track is English-only, official score 12 May = 0.877, speed = 0.864):
+What we built (Novice track is English-only, official score 12 May = 0.877 / 0.864 on `norm-v1`; newer builds `vad-off-v1`/`vad-off-v2` improve local WER by another ~27% but are not yet submitted — see [RESULTS.md](RESULTS.md)):
 
 ```text
 faster-whisper distil-large-v3 + slang prompt mined from NLP corpus.
 Loaded once at startup, CT2 float16 on GPU (int8 CPU fallback).
-VAD trim, greedy beam, condition_on_previous_text=False, language="en" forced.
+greedy beam, condition_on_previous_text=False, language="en" forced.
+vad_filter=False + audio-level silence guard (long-clip truncation was the
+  dominant error in norm-v1 — see ERROR_ANALYSIS).
+Hallucination guards: no_speech_threshold=0.6, log_prob_threshold=-1.0,
+  compression_ratio_threshold=2.4, temperature=0.0, without_timestamps=True.
+Post-processing: digits + ordinals + niner callsigns + coordinate-safe
+  decimals verbalized so the scorer's word-level metric counts them correctly.
 ```
 
-Server now passes the whole HTTP batch to `ASRManager.asr_batch(list[bytes])`
-in one call (true GPU batching) — see `asr/src/asr_server.py`.
+Server passes the whole HTTP batch to `ASRManager.asr_batch(list[bytes])` in
+one call — see `asr/src/asr_server.py`.
 
 Training (Workbench-only, in `training/asr/`):
 
-1. `extract_slang.py` — mines NLP corpus → `slang_prompt.txt`, baked next to model weights and passed as `initial_prompt=` to bias decoding toward in-world vocab.
-2. `prepare_data.py` — reads `/home/jupyter/novice/asr/asr.jsonl`, 90/10 stratified split, oversamples slang-containing clips.
+1. `extract_slang.py` — mines NLP corpus → `slang_prompt.txt`, baked next to model weights. **Defaults updated**: `--top-k 200 --min-count 2`. Writes the list reversed so Whisper's `initial_prompt` truncation (`[-(max_length // 2 - 1):]` keeps the LAST ~223 tokens) preserves the highest-frequency in-world vocab. Passed as `initial_prompt=` at inference.
+2. `prepare_data.py` — reads `/home/jupyter/novice/asr/asr.jsonl` (4110 entries), 90/10 stratified split, oversamples slang-containing clips. **Note**: there is no separate training manifest — same file is what `test_asr.py` evaluates against, so post-FT local numbers will be inflated by memorization. Treat the official submission as the only real validator.
 3. `train_distil_whisper.py` — LoRA fine-tune (decoder attn, encoder frozen), SpecAugment + optional noise mixing + speed perturb, jiwer WER aligned with official scorer transforms.
 4. `export_ct2.py` — merge LoRA → `ct2-transformers-converter` → CT2 float16 dir + slang prompt copied alongside.
 5. Push `asr/models/` to a private GCS bucket; pull before `til build asr`.
 
-See [training/asr/README.md](training/asr/README.md) for end-to-end commands, the smoke-test path (zero-shot CT2 export, no training required), and environment variables (`ASR_DEVICE`, `ASR_COMPUTE_TYPE`) to override device/precision. See [training/asr/ERROR_ANALYSIS.md](training/asr/ERROR_ANALYSIS.md) for current ASR mistakes, numeric-formatting fixes, silence hallucination handling, and the route toward `0.95+` score / `0.90+` speed.
+See [training/asr/README.md](training/asr/README.md) for end-to-end commands, the smoke-test path (zero-shot CT2 export, no training required), and environment variables (`ASR_DEVICE`, `ASR_COMPUTE_TYPE`) to override device/precision. See [training/asr/ERROR_ANALYSIS.md](training/asr/ERROR_ANALYSIS.md) for full data-driven error analysis, the scoring-artifact explanation, and the route toward `0.95+` score / `0.90+` speed.
 
-Open items to verify on Workbench:
+Workbench facts (confirmed 12 May 2026):
 
-- Is the training manifest also `asr.jsonl` at `/home/jupyter/novice/asr/`, or a separate file? `prepare_data.py` assumes the former.
-- Does the official scorer divide by 4 when only the `english` bucket is populated, and does `jiwer.wer` handle empty lists gracefully?
-- Path to a noise corpus (if any) for the augmentation pass — wire into `--noise-dir`.
+- GPU: **Tesla T4** (16 GB) — fp16, not bf16.
+- Manifest: 4110 entries at `/home/jupyter/novice/asr/asr.jsonl`, schema `{"key","audio","transcript","language":"english"}`. No separate `train.jsonl`.
+- No accessible noise corpus on Workbench — augmentation falls back to SpecAugment + speed perturb only.
+- Scoring artifact: local `1 - MER` is misleading high because the local manifest has only `english`-labeled samples and the scorer divides by 4 (the other three buckets contribute 0). Track the bare `english error rate (WER)` line in `test_asr.py` output instead.
 
-Stretch:
-- Beam=5 on top of LoRA-FT if speed budget allows.
+Stretch (only after LoRA-FT + int8_float16 re-export land):
+- Beam=2 (not 5) if speed has margin.
 - Encoder unfreeze for a final low-LR pass.
-- Ensemble distil-large-v3 + large-v3-turbo (~2× inference cost) if accuracy ceiling becomes the bottleneck.
+- Ensemble distil-large-v3 + whisper-large-v3 (~2× inference cost) only if accuracy ceiling becomes the bottleneck.
 
 ---
 

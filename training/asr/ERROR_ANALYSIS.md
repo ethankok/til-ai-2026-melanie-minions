@@ -2,229 +2,220 @@
 
 Last updated: 12 May 2026
 
-## Current best official submission
+## Progression of local results
 
 ```text
-Image: melanie-minions-asr:norm-v1
-Submitted: 12/05/2026 16:23:35
-Errors: 0 / 400
-Score: 0.877
-Speed: 0.864
+v1   faster-whisper distil-large-v3 zero-shot              official 0.839 / 0.864
+v2   norm-v1: + digit verbalization + silence guard        official 0.877 / 0.864
+v3   vad-off-v1: + VAD off + hallucination guards          local 0.0554 WER, not yet submitted
+v4   vad-off-v2: + slang prompt reversed (truncation fix)  testing now
 ```
 
-Local pre-submission test on the Workbench scored higher:
+Local English WER trajectory: **0.113 → 0.076 → 0.055** across three rebuilds (combined ~51% relative reduction).
+
+## Scoring artifact — confirmed
+
+Local `test_asr.py` output:
 
 ```text
-1 - MER: 0.9718490510343567
-english WER: 0.1126
-1028 local clips in 47m50s
+english error rate (WER): 0.0759       <-- the only meaningful number
+chinese error rate (CER): 0.0000       <-- empty bucket
+malay error rate (WER):   0.0000       <-- empty bucket
+tamil error rate (WER):   0.0000       <-- empty bucket
+1 - MER: 0.9810
 ```
 
-Official hidden score is lower than local, so prioritize fixes that generalize rather than overfitting the local manifest.
+The local manifest has only `english`-labeled samples; `jiwer.wer([], [])` returns 0 for the other three buckets; the scorer divides the sum by 4 unconditionally. So `MER = English_WER / 4` and `1 - MER ≈ 0.98` even when real WER is ~7%. The official 400-clip set must distribute samples across all four buckets, because official 0.877 ≈ `1 - English_WER` directly (suggesting English_WER ≈ 0.12 on the hidden set).
+
+**Implication**: tune against the `english WER` line, not `1 - MER`. Local-official gap is roughly +0.05 absolute WER from local to official.
+
+## Workbench facts (confirmed 12 May 2026)
+
+- GPU: **Tesla T4** (16 GB). fp16 not bf16.
+- Manifest: `/home/jupyter/novice/asr/asr.jsonl` has **4110 entries**. Same manifest is what `test_asr.py` evaluates against — there is no separate `train.jsonl`. Fine-tuning on it leaks into local eval; we trust only the official submission as a leaderboard signal. (Strategy: **Option B** — train on all, hold out 10% only for stability.)
+- Schema per entry: `{"key", "audio": "sample_N.wav", "transcript", "language": "english"}`.
+- Slang prompt was populated in the deployed `norm-v1` image (1 line, ~80 tokens).
+- No accessible noise corpus on Workbench — augmentation falls back to SpecAugment + speed perturb only.
+- 309 GB free disk.
 
 ## Observed error patterns
 
-### 1. Numeric formatting causes avoidable WER
+### 1. VAD truncation on long clips (DOMINANT issue — fixed in vad-off-v1)
 
-The scorer lowercases and removes punctuation, but it does not convert digits into spoken words. Faster-Whisper often recognizes the meaning correctly but returns digits, which are counted as word errors.
+The 30-worst-WER dump showed ~25 of 30 clips were 25-38s long with the same pattern: predictions missing leading words, mid-content chunks, or trailing content. Examples (from the norm-v1 dump):
 
-Examples:
+| File              | Dur  | WER  | What was missing                                            |
+|-------------------|------|------|-------------------------------------------------------------|
+| sample_3776.wav   | 35s  | 0.60 | First sentence dropped                                      |
+| sample_176.wav    | 25s  | 0.56 | Prediction starts mid-sentence                              |
+| sample_596.wav    | 38s  | 0.40 | Last ~30% missing                                            |
+| sample_2397.wav   | 35s  | 0.30 | 30+ words missing in the middle                              |
 
-```text
-REF : seventy-two hours
-PRED: 72 hours
+Root cause: faster-whisper's `BatchedInferencePipeline` requires VAD, and the Silero VAD with `min_silence_duration_ms=500` was clipping speech across utterance boundaries on long clips.
 
-REF : zero six hundred
-PRED: 0600 / 0,600
+**Fix in vad-off-v1** ([asr/src/asr_manager.py](../../asr/src/asr_manager.py)):
 
-REF : seven niner
-PRED: 7-9-er
-```
+- Dropped `BatchedInferencePipeline` (it only batches encoder segments within a single audio anyway, no real throughput gain for our per-clip loop).
+- Switched to plain `model.transcribe(..., vad_filter=False)`.
+- The audio-level `_is_probably_silence()` guard still catches empty-clip hallucinations.
 
-Fix added in `asr/src/asr_manager.py`:
+### 2. Numeric formatting (handled in norm-v1, extended in vad-off-v1)
 
-- `_digits_to_words()` verbalizes numerals before returning predictions.
-- Handles plain integers, decimals, comma-formatted numbers, four-digit times, and `niner` callsigns.
-
-Commit:
-
-```text
-bc34715 feat(asr): normalize numeric transcripts
-```
-
-### 2. Silent / near-silent clips hallucinate text
-
-Whisper sometimes emits short hallucinations on silence.
+The scorer lowercases + strips punctuation but does not convert digits to words. Whisper outputs digits; references spell them out.
 
 Examples:
 
 ```text
-REF :
-PRED: Thank you.
-
-REF :
-PRED: I
+REF : seventy-two hours       PRED: 72 hours
+REF : zero six hundred        PRED: 0600
+REF : seven niner             PRED: 7-9-er
+REF : the twenty-third        PRED: the 23rd
 ```
 
-Fix added in `asr/src/asr_manager.py`:
+Fixes in `_digits_to_words()`:
 
-- `_is_probably_silence()` returns blank output for very low RMS + low peak audio.
-- Goal: reduce hallucinated non-empty transcripts on empty references.
+- Plain integers, decimals, comma-formatted numbers, four-digit times, `niner` callsigns.
+- **vad-off-v1 extensions**:
+  - Spoken ordinals: `"23rd"` → `"twenty third"` (not `"twenty threerd"`), `"15th"` → `"fifteenth"`.
+  - Coordinate-safe decimals: `"1.1.7"` no longer mangled into `"one point one.seven"`; dotted coordinates collapse to `"one one seven"` cleanly.
 
-Risk: threshold that is too aggressive can blank very quiet real speech. Current threshold is conservative:
+### 3. Silent / near-silent clips hallucinated text (handled in norm-v1, tightened in vad-off-v1)
+
+```text
+sample_924.wav  (0.6s)  REF:       PRED: Thank you.
+sample_2373.wav (0.6s)  REF:       PRED: I
+```
+
+The original `rms < 2e-4 and peak < 2e-3` guard was too conservative for short noisy bursts. vad-off-v1 adds:
 
 ```python
-rms < 2e-4 and peak < 2e-3
+if audio.size < self.TARGET_SR * 1.5 and rms < 1e-2:
+    return True   # short + quiet = noise burst, not speech
 ```
 
-### 3. Long clips can be truncated
+Plus Whisper-side hallucination guards on the decode call: `no_speech_threshold=0.6`, `log_prob_threshold=-1.0`, `compression_ratio_threshold=2.4`, `temperature=0.0`.
 
-Some bad local examples looked like the model captured the start but missed later content. Likely causes:
+### 4. Proper-noun substitutions (partially fixed by slang prompt + reversal)
 
-- VAD cuts speech too aggressively.
-- Long/noisy clips exceed the model's comfortable context.
-- Greedy decoding (`beam_size=1`) chooses a locally plausible but incomplete transcript.
+Almost every long-clip WER point comes from substitutions of in-world vocabulary:
 
-Current inference settings:
+| Reference     | Norm-v1 PRED  |
+|---------------|---------------|
+| Sarento       | Sorrento      |
+| Cyanite       | cyanide       |
+| Phyrexis      | Pyrex's       |
+| New Mewan     | "new Mee-one" |
+| Kestrelian    | Castilian     |
+| Acolyte       | accolite      |
+| Belford Straits | Belford Streets |
+
+`extract_slang.py` mines exactly these from the NLP corpus. The current defaults are `--top-k 200 --min-count 2`. Top-frequency tokens include `cyanite phyrexis sarento mewan kestrelian floodwall ashcastle fullwalker ...`.
+
+**Slang prompt truncation fix** (vad-off-v2): faster-whisper truncates `initial_prompt` to the **last** ~223 tokens via `previous_tokens[-(max_length // 2 - 1):]`. With 200 proper nouns the tokenized prompt overflows, and the highest-frequency terms — written first by the default ordering — were getting sliced off. `extract_slang.py` now writes the list reversed so the high-frequency terms live at the END and survive truncation.
+
+## Current inference settings (vad-off-v2)
 
 ```python
-beam_size=1
-vad_filter=True
-vad_parameters={"min_silence_duration_ms": 500}
-condition_on_previous_text=False
-language="en"
+self.model.transcribe(
+    audio,
+    language="en",
+    task="transcribe",
+    beam_size=1,
+    vad_filter=False,                       # changed in vad-off-v1
+    condition_on_previous_text=False,
+    initial_prompt=self.initial_prompt,     # 200-token slang prompt, reversed
+    without_timestamps=True,                # small speed win
+    temperature=0.0,                        # no temp fallback retries
+    compression_ratio_threshold=2.4,        # repetition guard
+    log_prob_threshold=-1.0,                # low-confidence guard
+    no_speech_threshold=0.6,                # silence hallucination guard
+)
 ```
 
-Next A/B tests:
-
-1. `vad_filter=False`
-2. weaker VAD, e.g. larger `min_silence_duration_ms`
-3. `beam_size=2` or `3` only if speed remains above target
-
-### 4. Domain slang / rare names still need data adaptation
-
-The prompt helps, but hidden official data may include vocabulary not covered by the current slang prompt.
-
-Current prompt source:
-
-```bash
-python training/asr/extract_slang.py \
-  --nlp-dir /home/jupyter/novice/nlp \
-  --out asr/models/slang_prompt.txt \
-  --top-k 80
-```
-
-Potential improvement:
-
-```bash
---top-k 120
-```
-
-Then rebuild and test.
+Audio-level silence pre-check ([_is_probably_silence](../../asr/src/asr_manager.py)) runs before the model call; output post-processing runs `_digits_to_words()` on the joined segment text.
 
 ## Path to score > 0.95 and speed > 0.9
 
-Current official:
-
 ```text
-Score: 0.839  -> error approx 0.161
-Speed: 0.864
+Official target: 0.95+
+Current best (submitted): 0.877 / 0.864
+Local best (not yet submitted): English WER 0.055 → predicted official ~0.91
 ```
 
-Target:
+Priority order now:
 
-```text
-Score: 0.950  -> error <= 0.050
-Speed: 0.900
-```
-
-Required improvement:
-
-```text
-~69% relative error reduction
-~4.2% speed improvement
-```
-
-Priority order:
-
-1. Run numeric/silence post-processing patch and compare against local baseline.
-2. A/B VAD off vs current VAD.
-3. If still below target, fine-tune Distil-Whisper with LoRA.
-4. For speed, test CT2 `int8_float16` export only after accuracy improves.
+1. **Land vad-off-v2 → submit** if local WER ≤ 0.045 (target: official ≥ 0.92).
+2. **LoRA fine-tune** ([training/asr/README.md](README.md)) to lock in proper-noun spelling. Realistic target: local WER 0.02-0.03 → official 0.05-0.08 → score 0.92-0.95.
+3. **Re-export `--quantization int8_float16`** after FT lands. Expected: speed 0.864 → 0.90+, accuracy delta ≤ 0.005.
+4. **Beam=2** only if speed has margin and accuracy plateaus.
+5. **Larger model / ensemble** (e.g., add full whisper-large-v3 in parallel and ROVER-vote) only if 1-4 still fall short of 0.95.
 
 ## Workbench test commands
 
 ```bash
 cd /home/jupyter/til
 git pull origin main
-export TIL_FOLDER=/home/jupyter/til
+export TIL_FOLDER=/home/jupyter/til   # one-time, or set in .bash_profile
 
-til build asr norm-v1
-til test asr norm-v1
+# Re-extract slang only when corpus or top-k changes.
+python training/asr/extract_slang.py \
+    --nlp-dir /home/jupyter/novice/nlp \
+    --out asr/models/slang_prompt.txt
+tail -c 300 asr/models/slang_prompt.txt   # should end with high-freq in-world nouns
+
+til build asr <tag>
+til test asr <tag>
 ```
 
-Compare against previous local baseline:
-
-```text
-1 - MER: 0.9718490510343567
-```
-
-Submit only if local score is same or better, or if the changes clearly target hidden official failures:
+Submit only if local `english WER` improves over the last shipped tag:
 
 ```bash
-til submit asr norm-v1
+til submit asr <tag>
 ```
 
-## Fine-tuning path if inference fixes are insufficient
+## Fine-tuning path
+
+See [README.md](README.md) for the end-to-end commands. With Option B locked in, train on all 4110 entries with a deterministic 10% held-out solely for early stopping; treat the official submission as the only real validator.
 
 ```bash
 python training/asr/extract_slang.py \
-  --nlp-dir /home/jupyter/novice/nlp \
-  --out asr/models/slang_prompt.txt \
-  --top-k 120
+    --nlp-dir /home/jupyter/novice/nlp \
+    --out asr/models/slang_prompt.txt
 
 python training/asr/prepare_data.py \
-  --data-dir /home/jupyter/novice/asr \
-  --slang-file asr/models/slang_prompt.txt \
-  --out-dir training/asr/data \
-  --slang-multiplier 3
+    --data-dir /home/jupyter/novice/asr \
+    --slang-file asr/models/slang_prompt.txt \
+    --out-dir training/asr/data \
+    --slang-multiplier 2
 
 python training/asr/train_distil_whisper.py \
-  --data-dir training/asr/data \
-  --output-dir training/asr/runs/distil-en-lora64-v1 \
-  --epochs 5 \
-  --per-device-batch-size 16 \
-  --lora-rank 64 \
-  --lora-alpha 128 \
-  --lr 5e-5 \
-  --eval-steps 250 \
-  --save-steps 250
+    --data-dir training/asr/data \
+    --output-dir training/asr/runs/distil-en-lora32-v1 \
+    --epochs 3 --per-device-batch-size 16 \
+    --lora-rank 32 --lora-alpha 64 --lr 1e-4
 
 python training/asr/export_ct2.py \
-  --adapter-dir training/asr/runs/distil-en-lora64-v1/best \
-  --slang-file asr/models/slang_prompt.txt \
-  --output-dir asr/models \
-  --quantization float16
+    --adapter-dir training/asr/runs/distil-en-lora32-v1/best \
+    --slang-file asr/models/slang_prompt.txt \
+    --output-dir asr/models \
+    --quantization float16
 
-til build asr ft-lora64-v1
-til test asr ft-lora64-v1
+til build asr ft-lora32-v1
+til test asr ft-lora32-v1
+til submit asr ft-lora32-v1
 ```
 
-If OOM:
+If the moderate run plateaus, escalate to rank 64 / 5 epochs / lr 5e-5.
 
-```bash
---per-device-batch-size 8 --grad-accum 2
-```
-
-Speed A/B after accuracy improves:
+Speed re-export after FT:
 
 ```bash
 python training/asr/export_ct2.py \
-  --adapter-dir training/asr/runs/distil-en-lora64-v1/best \
-  --slang-file asr/models/slang_prompt.txt \
-  --output-dir asr/models \
-  --quantization int8_float16
+    --adapter-dir training/asr/runs/distil-en-lora32-v1/best \
+    --slang-file asr/models/slang_prompt.txt \
+    --output-dir asr/models \
+    --quantization int8_float16
 
-til build asr ft-lora64-int8f16
-til test asr ft-lora64-int8f16
+til build asr ft-lora32-int8f16
+til test asr ft-lora32-int8f16
 ```
