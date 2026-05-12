@@ -5,10 +5,10 @@ Last updated: 12 May 2026
 ## Current best official submission
 
 ```text
-Image: melanie-minions-asr:latest
-Submitted: 12/05/2026 06:15:50
+Image: melanie-minions-asr:norm-v1
+Submitted: 12/05/2026 16:23:35
 Errors: 0 / 400
-Score: 0.839
+Score: 0.877
 Speed: 0.864
 ```
 

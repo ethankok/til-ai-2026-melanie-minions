@@ -142,7 +142,7 @@ Endpoint: POST `/asr` on port 5001
 Input: list of `{key, b64}` where b64 is base64 WAV bytes
 Output: `{"predictions": ["transcript1", "transcript2", ...]}` (same order as input)
 
-What we built (Novice track is English-only, official score 12 May = 0.839, speed = 0.864):
+What we built (Novice track is English-only, official score 12 May = 0.877, speed = 0.864):
 
 ```text
 faster-whisper distil-large-v3 + slang prompt mined from NLP corpus.
