@@ -142,7 +142,7 @@ Endpoint: POST `/asr` on port 5001
 Input: list of `{key, b64}` where b64 is base64 WAV bytes
 Output: `{"predictions": ["transcript1", "transcript2", ...]}` (same order as input)
 
-What we built (Novice track is English-only, official score 12 May = 0.877 / 0.864 on `norm-v1`. **`vad-off-v1` is ready to submit** — local English WER dropped from 0.0759 to 0.0554 (~27% relative), predicted official ~0.91-0.92. `vad-off-v2` regressed and was reverted. Next major lever is LoRA fine-tune — see [training/asr/README.md](training/asr/README.md) Quick-start. See [RESULTS.md](RESULTS.md)):
+What we built (Novice track is English-only, current best official score is **`vad-off-v1` at 0.938 / 0.859** (12 May 20:00) — a +6.1 absolute point jump from `norm-v1`'s 0.877 with speed unchanged. Local English WER 0.055 maps to official WER ~0.062 (gap +0.007 absolute, very small — the inference fixes generalize). Next major lever is LoRA fine-tune to push the last 20-40% relative WER reduction toward the 0.95 target — see [training/asr/README.md](training/asr/README.md) Quick-start. See [RESULTS.md](RESULTS.md)):
 
 ```text
 faster-whisper distil-large-v3 + slang prompt mined from NLP corpus.

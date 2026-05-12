@@ -2,16 +2,19 @@
 
 Last updated: 12 May 2026
 
-## Progression of local results
+## Progression of submitted results
 
 ```text
-v1   faster-whisper distil-large-v3 zero-shot              official 0.839 / 0.864
-v2   norm-v1: + digit verbalization + silence guard        official 0.877 / 0.864
-v3   vad-off-v1: + VAD off + hallucination guards          local WER 0.0554  (recommended next submission)
-v4   vad-off-v2: + slang prompt reversed                   local WER 0.0604  REGRESSED, do not submit
+v1          faster-whisper distil-large-v3 zero-shot        official 0.839 / 0.864
+norm-v1     + digit verbalization + silence guard           official 0.877 / 0.864     local Eng-WER 0.0759
+vad-off-v1  + VAD off + hallucination guards + ordinals     official 0.938 / 0.859     local Eng-WER 0.0554
+vad-off-v2  + slang prompt reversed                         REGRESSED local Eng-WER 0.0604, not submitted
+ft-lora32-v1 + LoRA decoder fine-tune                       in progress, target official ≥ 0.95
 ```
 
-Local English WER trajectory: **0.113 → 0.076 → 0.055 → 0.060**.
+Local English WER trajectory: **0.113 → 0.076 → 0.055**.
+
+**Local-official gap is small and shrinking.** On `norm-v1` the gap was +0.047 absolute WER (local 0.076 vs official 0.123). On `vad-off-v1` the gap shrank to +0.007 absolute (local 0.055 vs official 0.062). The inference fixes are generalizing cleanly — if LoRA pushes local to ~0.025-0.035, we should land official ≤ 0.05 (score ≥ 0.95).
 
 ## Slang prompt ordering experiment (vad-off-v2)
 
@@ -147,18 +150,17 @@ Audio-level silence pre-check ([_is_probably_silence](../../asr/src/asr_manager.
 ## Path to score > 0.95 and speed > 0.9
 
 ```text
-Official target:                    0.95+
-Current best (submitted):           0.877 / 0.864    (norm-v1)
-Local best (not yet submitted):     WER 0.055        (vad-off-v1) → predicted official ~0.91
+Official target:           0.95+
+Current best (submitted):  0.938 / 0.859   (vad-off-v1)
+Distance to target:        +0.012 accuracy, +0.041 speed
 ```
 
 Priority order now:
 
-1. **Submit `vad-off-v1`** immediately (`til submit asr vad-off-v1`). Predicted official 0.91-0.92.
-2. **LoRA fine-tune** ([training/asr/README.md](README.md)) to lock in proper-noun spelling. Realistic target: local WER 0.02-0.03 → official 0.05-0.08 → score 0.92-0.95.
-3. **Re-export `--quantization int8_float16`** after FT lands. Expected: speed 0.864 → 0.90+, accuracy delta ≤ 0.005.
-4. **Beam=2** only if speed has margin and accuracy plateaus.
-5. **Larger model / ensemble** (e.g., add full whisper-large-v3 in parallel and ROVER-vote) only if 1-4 still fall short of 0.95.
+1. **LoRA fine-tune** ([training/asr/README.md](README.md)) — in progress. With the small local-official gap (+0.007 WER), pushing local WER from 0.055 to ~0.030 should land official ≤ 0.050 → score ≥ 0.95. Distil-large-v3 + LoRA on decoder attention is the right scope.
+2. **Re-export `--quantization int8_float16`** after FT lands. Expected: speed 0.859 → 0.90+, accuracy delta ≤ 0.005.
+3. **Beam=2** only if speed has margin and accuracy plateaus.
+4. **Larger model / ensemble** (e.g., add full whisper-large-v3 in parallel and ROVER-vote) only if 1-3 still fall short of 0.95.
 
 ## Workbench test commands
 
