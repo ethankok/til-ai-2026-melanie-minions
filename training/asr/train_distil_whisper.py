@@ -35,7 +35,7 @@ import torch
 from datasets import Audio, DatasetDict, load_from_disk
 import soundfile as sf
 import jiwer
-from peft import LoraConfig, TaskType, get_peft_model
+from peft import LoraConfig, get_peft_model
 from transformers import (
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
@@ -266,13 +266,15 @@ def main() -> None:
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
 
+    # No task_type: PeftModelForSeq2SeqLM.forward injects input_ids=None into
+    # the base model call, which transformers >= 4.57 rejects on Whisper
+    # (input_features-based forward). Plain LoraModel passes kwargs through.
     lora_config = LoraConfig(
         r=args.lora_rank,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         target_modules=["q_proj", "k_proj", "v_proj", "out_proj"],
         bias="none",
-        task_type=TaskType.SEQ_2_SEQ_LM,
     )
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
