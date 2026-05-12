@@ -23,6 +23,7 @@ Usage on the GCP Workbench instance::
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import random
 from dataclasses import dataclass
@@ -31,7 +32,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from datasets import DatasetDict, load_from_disk
+from datasets import Audio, DatasetDict, load_from_disk
 import soundfile as sf
 import jiwer
 from peft import LoraConfig, TaskType, get_peft_model
@@ -63,6 +64,36 @@ def _list_wavs(d: Path) -> list[Path]:
 
 def _load_audio(path: Path, target_sr: int = 16000) -> np.ndarray:
     data, sr = sf.read(str(path), dtype="float32", always_2d=False)
+    if data.ndim == 2:
+        data = data.mean(axis=1)
+    if sr != target_sr:
+        import librosa
+
+        data = librosa.resample(data, orig_sr=sr, target_sr=target_sr)
+    return data.astype(np.float32)
+
+
+def _load_audio_from_example(audio_info, target_sr: int = 16000) -> np.ndarray:
+    """Decode one example's audio without relying on HF's torchcodec backend.
+
+    The HF `Audio` feature defaults to torchcodec → torchaudio → soundfile and
+    fails outright if torchcodec can't find FFmpeg shared libs (libavutil.so).
+    Casting the column to `Audio(decode=False)` hands us `{"path", "bytes"}`
+    directly and we load it ourselves with soundfile, same as the inference
+    container in asr/src/asr_manager.py.
+    """
+    if isinstance(audio_info, dict):
+        if audio_info.get("bytes") is not None:
+            data, sr = sf.read(
+                io.BytesIO(audio_info["bytes"]),
+                dtype="float32",
+                always_2d=False,
+            )
+        else:
+            data, sr = sf.read(audio_info["path"], dtype="float32", always_2d=False)
+    else:
+        # Plain path string (e.g. if prepare_data.py skipped the Audio cast).
+        data, sr = sf.read(str(audio_info), dtype="float32", always_2d=False)
     if data.ndim == 2:
         data = data.mean(axis=1)
     if sr != target_sr:
@@ -109,7 +140,7 @@ class WhisperCollator:
         audios: list[np.ndarray] = []
         texts: list[str] = []
         for ex in batch:
-            audio = np.asarray(ex["audio"]["array"], dtype=np.float32)
+            audio = _load_audio_from_example(ex["audio"])
             if self.p_speed > 0 and random.random() < self.p_speed:
                 audio = _speed_perturb(audio, random.choice([0.9, 1.1]))
             if (
@@ -192,6 +223,18 @@ def main() -> None:
 
     print(f"Loading dataset from {args.data_dir}")
     ds: DatasetDict = load_from_disk(str(args.data_dir))
+    # Disable HF Audio decoding; we load with soundfile in the collator. This
+    # sidesteps torchcodec / FFmpeg shared-lib requirements that the Workbench
+    # base image doesn't satisfy. Works for both Audio-cast and string-path
+    # columns produced by prepare_data.py.
+    for split in ds:
+        if "audio" in ds[split].features:
+            try:
+                ds[split] = ds[split].cast_column(
+                    "audio", Audio(sampling_rate=16000, decode=False)
+                )
+            except Exception:
+                pass
 
     print(f"Loading model: {args.model_name}")
     processor = WhisperProcessor.from_pretrained(
