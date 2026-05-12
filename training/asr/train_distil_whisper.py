@@ -165,8 +165,11 @@ def main() -> None:
     )
     ap.add_argument("--output-dir", type=Path, required=True)
     ap.add_argument("--epochs", type=int, default=3)
-    ap.add_argument("--per-device-batch-size", type=int, default=16)
-    ap.add_argument("--grad-accum", type=int, default=1)
+    # Default tuned for Tesla T4 (16 GB). distil-large-v3 + LoRA + gradient
+    # checkpointing fits at batch 8 with headroom; batch 16 occasionally OOMs
+    # depending on clip lengths in the batch. Override on bigger GPUs.
+    ap.add_argument("--per-device-batch-size", type=int, default=8)
+    ap.add_argument("--grad-accum", type=int, default=2)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--warmup-ratio", type=float, default=0.10)
     ap.add_argument("--eval-steps", type=int, default=500)
@@ -199,10 +202,10 @@ def main() -> None:
     feature_extractor.mask_time_prob = 0.05
     feature_extractor.mask_feature_prob = 0.05
 
-    model = WhisperForConditionalGeneration.from_pretrained(
-        args.model_name,
-        torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
-    )
+    # Load base in fp32; let the Trainer's fp16/bf16 flag handle mixed precision.
+    # Loading directly in fp16 + PEFT + gradient checkpointing on T4 is fragile
+    # (dtype mismatch on backward); the autocast path is more stable.
+    model = WhisperForConditionalGeneration.from_pretrained(args.model_name)
     model.generation_config.language = "en"
     model.generation_config.task = "transcribe"
     model.generation_config.forced_decoder_ids = None
@@ -211,6 +214,14 @@ def main() -> None:
     # Freeze encoder; LoRA the decoder attention.
     for p in model.model.encoder.parameters():
         p.requires_grad = False
+
+    # Required for PEFT + gradient checkpointing: without this you get
+    # "RuntimeError: element 0 of tensors does not require grad" at the first
+    # backward pass, because input embeddings are frozen and gradient
+    # checkpointing breaks the autograd chain. Must be called BEFORE
+    # get_peft_model so the hook attaches to the base embeddings.
+    model.gradient_checkpointing_enable()
+    model.enable_input_require_grads()
 
     lora_config = LoraConfig(
         r=args.lora_rank,

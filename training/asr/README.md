@@ -48,6 +48,70 @@ til build asr && til test asr
 This proves the manager, server, and Docker plumbing work before spending GPU
 time on fine-tuning.
 
+## Quick start: LoRA on Tesla T4 (Workbench)
+
+The defaults in `train_distil_whisper.py` are tuned for T4 (16 GB). On
+Workbench, after `git pull origin main`:
+
+```bash
+cd /home/jupyter/til
+export TIL_FOLDER=/home/jupyter/til
+
+# 0. Install training deps once (skip if already done).
+pip install -r requirements-dev.txt
+
+# 1. Skip if slang_prompt.txt is already current.
+python training/asr/extract_slang.py \
+    --nlp-dir /home/jupyter/novice/nlp \
+    --out asr/models/slang_prompt.txt
+
+# 2. Build the HF dataset (90/10 stratified split + slang oversampling).
+python training/asr/prepare_data.py \
+    --data-dir /home/jupyter/novice/asr \
+    --slang-file asr/models/slang_prompt.txt \
+    --out-dir training/asr/data
+
+# 3. LoRA fine-tune. ~2-3 hrs on T4 for 3 epochs.
+python training/asr/train_distil_whisper.py \
+    --data-dir training/asr/data \
+    --output-dir training/asr/runs/distil-en-lora32-v1 \
+    --epochs 3 \
+    --lora-rank 32 --lora-alpha 64 --lr 1e-4
+
+# 4. Merge LoRA into base + convert to CT2 + copy slang prompt next door.
+python training/asr/export_ct2.py \
+    --adapter-dir training/asr/runs/distil-en-lora32-v1/best \
+    --slang-file asr/models/slang_prompt.txt \
+    --output-dir asr/models \
+    --quantization float16
+
+# 5. Build, local-test, submit.
+til build asr ft-lora32-v1
+til test asr ft-lora32-v1     # confirm english WER improves vs vad-off-v1 (0.0554)
+til submit asr ft-lora32-v1
+```
+
+If the moderate run plateaus or you see val WER still falling at epoch 3,
+relaunch with the heavier settings:
+
+```bash
+--epochs 5 --lora-rank 64 --lora-alpha 128 --lr 5e-5
+```
+
+### Known gotchas on T4
+
+- **OOM at batch 8**: drop to `--per-device-batch-size 4 --grad-accum 4`. The
+  effective batch stays the same; per-step compute halves.
+- **`RuntimeError: element 0 of tensors does not require grad`**: the
+  `model.enable_input_require_grads()` call in `train_distil_whisper.py`
+  prevents this for PEFT + gradient checkpointing. If it fires anyway, the
+  installed `peft` is probably very old — `pip install -U peft transformers`.
+- **`AttributeError: TrainingArguments has no attribute 'evaluation_strategy'`**:
+  newer `transformers` renamed it to `eval_strategy`. Sed-fix that one line in
+  the script if it triggers.
+- **Per-clip wall-clock**: T4 takes ~30-60 min per epoch on ~4100 clips at
+  batch 8. A full 3-epoch run is ~2-3 hrs. Start it and let it cook.
+
 ## End-to-end
 
 ```bash
@@ -124,7 +188,7 @@ ENV ASR_SLANG_PROMPT_PATH=/workspace/models/asr/slang_prompt.txt
 
 ## Iteration knobs (after first successful submission)
 
-- `--per-device-batch-size`, `--grad-accum` — fit the T4 (16 GB).
+- `--per-device-batch-size`, `--grad-accum` — default 8 × 2 = effective 16, T4-safe. Drop to 4 × 4 if OOM, raise on bigger GPUs.
 - `--lora-rank` 32 → 64 (+ `--lora-alpha` 64 → 128, `--lr` 1e-4 → 5e-5, `--epochs` 3 → 5) if val WER is still falling at epoch 3.
 - `--noise-dir <path>` — wire in noise corpus if/when one is available on Workbench (none found 12 May).
 - Try `beam_size=2` (not 5) in `asr_manager.py` only if speed has margin after `int8_float16` re-export.
