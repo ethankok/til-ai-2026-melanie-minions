@@ -13,7 +13,7 @@ import re
 import ctranslate2
 import numpy as np
 import soundfile as sf
-from faster_whisper import BatchedInferencePipeline, WhisperModel
+from faster_whisper import WhisperModel
 
 try:
     import librosa
@@ -39,6 +39,26 @@ _ONES = [
     "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
 ]
 _TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+_ORDINALS = {
+    1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth",
+    6: "sixth", 7: "seventh", 8: "eighth", 9: "ninth", 10: "tenth",
+    11: "eleventh", 12: "twelfth", 13: "thirteenth", 14: "fourteenth",
+    15: "fifteenth", 16: "sixteenth", 17: "seventeenth", 18: "eighteenth",
+    19: "nineteenth", 20: "twentieth", 30: "thirtieth", 40: "fortieth",
+    50: "fiftieth", 60: "sixtieth", 70: "seventieth", 80: "eightieth",
+    90: "ninetieth", 100: "hundredth", 1000: "thousandth",
+}
+
+
+def _int_to_ordinal(n: int) -> str:
+    """Spoken ordinal form: 23 -> 'twenty third', 15 -> 'fifteenth'."""
+    if n in _ORDINALS:
+        return _ORDINALS[n]
+    if n < 100:
+        q, r = divmod(n, 10)
+        return f"{_TENS[q]} {_ORDINALS[r]}"
+    return _int_to_words(n) + "th"
 
 
 def _int_to_words(n: int) -> str:
@@ -69,13 +89,27 @@ def _digits_to_words(text: str) -> str:
 
     text = re.sub(r"\b([0-9])\s*[- ]\s*9\s*[- ]?er\b", repl_niner, text, flags=re.I)
 
+    # Ordinals such as "23rd", "15th". Run before any int regex catches the
+    # digit half and leaves an orphaned suffix. Use spoken ordinal forms so
+    # "23rd" -> "twenty third" (not "twenty threerd").
+    def repl_ordinal(match: re.Match[str]) -> str:
+        return _int_to_ordinal(int(match.group(1)))
+
+    text = re.sub(r"\b(\d+)(st|nd|rd|th)\b", repl_ordinal, text, flags=re.I)
+
     def repl_decimal(match: re.Match[str]) -> str:
         whole, frac = match.group(1), match.group(2)
         whole_words = _int_to_words(int(whole)) if whole else "zero"
         frac_words = " ".join(_DIGIT_WORDS[d] for d in frac)
         return f"{whole_words} point {frac_words}"
 
-    text = re.sub(r"\b(\d+)\s*\.\s*(\d+)\b", repl_decimal, text)
+    # Require no adjacent digit or dot on either side so dotted coordinates such
+    # as "0.8.4" or "1.2.3" do not get partially rewritten.
+    text = re.sub(r"(?<![\d.])(\d+)\s*\.\s*(\d+)(?![\d.])", repl_decimal, text)
+    # Multi-dot sequences like "1.2.3" are not decimals. Preserve token
+    # boundaries by turning digit-to-digit dots into spaces before integer
+    # verbalization; the scorer removes punctuation without inserting spaces.
+    text = re.sub(r"(?<=\d)\.(?=\d)", " ", text)
 
     def _time_words(hour: int, minute: int) -> str:
         if minute == 0:
@@ -170,7 +204,10 @@ class ASRManager:
             device=device,
             compute_type=compute_type,
         )
-        self.batched = BatchedInferencePipeline(model=self.model)
+        # Note: BatchedInferencePipeline only batches encoder segments WITHIN one
+        # long audio. Since we already loop one clip at a time, it adds no real
+        # throughput here, and it forces VAD which was truncating long clips
+        # (see ERROR_ANALYSIS.md). Use the plain WhisperModel.transcribe path.
         self._warmup()
 
     def _load_slang_prompt(self) -> str | None:
@@ -219,17 +256,30 @@ class ASRManager:
                 if self._is_probably_silence(audio):
                     results[i] = ""
                     continue
-                segments, _info = self.batched.transcribe(
+                segments, _info = self.model.transcribe(
                     audio,
                     language="en",
                     task="transcribe",
                     beam_size=1,
-                    vad_filter=True,
-                    vad_parameters={"min_silence_duration_ms": 500},
+                    # vad_filter was eating leading/trailing/middle speech on
+                    # long clips (see ERROR_ANALYSIS.md). The audio-level silence
+                    # guard above handles the empty-clip hallucination case.
+                    vad_filter=False,
                     condition_on_previous_text=False,
                     initial_prompt=self.initial_prompt,
+                    without_timestamps=True,
+                    # Single greedy decode, no temperature fallback retries.
+                    temperature=0.0,
+                    # Hallucination guards: skip segments where the decoder is
+                    # uncertain or the output is unusually compressed (a Whisper
+                    # repetition tell). These thresholds are tighter than the
+                    # library defaults.
+                    compression_ratio_threshold=2.4,
+                    log_prob_threshold=-1.0,
+                    no_speech_threshold=0.6,
                 )
-                text = " ".join(seg.text for seg in segments).strip()
+                text = " ".join(seg.text for seg in segments)
+                text = re.sub(r"\s+", " ", text).strip()
                 results[i] = self._postprocess_transcript(text)
             except Exception:
                 results[i] = ""
@@ -238,12 +288,20 @@ class ASRManager:
     def _is_probably_silence(self, audio: np.ndarray) -> bool:
         if audio.size == 0:
             return True
-        # Prevent Whisper's common silence hallucinations such as "Thank you."
-        # Use both RMS and peak so very quiet real speech is not discarded just
-        # because its average energy is low.
+        # Audio-level silence detector; cheaper than running the model on noise.
         rms = float(np.sqrt(np.mean(np.square(audio))))
         peak = float(np.max(np.abs(audio)))
-        return rms < 2e-4 and peak < 2e-3
+        # Long-clip conservative threshold: only blank essentially digital silence
+        # so very quiet real speech is not discarded for its low average energy.
+        if rms < 2e-4 and peak < 2e-3:
+            return True
+        # Short-clip aggressive threshold: sub-1.5 s clips that are still quiet
+        # are almost always microphone bumps or breaths, not speech. Whisper
+        # hallucinates "Thank you." / "I" on these (see ERROR_ANALYSIS.md
+        # sample_924, sample_2373).
+        if audio.size < self.TARGET_SR * 1.5 and rms < 1e-2:
+            return True
+        return False
 
     def _postprocess_transcript(self, text: str) -> str:
         return _digits_to_words(text)

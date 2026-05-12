@@ -116,13 +116,19 @@ def main() -> None:
     ap.add_argument(
         "--top-k",
         type=int,
-        default=80,
-        help="Number of slang tokens to keep.",
+        default=200,
+        help=(
+            "Number of slang tokens to keep. Whisper truncates the "
+            "initial_prompt to roughly the last 224 tokens, so ~200 short "
+            "words is the safe budget. ERROR_ANALYSIS shows proper-noun "
+            "substitutions (Sarento, Cyanite, Phyrexis, Mewan, etc.) drive a "
+            "large share of remaining WER, so we want broad coverage."
+        ),
     )
     ap.add_argument(
         "--min-count",
         type=int,
-        default=3,
+        default=2,
         help="Minimum occurrences in the NLP corpus.",
     )
     ap.add_argument(
