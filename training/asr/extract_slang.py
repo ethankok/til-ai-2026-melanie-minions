@@ -156,22 +156,24 @@ def main() -> None:
     ranked = [t for t, c in counts.most_common() if c >= args.min_count]
     slang = ranked[: args.top_k]
 
-    # Whisper truncates initial_prompt to the LAST ~223 tokens (it slices via
-    # previous_tokens[-(max_length // 2 - 1):] in faster-whisper). With ~200
-    # proper nouns the tokenized prompt overflows that window, and naive
-    # ordering (highest-frequency first) means the most important terms get
-    # truncated off the front. Reverse the list so the highest-frequency
-    # in-world vocabulary lives at the END of the prompt and survives.
-    slang_for_prompt = list(reversed(slang))
-
+    # NOTE on ordering: faster-whisper truncates initial_prompt to the LAST
+    # ~223 tokens (via previous_tokens[-(max_length // 2 - 1):]). With ~200
+    # proper nouns the tokenized prompt overflows. Intuition would say to
+    # reverse the list so high-frequency terms land at the end and survive
+    # truncation -- BUT the vad-off-v2 experiment showed that ordering
+    # produced WORSE local WER than the original highest-frequency-first
+    # layout (0.060 vs 0.055 on the 1028-clip Workbench manifest). Likely
+    # cause: putting the most common in-world nouns immediately before
+    # decode-start over-primes the decoder and causes false-positive
+    # hallucinations on unrelated clips. Keeping high-frequency first lets
+    # those terms be in the prompt as background context but not in the
+    # last-attended position. See training/asr/ERROR_ANALYSIS.md.
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(" ".join(slang_for_prompt) + "\n", encoding="utf-8")
+    args.out.write_text(" ".join(slang) + "\n", encoding="utf-8")
 
-    print(f"Wrote {len(slang_for_prompt)} slang tokens to {args.out}")
-    print("Top 20 (highest frequency, written last in the prompt):",
+    print(f"Wrote {len(slang)} slang tokens to {args.out}")
+    print("Top 20 (highest frequency, written first in the prompt):",
           " ".join(slang[:20]))
-    print("Tail of prompt (what Whisper actually keeps):",
-          " ".join(slang_for_prompt[-20:]))
 
 
 if __name__ == "__main__":

@@ -161,7 +161,7 @@ one call — see `asr/src/asr_server.py`.
 
 Training (Workbench-only, in `training/asr/`):
 
-1. `extract_slang.py` — mines NLP corpus → `slang_prompt.txt`, baked next to model weights. **Defaults updated**: `--top-k 200 --min-count 2`. Writes the list reversed so Whisper's `initial_prompt` truncation (`[-(max_length // 2 - 1):]` keeps the LAST ~223 tokens) preserves the highest-frequency in-world vocab. Passed as `initial_prompt=` at inference.
+1. `extract_slang.py` — mines NLP corpus → `slang_prompt.txt`, baked next to model weights. **Defaults**: `--top-k 200 --min-count 2`. Writes highest-frequency first; reversing was tested in `vad-off-v2` and regressed WER (over-primes decoder), so we keep the original order. Passed as `initial_prompt=` at inference.
 2. `prepare_data.py` — reads `/home/jupyter/novice/asr/asr.jsonl` (4110 entries), 90/10 stratified split, oversamples slang-containing clips. **Note**: there is no separate training manifest — same file is what `test_asr.py` evaluates against, so post-FT local numbers will be inflated by memorization. Treat the official submission as the only real validator.
 3. `train_distil_whisper.py` — LoRA fine-tune (decoder attn, encoder frozen), SpecAugment + optional noise mixing + speed perturb, jiwer WER aligned with official scorer transforms.
 4. `export_ct2.py` — merge LoRA → `ct2-transformers-converter` → CT2 float16 dir + slang prompt copied alongside.

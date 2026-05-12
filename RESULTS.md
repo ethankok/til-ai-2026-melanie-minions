@@ -51,9 +51,9 @@ Estimated blended qualifier score = 0.4184
 ## Notes
 
 - All 5 tasks have been submitted successfully at least once.
-- ASR norm-v1 (12 May 16:23) official `0.877 / 0.864` is the second submission. **Two newer builds exist locally but are not yet submitted**:
-  - `vad-off-v1` — local English WER **0.0554** (down from norm-v1's 0.0759). Adds `vad_filter=False`, hallucination guards (`no_speech_threshold=0.6`, `log_prob_threshold=-1.0`, `compression_ratio_threshold=2.4`, `temperature=0.0`), spoken-form ordinals (`23rd` → `twenty third`), coordinate-safe decimal regex, tighter silence guard for short noisy clips. Predicted official ≈ 0.90.
-  - `vad-off-v2` — adds slang-prompt truncation fix in [training/asr/extract_slang.py](training/asr/extract_slang.py): writes the high-frequency in-world vocabulary (cyanite, sarento, phyrexis, mewan, kestrelian, ...) at the END of the prompt so Whisper's `[-(max_length // 2 - 1):]` truncation keeps it. Test in progress; predicted local English WER ~0.04-0.05, predicted official ≈ 0.91-0.92.
+- ASR norm-v1 (12 May 16:23) official `0.877 / 0.864` is the second submission. **A newer local build is ready to ship**:
+  - `vad-off-v1` — local English WER **0.0554** (down from norm-v1's 0.0759). Adds `vad_filter=False`, hallucination guards (`no_speech_threshold=0.6`, `log_prob_threshold=-1.0`, `compression_ratio_threshold=2.4`, `temperature=0.0`), spoken-form ordinals (`23rd` → `twenty third`), coordinate-safe decimal regex, tighter silence guard for short noisy clips. **Recommended next submission.** Predicted official ≈ 0.91-0.92.
+  - `vad-off-v2` — REGRESSED to local WER 0.0604 after reversing the slang-prompt order (intent was to survive Whisper's truncation but reversing over-primed the decoder). Reverted. Do not submit.
 - The local `1 - MER` number is a **scoring artifact** of the local manifest being English-only (three other language buckets contribute 0 to the divide-by-4 mean). Track the bare `english error rate (WER)` line instead.
 - Noise scored `1.000`, but appears required/useful rather than directly weighted for qualifiers.
 - CV submitted but had `4 / 500` errors and score `0.000`; fix robustness/schema edge cases before improving model quality.

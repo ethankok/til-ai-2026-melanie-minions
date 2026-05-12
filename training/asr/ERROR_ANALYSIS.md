@@ -7,11 +7,21 @@ Last updated: 12 May 2026
 ```text
 v1   faster-whisper distil-large-v3 zero-shot              official 0.839 / 0.864
 v2   norm-v1: + digit verbalization + silence guard        official 0.877 / 0.864
-v3   vad-off-v1: + VAD off + hallucination guards          local 0.0554 WER, not yet submitted
-v4   vad-off-v2: + slang prompt reversed (truncation fix)  testing now
+v3   vad-off-v1: + VAD off + hallucination guards          local WER 0.0554  (recommended next submission)
+v4   vad-off-v2: + slang prompt reversed                   local WER 0.0604  REGRESSED, do not submit
 ```
 
-Local English WER trajectory: **0.113 → 0.076 → 0.055** across three rebuilds (combined ~51% relative reduction).
+Local English WER trajectory: **0.113 → 0.076 → 0.055 → 0.060**.
+
+## Slang prompt ordering experiment (vad-off-v2)
+
+Hypothesis: faster-whisper truncates `initial_prompt` to the last ~223 tokens; with ~200 proper nouns the prompt overflows, so reversing the list to put high-frequency terms at the END should make them survive truncation and help.
+
+Result: **wrong direction**. Reversing the prompt regressed local English WER from 0.0554 → 0.0604 (≈+9% relative) with no other changes between v1 and v2. Wall-clock similar (44:29 → 46:22).
+
+Likely cause: putting the most common in-world proper nouns (`cyanite`, `sarento`, `phyrexis`, `mewan`, ...) immediately before decode-start over-primes the decoder and causes false-positive hallucinations of those tokens on unrelated audio. v1's ordering left high-frequency terms in the truncated head and rarer terms at the end — a weaker, less biased prior.
+
+Action taken: reverted `extract_slang.py` to write highest-frequency first. The `vad-off-v1` image (built before the reversal) is the recommended submission.
 
 ## Scoring artifact — confirmed
 
@@ -111,7 +121,7 @@ Almost every long-clip WER point comes from substitutions of in-world vocabulary
 
 `extract_slang.py` mines exactly these from the NLP corpus. The current defaults are `--top-k 200 --min-count 2`. Top-frequency tokens include `cyanite phyrexis sarento mewan kestrelian floodwall ashcastle fullwalker ...`.
 
-**Slang prompt truncation fix** (vad-off-v2): faster-whisper truncates `initial_prompt` to the **last** ~223 tokens via `previous_tokens[-(max_length // 2 - 1):]`. With 200 proper nouns the tokenized prompt overflows, and the highest-frequency terms — written first by the default ordering — were getting sliced off. `extract_slang.py` now writes the list reversed so the high-frequency terms live at the END and survive truncation.
+**Slang prompt ordering** (post-experiment): the original ordering (highest-frequency first) works better than the reversed ordering, even though the prompt overflows the ~223-token retention budget. See the experiment write-up at the top of this file.
 
 ## Current inference settings (vad-off-v2)
 
@@ -137,14 +147,14 @@ Audio-level silence pre-check ([_is_probably_silence](../../asr/src/asr_manager.
 ## Path to score > 0.95 and speed > 0.9
 
 ```text
-Official target: 0.95+
-Current best (submitted): 0.877 / 0.864
-Local best (not yet submitted): English WER 0.055 → predicted official ~0.91
+Official target:                    0.95+
+Current best (submitted):           0.877 / 0.864    (norm-v1)
+Local best (not yet submitted):     WER 0.055        (vad-off-v1) → predicted official ~0.91
 ```
 
 Priority order now:
 
-1. **Land vad-off-v2 → submit** if local WER ≤ 0.045 (target: official ≥ 0.92).
+1. **Submit `vad-off-v1`** immediately (`til submit asr vad-off-v1`). Predicted official 0.91-0.92.
 2. **LoRA fine-tune** ([training/asr/README.md](README.md)) to lock in proper-noun spelling. Realistic target: local WER 0.02-0.03 → official 0.05-0.08 → score 0.92-0.95.
 3. **Re-export `--quantization int8_float16`** after FT lands. Expected: speed 0.864 → 0.90+, accuracy delta ≤ 0.005.
 4. **Beam=2** only if speed has margin and accuracy plateaus.
