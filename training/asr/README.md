@@ -98,19 +98,35 @@ relaunch with the heavier settings:
 --epochs 5 --lora-rank 64 --lora-alpha 128 --lr 5e-5
 ```
 
-### Known gotchas on T4
+### Known gotchas on T4 (all already patched in the script as of 12 May 2026)
+
+The four errors below all fired in sequence on the first Workbench run and are
+now fixed in the committed `train_distil_whisper.py`. Listed for posterity so a
+future contributor recognizes them if they reappear:
+
+- **`RuntimeError: element 0 of tensors does not require grad`** — PEFT +
+  gradient checkpointing on a frozen-encoder setup. Fixed by calling
+  `model.gradient_checkpointing_enable()` + `model.enable_input_require_grads()`
+  BEFORE `get_peft_model(...)`.
+- **`TypeError: ... unexpected keyword argument 'evaluation_strategy'`** —
+  `transformers >= 4.46` renamed it to `eval_strategy`. Fixed in the kwargs to
+  `Seq2SeqTrainingArguments`.
+- **`TypeError: Seq2SeqTrainer.__init__() got an unexpected keyword argument 'tokenizer'`** —
+  same transformers rename family: `tokenizer=` → `processing_class=`. Fixed.
+- **`RuntimeError: Could not load libtorchcodec ... libavutil.so.* not found`** —
+  HF `datasets` Audio decoding defaults to torchcodec, which needs FFmpeg
+  system libraries that aren't in the Workbench base image. Fixed by casting
+  the audio column to `Audio(decode=False)` and loading via soundfile +
+  librosa in the collator (same path the inference container uses). No
+  system FFmpeg install required.
+
+Still possible during a longer run:
 
 - **OOM at batch 8**: drop to `--per-device-batch-size 4 --grad-accum 4`. The
   effective batch stays the same; per-step compute halves.
-- **`RuntimeError: element 0 of tensors does not require grad`**: the
-  `model.enable_input_require_grads()` call in `train_distil_whisper.py`
-  prevents this for PEFT + gradient checkpointing. If it fires anyway, the
-  installed `peft` is probably very old — `pip install -U peft transformers`.
-- **`AttributeError: TrainingArguments has no attribute 'evaluation_strategy'`**:
-  newer `transformers` renamed it to `eval_strategy`. Sed-fix that one line in
-  the script if it triggers.
-- **Per-clip wall-clock**: T4 takes ~30-60 min per epoch on ~4100 clips at
-  batch 8. A full 3-epoch run is ~2-3 hrs. Start it and let it cook.
+- **Per-step wall-clock**: T4 takes ~5-7s per optimizer step at batch 8 with
+  grad-accum 2. Total ~1.5-2 hrs for 1164 steps (3 epochs × 6196 train clips ÷
+  effective batch 16).
 
 ## End-to-end
 
