@@ -272,7 +272,9 @@ def main() -> None:
         fp16=not bf16_ok,
         predict_with_generate=True,
         generation_max_length=225,
-        evaluation_strategy="steps",
+        # `evaluation_strategy` was renamed to `eval_strategy` in transformers
+        # >= 4.46; the old name now raises TypeError instead of warning.
+        eval_strategy="steps",
         eval_steps=args.eval_steps,
         save_strategy="steps",
         save_steps=args.save_steps,
