@@ -33,6 +33,14 @@ class BCDataset(Dataset):
         self.scalars = torch.from_numpy(data["scalars"]).float()
         self.action_masks = torch.from_numpy(data["action_masks"]).float()
         self.actions = torch.from_numpy(data["actions"]).long()
+        # New: frame-stacked datasets save n_frames so the trainer can
+        # instantiate a matching network.
+        if "n_frames" in data.files:
+            self.n_frames = int(data["n_frames"])
+        else:
+            # Backwards-compat for the single-frame bc.npz collected before
+            # frame stacking. agent_views.shape[1] == 25*n_frames.
+            self.n_frames = max(1, int(self.agent_views.shape[1] // 25))
 
     def __len__(self) -> int:
         return self.actions.shape[0]
@@ -107,8 +115,8 @@ def train(args: argparse.Namespace) -> None:
         pin_memory=(device.type == "cuda"),
     )
 
-    model = PolicyNetwork().to(device)
-    print(f"params: {num_parameters(model):,}")
+    model = PolicyNetwork(n_frames=dataset.n_frames).to(device)
+    print(f"n_frames: {dataset.n_frames}; params: {num_parameters(model):,}")
 
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
@@ -160,6 +168,7 @@ def train(args: argparse.Namespace) -> None:
                 "epoch": epoch,
                 "val_acc": val_acc,
                 "val_loss": val_loss,
+                "n_frames": dataset.n_frames,
             }, out_path)
             print(f"  ✓ best so far → saved to {out_path}")
 

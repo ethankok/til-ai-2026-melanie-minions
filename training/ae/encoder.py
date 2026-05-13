@@ -1,14 +1,20 @@
-"""Observation encoder for AE policy networks.
+"""Observation encoder + frame stacker for AE policy networks.
 
-Converts a raw env observation dict into float32 numpy arrays suitable for the
-policy network. Used by both BC dataset collection and live policy inference,
-so a single source of truth for the observation -> tensor mapping.
+`encode_observation` produces a single-step tensor dict. `FrameStacker` keeps
+a rolling buffer of the last N encoded observations and emits the
+channel-concatenated stack, which is what the v2 `PolicyNetwork` consumes.
 
-Output layout:
+Output layout (single frame):
     agent_view:  (25, 7, 5) channel-first viewcone
     base_view:   (25, 7, 7) channel-first viewcone
-    scalars:     (SCALAR_DIM,) flat features
-    action_mask: (6,) binary
+    scalars:     (SCALAR_DIM,)   flat features
+    action_mask: (6,)            binary
+
+After N-frame stacking:
+    agent_view:  (25 * N, 7, 5)
+    base_view:   (25 * N, 7, 7)
+    scalars:     (SCALAR_DIM * N,)
+    action_mask: (6,)   — always taken from the latest frame only
 """
 
 from __future__ import annotations
@@ -80,21 +86,20 @@ def encode_observation(obs: dict) -> dict:
     step = _scalar(obs.get("step"), 0.0)
 
     scalars = np.concatenate([
-        _onehot(direction, 4),                                              # 4
-        _onehot(frozen_ticks, 4),                                           # 4
-        np.array([location[0] / GRID_SIZE, location[1] / GRID_SIZE], dtype=np.float32),       # 2
-        np.array([base_location[0] / GRID_SIZE, base_location[1] / GRID_SIZE], dtype=np.float32),  # 2
-        np.array([health / MAX_HEALTH, base_health / MAX_BASE_HEALTH], dtype=np.float32),    # 2
+        _onehot(direction, 4),
+        _onehot(frozen_ticks, 4),
+        np.array([location[0] / GRID_SIZE, location[1] / GRID_SIZE], dtype=np.float32),
+        np.array([base_location[0] / GRID_SIZE, base_location[1] / GRID_SIZE], dtype=np.float32),
+        np.array([health / MAX_HEALTH, base_health / MAX_BASE_HEALTH], dtype=np.float32),
         np.array([min(team_resources / MAX_RESOURCES, 1.0),
-                  min(team_bombs / MAX_BOMBS, 1.0)], dtype=np.float32),    # 2
-        np.array([min(step / MAX_STEPS, 1.0)], dtype=np.float32),          # 1
+                  min(team_bombs / MAX_BOMBS, 1.0)], dtype=np.float32),
+        np.array([min(step / MAX_STEPS, 1.0)], dtype=np.float32),
     ]).astype(np.float32)
     assert scalars.shape[0] == SCALAR_DIM, f"got scalar shape {scalars.shape}, expected {SCALAR_DIM}"
 
     action_mask = _to_array(obs.get("action_mask", [1, 1, 1, 1, 1, 1]))
     action_mask = action_mask.flatten().astype(np.float32)
     if action_mask.shape[0] != 6:
-        # Pad or trim defensively; the env always returns 6.
         fixed = np.ones(6, dtype=np.float32)
         fixed[: min(6, action_mask.shape[0])] = action_mask[: min(6, action_mask.shape[0])]
         action_mask = fixed
@@ -105,3 +110,48 @@ def encode_observation(obs: dict) -> dict:
         "scalars": scalars,
         "action_mask": action_mask,
     }
+
+
+class FrameStacker:
+    """Rolling buffer of the last N encoded observations.
+
+    First-call behavior: pads the buffer with copies of the first observation
+    so the policy always receives ``N`` frames, even on step 0/1/2 of a game.
+    Designed for both training (one stacker per env instance) and deployment
+    (one stacker per `PolicyAEManager`, cleared on `/reset` via factory).
+    """
+
+    def __init__(self, n_frames: int = 4):
+        if n_frames < 1:
+            raise ValueError("n_frames must be ≥ 1")
+        self.n_frames = n_frames
+        self.frames: list[dict] = []
+
+    def reset(self) -> None:
+        self.frames = []
+
+    def observe(self, obs: dict) -> dict:
+        """Encode `obs`, push into the buffer, return the stacked input."""
+        encoded = encode_observation(obs)
+        if not self.frames:
+            # Pad: on the first observation of a game, fill the buffer with
+            # copies of the same encoding so the network has a valid input.
+            self.frames = [encoded] * self.n_frames
+        else:
+            self.frames.append(encoded)
+            if len(self.frames) > self.n_frames:
+                self.frames.pop(0)
+        return self._stack()
+
+    def _stack(self) -> dict:
+        return {
+            "agent_view": np.concatenate([f["agent_view"] for f in self.frames], axis=0),
+            "base_view": np.concatenate([f["base_view"] for f in self.frames], axis=0),
+            "scalars": np.concatenate([f["scalars"] for f in self.frames], axis=0),
+            "action_mask": self.frames[-1]["action_mask"],
+        }
+
+
+def stacked_dim(n_frames: int) -> tuple[int, int]:
+    """Return (view_channels, scalar_dim) for an N-frame stack."""
+    return 25 * n_frames, SCALAR_DIM * n_frames
