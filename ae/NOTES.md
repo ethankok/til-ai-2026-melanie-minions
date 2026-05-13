@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 14 May 2026 SGT
+Last updated: 14 May 2026 SGT — PPO run started
 
 Per-task working log for AE (Autonomous Exploration / Bomberman). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#ae).
@@ -271,6 +271,54 @@ What this submission is actually testing:
   0.853; BC inference is ~13 ms/call vs heuristic's ~1 ms, so speed will
   likely drop to roughly 0.75–0.82.
 
+### ppo-v1 (14 May, running) — RL fine-tune with mixed opponents
+
+A pure-PyTorch PPO training path now exists in [../training/ae/train_ppo.py](../training/ae/train_ppo.py).
+It reuses the deployed `PolicyNetwork`, so the saved actor checkpoint is directly compatible with `PolicyAEManager`.
+
+Current Workbench command:
+
+```bash
+python training/ae/train_ppo.py \
+  --bc-checkpoint training/ae/checkpoints/bc.pt \
+  --out training/ae/checkpoints/ppo.pt \
+  --updates 200 \
+  --games-per-update 8 \
+  --eval-games 12 \
+  --opponents mixed \
+  --eval-opponents mixed
+```
+
+Observed startup:
+
+```text
+device: cuda
+warm-started actor from training/ae/checkpoints/bc.pt (epoch=20, val_acc=0.87425)
+actor params: 149,438; critic params: 103,225
+```
+
+Training design:
+- Actor warm-starts from `bc.pt` instead of scratch.
+- Critic is training-only and is not needed in the Docker image.
+- We control `env.possible_agents[0]` only.
+- Opponent pool is mixed: random + frozen planner-v3b + frozen self-copy.
+- Invalid actions are masked during PPO sampling and loss, same as BC/deployment.
+
+Decision rule before submission:
+- Do **not** submit just because PPO beats random-opponent eval.
+- Submit `ppo-v1` only if mixed-opponent eval and `til test ae ppo-v1` look competitive with or clearly better than `planner-v3b`.
+- Keep `planner-v3b` shipped unless `ppo-v1` has `0 / 30` errors and a convincing local score.
+
+Deployment if the run looks good:
+
+```bash
+cp training/ae/checkpoints/ppo.pt ae/models/bc.pt
+til build ae ppo-v1
+til test ae ppo-v1
+# submit only after reviewing score/errors
+til submit ae ppo-v1
+```
+
 ## Where we are vs target
 
 | Metric                  | planner-v3b | Target | Gap     |
@@ -298,13 +346,8 @@ tuning. **Score is the hard problem** — needs a different approach.
 
 ## Next steps
 
-1. **PPO with mixed opponents**. `bc-v1` result is already known: `0.364 / 0.856`, worse than `planner-v3b`. Do not spend more time on pure behavior cloning from random-opponent planner rollouts.
-2. **`train_ppo.py`** (next session). Single-agent gym wrapper around
-   `til_environment.bomberman_env`; BC weights as the warm start; mixed
-   opponents (random + frozen planner-v3b + frozen self-copies) to fight
-   the local→official gap directly. Save best checkpoint by local-eval
-   score; replace `ae/models/bc.pt` with the PPO winner; resubmit as
-   `ppo-v1`.
+1. **Monitor the active PPO run**. It is warm-started from `bc.pt` and training with `--opponents mixed --eval-opponents mixed`. Capture best PPO eval, final `til test ae ppo-v1` score, and `0 / 30` error status before deciding to submit.
+2. **Deploy only if PPO is competitive**. Copy `training/ae/checkpoints/ppo.pt` to `ae/models/bc.pt`, build/test as `ppo-v1`, and submit only after review. `planner-v3b` remains shipped until PPO proves itself.
 3. **Per-game JSONL logging during `til test`** if PPO plateaus. Capture
    `(obs, action, reward)` per step, post-mortem the low-score rounds.
 4. **Speed micro-optimizations** if blended score becomes the constraint
