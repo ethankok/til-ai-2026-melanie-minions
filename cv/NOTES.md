@@ -148,7 +148,25 @@ The next CV score gap is not plumbing. Candidate A/Bs:
 Do not spend time on COCO→TIL mapping guesses; the fine-tuned model already uses
 the official 18-class label order.
 
-### 3. Output-format checks to preserve
+### 3. Use the non-leaky eval tools before the next submit
+
+Implemented on 14 May:
+
+- [../training/cv/prepare_yolo_dataset.py](../training/cv/prepare_yolo_dataset.py)
+  now writes train/val/test YOLO splits plus split-specific COCO annotations.
+- [../training/cv/eval_cv_http.py](../training/cv/eval_cv_http.py) evaluates the
+  running Docker HTTP service on a held-out split and prints global, area, and
+  per-class AP.
+- [../training/cv/sweep_cv_http.py](../training/cv/sweep_cv_http.py) restarts the
+  Docker service across `CV_CONF`, `CV_IOU`, and `CV_IMGSZ` sweeps and ranks the
+  held-out mAP results.
+
+This fixes the main local-eval blind spot: the previous `0.885` local Docker mAP
+was measured on the full local CV set after training on 90% of it. Future CV
+model selection should use `/home/jupyter/cv_yolo_dataset/coco/annotations_test.json`
+instead of full-set `til test` mAP.
+
+### 4. Output-format checks to preserve
 
 - YOLO training labels are normalized center-XYWH; that is only the training
   format.
