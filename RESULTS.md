@@ -28,7 +28,8 @@ vad-off-v1 12/05 20:00           0.938   0.859   0.0554          + VAD off + hal
 ```text
 Variant     Date/time          Local novice score   Errors/action validity   Notes
 baseline    12/05              0.051 official       0 / 30 official errors   Periodic-forward + periodic bomb baseline
-planner-v1  13/05 10:31 +08    0.732 local          0 invalid actions        Stateful belief map + objective/frontier BFS + LOS-safe tactical bombs
+planner-v1  13/05 10:31 +08    0.732 local Mac      0 invalid actions        Stateful belief map + objective/frontier BFS + LOS-safe tactical bombs
+planner-v1  13/05 Workbench    0.697 local          til test completed       Built/tested with official Workbench Docker flow before submission
 ```
 
 ## Qualifier weighted score estimate
@@ -54,6 +55,8 @@ Using raw task scores only:
 Estimated weighted qualifier score = 0.2682
 ```
 
+If `planner-v1` official AE roughly matches the Workbench local score (`0.697`), the raw weighted qualifier estimate becomes `0.5267` before any ASR/NLP/CV upgrades.
+
 Using the observed ~75% score / 25% speed blend:
 
 ```text
@@ -73,11 +76,11 @@ Estimated blended qualifier score = 0.4274
 - `vad-off-v2` REGRESSED to local WER 0.0604 after reversing the slang-prompt order (intent was to survive Whisper's truncation but reversing over-primed the decoder). Reverted; not submitted.
 - Noise scored `1.000`, but appears required/useful rather than directly weighted for qualifiers.
 - CV submitted but had `4 / 500` errors and score `0.000`; fix robustness/schema edge cases before improving model quality.
-- AE submitted cleanly with score `0.051`; because AE is 40% of qualifiers, this is the highest-priority improvement target.
+- AE baseline submitted cleanly with score `0.051`. `planner-v1` built and passed Workbench local testing at `0.697`; official submission/result pending as of this note.
 
 ## Next priority
 
-1. **Submit AE planner-v1 on Workbench** — local novice score is `0.732` with `0` invalid actions; official AE is still `0.051` until submitted.
+1. **Record AE planner-v1 official result** once the Workbench submission finishes; keep baseline `0.051` until the official score appears.
 2. **ASR LoRA fine-tune** ([training/asr/README.md](training/asr/README.md) quick-start; in progress). To hit `0.95+` we need WER ≤ 0.05 on the hidden set. Vad-off-v1 is at official WER 0.062 — LoRA realistically gets us 20-40% relative more.
 3. **ASR re-export `int8_float16`** after FT lands for the speed score (~0.86 → 0.90+).
 4. **NLP retrieval / chunking** upgrade — currently 0.301.

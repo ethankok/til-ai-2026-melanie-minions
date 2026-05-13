@@ -292,48 +292,76 @@ File: `ae/src/ae_manager.py`
 Endpoint: POST `/ae` (and `/reset`) on port 5005
 Server resets the manager when a fresh round is detected (`step == 0` or empty POST).
 
+Detailed revised plan: [`AE_IMPLEMENTATION_PLAN.md`](AE_IMPLEMENTATION_PLAN.md)
+
 Actions:
 
 ```text
-0 forward
-1 backward
-2 left  (rotate?)
-3 right (rotate?)
-4 stay
-5 place bomb
+0 FORWARD
+1 BACKWARD
+2 LEFT   rotate counter-clockwise
+3 RIGHT  rotate clockwise
+4 STAY
+5 PLACE_BOMB
 ```
 
-Observation keys we already use: `action_mask`, `frozen_ticks`, `team_bombs`, `step`. There are more — inspect a real observation early.
-
-Current baseline:
+Observation keys confirmed from the actual local env:
 
 ```text
-respects action_mask, mostly forward, periodic rotates, bombs every 20 turns if legal,
-stays put while frozen
+agent_viewcone, base_viewcone, direction, location, base_location,
+health, frozen_ticks, base_health, team_resources, team_bombs,
+step, action_mask
 ```
 
-AE is **40%** of the qualifier — biggest lever, do this first.
+Current implementation: `planner-v1` stateful classical planner.
 
-What we need to do:
+```text
+Stateful belief map + objective/frontier BFS + action-mask-safe fallback.
+Targets enemy base / mission / resource / recon before frontier exploration.
+Removes periodic bombing; bombs only for tactical enemy/base/destructible-wall value with escape planning.
+```
 
-1. **Inspect observations**: dump one real observation locally (run `til-26-ae`'s env, print keys/shapes). We need the full schema before planning. Likely has: agent position, orientation, occupancy grid, enemy positions, bomb timers, walls, items.
-2. **Phase 1 — rule-based planner**:
-   - Build a grid map from the observation each step.
-   - Pathfind (BFS/A*) toward the nearest unexplored cell or objective.
-   - Translate the next step in the path into the right action given current orientation.
-   - Bomb only when (a) blocked by a destructible wall on the path, or (b) an enemy is in the blast line and we have an escape route. Always plan the escape before placing.
-   - Avoid stepping into bomb blast zones — predict explosions N ticks ahead.
-3. **Phase 2 — heuristic scoring**: score candidate actions by (progress toward goal) + (safety from bombs) + (item pickup) and pick argmax. Easier to tune than a hard rule tree.
-4. **Phase 3 (only if time) — RL**:
-   - Train PPO or DQN against `til_environment.bomberman_env` using `til-26-ae`.
-   - Export policy weights, load in `AEManager.__init__`.
-   - Inference must still be fast — tiny MLP/CNN, not a giant transformer.
-5. Reset hygiene: anything stateful (turn counter, map memory) MUST live on `self` — the server re-instantiates `AEManager` on reset, which already handles this. Don't add module-level globals.
-6. Test: run `python test/test_ae.py` after `til build ae` (it spins up the env and POSTs observations to the live container).
+Validation:
+
+```text
+Mac local server test:        score 0.732, 0 invalid actions observed
+Workbench til test planner-v1: score 0.697, test completed cleanly
+Official AE baseline remains 0.051 until planner-v1 submission result lands
+```
+
+AE is **40%** of the qualifier — if official `planner-v1` tracks Workbench local score, raw weighted estimate rises from `0.2682` to about `0.5267`.
+
+Implemented from the revised AE plan:
+
+1. **Phase 0 — observation projection + belief map**
+   - Maintains `seen`, wall/destructible-wall memory, item memory, enemy/base sightings, bomb timers, and visit counts on `self`.
+   - Projects `agent_viewcone` from egocentric coordinates into world coordinates using `location` + `direction`.
+   - Projects `base_viewcone` around `base_location`.
+   - Resets memory on `step == 0` / `/reset`; no module-level globals.
+2. **Phase 1 — classical safe planner**
+   - Uses BFS over known safe cells.
+   - Target priority: enemy base if reachable/safe → mission → resource → recon → frontier cell → least-visited safe known cell.
+   - Translates the next world step into relative actions (`FORWARD`, `BACKWARD`, `LEFT`, `RIGHT`) and always respects `action_mask`.
+   - Predicts bomb danger and avoids blast cells before optimizing exploration.
+3. **Phase 2 — conditional bomb policy**
+   - Removes periodic bombing.
+   - Places bombs only when a destructible wall blocks a useful path or an enemy/base is in blast reach.
+   - Before placing, proves there is an escape path outside the predicted blast radius before detonation.
+4. **Phase 3 — heuristic action scoring**
+   - Scores legal fallback actions by target progress, immediate item pickup, frontier gain, bomb danger, loop penalty, and idle penalty.
+5. **Phase 4 — RL only after planner plateaus**
+   - The given PPO/multi-agent material is useful, but not first priority.
+   - Start with fixed-random opponents because local AE evaluator controls only `agent_0` and samples other agents randomly.
+   - If training later, use a compact MLP/CNN policy and load weights once in `AEManager.__init__`.
+6. Submission loop:
+   - `til build ae planner-v1`
+   - `til test ae planner-v1`
+   - `til submit ae planner-v1`
+   - Record official score/speed in `RESULTS.md`.
 
 Stretch:
-- Opponent modeling: track the enemy's recent moves and avoid their predicted next position.
-- Bomb-chain planning (chain reactions).
+- Opponent modeling: track enemy recent positions and avoid likely next cells.
+- Bomb-chain planning only after basic bomb safety improves score.
 
 ---
 
