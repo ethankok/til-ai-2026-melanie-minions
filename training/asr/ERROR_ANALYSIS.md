@@ -1,20 +1,34 @@
 # ASR Error Analysis
 
-Last updated: 12 May 2026
+Last updated: 13 May 2026
 
 ## Progression of submitted results
 
 ```text
-v1          faster-whisper distil-large-v3 zero-shot        official 0.839 / 0.864
-norm-v1     + digit verbalization + silence guard           official 0.877 / 0.864     local Eng-WER 0.0759
-vad-off-v1  + VAD off + hallucination guards + ordinals     official 0.938 / 0.859     local Eng-WER 0.0554
-vad-off-v2  + slang prompt reversed                         REGRESSED local Eng-WER 0.0604, not submitted
-ft-lora32-v1 + LoRA decoder fine-tune                       in progress, target official ≥ 0.95
+v1            faster-whisper distil-large-v3 zero-shot       official 0.839 / 0.864
+norm-v1       + digit verbalization + silence guard          official 0.877 / 0.864   local Eng-WER 0.0759
+vad-off-v1    + VAD off + hallucination guards + ordinals    official 0.938 / 0.859   local Eng-WER 0.0554
+vad-off-v2    + slang prompt reversed                        REGRESSED local Eng-WER 0.0604, not submitted
+ft-lora32-v1  + LoRA rank-32 decoder fine-tune (3 epochs)    official 0.957 / 0.849   local Eng-WER 0.0299 (leaky), val 0.04662
 ```
 
-Local English WER trajectory: **0.113 → 0.076 → 0.055**.
+Local English WER trajectory (full 4110-clip test set): **0.113 → 0.076 → 0.055 → 0.030**.
 
-**Local-official gap is small and shrinking.** On `norm-v1` the gap was +0.047 absolute WER (local 0.076 vs official 0.123). On `vad-off-v1` the gap shrank to +0.007 absolute (local 0.055 vs official 0.062). The inference fixes are generalizing cleanly — if LoRA pushes local to ~0.025-0.035, we should land official ≤ 0.05 (score ≥ 0.95).
+**Local-official gap behavior changed on `ft-lora32-v1`** because the LoRA run
+memorized ~90% of the local test set (the manifest has no held-out train/test
+split — Option B). The cleaner generalization proxy is the 10% held-out val set
+used for early-stopping inside training: val WER `0.04662` at step 1000.
+
+| Tag | Local test WER | Local val WER (held-out) | Official WER | Gap (best proxy → official) |
+|---|---:|---:|---:|---:|
+| `norm-v1` | 0.0759 | — | 0.123 | **+0.047** (local→official) |
+| `vad-off-v1` | 0.0554 | — | 0.062 | **+0.007** (local→official) |
+| `ft-lora32-v1` | 0.0299 (leaky) | 0.04662 | ~0.043 | **−0.0036** (val→official) |
+
+The `ft-lora32-v1` gap turned out **negative**: the official 400-clip set is
+slightly easier than the held-out 409-clip val slice. Useful piece of
+leaderboard intuition for future runs — held-out val WER is a *slight
+over-estimate* of official WER on this dataset.
 
 ## Slang prompt ordering experiment (vad-off-v2)
 
@@ -126,7 +140,11 @@ Almost every long-clip WER point comes from substitutions of in-world vocabulary
 
 **Slang prompt ordering** (post-experiment): the original ordering (highest-frequency first) works better than the reversed ordering, even though the prompt overflows the ~223-token retention budget. See the experiment write-up at the top of this file.
 
-## Current inference settings (vad-off-v2)
+## Current inference settings (ft-lora32-v1)
+
+Inference path is unchanged from `vad-off-v1`; only the model weights are
+different (LoRA merged into base). Slang-prompt ordering is highest-frequency
+first (the reversal experiment regressed; see above).
 
 ```python
 self.model.transcribe(
@@ -136,7 +154,7 @@ self.model.transcribe(
     beam_size=1,
     vad_filter=False,                       # changed in vad-off-v1
     condition_on_previous_text=False,
-    initial_prompt=self.initial_prompt,     # 200-token slang prompt, reversed
+    initial_prompt=self.initial_prompt,     # 200-token slang prompt, high-freq first
     without_timestamps=True,                # small speed win
     temperature=0.0,                        # no temp fallback retries
     compression_ratio_threshold=2.4,        # repetition guard
@@ -150,17 +168,18 @@ Audio-level silence pre-check ([_is_probably_silence](../../asr/src/asr_manager.
 ## Path to score > 0.95 and speed > 0.9
 
 ```text
-Official target:           0.95+
-Current best (submitted):  0.938 / 0.859   (vad-off-v1)
-Distance to target:        +0.012 accuracy, +0.041 speed
+Official target:           0.95+ accuracy AND 0.90+ speed
+Current best (submitted):  0.957 / 0.849   (ft-lora32-v1)
+Distance to target:        accuracy DONE (+0.007 margin); speed still −0.051
 ```
 
 Priority order now:
 
-1. **LoRA fine-tune** ([training/asr/README.md](README.md)) — in progress. With the small local-official gap (+0.007 WER), pushing local WER from 0.055 to ~0.030 should land official ≤ 0.050 → score ≥ 0.95. Distil-large-v3 + LoRA on decoder attention is the right scope.
-2. **Re-export `--quantization int8_float16`** after FT lands. Expected: speed 0.859 → 0.90+, accuracy delta ≤ 0.005.
-3. **Beam=2** only if speed has margin and accuracy plateaus.
-4. **Larger model / ensemble** (e.g., add full whisper-large-v3 in parallel and ROVER-vote) only if 1-3 still fall short of 0.95.
+1. **DONE — LoRA rank-32 fine-tune** ([training/asr/README.md](README.md)). 3-epoch run pushed local val WER 0.0554 → 0.0466 and landed official 0.957. Crossed the accuracy target. `load_best_model_at_end=True` rolled back to the step-1000 checkpoint (best val WER).
+2. **NEXT — Re-export `--quantization int8_float16`** of the same LoRA-merged checkpoint. Expected: speed 0.849 → 0.90+, accuracy delta ≤ 0.005 → blended ~0.952 / 0.90+.
+3. **Beam=2** only if step 2 has speed margin (≥0.92) and accuracy still has headroom below 0.95.
+4. **Rank-64 escalation** (5 epochs, lr 5e-5, alpha 128) is deferred — would likely buy another 0.005–0.010 absolute on local val, but `ft-lora32-v1` already crossed target and another 7-hour training run isn't worth it unless step 2 regresses accuracy.
+5. **Larger model / ensemble** (e.g., add full whisper-large-v3 in parallel and ROVER-vote) only if 1-4 still fall short of 0.95 — which is unlikely now.
 
 ## Workbench test commands
 

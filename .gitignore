@@ -1,6 +1,9 @@
 # .gitignore tells Git not to track these files.
 .vscode
 
+# Agent/session-local files
+.hermes/
+.claude/
 
 # Large files like model weights, training data, and results should be ignored.
 **/models/

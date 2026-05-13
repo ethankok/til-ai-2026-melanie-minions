@@ -64,6 +64,20 @@ def main() -> None:
     print("Merging LoRA into base weights")
     model = model.merge_and_unload()
 
+    # Read the slang prompt into memory BEFORE touching output_dir. On re-export
+    # the slang file commonly lives at output_dir/slang_prompt.txt (left there
+    # by the previous export), and the wipe loop below would delete it before
+    # the copy-back step runs. Buffer it here to make the export idempotent
+    # regardless of where --slang-file points.
+    slang_bytes: bytes | None = None
+    if args.slang_file.exists():
+        slang_bytes = args.slang_file.read_bytes()
+    else:
+        print(
+            f"WARN: slang file {args.slang_file} not found; "
+            "container will run without a slang prompt"
+        )
+
     with tempfile.TemporaryDirectory() as tmp:
         merged_dir = Path(tmp) / "merged"
         model.save_pretrained(str(merged_dir))
@@ -99,15 +113,10 @@ def main() -> None:
         if result.returncode != 0:
             sys.exit(result.returncode)
 
-    if args.slang_file.exists():
+    if slang_bytes is not None:
         dst = args.output_dir / "slang_prompt.txt"
-        shutil.copy2(args.slang_file, dst)
-        print(f"Copied slang prompt to {dst}")
-    else:
-        print(
-            f"WARN: slang file {args.slang_file} not found; "
-            "container will run without a slang prompt"
-        )
+        dst.write_bytes(slang_bytes)
+        print(f"Copied slang prompt to {dst} ({len(slang_bytes)} bytes)")
 
     print(f"CT2 model ready at {args.output_dir}")
 

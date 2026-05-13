@@ -142,7 +142,7 @@ Endpoint: POST `/asr` on port 5001
 Input: list of `{key, b64}` where b64 is base64 WAV bytes
 Output: `{"predictions": ["transcript1", "transcript2", ...]}` (same order as input)
 
-What we built (Novice track is English-only, current best official score is **`vad-off-v1` at 0.938 / 0.859** (12 May 20:00) — a +6.1 absolute point jump from `norm-v1`'s 0.877 with speed unchanged. Local English WER 0.055 maps to official WER ~0.062 (gap +0.007 absolute, very small — the inference fixes generalize). Next major lever is LoRA fine-tune to push the last 20-40% relative WER reduction toward the 0.95 target — see [training/asr/README.md](training/asr/README.md) Quick-start. See [RESULTS.md](RESULTS.md)):
+What we built (Novice track is English-only, current best official score is **`ft-lora32-v1` at 0.957 / 0.849** (13 May 11:22) — a +0.019 absolute accuracy jump over `vad-off-v1` from a single 3-epoch LoRA-rank-32 decoder fine-tune of `distil-whisper/distil-large-v3`. Crosses the 0.95 target. Generalization gap turned out *negative*: held-out val WER 0.04662 → official WER ~0.043, i.e. the official 400-clip set is slightly easier than the leaky local val. Next lever is **int8_float16 re-export** to recover the speed score (target 0.90+); no retrain needed. See [training/asr/README.md](training/asr/README.md) and [RESULTS.md](RESULTS.md)):
 
 ```text
 faster-whisper distil-large-v3 + slang prompt mined from NLP corpus.
@@ -176,8 +176,9 @@ Workbench facts (confirmed 12 May 2026):
 - No accessible noise corpus on Workbench — augmentation falls back to SpecAugment + speed perturb only.
 - Scoring artifact: local `1 - MER` is misleading high because the local manifest has only `english`-labeled samples and the scorer divides by 4 (the other three buckets contribute 0). Track the bare `english error rate (WER)` line in `test_asr.py` output instead.
 
-Stretch (only after LoRA-FT + int8_float16 re-export land):
+Stretch (only after int8_float16 re-export lands):
 - Beam=2 (not 5) if speed has margin.
+- Rank-64 / 5-epoch LoRA escalation if int8 quantization unexpectedly regresses accuracy below 0.95.
 - Encoder unfreeze for a final low-LR pass.
 - Ensemble distil-large-v3 + whisper-large-v3 (~2× inference cost) only if accuracy ceiling becomes the bottleneck.
 
@@ -324,12 +325,12 @@ Removes periodic bombing; bombs only for tactical enemy/base/destructible-wall v
 Validation:
 
 ```text
-Mac local server test:        score 0.732, 0 invalid actions observed
-Workbench til test planner-v1: score 0.697, test completed cleanly
-Official AE baseline remains 0.051 until planner-v1 submission result lands
+Mac local server test:         score 0.732, 0 invalid actions observed
+Workbench til test planner-v1:  score 0.697, test completed cleanly
+Official planner-v1 submission: score 0.445 / speed 0.788, 0 / 30 errors
 ```
 
-AE is **40%** of the qualifier — if official `planner-v1` tracks Workbench local score, raw weighted estimate rises from `0.2682` to about `0.5267`.
+AE is **40%** of the qualifier. `planner-v1` still jumps official AE from `0.051` to `0.445`, but the local-official gap is large (`0.697` Workbench local → `0.445` official), so planner-v2 should diagnose hidden-scenario failures before adding complexity.
 
 Implemented from the revised AE plan:
 
@@ -353,15 +354,16 @@ Implemented from the revised AE plan:
    - The given PPO/multi-agent material is useful, but not first priority.
    - Start with fixed-random opponents because local AE evaluator controls only `agent_0` and samples other agents randomly.
    - If training later, use a compact MLP/CNN policy and load weights once in `AEManager.__init__`.
-6. Submission loop:
-   - `til build ae planner-v1`
-   - `til test ae planner-v1`
-   - `til submit ae planner-v1`
-   - Record official score/speed in `RESULTS.md`.
+6. Submission result:
+   - `til build ae planner-v1` passed.
+   - `til test ae planner-v1` scored `0.697` locally on Workbench.
+   - `til submit ae planner-v1` scored `0.445 / 0.788` officially with `0 / 30` errors.
+   - This is a new AE high score, but much lower than local; next AE work should compare rollouts/failure modes rather than assuming local score predicts hidden eval.
 
-Stretch:
-- Opponent modeling: track enemy recent positions and avoid likely next cells.
-- Bomb-chain planning only after basic bomb safety improves score.
+Next AE work:
+- Diagnose local-vs-official gap: inspect rollouts for wasted movement, unsafe/low-value bombing, failure to find bases, and over-exploration.
+- Try a safer `planner-v2`: stricter bomb policy, stronger enemy-base pursuit, and fewer low-value frontier detours.
+- Opponent modeling / bomb-chain planning only after basic planner reliability improves.
 
 ---
 
