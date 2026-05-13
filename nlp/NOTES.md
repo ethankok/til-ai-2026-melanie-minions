@@ -1,6 +1,6 @@
 # NLP — notes & history
 
-Last updated: 13 May 2026
+Last updated: 14 May 2026
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
@@ -8,134 +8,66 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`latest` — official 0.301 / 0.971 (12 May 03:23 SGT, 0 of 700 errors).**
+**`latest` — official 0.301 / 0.971 (12 May 03:23 SGT, 0 of 700 errors)** — scored under the OLD eval; the response shape no longer matches the FINAL eval rolled out 14 May (see below). The next submission is the first one that runs against the new evaluator.
 
-Lexical keyword-overlap baseline. Already in the "correct JSON shape, somewhat
-useful" zone — much better starting point than CV's empty-list baseline.
-Most of the headroom is in retrieval quality, not plumbing.
+## New eval (FINAL — pinned 14 May, no more changes)
 
-## What our model runs on
+Per organisers, the NLP evaluator is now frozen in this state:
 
-From [src/nlp_manager.py](src/nlp_manager.py):
+- Submit top-3 document IDs in `documents`. If any of the first 3 matches the target, retrieval succeeds. >3 → only first 3 considered; <3 → only those.
+- Answer cleaned of non-printable chars and truncated to 64 tokens server-side.
+- Answer-equivalence threshold raised from 0.5 to **0.9** (same ModernBERT weights).
+- Retrieval ✗ → 0.0 outright. Retrieval ✓ + answer ✗ → 0.4. Retrieval ✓ + answer ✓ → 1.0.
 
-- Two-method manager interface:
-  - `load_corpus(documents)` called once per round
-  - `qa(question)` called per question
-- **Current code warning**: the official Wiki now specifies structured NLP responses:
-  - load response: `{"predictions": [{"status": "loaded"}]}`
-  - QA response: `{"documents": ["DOC-0001"], "answer": "..."}` per question
-  Current `nlp_server.py` still returns bare status/answer strings, so patch the
-  server/manager contract before the next NLP submission.
-- **Chunking**: sentence-split each document
-- **Retrieval**: lexical token-overlap (Counter intersection) with light length
-  normalization, return top-scoring sentence
-- **Answer extraction**: return the top sentence, truncated to 500 characters
-- **No model weights**, no embeddings, no learned components
+Response shape (per-question):
+```json
+{"documents": ["DOC-0001"], "answer": "This is my answer."}
+```
+Corpus-load response: `{"predictions": [{"status": "loaded"}]}`.
 
-CPU-bound, near-instant per-question (speed score 0.971 confirms).
+## Implementation (`v2-hybrid-rag`, unsubmitted)
+
+End-to-end overhaul in [src/nlp_manager.py](src/nlp_manager.py) and [src/nlp_server.py](src/nlp_server.py):
+
+1. **Schema fix (mandatory).** Server now returns `{"status":"loaded"}` on load and `{documents, answer}` per question.
+2. **Document IDs.** Positional, 1-indexed, zero-padded 4-digit (`DOC-{i+1:04d}` for the i-th doc in the received list). The endpoint only ever sees raw strings, so positional is the only viable scheme; the evaluator must mirror it.
+3. **Chunking.** 3-sentence sliding window with 1-sentence overlap; each chunk carries its parent doc index.
+4. **Hybrid retrieval.** BM25Okapi over tokenized chunks ⊕ dense cosine over `BAAI/bge-small-en-v1.5` embeddings (CLS-pooled, L2-normalized; query gets BGE's English search prefix). Per-query z-score normalise then sum. Top-30 chunks → reranker.
+5. **Cross-encoder rerank.** `BAAI/bge-reranker-base` scores `(question, chunk)` pairs. Top-10 → QA. Top-3 unique parent docs become the response `documents`.
+6. **Extractive QA.** `deepset/roberta-base-squad2` over each of the top reranked chunks; pick the highest-scoring span ≤64 tokens. Extractive (vs generative) is the right play because (a) Clairos has fictional proper nouns pretrained LMs don't know, and (b) the 0.9 ModernBERT threshold rewards near-verbatim spans from the source.
+7. **Speed.** GPU half-precision on all three models. Batched embed/rerank/QA. Empty corpus / empty tokens guarded.
+
+Weights baked into the image via [download_models.py](download_models.py). Container runs offline (`TRANSFORMERS_OFFLINE=1` set in the Dockerfile after weights are downloaded). `NLP_MODEL_DIR=/workspace/models`.
+
+Track: **Novice** — no L4/L5 handling code (those don't appear at Novice level).
 
 ## Submission history
 
 ```text
-Tag       Submitted          Score   Speed   Errors    Notes
-latest    12/05 03:23        0.301   0.971   0 / 700   Sentence-split + lexical token-overlap retrieval, 500-char truncation
+Tag             Submitted          Score   Speed   Errors    Notes
+latest          12/05 03:23        0.301   0.971   0 / 700   Lexical, old eval — schema no longer matches
+v2-hybrid-rag   (pending)          ?       ?       ?         Hybrid BM25+BGE + reranker + RoBERTa-SQuAD2
 ```
 
-## Detailed timeline
+## Expected impact
 
-### latest (12 May 03:23) — initial submission
+- Schema fix alone: prevents 0.0 from shape mismatch on the new eval.
+- Hybrid + reranker top-3 doc recall should push retrieval success high (≥0.85 is plausible given 3 picks); that lifts the floor to ~0.34 even with zero answer credit.
+- Extractive answers with 0.9 threshold: harder to estimate; bound is the answer-equivalence rate.
 
-Sentence-level lexical retrieval. Already scoring 0.301 with zero errors on
-700 inputs. The baseline is correct-shape and useful enough that there's a
-clear measurable next step.
+If shipped scoring is poor, the levers in order are: (a) better chunking (paragraph-aware), (b) increase retrieve-K before rerank, (c) sentence-of-best-chunk fallback when SQuAD2 returns low confidence, (d) try `bge-base-en-v1.5` for dense, (e) try `bge-reranker-large`.
 
-## What needs doing
+## What to edit, what not to
 
-In priority order (per [../SUMMARY.md "NLP"](../SUMMARY.md)):
-
-### 1. Match the current official response schema first
-
-The Wiki's NLP schema now expects document IDs with the answer. Before any model
-upgrade, patch `nlp_server.py`/`nlp_manager.py` so:
-
-```python
-# corpus load
-{"predictions": [{"status": "loaded"}]}
-
-# questions
-{"predictions": [{"documents": ["DOC-0001"], "answer": "..."}]}
-```
-
-This also unlocks the official retrieval partial credit: successful retrieval
-with a wrong answer still scores `0.4`, so top-3 document recall matters.
-
-### 2. Better chunking — single afternoon
-
-Sliding window of ~2–3 sentences with overlap, not single sentences. Single
-sentences lose context (especially for "what was the cause of X?" style
-questions where the answer spans multiple sentences). Full paragraphs dilute
-retrieval scores. Two-to-three-sentence chunks with 1-sentence overlap is
-the standard middle ground.
-
-### 3. BM25 retrieval — fast win
-
-Replace `collections.Counter` token-overlap with `rank_bm25.BM25Okapi`. BM25
-adds TF-IDF weighting + length normalization that's far better than the
-current Counter heuristic. Single `pip install rank_bm25` + ~20 lines of
-code.
-
-Expected gain: 0.301 → 0.45–0.55 range based on standard RAG benchmarks.
-
-### 4. Hybrid retrieval (BM25 + dense embeddings)
-
-Layer dense embeddings (`sentence-transformers/all-MiniLM-L6-v2`) for hybrid
-retrieval. Combine BM25 + cosine-sim scores via convex combination
-(`alpha * bm25_norm + (1-alpha) * dense_sim`, alpha around 0.5).
-
-Adds ~80 MB to the container, embedding compute is fast on CPU for the
-corpus sizes we're seeing (small enough that `load_corpus` can pre-compute
-everything).
-
-Cache embeddings in `load_corpus` so `qa()` stays fast.
-
-### 5. Better answer extraction (don't return the whole chunk)
-
-Two options:
-
-- **Extractive QA model**: run `distilbert-base-uncased-distilled-squad` (or
-  similar) on the top-k retrieved chunks, return the highest-confidence
-  span. Adds ~250 MB to container, real model compute per question — may
-  hurt speed score.
-- **Sentence-of-best-chunk**: pick the sentence within the retrieved chunk
-  with highest overlap / embedding similarity to the question. Much cheaper,
-  partial gain.
-
-### 6. Cross-encoder re-ranker (stretch)
-
-Re-rank top-k with a cross-encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2`).
-Slower but usually a clear quality win.
-
-### 7. Watch the answer length cap
-
-Current truncates at 500 chars. Verify the eval doesn't penalize overlong or
-under-long answers (different scorers weight these differently).
-
-## State
-
-NLP at 0.301 is the second-biggest structured opportunity after AE. First
-make the implementation match the current official response schema, then use
-BM25/chunking to raise top-3 document recall. The official scorer gives `0.4`
-for successful retrieval even with a wrong answer, so retrieval quality has
-clear standalone value before heavier answer generation.
-
-A schema + BM25 upgrade is a **single afternoon of work for likely +0.15–0.25 raw
-score**, which translates to **+0.03–0.05 blended qualifier score** at the
-20% NLP weight.
+- [src/nlp_manager.py](src/nlp_manager.py) — main logic.
+- [src/nlp_server.py](src/nlp_server.py) — schema contract; only edit if the spec changes again (organisers said it won't).
+- [Dockerfile](Dockerfile), [requirements.txt](requirements.txt), [download_models.py](download_models.py) — packaging.
 
 ## Reproducibility / pointers
 
 - Manager source: [src/nlp_manager.py](src/nlp_manager.py)
-- HTTP server (don't edit): [src/nlp_server.py](src/nlp_server.py)
+- HTTP server: [src/nlp_server.py](src/nlp_server.py)
+- Weight bundler: [download_models.py](download_models.py)
 - Container build: [Dockerfile](Dockerfile), [requirements.txt](requirements.txt)
 - Input/output spec: [README.md](README.md)
 - Strategic context: [../SUMMARY.md#nlp](../SUMMARY.md)

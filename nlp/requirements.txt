@@ -1,5 +1,11 @@
 # Dependencies for the NLP container.
+# torch comes from the nvcr.io/nvidia/pytorch base image — do not pin here.
 
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
 asyncio
+numpy
+transformers==4.46.3
+tokenizers==0.20.3
+safetensors==0.4.5
+rank_bm25==0.2.2

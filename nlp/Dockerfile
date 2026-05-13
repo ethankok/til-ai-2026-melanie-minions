@@ -10,12 +10,22 @@ FROM nvcr.io/nvidia/pytorch:25.11-py3
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
+ENV HF_HUB_DISABLE_TELEMETRY=1
+ENV TRANSFORMERS_OFFLINE=1
+ENV NLP_MODEL_DIR=/workspace/models
 WORKDIR /workspace
 
 # Installs your dependencies.
 RUN pip install -U pip
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Bake model weights into the image so inference runs fully offline.
+# This must run BEFORE setting TRANSFORMERS_OFFLINE=1 takes effect for the
+# downloader — ENV directives apply to subsequent layers, so we override
+# locally with `TRANSFORMERS_OFFLINE=0`.
+COPY download_models.py .
+RUN TRANSFORMERS_OFFLINE=0 python download_models.py
 
 # Copies your source files.
 COPY src .
