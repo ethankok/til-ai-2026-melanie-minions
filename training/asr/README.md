@@ -7,6 +7,11 @@ container in [../../asr/](../../asr/).
 Nothing in this folder ships in the eval Docker image — it's all training-side
 tooling.
 
+**Current shipped artifact**: `ft-lora32-v1` — 3-epoch LoRA-rank-32 fine-tune,
+official **0.957 / 0.849** (13 May 11:22 SGT). Crosses the 0.95 accuracy target.
+Speed lever (`int8_float16` re-export) is the next action; see
+"Iteration knobs" at the bottom of this file.
+
 ## Design at a glance
 
 - **Base model**: `distil-whisper/distil-large-v3` — English-only distillation of large-v3. Same encoder quality, ~6× faster decoder. Right call for the Novice (English-only) track; avoids paying for a multilingual decoder we don't need.
@@ -87,7 +92,7 @@ python training/asr/export_ct2.py \
 
 # 5. Build, local-test, submit.
 til build asr ft-lora32-v1
-til test asr ft-lora32-v1     # confirm english WER improves vs vad-off-v1 (0.0554)
+til test asr ft-lora32-v1     # ft-lora32-v1 shipped at local 0.0299 (leaky), official 0.957
 til submit asr ft-lora32-v1
 ```
 
@@ -98,11 +103,15 @@ relaunch with the heavier settings:
 --epochs 5 --lora-rank 64 --lora-alpha 128 --lr 5e-5
 ```
 
-### Known gotchas on T4 (all already patched in the script as of 12 May 2026)
+### Known gotchas on T4 (all already patched as of 13 May 2026)
 
-The four errors below all fired in sequence on the first Workbench run and are
-now fixed in the committed `train_distil_whisper.py`. Listed for posterity so a
-future contributor recognizes them if they reappear:
+The seven errors below all fired in sequence across the first two Workbench
+runs and are now fixed in the committed scripts. Listed for posterity so a
+future contributor recognizes them if they reappear. The first four hit on the
+12 May initial run; the last three hit on the 13 May resumed run after the
+Workbench env got bumped to `transformers 5.8.0`.
+
+Initial four (12 May):
 
 - **`RuntimeError: element 0 of tensors does not require grad`** — PEFT +
   gradient checkpointing on a frozen-encoder setup. Fixed by calling
@@ -119,6 +128,28 @@ future contributor recognizes them if they reappear:
   the audio column to `Audio(decode=False)` and loading via soundfile +
   librosa in the collator (same path the inference container uses). No
   system FFmpeg install required.
+
+Three more from the 13 May resumed run (Workbench env was bumped to
+`transformers 5.8.0` overnight):
+
+- **`TypeError: WhisperDecoder ... got multiple values for keyword argument 'input_ids'`**
+  on step 0 — transformers 5.x's Whisper forward signature is stricter and PEFT
+  was double-passing `input_ids`. **Workaround**: pin transformers to 4.x on
+  the user site:
+  `pip install --user 'transformers>=4.46,<5.0'`
+  (resolves to 4.57.x as of writing). Verify with
+  `python -c "import transformers; print(transformers.__version__)"`.
+- **`TypeError: WhisperForConditionalGeneration.forward() got an unexpected keyword argument 'input_ids'`**
+  on step 0 — `PeftModelForSeq2SeqLM.forward` (selected by
+  `task_type=TaskType.SEQ_2_SEQ_LM`) explicitly passes `input_ids=None` down
+  to the base model, which transformers 4.57's Whisper rejects (audio path
+  uses `input_features`). **Fix**: drop `task_type` from `LoraConfig` — plain
+  `LoraModel` passes kwargs through unchanged. Patched in
+  `train_distil_whisper.py`.
+- **`RuntimeError: output directory asr/models already exists, use --force to override`** —
+  `ct2-transformers-converter` checks for *directory existence*, not just
+  emptiness, so the wipe loop in `export_ct2.py` wasn't enough on re-export.
+  **Fix**: pass `--force` to the converter. Patched in `export_ct2.py`.
 
 Still possible during a longer run:
 
@@ -202,11 +233,20 @@ ENV ASR_SLANG_PROMPT_PATH=/workspace/models/asr/slang_prompt.txt
 - Don't commit `asr/models/` or `training/asr/runs/` — they're in
   `.gitignore`.
 
-## Iteration knobs (after first successful submission)
+## Iteration knobs (current state: `ft-lora32-v1` @ 0.957 / 0.849)
+
+Priority order, top is the next action:
+
+1. **Re-export `--quantization int8_float16`** — same merged checkpoint, no retrain. Expected speed `0.849 → 0.90+`, accuracy delta `≤ 0.005`. Tag the resulting image `ft-lora32-int8f16`. This is the **next submission**.
+2. **`beam_size=2`** (not 5) at [../../asr/src/asr_manager.py](../../asr/src/asr_manager.py) — only worth trying if step 1's int8 image has speed margin ≥ 0.92 AND accuracy is borderline. Typically buys 0.002–0.005 WER.
+
+Deferred (don't pursue unless step 1 unexpectedly regresses below 0.95):
+
+- **`--lora-rank 32 → 64`** (+ `--lora-alpha 64 → 128`, `--lr 1e-4 → 5e-5`, `--epochs 3 → 5`) — would have been Step 1b had `ft-lora32-v1` not hit the target. Val WER was still gently falling at epoch 3 (0.04982 → 0.04662), so there's likely 0.005–0.010 more to extract, but not enough to justify another 7-hour run at this stage of the qualifier.
+- **Encoder unfreeze for one low-LR pass** — middle ground between our full-freeze and full FT. Per notebook 03's `freeze_feature_encoder()` pattern.
+- **Ensemble distil-large-v3 + whisper-large-v3 with ROVER vote** — ~2× inference cost, only worth it if the accuracy ceiling becomes the bottleneck.
+
+Other knobs that exist but aren't current levers:
 
 - `--per-device-batch-size`, `--grad-accum` — default 8 × 2 = effective 16, T4-safe. Drop to 4 × 4 if OOM, raise on bigger GPUs.
-- `--lora-rank` 32 → 64 (+ `--lora-alpha` 64 → 128, `--lr` 1e-4 → 5e-5, `--epochs` 3 → 5) if val WER is still falling at epoch 3.
 - `--noise-dir <path>` — wire in noise corpus if/when one is available on Workbench (none found 12 May).
-- Try `beam_size=2` (not 5) in `asr_manager.py` only if speed has margin after `int8_float16` re-export.
-- Unfreeze encoder for one low-LR pass at the end if WER plateau persists.
-- Re-export `--quantization int8_float16` after FT lands for the speed score (expect ~0.86 → 0.90+, accuracy delta ≤ 0.005).
