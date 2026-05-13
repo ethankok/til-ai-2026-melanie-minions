@@ -325,12 +325,12 @@ Removes periodic bombing; bombs only for tactical enemy/base/destructible-wall v
 Validation:
 
 ```text
-Mac local server test:        score 0.732, 0 invalid actions observed
-Workbench til test planner-v1: score 0.697, test completed cleanly
-Official AE baseline remains 0.051 until planner-v1 submission result lands
+Mac local server test:         score 0.732, 0 invalid actions observed
+Workbench til test planner-v1:  score 0.697, test completed cleanly
+Official planner-v1 submission: score 0.445 / speed 0.788, 0 / 30 errors
 ```
 
-AE is **40%** of the qualifier — if official `planner-v1` tracks Workbench local score, raw weighted estimate rises from `0.2682` to about `0.5267`.
+AE is **40%** of the qualifier. `planner-v1` still jumps official AE from `0.051` to `0.445`, but the local-official gap is large (`0.697` Workbench local → `0.445` official), so planner-v2 should diagnose hidden-scenario failures before adding complexity.
 
 Implemented from the revised AE plan:
 
@@ -354,15 +354,16 @@ Implemented from the revised AE plan:
    - The given PPO/multi-agent material is useful, but not first priority.
    - Start with fixed-random opponents because local AE evaluator controls only `agent_0` and samples other agents randomly.
    - If training later, use a compact MLP/CNN policy and load weights once in `AEManager.__init__`.
-6. Submission loop:
-   - `til build ae planner-v1`
-   - `til test ae planner-v1`
-   - `til submit ae planner-v1`
-   - Record official score/speed in `RESULTS.md`.
+6. Submission result:
+   - `til build ae planner-v1` passed.
+   - `til test ae planner-v1` scored `0.697` locally on Workbench.
+   - `til submit ae planner-v1` scored `0.445 / 0.788` officially with `0 / 30` errors.
+   - This is a new AE high score, but much lower than local; next AE work should compare rollouts/failure modes rather than assuming local score predicts hidden eval.
 
-Stretch:
-- Opponent modeling: track enemy recent positions and avoid likely next cells.
-- Bomb-chain planning only after basic bomb safety improves score.
+Next AE work:
+- Diagnose local-vs-official gap: inspect rollouts for wasted movement, unsafe/low-value bombing, failure to find bases, and over-exploration.
+- Try a safer `planner-v2`: stricter bomb policy, stronger enemy-base pursuit, and fewer low-value frontier detours.
+- Opponent modeling / bomb-chain planning only after basic planner reliability improves.
 
 ---
 

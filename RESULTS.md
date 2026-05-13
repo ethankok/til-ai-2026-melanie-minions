@@ -11,7 +11,7 @@ NLP    melanie-minions-nlp      latest      12/05/2026 03:23:35   0 / 700       
 ASR    melanie-minions-asr      ft-lora32-v1 13/05/2026 11:22:30  0 / 400       0.957   0.849
 CV     melanie-minions-cv       latest      12/05/2026 03:52:32   4 / 500       0.000   0.981
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
-AE     melanie-minions-ae       latest      12/05/2026 04:20:34   0 / 30        0.051   0.856
+AE     melanie-minions-ae       planner-v1  13/05/2026 11:33:09   0 / 30        0.445   0.788
 ```
 
 ## ASR submission history
@@ -37,6 +37,7 @@ Variant     Date/time          Local novice score   Errors/action validity   Not
 baseline    12/05              0.051 official       0 / 30 official errors   Periodic-forward + periodic bomb baseline
 planner-v1  13/05 10:31 +08    0.732 local Mac      0 invalid actions        Stateful belief map + objective/frontier BFS + LOS-safe tactical bombs
 planner-v1  13/05 Workbench    0.697 local          til test completed       Built/tested with official Workbench Docker flow before submission
+planner-v1  13/05 11:33        0.445 official       0 / 30 official errors   New AE high score, but hidden evaluation underperformed local test
 ```
 
 ## Qualifier weighted score estimate
@@ -54,25 +55,25 @@ Noise has no direct qualifier weight observed
 Using raw task scores only:
 
 ```text
-0.40 * AE 0.051  = 0.0204
+0.40 * AE 0.445  = 0.1780
 0.20 * NLP 0.301 = 0.0602
 0.20 * ASR 0.957 = 0.1914
 0.20 * CV 0.000  = 0.0000
 --------------------------------
-Estimated weighted qualifier score = 0.2720
+Estimated weighted qualifier score = 0.4296
 ```
 
-If `planner-v1` official AE roughly matches the Workbench local score (`0.697`), the raw weighted qualifier estimate becomes `0.5305` before any NLP/CV upgrades.
+`planner-v1` underperformed the Workbench local score (`0.697` → official `0.445`), but still raises AE raw contribution from `0.0204` to `0.1780`.
 
 Using the observed ~75% score / 25% speed blend:
 
 ```text
-AE   contribution = 0.1009
+AE   contribution = 0.2123
 NLP  contribution = 0.0937
 ASR  contribution = 0.1858
 CV   contribution = 0.0491
 --------------------------------
-Estimated blended qualifier score = 0.4295
+Estimated blended qualifier score = 0.5409
 ```
 
 ## Notes
@@ -84,11 +85,11 @@ Estimated blended qualifier score = 0.4295
 - `vad-off-v2` REGRESSED to local WER 0.0604 after reversing the slang-prompt order (intent was to survive Whisper's truncation but reversing over-primed the decoder). Reverted; not submitted.
 - Noise scored `1.000`, but appears required/useful rather than directly weighted for qualifiers.
 - CV submitted but had `4 / 500` errors and score `0.000`; fix robustness/schema edge cases before improving model quality.
-- AE baseline submitted cleanly with score `0.051`. `planner-v1` built and passed Workbench local testing at `0.697`; official submission/result pending as of this note.
+- AE `planner-v1` officially scored `0.445 / 0.788` with `0 / 30` errors — a new team high score and a large jump from `0.051`, but much worse than Workbench local `0.697`, so the planner likely overfit/easy-rolled local scenarios or hidden eval punished tactical choices differently.
 
 ## Next priority
 
-1. **Record AE planner-v1 official result** once the Workbench submission finishes; keep baseline `0.051` until the official score appears.
+1. **AE planner-v2 diagnosis** — official `0.445` vs Workbench local `0.697` means test variance/hidden scenario mismatch is real. Start by logging failure modes and trying safer bombing / stronger objective pathing, not RL yet.
 2. **ASR re-export `int8_float16`** — same LoRA-merged checkpoint, no retrain. Target: speed `0.849 → 0.90+` with accuracy delta `≤ 0.005`. Tag `ft-lora32-int8f16`.
 3. **NLP retrieval / chunking** upgrade — currently 0.301.
 4. **CV** — fix the `4 / 500` errors first, then drop in a pretrained detector.
