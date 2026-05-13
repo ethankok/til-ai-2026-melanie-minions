@@ -6,18 +6,26 @@ We need to submit **5 separate Docker services** by:
 
 The repo looks huge, but most of it is official scaffolding. For now, we mainly edit **5 manager files**.
 
+This file is cross-cutting orientation. **Per-task history, decisions, and current state live in `<task>/NOTES.md`** — read that for the task you're working on. Submission scores live in [RESULTS.md](RESULTS.md).
+
 ---
 
 ## The only files that matter right now
 
 ```text
-SUMMARY.md                   read this
-RESULTS.md                   latest leaderboard/submission scores
-asr/src/asr_manager.py       ASR baseline / our ASR code
-cv/src/cv_manager.py         CV baseline / our CV code
-noise/src/noise_manager.py   Noise baseline / our noising code
-nlp/src/nlp_manager.py       NLP baseline / our RAG code
-ae/src/ae_manager.py         AE baseline / our agent code
+SUMMARY.md                   read this (orientation + strategy)
+RESULTS.md                   leaderboard / submission scores
+asr/NOTES.md                 ASR working log
+cv/NOTES.md                  CV working log
+nlp/NOTES.md                 NLP working log
+ae/NOTES.md                  AE working log
+noise/NOTES.md               Noise working log
+
+asr/src/asr_manager.py       ASR inference code
+cv/src/cv_manager.py         CV inference code
+noise/src/noise_manager.py   Noise code
+nlp/src/nlp_manager.py       NLP retrieval code
+ae/src/ae_manager.py         AE agent code
 ```
 
 I also patched this once for reset robustness:
@@ -51,10 +59,11 @@ til-26-finals/  official finals code, don't edit
 Inside each task folder:
 
 ```text
+NOTES.md          OUR working log — history, decisions, gotchas
 src/*_manager.py  OUR model/inference logic — edit this
 src/*_server.py   HTTP wrapper — usually don't edit
-Dockerfile        packaging for submission — later
-requirements.txt  task-specific Docker deps — later
+Dockerfile        packaging for submission
+requirements.txt  task-specific Docker deps
 README.md         task input/output spec — reference only
 ```
 
@@ -81,24 +90,16 @@ What a "baseline" means:
 
 ---
 
-## What we need to submit
+## Scoring
 
-Submit these 5 tasks:
-
-1. **ASR** — transcribe audio
-2. **CV** — detect/classify objects in images
-3. **Noise** — produce adversarially noised images
-4. **NLP** — answer questions from provided documents using RAG
-5. **AE** — control an agent in a Bomberman-like environment
-
-Scoring weight:
+Qualifier weights from the handbook:
 
 ```text
-AE   40%
-ASR  20%
-CV   20%
-NLP  20%
-Noise: required/useful, but no direct qualifier points observed
+AE     40%
+ASR    20%
+CV     20%
+NLP    20%
+Noise  required/useful, no direct qualifier weight observed
 ```
 
 Each scored task is roughly:
@@ -107,19 +108,6 @@ Each scored task is roughly:
 75% accuracy/reward
 25% speed
 ```
-
-First goal: **working valid submissions for everything**. Then optimize.
-
-Important terms:
-
-- **Docker service**: a packaged mini-app for one task. It runs a web server and waits for inputs.
-- **Endpoint/route**: the URL path the evaluator calls, e.g. `/asr` or `/nlp`.
-- **Port**: the network number the service listens on, e.g. ASR uses `5001`.
-- **Schema**: the exact input/output JSON format. Matching schema is non-negotiable.
-- **GCP Workbench**: the official Google Cloud machine where data/submission tools live.
-- **`til build`**: builds a Docker image for one task.
-- **`til test`**: runs official local evaluation against that image.
-- **`til submit`**: uploads/submits that image for scoring.
 
 Task ports/routes:
 
@@ -131,277 +119,67 @@ NLP    /nlp    port 5004
 AE     /ae     port 5005, plus /reset
 ```
 
----
+Important terms:
 
-## Current baselines
-
-### ASR
-
-File: `asr/src/asr_manager.py`
-Endpoint: POST `/asr` on port 5001
-Input: list of `{key, b64}` where b64 is base64 WAV bytes
-Output: `{"predictions": ["transcript1", "transcript2", ...]}` (same order as input)
-
-What we built (Novice track is English-only, current best official score is **`ft-lora32-v1` at 0.957 / 0.849** (13 May 11:22) — a +0.019 absolute accuracy jump over `vad-off-v1` from a single 3-epoch LoRA-rank-32 decoder fine-tune of `distil-whisper/distil-large-v3`. Crosses the 0.95 target. Generalization gap turned out *negative*: held-out val WER 0.04662 → official WER ~0.043, i.e. the official 400-clip set is slightly easier than the leaky local val. Next lever is **int8_float16 re-export** to recover the speed score (target 0.90+); no retrain needed. See [training/asr/README.md](training/asr/README.md) and [RESULTS.md](RESULTS.md)):
-
-```text
-faster-whisper distil-large-v3 + slang prompt mined from NLP corpus.
-Loaded once at startup, CT2 float16 on GPU (int8 CPU fallback).
-greedy beam, condition_on_previous_text=False, language="en" forced.
-vad_filter=False + audio-level silence guard (long-clip truncation was the
-  dominant error in norm-v1 — see ERROR_ANALYSIS).
-Hallucination guards: no_speech_threshold=0.6, log_prob_threshold=-1.0,
-  compression_ratio_threshold=2.4, temperature=0.0, without_timestamps=True.
-Post-processing: digits + ordinals + niner callsigns + coordinate-safe
-  decimals verbalized so the scorer's word-level metric counts them correctly.
-```
-
-Server passes the whole HTTP batch to `ASRManager.asr_batch(list[bytes])` in
-one call — see `asr/src/asr_server.py`.
-
-Training (Workbench-only, in `training/asr/`):
-
-1. `extract_slang.py` — mines NLP corpus → `slang_prompt.txt`, baked next to model weights. **Defaults**: `--top-k 200 --min-count 2`. Writes highest-frequency first; reversing was tested in `vad-off-v2` and regressed WER (over-primes decoder), so we keep the original order. Passed as `initial_prompt=` at inference.
-2. `prepare_data.py` — reads `/home/jupyter/novice/asr/asr.jsonl` (4110 entries), 90/10 stratified split, oversamples slang-containing clips. **Note**: there is no separate training manifest — same file is what `test_asr.py` evaluates against, so post-FT local numbers will be inflated by memorization. Treat the official submission as the only real validator.
-3. `train_distil_whisper.py` — LoRA fine-tune (decoder attn, encoder frozen), SpecAugment + optional noise mixing + speed perturb, jiwer WER aligned with official scorer transforms.
-4. `export_ct2.py` — merge LoRA → `ct2-transformers-converter` → CT2 float16 dir + slang prompt copied alongside.
-5. Push `asr/models/` to a private GCS bucket; pull before `til build asr`.
-
-See [training/asr/README.md](training/asr/README.md) for end-to-end commands, the smoke-test path (zero-shot CT2 export, no training required), and environment variables (`ASR_DEVICE`, `ASR_COMPUTE_TYPE`) to override device/precision. See [training/asr/ERROR_ANALYSIS.md](training/asr/ERROR_ANALYSIS.md) for full data-driven error analysis, the scoring-artifact explanation, and the route toward `0.95+` score / `0.90+` speed.
-
-Workbench facts (confirmed 12 May 2026):
-
-- GPU: **Tesla T4** (16 GB) — fp16, not bf16.
-- Manifest: 4110 entries at `/home/jupyter/novice/asr/asr.jsonl`, schema `{"key","audio","transcript","language":"english"}`. No separate `train.jsonl`.
-- No accessible noise corpus on Workbench — augmentation falls back to SpecAugment + speed perturb only.
-- Scoring artifact: local `1 - MER` is misleading high because the local manifest has only `english`-labeled samples and the scorer divides by 4 (the other three buckets contribute 0). Track the bare `english error rate (WER)` line in `test_asr.py` output instead.
-
-Stretch (only after int8_float16 re-export lands):
-- Beam=2 (not 5) if speed has margin.
-- Rank-64 / 5-epoch LoRA escalation if int8 quantization unexpectedly regresses accuracy below 0.95.
-- Encoder unfreeze for a final low-LR pass.
-- Ensemble distil-large-v3 + whisper-large-v3 (~2× inference cost) only if accuracy ceiling becomes the bottleneck.
+- **Docker service**: a packaged mini-app for one task. Runs a web server, waits for inputs.
+- **Endpoint/route**: URL path the evaluator calls, e.g. `/asr` or `/nlp`.
+- **Port**: network number the service listens on (see table above).
+- **Schema**: exact input/output JSON format. Matching schema is non-negotiable.
+- **GCP Workbench**: official Google Cloud machine where data + submission tools live.
+- **`til build` / `til test` / `til submit`**: build, locally evaluate, and submit a Docker image.
 
 ---
 
-### CV
+## Where each task stands (13 May 2026)
 
-File: `cv/src/cv_manager.py`
-Endpoint: POST `/cv` on port 5002
-Input: list of `{key, b64}` where b64 is base64 JPEG bytes
-Output:
+For task-specific history, decisions, gotchas, and next-step plans, open the task's NOTES.md.
 
-```python
-{"predictions": [[{"bbox": [x, y, w, h], "category_id": int}, ...], ...]}
-```
-
-`bbox` is [x, y, w, h] (top-left + width/height, COCO style — NOT [x1, y1, x2, y2]).
-Empty list per image is valid if nothing is detected.
-
-Current baseline:
-
-```text
-returns [] = no detections
-```
-
-Valid but scores 0.
-
-What we need to do:
-
-1. Pick a detector. Default: `ultralytics` YOLOv8/v11 (easiest), or `RT-DETR` if accuracy > speed. Pretrained COCO weights first, then fine-tune on the provided training images if categories don't match COCO.
-2. Confirm category mapping: the eval has its own `category_id` set. Map model class IDs → eval `category_id` (probably needs a lookup table from the dataset metadata).
-3. Load model once in `CVManager.__init__`.
-4. In `cv(image_bytes)`:
-   - Decode JPEG (`PIL.Image.open(io.BytesIO(image_bytes))`).
-   - Run detector.
-   - Convert each detection to `{"bbox": [x, y, w, h], "category_id": id}`. Make sure to convert from xyxy→xywh if the detector returns xyxy.
-   - Apply a confidence threshold (start ~0.25, tune).
-5. Add deps to `cv/requirements.txt`: `ultralytics` (pulls torch), `pillow`. Use a CUDA base image in `cv/Dockerfile` if GPU is available on eval — check what the wiki says about GPU access.
-6. Test: `til build cv && til test cv`.
-
-Stretch:
-- Fine-tune on the training set rather than relying on COCO weights.
-- TTA (test-time augmentation) if speed budget allows.
-- NMS tuning per class.
-
----
-
-### Noise
-
-File: `noise/src/noise_manager.py`
-Output: base64-encoded JPEG string
-
-Current baseline:
-
-```text
-re-encodes input as a clean JPEG, returns base64
-```
-
-Valid and safe.
-
-What we need to do (do this last — no qualifier weight):
-
-1. Read the noise spec carefully: there's a perturbation budget (likely L∞ or SSIM/PSNR threshold) AND a fairness/validity check.
-2. Pick a method:
-   - **Cheap**: random bounded noise within budget. Easy, modest impact.
-   - **Better**: untargeted FGSM/PGD against a public surrogate classifier (ResNet/ViT), clipped to budget.
-   - **Best**: ensemble attack across multiple surrogates for transferability.
-3. In `noise(image_bytes)`:
-   - Decode → tensor.
-   - Compute perturbation, clip to budget.
-   - Re-encode as JPEG (JPEG re-compression can wipe high-freq adversarial signal — be aware, may need to compensate).
-   - Return base64.
-4. Add deps to `noise/requirements.txt` only if needed (torch, torchvision).
-5. Verify the fairness check still passes locally before submitting.
-
----
-
-### NLP
-
-File: `nlp/src/nlp_manager.py`
-Has two methods: `load_corpus(documents)` (called once per round) and `qa(question)` (per question).
-
-Current baseline:
-
-```text
-sentence-split each doc, lexical token-overlap retrieval with light length normalization,
-return the top-scoring sentence (truncated to 500 chars)
-```
-
-This is our best starting point — it's already correct shape and somewhat useful.
-
-What we need to do:
-
-1. **Better chunking**: sliding window of ~2–3 sentences with overlap, not single sentences. Single sentences lose context; full paragraphs dilute retrieval.
-2. **Better retrieval**: replace token-Counter overlap with BM25 (`rank_bm25` package) as a fast win. Then layer dense embeddings (e.g. `sentence-transformers/all-MiniLM-L6-v2`) for hybrid retrieval.
-3. **Better answer extraction**: don't return the whole chunk. Either:
-   - Run an extractive QA model (`distilbert-base-uncased-distilled-squad` or similar) on the top-k chunks, or
-   - Pick the sentence within the chunk with highest overlap/embedding sim to the question.
-4. Cache embeddings in `load_corpus` so `qa()` is fast.
-5. Add deps to `nlp/requirements.txt`: `rank_bm25`, `sentence-transformers`, `transformers`.
-6. Watch the answer length cap — current truncates at 500 chars; verify the eval doesn't penalize too-long answers.
-
-Stretch:
-- Re-ranker (cross-encoder) on top-k.
-- Tiny local LLM for generative answers, **only** if it fits the runtime budget.
-
----
-
-### AE
-
-File: `ae/src/ae_manager.py`
-Endpoint: POST `/ae` (and `/reset`) on port 5005
-Server resets the manager when a fresh round is detected (`step == 0` or empty POST).
-
-Detailed revised plan: [`AE_IMPLEMENTATION_PLAN.md`](AE_IMPLEMENTATION_PLAN.md)
-
-Actions:
-
-```text
-0 FORWARD
-1 BACKWARD
-2 LEFT   rotate counter-clockwise
-3 RIGHT  rotate clockwise
-4 STAY
-5 PLACE_BOMB
-```
-
-Observation keys confirmed from the actual local env:
-
-```text
-agent_viewcone, base_viewcone, direction, location, base_location,
-health, frozen_ticks, base_health, team_resources, team_bombs,
-step, action_mask
-```
-
-Current implementation: `planner-v1` stateful classical planner.
-
-```text
-Stateful belief map + objective/frontier BFS + action-mask-safe fallback.
-Targets enemy base / mission / resource / recon before frontier exploration.
-Removes periodic bombing; bombs only for tactical enemy/base/destructible-wall value with escape planning.
-```
-
-Validation:
-
-```text
-Mac local server test:         score 0.732, 0 invalid actions observed
-Workbench til test planner-v1:  score 0.697, test completed cleanly
-Official planner-v1 submission: score 0.445 / speed 0.788, 0 / 30 errors
-```
-
-AE is **40%** of the qualifier. `planner-v1` still jumps official AE from `0.051` to `0.445`, but the local-official gap is large (`0.697` Workbench local → `0.445` official), so planner-v2 should diagnose hidden-scenario failures before adding complexity.
-
-Implemented from the revised AE plan:
-
-1. **Phase 0 — observation projection + belief map**
-   - Maintains `seen`, wall/destructible-wall memory, item memory, enemy/base sightings, bomb timers, and visit counts on `self`.
-   - Projects `agent_viewcone` from egocentric coordinates into world coordinates using `location` + `direction`.
-   - Projects `base_viewcone` around `base_location`.
-   - Resets memory on `step == 0` / `/reset`; no module-level globals.
-2. **Phase 1 — classical safe planner**
-   - Uses BFS over known safe cells.
-   - Target priority: enemy base if reachable/safe → mission → resource → recon → frontier cell → least-visited safe known cell.
-   - Translates the next world step into relative actions (`FORWARD`, `BACKWARD`, `LEFT`, `RIGHT`) and always respects `action_mask`.
-   - Predicts bomb danger and avoids blast cells before optimizing exploration.
-3. **Phase 2 — conditional bomb policy**
-   - Removes periodic bombing.
-   - Places bombs only when a destructible wall blocks a useful path or an enemy/base is in blast reach.
-   - Before placing, proves there is an escape path outside the predicted blast radius before detonation.
-4. **Phase 3 — heuristic action scoring**
-   - Scores legal fallback actions by target progress, immediate item pickup, frontier gain, bomb danger, loop penalty, and idle penalty.
-5. **Phase 4 — RL only after planner plateaus**
-   - The given PPO/multi-agent material is useful, but not first priority.
-   - Start with fixed-random opponents because local AE evaluator controls only `agent_0` and samples other agents randomly.
-   - If training later, use a compact MLP/CNN policy and load weights once in `AEManager.__init__`.
-6. Submission result:
-   - `til build ae planner-v1` passed.
-   - `til test ae planner-v1` scored `0.697` locally on Workbench.
-   - `til submit ae planner-v1` scored `0.445 / 0.788` officially with `0 / 30` errors.
-   - This is a new AE high score, but much lower than local; next AE work should compare rollouts/failure modes rather than assuming local score predicts hidden eval.
-
-Next AE work:
-- Diagnose local-vs-official gap: inspect rollouts for wasted movement, unsafe/low-value bombing, failure to find bases, and over-exploration.
-- Try a safer `planner-v2`: stricter bomb policy, stronger enemy-base pursuit, and fewer low-value frontier detours.
-- Opponent modeling / bomb-chain planning only after basic planner reliability improves.
+| Task | Latest tag | Acc | Speed | Status | Working log |
+|---|---|---:|---:|---|---|
+| ASR | `ft-lora32-v1` | 0.957 | 0.849 | Crossed 0.95 target. Parked. | [asr/NOTES.md](asr/NOTES.md) |
+| AE | `planner-v1` | 0.445 | 0.788 | Big local→official gap (0.697 → 0.445). planner-v2 in progress. | [ae/NOTES.md](ae/NOTES.md) |
+| NLP | `latest` | 0.301 | 0.971 | Lexical baseline. BM25 upgrade is biggest free win. | [nlp/NOTES.md](nlp/NOTES.md) |
+| CV | `latest` | 0.000 | 0.981 | Empty-detection baseline + 4/500 errors. Fix errors → drop in YOLOv8. | [cv/NOTES.md](cv/NOTES.md) |
+| Noise | `latest` | 1.000 | 0.970 | Done. Don't touch. | [noise/NOTES.md](noise/NOTES.md) |
 
 ---
 
 ## Rough outline (what to do, in order)
 
-**Week 0 — plumbing (everyone, in parallel)**
+**Week 0 — plumbing (done)**
 
-1. Get GCP Workbench access working for everyone.
-2. Run `til build <task>` and `til test <task>` for all 5 tasks against the current baselines. Goal: every container starts, every endpoint returns valid-shape JSON, every `til test` exits cleanly.
-3. `til submit` all 5 baselines so we have a non-zero submission on the board.
+1. Workbench access for everyone ✅
+2. All 5 services build, `til test` runs clean, JSON shape correct ✅
+3. All 5 baselines submitted ✅
 
-**Week 1 — first real models**
+**Week 1 — first real models (in progress)**
 
-4. **AE** (40%): replace random-walk baseline with a rule-based planner (BFS over the occupancy grid + bomb safety check). Big jump expected.
-5. **NLP** (20%): swap lexical Counter for BM25 + better chunking. Single afternoon of work, meaningful score gain.
-6. **CV** (20%): drop in pretrained YOLOv8/v11 with COCO weights, map class IDs to the eval's `category_id`. Real work is the class mapping, not the model.
-7. **ASR** (20%): drop in faster-whisper (small), load once in `__init__`, batch instances. Done.
+4. **AE** (40%) — `planner-v1` shipped at 0.445. Investigate local→official gap, ship planner-v2.
+5. **NLP** (20%) — swap lexical Counter for BM25 + better chunking. Single afternoon, meaningful gain.
+6. **CV** (20%) — fix 4/500 errors first, then drop in pretrained YOLOv8/v11 with COCO weights, map class IDs.
+7. **ASR** (20%) — `ft-lora32-v1` shipped at 0.957. Parked (see asr/NOTES.md).
 
 **Week 2 — push scores**
 
-8. **AE**: heuristic scoring or fine-tuned policy. Test against `til-26-ae` env locally.
+8. **AE**: heuristic scoring / fine-tuned policy. Test against `til-26-ae` env locally.
 9. **NLP**: hybrid retrieval (BM25 + dense embeddings) + extractive QA model on top-k.
-10. **CV**: fine-tune on the provided training set if categories don't match COCO.
-11. **ASR**: try larger Whisper variant if speed budget allows.
-12. **Noise**: bounded perturbation (FGSM against a surrogate classifier).
+10. **CV**: fine-tune on provided training set if categories don't match COCO.
+11. **Noise**: bounded FGSM perturbation if time and the score actually matters.
 
 **Always**
 
 - Re-run `til test` after every change.
-- Don't commit model weights to git — bake them into the Docker image build instead.
+- Don't commit model weights to git — bake into the Docker image build.
 - If a change makes a container fail to start, **revert immediately**. A working bad model > broken good model.
+- Leaderboard keeps the **higher** score, so a regressing submission can't demote a peak. But a regressing submission *for free* is still a waste of time and submission slot.
 
 Why this order:
 
-- AE is 40% — every hour spent there is worth ~2x the same hour on a 20% task.
-- NLP's lexical baseline can jump significantly with retrieval upgrades alone.
-- CV/ASR are mostly "swap in a pretrained model" once the plumbing works.
-- Noise has no direct qualifier weight; do it last.
+- AE is 40% — every hour spent there is worth ~2× the same hour on a 20% task.
+- NLP's lexical baseline jumps significantly with retrieval upgrades alone.
+- CV is mostly "swap in a pretrained model" once the schema bugs are fixed.
+- ASR has crossed its target; marginal hour is low-ROI now.
+- Noise has no direct qualifier weight; do it last (or never).
 
 What "done for now" means for a task:
 
@@ -413,8 +191,6 @@ What "done for now" means for a task:
 5. til test runs without crashing
 6. til submit succeeds
 ```
-
-Only after all 5 hit "done for now" should anyone chase better scores.
 
 ---
 
@@ -451,20 +227,29 @@ PY
 
 ---
 
-## GCP setup later
+## GCP setup (Workbench-only)
 
 Official loop:
 
 ```bash
-til build asr
-til test asr
-til submit asr
+til build <task> <tag>
+til test  <task> <tag>
+til submit <task> <tag>
 ```
 
-Repeat for:
+Repeat for: `asr cv noise nlp ae`.
 
-```text
-asr cv noise nlp ae
+If `til` errors with "Could not find directory for task ...", set `TIL_FOLDER`:
+
+```bash
+echo 'export TIL_FOLDER=/home/jupyter/til' >> ~/.bash_profile
+export TIL_FOLDER=/home/jupyter/til
+```
+
+If `til submit` errors with "Unauthenticated request" on the Docker push, register the gcloud credential helper once:
+
+```bash
+gcloud auth configure-docker asia-southeast1-docker.pkg.dev
 ```
 
 ---
@@ -475,9 +260,9 @@ asr cv noise nlp ae
 til-26-ae/
 til-26-finals/
 .gitmodules
-src/*_server.py
-Dockerfile
-requirements.txt
+<task>/src/<task>_server.py
+<task>/Dockerfile
+<task>/requirements.txt
 ```
 
-Do not commit huge model weights to Git.
+Do not commit large model weights to Git.
