@@ -1,4 +1,11 @@
 # Dependencies for AE.
 
+# CPU-only torch keeps the image at ~250 MB instead of ~2 GB. The extra
+# index is the PyTorch wheel mirror; pip resolves torch from there and the
+# rest from the default index.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 fastapi
 uvicorn[standard]
+torch
+numpy

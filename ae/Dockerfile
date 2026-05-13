@@ -19,6 +19,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copies your source files.
 COPY src .
 
+# Copies trained policy weights (if any). Build still succeeds with an empty
+# `models/` and the server falls back to the heuristic planner at runtime.
+COPY models /workspace/models
+
 # Starts your model server. uvloop + httptools are already pulled in by
 # uvicorn[standard]; setting them explicitly ensures the faster event loop
 # and parser are used (gives a small per-request latency win for AE since

@@ -6,7 +6,12 @@
 .claude/
 
 # Large files like model weights, training data, and results should be ignored.
-**/models/
+# Scoped per task — AE's policy checkpoints are tiny (~600 KB), so we track
+# the directory and rely on ae/.gitignore to filter .pt/.onnx files.
+asr/models/
+cv/models/
+nlp/models/
+noise/models/
 **/results/
 training/asr/data/
 training/asr/runs/
