@@ -8,12 +8,13 @@ Per-task working log for CV (object detection). For input/output spec see
 
 ## Current shipped tag
 
-**`latest` — official 0.000 / 0.981 (12 May 03:52 SGT, 4 of 500 errors).**
+**`yolo-til-map-v2` — official 0.044 / 0.961 (14 May 01:56 SGT, 0 of 500 errors).**
 
-Empty-detection baseline. Service starts, endpoint returns valid-shape JSON,
-but predicts no objects → 0.000 accuracy. The `4 / 500` errors are the
-priority before any model work — even a working detector won't help if
-schema bugs cause errors on some inputs.
+Pretrained YOLOv8n + custom sparse COCO→TIL mapping. This fixed the old
+`4 / 500` errors and confirms the service/schema/fallback plumbing is clean.
+Score is still low because COCO YOLO cannot distinguish the 18 TIL-specific
+military/vehicle/ship subclasses. Next step: fine-tune a custom detector on the
+provided CV annotations, not more mapping guesses.
 
 ## What our model runs on
 
@@ -34,8 +35,9 @@ JSON override for further tuning.
 ## Submission history
 
 ```text
-Tag       Submitted          Score   Speed   Errors    Notes
-latest    12/05 03:52        0.000   0.981   4 / 500   Empty-detection baseline, 4 inputs erroring
+Tag              Submitted       Score   Speed   Errors    Notes
+latest           12/05 03:52     0.000   0.981   4 / 500   Empty-detection baseline, 4 inputs erroring
+yolo-til-map-v2  14/05 01:56     0.044   0.961   0 / 500   YOLOv8n + sparse COCO→TIL map; clean serving, weak domain fit
 ```
 
 ## Detailed timeline
@@ -106,19 +108,9 @@ In priority order (per [../SUMMARY.md "CV"](../SUMMARY.md)):
 
 ### 1. Fix the `4 / 500` errors first
 
-Status: implemented defensive fallbacks, pending Workbench submission to confirm
-the errors are gone. We don't yet know what the 4 erroring inputs are.
-Possibilities:
-- Corrupted / non-JPEG image bytes that `PIL.Image.open()` chokes on
-- Edge-case image dimensions or color modes (grayscale, RGBA)
-- Request payload variations the manager doesn't handle
-
-Diagnostic now in place: manager returns `[]` on decode/model errors and logs
-the input `key` plus byte size. Rebuild, submit, and check the Debug URL if
-errors remain.
-
-A 4-error-free submission with `[]` predictions would already be a "clean"
-baseline to compare model improvements against.
+Status: fixed by `yolo-til-map-v2` (`0 / 500` errors officially). The robust
+manager fallback and RGB/EXIF normalization did their job. Keep this serving
+path as the safe baseline while changing model weights.
 
 ### 2. Drop in a pretrained detector
 
@@ -151,9 +143,12 @@ classes. Use `CV_CATEGORY_MAP` to tune after the first `til test cv` output.
 
 ## State
 
-CV official score is still last-known 0.000 until this branch is built and
-submitted. The local implementation should now produce non-empty detections
-when the model loads and should return clean empty lists for bad inputs.
+CV official score is now `0.044 / 0.961` with `0 / 500` errors. That is a clean
+serving baseline but a weak detector. Next high-ROI work is machine learning:
+convert `/home/jupyter/novice/cv/annotations.json` to YOLO format, fine-tune a
+YOLO model for the 18 TIL labels, copy the best checkpoint into `cv/models/`, set
+`CV_MODEL_PATH` to that checkpoint in the Docker image, then `til build/test/submit`
+with a tag like `cv-yolo-ft-v1`.
 
 ## Reproducibility / pointers
 

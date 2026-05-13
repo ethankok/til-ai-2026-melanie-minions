@@ -1,7 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 13 May 2026 23:55 SGT
+Last updated: 14 May 2026 01:56 SGT
 
 ## Latest submitted scores
 
@@ -9,7 +9,7 @@ Last updated: 13 May 2026 23:55 SGT
 Task   Image                    Tag         Submitted             Errors        Score   Speed
 NLP    melanie-minions-nlp      latest      12/05/2026 03:23:35   0 / 700       0.301   0.971
 ASR    melanie-minions-asr      ft-lora32-v1 13/05/2026 11:22:30  0 / 400       0.957   0.849
-CV     melanie-minions-cv       latest      12/05/2026 03:52:32   4 / 500       0.000   0.981
+CV     melanie-minions-cv       yolo-til-map-v2 14/05/2026 01:56:21 0 / 500       0.044   0.961
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
 AE     melanie-minions-ae       planner-v3b 13/05/2026 23:42:57   0 / 30        0.499   0.853
 AE (bc) melanie-minions-ae      bc-v1       14/05/2026 01:22:13   0 / 30        0.364   0.856  ← regressed; planner-v3b still shipped
@@ -66,9 +66,9 @@ Using raw task scores only:
 0.40 * AE 0.499  = 0.1996
 0.20 * NLP 0.301 = 0.0602
 0.20 * ASR 0.957 = 0.1914
-0.20 * CV 0.000  = 0.0000
+0.20 * CV 0.044  = 0.0088
 --------------------------------
-Estimated weighted qualifier score = 0.4512
+Estimated weighted qualifier score = 0.4600
 ```
 
 `planner-v3b` keeps AE accuracy flat at `0.499` (vs `planner-v2`'s `0.501`) — within noise — but speed jumped `0.771 → 0.853`. Local→official gap is unchanged at `~0.17` (local mean `0.681` → official `0.499`); heuristic ceiling is in sight. Next swing is a learned policy (see Next priority).
@@ -79,9 +79,9 @@ Using the observed ~75% score / 25% speed blend:
 AE   contribution = 0.2350   (0.75*0.499 + 0.25*0.853 = 0.5876)
 NLP  contribution = 0.0937
 ASR  contribution = 0.1860
-CV   contribution = 0.0491
+CV   contribution = 0.0547
 --------------------------------
-Estimated blended qualifier score = 0.5638
+Estimated blended qualifier score = 0.5693
 ```
 
 ## Notes
@@ -92,7 +92,7 @@ Estimated blended qualifier score = 0.5638
 - The local `1 - MER` number is a **scoring artifact** of the local manifest being English-only (three other language buckets contribute 0 to the divide-by-4 mean). Track the bare `english error rate (WER)` line instead.
 - `vad-off-v2` REGRESSED to local WER 0.0604 after reversing the slang-prompt order (intent was to survive Whisper's truncation but reversing over-primed the decoder). Reverted; not submitted.
 - Noise scored `1.000`, but appears required/useful rather than directly weighted for qualifiers.
-- CV submitted but had `4 / 500` errors and score `0.000`; fix robustness/schema edge cases before improving model quality.
+- **CV `yolo-til-map-v2` cleaned up the errors and set a new high score**: official `0.044 / 0.961` with `0 / 500` errors (14/05 01:56 SGT). This confirms the serving/schema/fallback plumbing is now sound. The low mAP is expected: COCO YOLO only overlaps broad classes and cannot distinguish TIL's 18 military/vehicle/ship subclasses. Next CV move is custom fine-tuning on `/home/jupyter/novice/cv/annotations.json`, not more mapping guesses.
 - AE `planner-v1` officially scored `0.445 / 0.788` with `0 / 30` errors — a new team high score and a large jump from `0.051`, but much worse than Workbench local `0.697`, so the planner likely overfit/easy-rolled local scenarios or hidden eval punished tactical choices differently.
 - **AE `planner-v2` lifts official to `0.501 / 0.771`** (`0 / 30` errors, 13/05 23:03 SGT). The single highest-value change was correcting `BOMB_TIMER = 4 → 3` to match the env config (placement→detonation budget is 3 movements, not 4); planner-v1 was almost certainly self-trapping in tactical bomb scenarios. Speed dipped slightly (`0.788 → 0.771`) from the bounded-escape and threat-aware BFS — well worth the +0.056 accuracy. The local→official gap narrowed from ~0.25 to ~0.17 but isn't closed; the remaining gap is likely (a) novice local map being fixed-seed and easier than hidden eval, (b) random opponents locally vs whatever the hidden eval uses, and (c) 6-round local variance.
 - **AE `planner-v3` (NOT submitted)** — bundled predictive-bombing at range 2, bomb-chain wall-break heuristic, soft threat penalty (1.0/3.0). Locally regressed to mean `0.596` (vs v2's `0.669`) — in 6-team random-opponent local, aggressive bombing burns the team's bomb budget on speculation. Reverted before submission.
@@ -103,5 +103,5 @@ Estimated blended qualifier score = 0.5638
 1. **AE PPO with mixed opponents** — bc-v1 shipped, scored `0.364/0.856` and **regressed -0.135 vs planner-v3b**. Local→official gap blew up from 0.18 (heuristic) to 0.31 (BC), confirming the gap is **environment-distribution mismatch**, not heuristic-specific: the BC policy memorized planner behavior against random opponents, which doesn't generalize to whatever the hidden eval uses. **Planner-v3b stays shipped** (`0.499` > `0.364`). Way forward: `train_ppo.py` initialized from `bc.pt`, trained against a **mixed opponent pool** (random + frozen planner-v3b + frozen self-copies + scripted aggressors) so the policy can't overfit to one distribution. Deployment plumbing already validated end-to-end through bc-v1. If PPO still loses to v3b official, fall back to v3b and pursue per-game logging.
 2. **ASR re-export `int8_float16`** — same LoRA-merged checkpoint, no retrain. Target: speed `0.849 → 0.90+` with accuracy delta `≤ 0.005`. Tag `ft-lora32-int8f16`.
 3. **NLP retrieval / chunking** upgrade — currently 0.301.
-4. **CV** — fix the `4 / 500` errors first, then drop in a pretrained detector.
+4. **CV custom detector fine-tune** — `yolo-til-map-v2` is clean but low (`0.044/0.961`, `0 / 500`). Train YOLO on `/home/jupyter/novice/cv/annotations.json` for the 18 TIL labels; stop spending time on COCO→TIL mapping guesses.
 5. **ASR rank-64 escalation** is deferred — `ft-lora32-v1` already crosses 0.95, so the marginal lift isn't worth the extra training time unless int8 quantization unexpectedly regresses accuracy.
