@@ -150,6 +150,15 @@ Three more from the 13 May resumed run (Workbench env was bumped to
   `ct2-transformers-converter` checks for *directory existence*, not just
   emptiness, so the wipe loop in `export_ct2.py` wasn't enough on re-export.
   **Fix**: pass `--force` to the converter. Patched in `export_ct2.py`.
+- **`WARN: slang file asr/models/slang_prompt.txt not found`** on re-export —
+  silent (only a WARN, build succeeds), but ships a container WITHOUT the
+  slang prompt, which silently degrades decoding on in-world vocabulary
+  (cyanite, sarento, phyrexis, …). Happens when `--slang-file` points inside
+  `--output-dir`: the wipe loop deletes the slang file before the copy-back
+  step runs. **Fix**: `export_ct2.py` now reads the slang file into memory
+  BEFORE wiping, then writes it back after the convert step. If you see this
+  WARN, **abort the build/test/submit cycle** and rebuild — submitting
+  without the slang prompt regresses official WER.
 
 Still possible during a longer run:
 
