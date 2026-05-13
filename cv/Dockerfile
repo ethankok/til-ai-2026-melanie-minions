@@ -14,6 +14,9 @@ ENV CV_MODEL_PATH=yolov8n.pt
 WORKDIR /workspace
 
 # Installs your dependencies.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
 RUN pip install -U pip
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
