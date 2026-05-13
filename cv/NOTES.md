@@ -27,9 +27,9 @@ def cv(image_bytes: bytes, key=None) -> list[dict]:
 ```
 
 Default model is `yolov8n.pt`, cached during Docker build so runtime does not
-depend on network access. Outputs use standard COCO category IDs by default
-(`YOLO class index -> COCO category_id`), with `CV_CATEGORY_MAP` available as a
-JSON override if the Workbench annotations use a different ID space.
+depend on network access. Outputs use the custom Workbench category IDs by
+default for the COCO classes YOLO can see, with `CV_CATEGORY_MAP` available as a
+JSON override for further tuning.
 
 ## Submission history
 
@@ -53,9 +53,9 @@ Implemented the notes plan:
 - Converts Ultralytics `xyxy` boxes to COCO-style `[x, y, w, h]`, clamps boxes
   to image bounds, drops invalid zero-area boxes, and emits plain Python
   `float`/`int` values.
-- Added default YOLO-index to COCO-category-id mapping. If Workbench
-  `annotations.json` uses different IDs, set `CV_CATEGORY_MAP` to either a JSON
-  dict like `{"0": 1, "1": 2}` or a path to that JSON file.
+- Added default YOLO-index to custom TIL category-id mapping. Set
+  `CV_CATEGORY_MAP` to either a JSON dict like `{"4": 3}` or a path to that JSON
+  file when tuning class mappings.
 - Added `pillow` and `ultralytics` to [requirements.txt](requirements.txt), and
   Docker build now pre-caches `yolov8n.pt`.
 
@@ -72,7 +72,27 @@ print(ann.get("categories", [])[:20])
 PY
 ```
 
-If those IDs are standard COCO IDs, no override is needed.
+Observed category IDs are custom:
+
+```text
+0 cargo aircraft, 1 commercial aircraft, 2 drone, 3 fighter jet,
+4 fighter plane, 5 helicopter, 6 light aircraft, 7 missile, 8 truck,
+9 car, 10 tank, 11 bus, 12 van, 13 cargo ship, 14 yacht,
+15 cruise ship, 16 warship, 17 sailboat
+```
+
+Default mapping is now sparse and approximate:
+
+```text
+YOLO car      -> 9 car
+YOLO airplane -> 1 commercial aircraft
+YOLO bus      -> 11 bus
+YOLO truck    -> 8 truck
+YOLO boat     -> 13 cargo ship
+```
+
+This is only a baseline: COCO YOLO cannot distinguish drone/fighter/cargo/light
+aircraft, missile/tank/van, or specific ship subclasses without fine-tuning.
 
 ### latest (12 May 03:52) — submission plumbing only
 
@@ -118,10 +138,10 @@ Wire-up:
 
 ### 3. Class mapping is the actual work
 
-Status: default mapping is standard COCO. Still verify against Workbench
-`annotations.json`. If the eval has its own `category_id` set, provide
-`CV_CATEGORY_MAP` as a JSON dict/list and rebuild. **Wrong class mapping scores
-0 even with perfect boxes.**
+Status: default mapping now targets the custom Workbench labels you printed.
+It is intentionally sparse because the pretrained model only has broad COCO
+classes. Use `CV_CATEGORY_MAP` to tune after the first `til test cv` output.
+**Wrong class mapping scores 0 even with perfect boxes.**
 
 ### 4. Stretch (post-baseline)
 

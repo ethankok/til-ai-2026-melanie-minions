@@ -22,91 +22,22 @@ except Exception:  # pragma: no cover - keeps importable without optional deps
     YOLO = None
 
 
-# Ultralytics COCO class index -> official COCO category_id.
-# COCO category IDs skip several integers, so returning raw YOLO class indices
-# would silently produce the wrong labels.
-YOLO_TO_COCO_CATEGORY_ID = [
-    1,
-    2,
-    3,
-    4,
-    5,
-    6,
-    7,
-    8,
-    9,
-    10,
-    11,
-    13,
-    14,
-    15,
-    16,
-    17,
-    18,
-    19,
-    20,
-    21,
-    22,
-    23,
-    24,
-    25,
-    27,
-    28,
-    31,
-    32,
-    33,
-    34,
-    35,
-    36,
-    37,
-    38,
-    39,
-    40,
-    41,
-    42,
-    43,
-    44,
-    46,
-    47,
-    48,
-    49,
-    50,
-    51,
-    52,
-    53,
-    54,
-    55,
-    56,
-    57,
-    58,
-    59,
-    60,
-    61,
-    62,
-    63,
-    64,
-    65,
-    67,
-    70,
-    72,
-    73,
-    74,
-    75,
-    76,
-    77,
-    78,
-    79,
-    80,
-    81,
-    82,
-    84,
-    85,
-    86,
-    87,
-    88,
-    89,
-    90,
-]
+# Ultralytics COCO class index -> TIL CV category_id.
+# The Workbench annotations use a custom label space:
+# 0 cargo aircraft, 1 commercial aircraft, 2 drone, 3 fighter jet,
+# 4 fighter plane, 5 helicopter, 6 light aircraft, 7 missile, 8 truck,
+# 9 car, 10 tank, 11 bus, 12 van, 13 cargo ship, 14 yacht,
+# 15 cruise ship, 16 warship, 17 sailboat.
+#
+# Pretrained COCO YOLO only has broad overlapping classes. Keep this mapping
+# sparse so unrelated COCO detections are ignored instead of mislabeled.
+DEFAULT_TIL_CATEGORY_MAP = {
+    2: 9,    # car -> car
+    4: 1,    # airplane -> commercial aircraft (best single broad aircraft bucket)
+    5: 11,   # bus -> bus
+    7: 8,    # truck -> truck
+    8: 13,   # boat -> cargo ship (best single broad ship bucket)
+}
 
 
 class CVManager:
@@ -141,9 +72,9 @@ class CVManager:
 
         Accepts either a JSON string/path shaped like {"0": 1, "1": 2} or a
         list where the index is the YOLO class id and the value is eval id.
-        Defaults to standard COCO IDs.
+        Defaults to the sparse custom TIL label mapping above.
         """
-        mapping = {idx: cat_id for idx, cat_id in enumerate(YOLO_TO_COCO_CATEGORY_ID)}
+        mapping = dict(DEFAULT_TIL_CATEGORY_MAP)
         raw = os.environ.get("CV_CATEGORY_MAP")
         if not raw:
             return mapping
