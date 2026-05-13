@@ -86,6 +86,9 @@ def main() -> None:
             str(args.output_dir),
             "--quantization",
             args.quantization,
+            # ct2 errors if output_dir exists at all (even if empty after our
+            # wipe loop above). --force lets it overwrite cleanly.
+            "--force",
             "--copy_files",
             "tokenizer.json",
             "preprocessor_config.json",
