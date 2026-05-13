@@ -2,9 +2,9 @@
 
 Last updated: 14 May 2026 SGT
 
-Per-task working log for AE (Autonomous Exploration / Bomberman). For
-input/output spec see [README.md](README.md). For submission history across
-all tasks see [../RESULTS.md](../RESULTS.md).
+Per-task working log for AE (Autonomous Exploration / Bomberman). For the authoritative input/output/scoring spec see
+[README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#ae).
+For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
@@ -30,6 +30,7 @@ AE is **40% of the qualifier** — biggest absolute lever in the whole repo.
 - **No model**, no learned weights. Rule-based planner only.
 - **Container base**: same NVIDIA pytorch image as the other services (per [Dockerfile](Dockerfile)), but the inference loop is CPU-bound pure Python — no GPU usage. Fast by design (per-step latency dominates because the evaluator calls `/ae` once per game tick).
 - **Source**: [src/ae_manager.py](src/ae_manager.py) (manager — what we edit) + [src/ae_server.py](src/ae_server.py) (server with the reset-robustness patch already applied — empty POST or `step == 0` triggers re-instantiation of `AEManager`; see top-level CLAUDE.md notes).
+- **Spec contract**: `/ae` on port 5005 returns one `{"action": int}` and `/reset` clears state. Official observation keys are `agent_viewcone`, `base_viewcone`, `direction`, `location`, `base_location`, `health`, `frozen_ticks`, `base_health`, `team_resources`, `team_bombs`, `step`, and `action_mask`.
 - **State on `self`**: belief map, frontier set, turn counter, etc. — must NOT use module-level globals because the server re-instantiates the manager on reset.
 
 ### Planner sketch (planner-v3b)
@@ -52,7 +53,7 @@ planner-v1  13/05 11:33        0.445   0.788   0/30    Stateful planner — new 
 planner-v2  13/05 23:03        0.501   0.771   0/30    Bomb timer 4→3, bounded escape, enemy soft threat, frontier unseen-yield → +0.056 over v1
 planner-v3  (not submitted)    —       —       9/9     Bigger v2 → multi-source BFS, predictive bombs (range 2), bomb chains, soft threat 1.0/3.0. Local regressed to 0.596, aborted.
 planner-v3b 13/05 23:42        0.499   0.853   0/30    v3 minus bomb-chains; predictive range=1 with ≥2 enemies; threat 2.0/5.0. Score flat, speed +0.082 from BFS/cache/uvloop.
-bc-v1       14/05 submitted    pending pending —       BC of planner-v3b: 149k-param CNN policy, val_acc 0.8742; 4-run container mean 0.672 (matches planner). Awaiting eval.
+bc-v1       14/05 01:22        0.364   0.856   0/30    BC of planner-v3b regressed badly; deployment path works but policy overfit random-opponent local rollouts.
 ```
 
 ## Local validation history
@@ -297,14 +298,7 @@ tuning. **Score is the hard problem** — needs a different approach.
 
 ## Next steps
 
-1. **Read the bc-v1 official result** when it comes back. Decision tree:
-   - **Score ≥ 0.55**: NN policies generalize better than heuristics —
-     local→official gap narrowed. PPO is now high-confidence.
-   - **Score 0.45–0.55**: gap is structural, same as heuristics. PPO is
-     still the right move but expectations capped at ~heuristic+ε
-     without varied-opponent training.
-   - **Score < 0.40**: deployment-specific bug we missed. Diff a single
-     observation's logits between `eval_policy.py` and the container.
+1. **PPO with mixed opponents**. `bc-v1` result is already known: `0.364 / 0.856`, worse than `planner-v3b`. Do not spend more time on pure behavior cloning from random-opponent planner rollouts.
 2. **`train_ppo.py`** (next session). Single-agent gym wrapper around
    `til_environment.bomberman_env`; BC weights as the warm start; mixed
    opponents (random + frozen planner-v3b + frozen self-copies) to fight

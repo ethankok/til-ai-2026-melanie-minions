@@ -2,9 +2,9 @@
 
 Last updated: 14 May 2026
 
-Per-task working log for CV (object detection). For input/output spec see
-[README.md](README.md). For submission history across all tasks see
-[../RESULTS.md](../RESULTS.md).
+Per-task working log for CV (object detection). For the authoritative input/output/scoring spec see
+[README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv).
+For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
@@ -52,7 +52,7 @@ Implemented the notes plan:
 - Added `PIL.ImageOps.exif_transpose(...).convert("RGB")` so grayscale/RGBA/EXIF
   oddities normalize before inference.
 - Added Ultralytics `yolov8n.pt` inference loaded once in `CVManager.__init__`.
-- Converts Ultralytics `xyxy` boxes to COCO-style `[x, y, w, h]`, clamps boxes
+- Converts Ultralytics `xyxy` boxes to official LTWH `[l, t, w, h]`, clamps boxes
   to image bounds, drops invalid zero-area boxes, and emits plain Python
   `float`/`int` values.
 - Added default YOLO-index to custom TIL category-id mapping. Set
@@ -112,28 +112,31 @@ Status: fixed by `yolo-til-map-v2` (`0 / 500` errors officially). The robust
 manager fallback and RGB/EXIF normalization did their job. Keep this serving
 path as the safe baseline while changing model weights.
 
-### 2. Drop in a pretrained detector
+### 2. Pretrained detector baseline
 
-Status: implemented with **Ultralytics YOLOv8n**. Pretrained COCO weights first;
-only fine-tune if categories don't match the eval's `category_id` set.
+Status: implemented with **Ultralytics YOLOv8n**. It is useful only as a
+serving/sanity baseline: official score `0.044` proves COCO labels are too
+mismatched for the 18-class target list.
 
 Wire-up:
 - Load model once in `CVManager.__init__`
 - In `cv(image_bytes)`:
   - `PIL.Image.open(io.BytesIO(image_bytes))`
   - Run detector
-  - **Convert xyxy → xywh** (COCO style: top-left + width/height, NOT corners). The output schema is `[x, y, w, h]` per `category_id`. Getting this wrong scores 0 with a working model.
+  - **Convert model boxes → LTWH** (official top-left + width/height, NOT corners and NOT center-XYWH). The output schema is `[l, t, w, h]` per `category_id`. Getting this wrong scores 0 with a working model.
   - Apply confidence threshold (start ~0.25, tune)
 - Added `ultralytics`, `pillow` to [requirements.txt](requirements.txt)
-- [Dockerfile](Dockerfile) already uses an NVIDIA PyTorch base and now caches
+- [Dockerfile](Dockerfile) already uses an NVIDIA PyTorch base and caches
   `yolov8n.pt` during build.
 
-### 3. Class mapping is the actual work
+### 3. Class mapping was the baseline blocker; fine-tuning is now the work
 
-Status: default mapping now targets the custom Workbench labels you printed.
-It is intentionally sparse because the pretrained model only has broad COCO
-classes. Use `CV_CATEGORY_MAP` to tune after the first `til test cv` output.
-**Wrong class mapping scores 0 even with perfect boxes.**
+Status: default mapping targets the official 18 labels. It is intentionally
+sparse because the pretrained COCO model only has broad `car/bus/truck/airplane/boat`
+classes. `CV_CATEGORY_MAP` can still override mappings, but the official
+mAP@.5:.05:.95 target requires a detector trained on the TIL category list.
+**Wrong class mapping scores 0 even with perfect boxes; correct mapping alone
+is still insufficient when the detector cannot see the target subclasses.**
 
 ### 4. Stretch (post-baseline)
 

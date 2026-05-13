@@ -2,18 +2,18 @@
 
 Last updated: 13 May 2026
 
-Per-task working log for Noise (adversarial image noising). For input/output
-spec see [README.md](README.md). For submission history across all tasks see
-[../RESULTS.md](../RESULTS.md).
+Per-task working log for Noise (adversarial image noising). For the authoritative input/output/scoring spec see
+[README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#noise).
+For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
 **`latest` — official 1.000 / 0.970 (12 May 03:54 SGT, 0 of 500 errors).**
 
-Already scoring `1.000`. Noise has **no observed qualifier weight** in the
-handbook — it's required-but-unweighted, so the perfect score doesn't move
-the leaderboard. Don't optimize further unless qualifier rules change or
-finals weight it.
+Already scoring `1.000`. The official Challenge spec says Noise is **not
+directly rewarded in Qualifiers**; it matters in Finals by making opponents'
+CV images harder while staying within SSIM/RMSE limits. Don't optimize further
+unless preparing for Finals or a rule update changes Qualifier weighting.
 
 ## What our model runs on
 
@@ -38,14 +38,14 @@ latest    12/05 03:54        1.000   0.970   0 / 500   Clean JPEG re-encode base
 
 ## Why we're not touching this
 
-Per [../SUMMARY.md "Scoring weight"](../SUMMARY.md):
+Per [../SUMMARY.md "Scoring weight"](../SUMMARY.md) and the official Challenge spec:
 
 ```text
 AE   40%
 ASR  20%
 CV   20%
 NLP  20%
-Noise: required/useful, but no direct qualifier points observed
+Noise: no direct Qualifier reward; Finals perturbations are constrained by SSIM/RMSE
 ```
 
 The 1.000 / 0.970 baseline already satisfies the "required" criterion. There

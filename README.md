@@ -46,7 +46,7 @@ There's a subdirectory for each challenge: [`asr/`](/asr), [`cv/`](/cv) and its 
   * `*_server.py`, which runs a local web server that talks to the rest of the competition infrastructure.
 * `Dockerfile`, which is used to build your Docker image for each model.
 * `requirements.txt`, which lists the dependencies you need to have bundled into your Docker image.
-* `README.md`, which contains specifications for the format of each challenge.
+* `README.md`, which contains a local copy of that challenge's input/output spec. The authoritative copy is the Wiki [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications); if the two differ, the Wiki wins.
 
 You should also see another subdirectory, [`test/`](/test). This contains tools to test and score your model locally, and are automatically run when you use the `til test TASK` command on your GCP Workbench instance.
 
@@ -102,7 +102,7 @@ For all the details of what the submission command does, check out the [Wiki](ht
 
 ## Links
 
-* The repo [Wiki](https://github.com/til-ai/til-26/wiki) contains tutorials, specifications, resources, and more.
+* The repo [Wiki](https://github.com/til-ai/til-26/wiki) contains tutorials, specifications, resources, and more. Start with the [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications) for authoritative task schemas, scoring, ports, and target labels.
 * Your [~~Vertex AI~~ Agent Platform Workbench Instance](https://console.cloud.google.com/agent-platform/workbench/instances?project=til-ai-2026) on Google Cloud Platform is where you'll do most of your development.
 * The [Strategist's Handbook](https://tribegroup.notion.site/BrainHack-2026-TIL-AI-Strategist-s-Handbook-33a5263ef45a80429a9dc47c569e40c3) houses the Leaderboard and info about the competition.
 * [TIL-AI Curriculum](https://drive.google.com/drive/folders/18zP4pHt5E6YqA3usey16ETEzKNeAn5X9) on Google Drive contains educational materials specially crafted for TIL-AI.

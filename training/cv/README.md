@@ -1,6 +1,6 @@
 # CV fine-tuning workflow
 
-Goal: replace the weak COCO `yolov8n.pt` baseline (`0.044 / 0.961`) with a detector trained on the 18 TIL CV classes.
+Goal: replace the weak COCO `yolov8n.pt` baseline (`0.044 / 0.961`) with a detector trained on the 18 TIL CV classes from the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv). CV scoring is mAP@.5:.05:.95 plus speed; outputs must be LTWH `[l, t, w, h]` boxes with `category_id` 0-17.
 
 Run on GCP Workbench, not the Mac, because the data lives under `/home/jupyter/novice/cv`.
 
@@ -14,7 +14,7 @@ python training/cv/prepare_yolo_dataset.py \
   --val-frac 0.10
 ```
 
-Verify it prints nonzero train/val image and box counts.
+Verify it prints nonzero train/val image and box counts. The converter preserves the official category order: `0 cargo aircraft`, `1 commercial aircraft`, `2 drone`, `3 fighter jet`, `4 fighter plane`, `5 helicopter`, `6 light aircraft`, `7 missile`, `8 truck`, `9 car`, `10 tank`, `11 bus`, `12 van`, `13 cargo ship`, `14 yacht`, `15 cruise ship`, `16 warship`, `17 sailboat`.
 
 ## 2. Train a first model
 
@@ -34,6 +34,8 @@ yolo detect train \
   name=til-yolov8s-v1 \
   patience=15
 ```
+
+Watch validation `metrics/mAP50-95(B)` first because it matches the official CV accuracy metric. `metrics/mAP50(B)` is useful for debugging but overestimates leaderboard quality.
 
 If batch 16 OOMs, retry with `batch=8`.
 

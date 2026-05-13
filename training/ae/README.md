@@ -2,9 +2,9 @@
 
 This directory holds scripts for training a learned AE policy. The current
 shipped agent ([../../ae/src/ae_manager.py](../../ae/src/ae_manager.py)) is a
-hand-coded BFS planner; the goal of this pipeline is a small neural-network
-policy that starts by imitating the planner (behavior cloning) and is then
-fine-tuned with reinforcement learning.
+hand-coded BFS planner; the learned-policy path starts by imitating the planner
+(behavior cloning) and then needs reinforcement learning against mixed opponents.
+The official AE spec is here: <https://github.com/til-ai/til-26/wiki/Challenge-specifications#ae>
 
 ## Status
 
@@ -15,8 +15,8 @@ fine-tuned with reinforcement learning.
 | Behavior-cloning collector| implemented |
 | Behavior-cloning trainer  | implemented |
 | Local policy evaluator    | implemented |
-| PPO fine-tune             | TODO (next session) |
-| Deployment into `ae/src/` | TODO (after BC works)|
+| PPO fine-tune             | scaffolded in `train_ppo.py`; run on Workbench |
+| Deployment into `ae/src/` | implemented; `bc-v1` official regressed |
 
 ## Files
 
@@ -25,6 +25,7 @@ fine-tuned with reinforcement learning.
 - `collect_bc.py` — rolls out the planner in `til_environment.bomberman_env`, logs every `(obs, action)` pair to a compressed `.npz`.
 - `train_bc.py` — supervised cross-entropy training of `PolicyNetwork` on the BC dataset. Masks illegal actions in both loss and argmax.
 - `eval_policy.py` — runs a checkpoint against the env for N games, reports the same `score = total_reward / games / 1000` as `test/test_ae.py`.
+- `train_ppo.py` — pure-PyTorch PPO fine-tune. Warm-starts from `bc.pt`, trains agent 0 against a mixed opponent pool, and saves a deployment-compatible actor checkpoint.
 
 `data/` and `checkpoints/` are gitignored. Move/copy weights into a tracked location only at deploy time.
 
@@ -62,20 +63,45 @@ python training/ae/eval_policy.py \
 
 If BC worked, score should land near the planner's local score (~0.65–0.70). If it's far below, the network is failing to imitate — usually means more data or larger net.
 
-## Step 4 — PPO fine-tune (TODO)
+## Step 4 — PPO fine-tune
 
-Once BC matches the planner locally, the next session adds `train_ppo.py`:
-- Wrap `bomberman_env` as a single-agent gym env (us controlling agent 0).
-- Initialize PPO with the BC weights.
-- Mix opponents: random + frozen planner + frozen self-copies.
-- Track local score every N steps, keep the best checkpoint.
+Run this on Workbench after `bc.pt` exists:
 
-## Step 5 — deploy (TODO)
+```bash
+python training/ae/train_ppo.py \
+    --bc-checkpoint training/ae/checkpoints/bc.pt \
+    --out training/ae/checkpoints/ppo.pt \
+    --updates 200 \
+    --games-per-update 8 \
+    --eval-games 12 \
+    --opponents mixed \
+    --eval-opponents mixed
+```
 
-Add inference path to [../../ae/src/ae_manager.py](../../ae/src/ae_manager.py)
-that loads the policy if present and falls back to the BFS planner if not.
-Copy weights into `ae/models/` and add `torch` to `ae/requirements.txt`.
-Test with `til build ae bc-v1 && til test ae bc-v1`.
+What this does:
+- wraps `bomberman_env` as a single-agent PPO loop controlling `env.possible_agents[0]`;
+- warm-starts the actor from BC if `bc.pt` exists;
+- trains against a mixed opponent pool: random + frozen planner + frozen self-copies;
+- keeps invalid actions masked in both sampling and PPO loss;
+- saves a deployment-compatible actor checkpoint at `training/ae/checkpoints/ppo.pt`.
+
+Do not trust random-opponent local score alone. `bc-v1` looked fine locally and still regressed officially. Only treat PPO as ready if it beats `planner-v3b` under mixed-opponent eval and keeps `0` invalid actions.
+
+## Step 5 — deploy
+
+The inference path already exists in [../../ae/src/ae_server.py](../../ae/src/ae_server.py): it loads `PolicyAEManager` if a checkpoint is present and falls back to the BFS planner if not.
+
+Deploy PPO by copying/renaming the best actor checkpoint:
+
+```bash
+mkdir -p ae/models
+cp training/ae/checkpoints/ppo.pt ae/models/bc.pt
+til build ae ppo-v1
+til test ae ppo-v1
+til submit ae ppo-v1
+```
+
+Keep `ae/models/bc.pt` as the expected filename unless you also set `AE_POLICY_CHECKPOINT`, because `policy_manager.py` searches for that path by default.
 
 ## Notes / gotchas
 

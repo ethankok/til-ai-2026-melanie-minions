@@ -92,21 +92,25 @@ What a "baseline" means:
 
 ## Scoring
 
-Qualifier weights from the handbook:
+Authoritative source: [official challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications). If local READMEs conflict with that page, the Wiki wins.
+
+Overall qualifier weights:
 
 ```text
 AE     40%
 ASR    20%
 CV     20%
 NLP    20%
-Noise  required/useful, no direct qualifier weight observed
+Noise  not directly rewarded in Qualifiers; relevant for Finals CV disruption
 ```
 
-Each scored task is roughly:
+Each scored challenge is:
 
 ```text
 75% accuracy/reward
 25% speed
+speed = 1 - min(t_elapsed, t_max) / t_max
+Qualifier t_max = 30 minutes for the full test set
 ```
 
 Task ports/routes:
@@ -130,17 +134,17 @@ Important terms:
 
 ---
 
-## Where each task stands (13 May 2026)
+## Where each task stands (14 May 2026)
 
 For task-specific history, decisions, gotchas, and next-step plans, open the task's NOTES.md.
 
-| Task | Latest tag | Acc | Speed | Status | Working log |
+| Task | Latest shipped tag | Acc/reward | Speed | Status | Working log |
 |---|---|---:|---:|---|---|
-| ASR | `ft-lora32-v1` | 0.957 | 0.849 | Crossed 0.95 target. Parked. | [asr/NOTES.md](asr/NOTES.md) |
-| AE | `planner-v1` | 0.445 | 0.788 | Big local→official gap (0.697 → 0.445). planner-v2 in progress. | [ae/NOTES.md](ae/NOTES.md) |
-| NLP | `latest` | 0.301 | 0.971 | Lexical baseline. BM25 upgrade is biggest free win. | [nlp/NOTES.md](nlp/NOTES.md) |
-| CV | `latest` | 0.000 | 0.981 | Empty-detection baseline + 4/500 errors. Fix errors → drop in YOLOv8. | [cv/NOTES.md](cv/NOTES.md) |
-| Noise | `latest` | 1.000 | 0.970 | Done. Don't touch. | [noise/NOTES.md](noise/NOTES.md) |
+| ASR | `ft-lora32-v1` | 0.957 | 0.849 | Crossed 0.95 target. Parked; int8 speed re-export regressed accuracy. | [asr/NOTES.md](asr/NOTES.md) |
+| AE | `planner-v3b` | 0.499 | 0.853 | Best shipped. `bc-v1` regressed to 0.364, so next learned attempt needs mixed opponents/PPO. | [ae/NOTES.md](ae/NOTES.md) |
+| NLP | `latest` | 0.301 | 0.971 | Schema-valid lexical baseline. BM25/chunking upgrade is still the biggest free win. | [nlp/NOTES.md](nlp/NOTES.md) |
+| CV | `yolo-til-map-v2` | 0.044 | 0.961 | Clean serving with 0/500 errors, but weak detector; YOLO fine-tuning in progress. | [cv/NOTES.md](cv/NOTES.md) |
+| Noise | `latest` | 1.000 | 0.970 | Qualifier-safe. Official spec says no direct Qualifier reward. | [noise/NOTES.md](noise/NOTES.md) |
 
 ---
 
@@ -154,10 +158,10 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 
 **Week 1 — first real models (in progress)**
 
-4. **AE** (40%) — `planner-v1` shipped at 0.445. Investigate local→official gap, ship planner-v2.
-5. **NLP** (20%) — swap lexical Counter for BM25 + better chunking. Single afternoon, meaningful gain.
-6. **CV** (20%) — fix 4/500 errors first, then drop in pretrained YOLOv8/v11 with COCO weights, map class IDs.
-7. **ASR** (20%) — `ft-lora32-v1` shipped at 0.957. Parked (see asr/NOTES.md).
+4. **AE** (40%) — `planner-v3b` remains shipped at 0.499/0.853; BC deployment works but `bc-v1` overfit hidden eval, so PPO must train against mixed opponents.
+5. **NLP** (20%) — fix around the official `{"documents": [...], "answer": "..."}` scoring contract: BM25 + better chunking first, then answer extraction.
+6. **CV** (20%) — `yolo-til-map-v2` fixed serving errors; train YOLO on the official 18-class LTWH/mAP task instead of guessing COCO mappings.
+7. **ASR** (20%) — `ft-lora32-v1` shipped at 0.957. Parked; int8 re-export already proved low-ROI.
 
 **Week 2 — push scores**
 
@@ -175,11 +179,11 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 
 Why this order:
 
-- AE is 40% — every hour spent there is worth ~2× the same hour on a 20% task.
-- NLP's lexical baseline jumps significantly with retrieval upgrades alone.
-- CV is mostly "swap in a pretrained model" once the schema bugs are fixed.
+- AE is 40% — every hour spent there is worth ~2× the same hour on a 20% task, but naive BC already failed, so PPO must solve distribution mismatch instead of just imitate the planner.
+- NLP's lexical baseline should jump with retrieval upgrades alone, and the official schema gives partial credit (`0.4`) for successful retrieval even when answer equivalence fails.
+- CV's COCO-mapped YOLO baseline is clean but low; the official target list is 18 custom classes and scoring is mAP@.5:.05:.95, so fine-tuning is the real lever.
 - ASR has crossed its target; marginal hour is low-ROI now.
-- Noise has no direct qualifier weight; do it last (or never).
+- Noise has no direct qualifier reward per the official spec; do it last unless preparing for Finals.
 
 What "done for now" means for a task:
 

@@ -2,7 +2,8 @@
 
 Last updated: 13 May 2026
 
-Per-task working log for ASR. For input/output spec see [README.md](README.md).
+Per-task working log for ASR. For the authoritative input/output/scoring spec see
+[README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
 For training-pipeline mechanics see [../training/asr/README.md](../training/asr/README.md).
 For data-driven error analysis see [../training/asr/ERROR_ANALYSIS.md](../training/asr/ERROR_ANALYSIS.md).
 For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
@@ -207,13 +208,13 @@ so recovery was fast.
 ASR is **parked at 0.957 / 0.849**. Marginal hour invested here now is
 lower-ROI than the same hour on:
 
-- **AE** (40% qualifier weight, currently 0.445 official, local was 0.697 — known gap to investigate)
-- **NLP** (currently 0.301, lexical baseline that BM25 + better chunking could move significantly)
-- **CV** (currently 0.000 with 4/500 errors, schema fix unlocks a non-zero score immediately)
+- **AE** (40% qualifier weight, best shipped `planner-v3b` at 0.499/0.853; learned policy needs mixed-opponent PPO after `bc-v1` regressed)
+- **NLP** (currently 0.301; official scorer gives partial credit for retrieval, so BM25/chunking has direct upside)
+- **CV** (currently 0.044/0.961 with 0/500 errors; official 18-class mAP task now needs custom detector fine-tuning)
 
-The only ASR experiment worth a one-hour cycle now is `beam_size=2` since it
-can't regress our leaderboard entry. Everything else, defer to post-qualifier
-finals prep.
+The only ASR experiment worth a short cycle now is `beam_size=2` or a tiny
+prompt tweak since it can't regress our leaderboard entry. Speed quantization
+is no longer a priority: `ft-lora32-int8f16` regressed to `0.923 / 0.856`.
 
 ## Reproducibility / pointers
 

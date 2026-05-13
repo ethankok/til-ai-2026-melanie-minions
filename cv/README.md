@@ -1,12 +1,60 @@
 # CV
 
-Your CV challenge is to detect and classify objects in an image.
+Your CV challenge is to detect and classify every target object in a JPEG image.
 
-This Readme provides a brief overview of the interface format; see the Wiki for the full [challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications).
+This README mirrors the official Wiki challenge specification. If this file ever conflicts with the Wiki, the Wiki wins: <https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv>
+
+## Target list
+
+`category_id` must be the index in this exact list:
+
+| Category index | Object type |
+|---:|---|
+| 0 | cargo aircraft |
+| 1 | commercial aircraft |
+| 2 | drone |
+| 3 | fighter jet |
+| 4 | fighter plane |
+| 5 | helicopter |
+| 6 | light aircraft |
+| 7 | missile |
+| 8 | truck |
+| 9 | car |
+| 10 | tank |
+| 11 | bus |
+| 12 | van |
+| 13 | cargo ship |
+| 14 | yacht |
+| 15 | cruise ship |
+| 16 | warship |
+| 17 | sailboat |
+
+## Track variations
+
+Advanced images contain more noise and smaller targets than Novice images.
+
+## Scoring
+
+Each challenge score blends accuracy and speed: 75% accuracy/reward + 25% speed. Qualifier speed uses `t_max = 30 minutes` for the whole test set.
+
+CV accuracy is mean average precision across IoU thresholds `0.50, 0.55, ..., 0.95` (`mAP@.5:.05:.95`).
+
+## Bounding box format
+
+Output boxes are LTWH:
+
+- `l`: left/top-left x coordinate in pixels
+- `t`: top/top-left y coordinate in pixels
+- `w`: width in pixels
+- `h`: height in pixels
+
+Coordinates are zero-indexed. `[0, 0, w, h]` starts at the image's top-left corner.
+
+YOLO-style outputs must be converted. For example, Ultralytics `xywh` uses center-x/center-y/width/height, so convert to LTWH before returning.
 
 ## Input
 
-The input is sent via a POST request to the `/cv` route on port 5002. It is a JSON document structured as such:
+The input is sent via a POST request to the `/cv` route on port `5002`.
 
 ```JSON
 {
@@ -14,35 +62,34 @@ The input is sent via a POST request to the `/cv` route on port 5002. It is a JS
     {
       "key": 0,
       "b64": "BASE64_ENCODED_IMAGE"
-    },
-    ...
+    }
   ]
 }
 ```
 
-The `b64` key of each object in the `instances` list contains the base64-encoded bytes of the input image in JPEG format. The length of the `instances` list is variable.
+`b64` contains base64-encoded JPEG bytes. The length of `instances` is variable.
 
 ## Output
 
-Your route handler function must return a `dict` with this structure:
+Your route handler must return:
 
 ```Python
 {
     "predictions": [
         [
             {
-                "bbox": [x, y, w, h],
+                "bbox": [l, t, w, h],
                 "category_id": category_id
-            },
-            ...
-        ],
-        ...
+            }
+        ]
     ]
 }
 ```
 
-where `x`, `y`, `w`, `h`, and `category_id` are defined as above.
+If no objects are detected in a scene, return an empty list for that scene:
 
-If your model detects no objects in a scene, your handler should output an empty list for that scene.
+```Python
+{"predictions": [[]]}
+```
 
-The $k$-th element of `predictions` must be the prediction corresponding to the $k$-th element of `instances` for all $1 \le k \le n$, where n is the number of input instances. The length of `predictions` must equal that of `instances`.
+The `k`-th prediction list must correspond to the `k`-th input instance. The length of `predictions` must equal the length of `instances`.

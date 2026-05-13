@@ -1,11 +1,53 @@
 # NLP
 
-Your NLP challenge is to answer questions using RAG.
+Your NLP challenge is retrieval-augmented question answering over a test corpus loaded at runtime.
 
-This Readme provides a brief overview of the interface format; see the Wiki for the full [challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications).
+This README mirrors the official Wiki challenge specification. If this file ever conflicts with the Wiki, the Wiki wins: <https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp>
 
+## Fictional world context
 
-To load the test corpus, the first request sent to your endpoint will be of the following structure:
+The documents are set in the fictional cyberpunk world of Clairos. This matters because questions and answers can contain in-world proper nouns, slang, organizations, and locations that normal QA models may not know.
+
+## Training data
+
+In the track data directory's `nlp/` folder:
+
+- `documents/` contains the plain-text training corpus.
+- `nlp.jsonl` contains question-answer pairs and metadata.
+- `models/nlp_eval.zip` contains the answer-equivalence evaluator weights.
+
+## Track variations
+
+Questions are categorized into levels:
+
+| Level | Name | What it tests |
+|---|---|---|
+| L1 | Direct extraction | Single fact stated directly in one document |
+| L2 | Inference / combination | Combine 2-3 facts, simple arithmetic, or identify what the doc does not state |
+| L3 | Cross-document | Requires facts from two or more documents; Advanced only |
+| L4 | Unanswerable | No corpus reference; expected empty answer and empty documents; Advanced only |
+| L5 | False premise | Premise contradicts a referenced document; expected empty answer and non-empty documents; Advanced only |
+
+## Scoring
+
+Each challenge score blends accuracy and speed: 75% accuracy/reward + 25% speed. Qualifier speed uses `t_max = 30 minutes` for the whole test set.
+
+NLP scoring has two parts:
+
+1. Retrieval: the top 3 returned document IDs are checked for overlap with the target document(s). If retrieval fails, the case scores `0`.
+2. Answer equivalence: answerable questions are checked by a ModernBERT-base answer-equivalence model on `(question, reference, candidate)` triples. Candidate answers are cleaned of non-printable characters and truncated to 64 tokens. Equivalence probability must exceed `0.9`.
+
+If retrieval succeeds but the answer is not equivalent, the case gets `0.4` for successful retrieval.
+
+Advanced unanswerable handling:
+
+- L4: return `answer: ""` and `documents: []`.
+- L5: return `answer: ""` and a non-empty `documents` list.
+- Empty/non-empty answer or document lists in the wrong situation score as wrong.
+
+## Corpus setup request
+
+The first request loads the test corpus:
 
 ```JSON
 {
@@ -13,55 +55,52 @@ To load the test corpus, the first request sent to your endpoint will be of the 
     {
       "documents": [
         "Text of document one.",
-        "Text of document two.",
-        ...
+        "Text of document two."
       ]
     }
   ]
 }
 ```
 
-This is expected to be parsed by your NLP RAG QA system to be used as context for RAG. You can thus do your embedding/chunking/etc on this data. Once your model has completed processing it, return the following:
+After embedding/chunking/indexing/etc, return:
 
 ```JSON
 {
-  "predictions": ["loaded"]
+  "predictions": [{"status": "loaded"}]
 }
 ```
 
-This will be taken as the signal that your system is ready to move on to receiving input.
+That response signals the evaluator that the system is ready for questions.
 
-### Input
+## Question input
 
-The input is sent via a POST request to the `/nlp` route on port 5004. It is a JSON document structured as such:
+Questions are sent via POST to `/nlp` on port `5004`.
 
 ```JSON
 {
   "instances": [
     {
       "question": "QUESTION_TEXT"
-    },
-    ...
+    }
   ]
 }
 ```
 
-The `question` key of each object in the `instances` list contains the text of the question to be answered by your NLP RAG QA system. The length of the `instances` list is variable.
+The length of `instances` is variable.
 
-### Output
+## Output
 
-Your route handler function must return a `dict` with this structure:
+Your route handler must return:
 
 ```Python
 {
     "predictions": [
-        "Answer one.",
-        "Answer two.",
-        ...
+        {"documents": ["DOC-0001"], "answer": "Answer one."},
+        {"documents": ["DOC-0002"], "answer": "Answer two."}
     ]
 }
 ```
 
-where each string in `predictions` is the predicted NLP answer for the corresponding question.
+Each item in `predictions` contains the relevant document IDs and predicted answer for the corresponding question.
 
-The $k$-th element of `predictions` must be the prediction corresponding to the $k$-th element of `instances` for all $1 \le k \le n$, where n is the number of input instances. The length of `predictions` must equal that of `instances`.
+The `k`-th prediction must correspond to the `k`-th input instance. The length of `predictions` must equal the length of `instances`.

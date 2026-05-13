@@ -1,12 +1,25 @@
-# TODO: Adversarial Noising
+# Noise
 
-An additional component to the CV challenge is for you to adversarially noise images for your competitors to use as inputs to their CV models.
+Noise is the adversarial image-noising component attached to the CV challenge. During Finals, a team may get the chance to add acceptable perturbations to an opposing team's CV input image before their CV model processes it.
 
-This Readme provides a brief overview of the interface format; see the Wiki for the full [challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications).
+This README mirrors the official Wiki challenge specification. If this file ever conflicts with the Wiki, the Wiki wins: <https://github.com/til-ai/til-26/wiki/Challenge-specifications#noise>
+
+## Track variations
+
+None.
+
+## Scoring
+
+There is an evaluator that checks whether added noise stays within acceptable limits using:
+
+- SSIM
+- RMSE L2 norm
+
+Per the official specification, Noise is not directly rewarded in Qualifiers. It can matter indirectly in Finals by making opponents' CV inputs harder while staying within the allowed perturbation limits.
 
 ## Input
 
-The input is sent via a POST request to the `/noise` route on port 5003. It is a JSON document structured as such:
+The input is sent via a POST request to the `/noise` route on port `5003`.
 
 ```JSON
 {
@@ -14,28 +27,25 @@ The input is sent via a POST request to the `/noise` route on port 5003. It is a
     {
       "key": 0,
       "b64": "BASE64_ENCODED_IMAGE"
-    },
-    ...
+    }
   ]
 }
 ```
 
-The `b64` key of each object in the `instances` list contains the base64-encoded bytes of the input image in JPEG format. The length of the `instances` list is variable.
+`b64` contains base64-encoded JPEG bytes. The length of `instances` is variable.
 
 ## Output
 
-Your route handler function must return a `dict` with this structure:
+Your route handler must return:
 
 ```JSON
 {
     "predictions": [
-        "BASE_64_ENCODED_IMAGE",
-        ...
+        "BASE64_ENCODED_IMAGE"
     ]
 }
 ```
 
-where each string in `predictions` is your adversarially noised version of the corresponding input image.
+Each string in `predictions` is the adversarially noised version of the corresponding input image.
 
-
-The $k$-th element of `predictions` must be the prediction corresponding to the $k$-th element of `instances` for all $1 \le k \le n$, where n is the number of input instances. The length of `predictions` must equal that of `instances`.
+The `k`-th prediction must correspond to the `k`-th input instance. The length of `predictions` must equal the length of `instances`.
