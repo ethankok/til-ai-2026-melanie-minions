@@ -7,8 +7,24 @@
 from ae_manager import AEManager
 from fastapi import FastAPI, Request
 
+
+def _make_manager():
+    """Prefer the learned policy if a checkpoint is present; fall back to the
+    heuristic planner. Failures during policy load are logged and degrade
+    gracefully so a missing/broken checkpoint can't take the service down."""
+
+    try:
+        from policy_manager import PolicyAEManager  # noqa: WPS433 (local import)
+        return PolicyAEManager()
+    except FileNotFoundError as exc:
+        print(f"AE: no policy checkpoint — using heuristic planner ({exc})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"AE: policy load failed — falling back to heuristic planner ({exc!r})")
+    return AEManager()
+
+
 app = FastAPI()
-manager = AEManager()
+manager = _make_manager()
 
 
 @app.post("/ae")
@@ -47,7 +63,7 @@ async def reset(_: Request) -> None:
     # `AEManager` instance; but if you must, you should also reset it here.
 
     global manager  # pylint: disable=global-statement
-    manager = AEManager()
+    manager = _make_manager()
 
     return
 
