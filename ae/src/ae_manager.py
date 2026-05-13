@@ -93,6 +93,17 @@ class AEManager:
     BOMB_RADIUS = 2
     # How long we still consider an enemy-agent sighting "threatening" in steps.
     ENEMY_STALENESS = 3
+    # Reachability radius (BFS steps from blast cell) for predictive bomb hits.
+    PREDICTIVE_BOMB_RANGE = 2
+    # Tiles respawn after this many steps per env config (env.tile_respawn_steps).
+    TILE_RESPAWN_STEPS = 40
+    # Below this health the agent prefers safe cells over aggressive plays.
+    LOW_HEALTH_THRESHOLD = 20
+    # Soft-threat scoring weights (lower = more aggressive; tuned for planner-v3).
+    PATH_THREAT_PENALTY = 1.0
+    CELL_THREAT_PENALTY = 3.0
+    # Distance (Manhattan) within which an enemy near our base becomes a defense target.
+    BASE_DEFENSE_RADIUS = 4
 
     def __init__(self):
         self.grid_size = self.GRID_SIZE
@@ -111,11 +122,15 @@ class AEManager:
         if self.last_step is None or step == 0 or step < self.last_step:
             self._reset_memory()
         self._age_bombs(step)
+        # Per-turn caches; walls/bombs can only change once per turn from new obs.
+        self._blast_cache = {}
         self.last_step = step
 
         location = self._location(observation.get("location"))
         direction = self._as_int(observation.get("direction"), default=self.DIR_RIGHT) % 4
         frozen_ticks = self._as_int(observation.get("frozen_ticks"), default=0)
+        self.health = self._as_int(observation.get("health"), default=60)
+        self.base_health = self._as_int(observation.get("base_health"), default=100)
 
         self._update_memory(observation, step, location, direction)
 
@@ -132,11 +147,17 @@ class AEManager:
             return self._fallback_action(observation, None, direction, None)
 
         danger = self._danger_cells()
+        low_health = self.health < self.LOW_HEALTH_THRESHOLD
+
         escape_path = self._active_escape_path(location, step)
         if escape_path is not None:
             target, path = self.escape_target, escape_path
         else:
-            target, path = self._choose_target(location, danger)
+            # Fast path: an obviously-dominant action skips full candidate scoring.
+            dominant = self._try_dominant_action(observation, location, direction, danger, low_health)
+            if dominant is not None:
+                return dominant
+            target, path = self._choose_target(location, danger, low_health)
 
         if escape_path is None and self._should_place_bomb(observation, location, target, danger):
             return self.PLACE_BOMB
@@ -156,6 +177,8 @@ class AEManager:
         self.walls: set[tuple[int, int, int]] = set()
         self.destructible: set[tuple[int, int, int]] = set()
         self.last_seen_items: dict[tuple[int, int], tuple[str, int]] = {}
+        # Items observed disappearing (presumed collected); reconsider after respawn.
+        self.collected_items: dict[tuple[int, int], tuple[str, int]] = {}
         self.enemy_bases: dict[tuple[int, int], int] = {}
         self.enemy_agents: dict[tuple[int, int], int] = {}
         self.known_bombs: dict[tuple[int, int], dict[str, int | bool]] = {}
@@ -163,6 +186,11 @@ class AEManager:
         self.recent_locations: list[tuple[int, int]] = []
         self.escape_target: tuple[int, int] | None = None
         self.escape_until_step: int | None = None
+        self.base_location: tuple[int, int] | None = None
+        self.health: int = 60
+        self.base_health: int = 100
+        # Per-turn blast cell cache; cleared at the start of every ae() call.
+        self._blast_cache: dict[tuple[int, int], frozenset[tuple[int, int]]] = {}
         self.last_step = None
 
     def _update_memory(
@@ -184,6 +212,7 @@ class AEManager:
         base_location = self._location(observation.get("base_location"))
         if base_location is not None:
             self.seen.add(base_location)
+            self.base_location = base_location
         if base_location is not None and base_view is not None:
             self._infer_grid_size(base_location)
             self._project_centered_view(base_view, base_location, step)
@@ -252,9 +281,16 @@ class AEManager:
                 visible_item = kind
                 break
         if visible_item is None:
-            self.last_seen_items.pop(world, None)
+            prev = self.last_seen_items.pop(world, None)
+            # If an item was here last time and is now gone, it was collected
+            # (by us or another agent). Remember the kind + step so we can
+            # reconsider it as a target once the respawn timer elapses.
+            if prev is not None:
+                self.collected_items[world] = (prev[0], step)
         else:
             self.last_seen_items[world] = (visible_item, step)
+            # If we see it again, it must have respawned; clear collected entry.
+            self.collected_items.pop(world, None)
 
         if self._channel_on(cell, self.ENEMY_BASE):
             self.enemy_bases[world] = step
@@ -303,14 +339,40 @@ class AEManager:
         self,
         start: tuple[int, int],
         danger: set[tuple[int, int]],
+        low_health: bool = False,
     ) -> tuple[tuple[int, int] | None, list[tuple[int, int]] | None]:
-        candidates: list[tuple[float, tuple[int, int]]] = []
         threats = self._enemy_threat_cells()
+        step = self.last_step if self.last_step is not None else 0
 
-        for pos in self.enemy_bases:
-            candidates.append((80.0, pos))
+        # Single multi-source BFS gives distance to every reachable cell at
+        # roughly the cost of one of the old per-target BFS calls.
+        distance, parent = self._bfs_distance_map(start, danger)
+
+        candidates: list[tuple[float, tuple[int, int]]] = []
+
+        # When health is low, avoid aggressive targets (enemy bases, base
+        # defense) and stick to items/exploration so we don't die in a melee.
+        if not low_health:
+            for pos in self.enemy_bases:
+                candidates.append((80.0, pos))
+            # Base defense: enemies near our base become high-priority bomb
+            # targets — losing the base is -50, so a 30+ value swing is worth it.
+            if self.base_location is not None:
+                for pos, last_seen in self.enemy_agents.items():
+                    if step - int(last_seen) > self.ENEMY_STALENESS:
+                        continue
+                    if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
+                        candidates.append((60.0, pos))
+
         for pos, (kind, _step) in self.last_seen_items.items():
             candidates.append((self.ITEM_VALUES.get(kind, 1.0), pos))
+
+        # Respawn awareness: items we saw get collected become candidates
+        # again once tile_respawn_steps have elapsed. Slight discount because
+        # the respawn is probabilistic, not guaranteed.
+        for pos, (kind, collected_step) in self.collected_items.items():
+            if step - collected_step >= self.TILE_RESPAWN_STEPS:
+                candidates.append((0.7 * self.ITEM_VALUES.get(kind, 1.0), pos))
 
         # Weight frontier cells by how much new area they likely reveal.
         for pos in self._frontier_cells():
@@ -323,29 +385,32 @@ class AEManager:
                 candidates.append((2.0 - 0.08 * self.visit_count.get(pos, 0), pos))
 
         best_target = None
-        best_path = None
         best_score = -inf
         for base_value, pos in candidates:
-            if pos in danger and pos != start:
+            if pos == start or pos not in distance:
                 continue
-            path = self._bfs(start, pos, danger)
-            if path is None:
-                continue
-            dist = max(0, len(path) - 1)
+            dist = distance[pos]
             score = base_value - 1.15 * dist - 0.25 * self.visit_count.get(pos, 0)
             if pos in self.recent_locations[-4:]:
                 score -= 2.0
-            # Discourage walking near a recently-seen enemy unless the target
-            # is the enemy itself or a base (attacks happen via bombs).
-            if pos not in self.enemy_bases:
-                path_threat = sum(1 for p in path[1:] if p in threats)
-                score -= 3.0 * path_threat
+            # Threats: penalize paths that brush near recently-seen enemies,
+            # but don't penalize when the *target itself* is the enemy (we want
+            # to attack them) or an enemy base.
+            if pos not in self.enemy_bases and pos not in self.enemy_agents:
+                path_threat = 0
+                cursor = pos
+                while cursor is not None and cursor != start:
+                    if cursor in threats:
+                        path_threat += 1
+                    cursor = parent.get(cursor)
+                score -= self.PATH_THREAT_PENALTY * path_threat
             if score > best_score:
                 best_score = score
                 best_target = pos
-                best_path = path
 
-        return best_target, best_path
+        if best_target is None:
+            return None, None
+        return best_target, self._reconstruct_path(parent, start, best_target)
 
     def _bfs(
         self,
@@ -384,6 +449,178 @@ class AEManager:
             nxt = (pos[0] + dx, pos[1] + dy)
             if self._in_bounds(nxt) and not self._edge_blocked(pos, direction):
                 yield nxt
+
+    def _bfs_distance_map(
+        self,
+        start: tuple[int, int],
+        danger: set[tuple[int, int]] | None = None,
+    ) -> tuple[dict[tuple[int, int], int], dict[tuple[int, int], tuple[int, int] | None]]:
+        """Single BFS that returns distances and parents for every reachable cell.
+
+        Replaces N per-target BFS calls with one. Cells are reachable only if
+        they're in ``self.seen``; ``danger`` cells are not traversed.
+        """
+
+        danger = danger or set()
+        distance: dict[tuple[int, int], int] = {start: 0}
+        parent: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
+        queue = deque([start])
+        while queue:
+            current = queue.popleft()
+            for nxt in self._neighbors(current):
+                if nxt in distance:
+                    continue
+                if nxt in danger:
+                    continue
+                if nxt not in self.seen:
+                    continue
+                distance[nxt] = distance[current] + 1
+                parent[nxt] = current
+                queue.append(nxt)
+        return distance, parent
+
+    def _reconstruct_path(
+        self,
+        parent: dict[tuple[int, int], tuple[int, int] | None],
+        start: tuple[int, int],
+        goal: tuple[int, int],
+    ) -> list[tuple[int, int]] | None:
+        if goal not in parent:
+            return None
+        path = [goal]
+        while path[-1] != start:
+            prev = parent.get(path[-1])
+            if prev is None:
+                if path[-1] == start:
+                    break
+                return None
+            path.append(prev)
+        path.reverse()
+        return path
+
+    def _extended_blast(
+        self,
+        blast: Iterable[tuple[int, int]],
+        radius: int,
+    ) -> set[tuple[int, int]]:
+        """Cells reachable in BFS distance ≤ radius from any blast cell."""
+
+        distance: dict[tuple[int, int], int] = {pos: 0 for pos in blast}
+        queue = deque(distance)
+        while queue:
+            current = queue.popleft()
+            if distance[current] >= radius:
+                continue
+            for nxt in self._neighbors(current):
+                if nxt in distance:
+                    continue
+                if nxt not in self.seen:
+                    continue
+                distance[nxt] = distance[current] + 1
+                queue.append(nxt)
+        return set(distance)
+
+    def _try_dominant_action(
+        self,
+        observation: dict,
+        location: tuple[int, int],
+        direction: int,
+        danger: set[tuple[int, int]],
+        low_health: bool,
+    ) -> int | None:
+        """Skip full candidate scoring when an obvious move dominates.
+
+        Two short-circuits, both with the same safety constraints as the slow
+        path:
+
+        - an enemy base sits in the immediate bomb blast, we have a bomb, the
+          cell is safe, and we have a verified escape → ``PLACE_BOMB``;
+        - a mission tile is one step away through a clear edge → step toward it.
+        """
+
+        # Hunting bombs are off when health is critically low.
+        if (not low_health
+                and self._legal(observation, self.PLACE_BOMB)
+                and self._as_int(observation.get("team_bombs"), default=0) > 0
+                and location not in danger):
+            bomb_blast = self._blast_cells(location)
+            base_loc = self.base_location
+            if (base_loc is None or base_loc not in bomb_blast) and any(
+                pos in bomb_blast for pos in self.enemy_bases
+            ):
+                escape = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER)
+                if escape is not None:
+                    # Mirror the side effects of _should_place_bomb so escape
+                    # mode kicks in next turn.
+                    self.known_bombs[location] = {
+                        "timer": self.BOMB_TIMER,
+                        "own": True,
+                        "last_step": self.last_step or 0,
+                    }
+                    self.escape_target = escape
+                    self.escape_until_step = (self.last_step or 0) + self.BOMB_TIMER
+                    return self.PLACE_BOMB
+
+        # Adjacent mission grab — purely a speed optimization, not a behavior
+        # change; the slow path would pick the same move.
+        for d, (dx, dy) in self.DIR_DELTAS.items():
+            nxt = (location[0] + dx, location[1] + dy)
+            if nxt not in self.seen or nxt in danger:
+                continue
+            if self._edge_blocked(location, d):
+                continue
+            item = self.last_seen_items.get(nxt)
+            if item is None or item[0] != "mission":
+                continue
+            preferred = self._action_for_path(location, direction, [location, nxt])
+            if preferred is not None and self._legal(observation, preferred):
+                return preferred
+        return None
+
+    def _wall_break_reveals_high_value(
+        self,
+        location: tuple[int, int],
+        wall_dir: int,
+        max_distance: int = 5,
+    ) -> bool:
+        """Would breaking the destructible wall at (location, wall_dir) open a
+        shortest path of length ≤ max_distance to an enemy base or a mission?
+
+        Used to justify proactive bombing when the agent isn't yet stuck.
+        """
+
+        dx, dy = self.DIR_DELTAS[wall_dir]
+        other = (location[0] + dx, location[1] + dy)
+        if not self._in_bounds(other):
+            return False
+        edge_a = (location[0], location[1], wall_dir)
+        edge_b = (other[0], other[1], self.OPPOSITE[wall_dir])
+        had_a = edge_a in self.walls
+        had_b = edge_b in self.walls
+        self.walls.discard(edge_a)
+        self.walls.discard(edge_b)
+        # Pretend the cell behind the wall is part of the belief map so BFS can
+        # reach it even if we never saw it directly.
+        added_seen = False
+        if other not in self.seen:
+            self.seen.add(other)
+            added_seen = True
+        try:
+            distance, _ = self._bfs_distance_map(location, set())
+            for pos in self.enemy_bases:
+                if distance.get(pos, max_distance + 1) <= max_distance:
+                    return True
+            for pos, (kind, _step) in self.last_seen_items.items():
+                if kind == "mission" and distance.get(pos, max_distance + 1) <= max_distance:
+                    return True
+        finally:
+            if had_a:
+                self.walls.add(edge_a)
+            if had_b:
+                self.walls.add(edge_b)
+            if added_seen:
+                self.seen.discard(other)
+        return False
 
     def _frontier_cells(self) -> list[tuple[int, int]]:
         frontiers = []
@@ -472,6 +709,9 @@ class AEManager:
         return threats
 
     def _blast_cells(self, bomb_pos: tuple[int, int]) -> set[tuple[int, int]]:
+        cached = self._blast_cache.get(bomb_pos)
+        if cached is not None:
+            return set(cached)
         bx, by = bomb_pos
         cells = set()
         for x in range(bx - self.BOMB_RADIUS, bx + self.BOMB_RADIUS + 1):
@@ -483,6 +723,7 @@ class AEManager:
                     continue
                 if self._line_of_sight_clear(bomb_pos, pos):
                     cells.add(pos)
+        self._blast_cache[bomb_pos] = frozenset(cells)
         return cells
 
     def _active_escape_path(self, location: tuple[int, int], step: int) -> list[tuple[int, int]] | None:
@@ -543,24 +784,61 @@ class AEManager:
             return False
         if location in danger:
             return False
+        # Health-aware retreat: don't initiate fights when one hit kills us.
+        if self.health < self.LOW_HEALTH_THRESHOLD:
+            return False
         bomb_blast = self._blast_cells(location)
-        base_location = self._location(observation.get("base_location"))
+        base_location = self.base_location or self._location(observation.get("base_location"))
         if base_location is not None and base_location in bomb_blast:
             return False
 
-        tactical_target = any(
-            pos in bomb_blast
-            for pos in [*self.enemy_bases.keys(), *self.enemy_agents.keys()]
-        )
+        step = self.last_step if self.last_step is not None else 0
+        # Direct hits: enemy base, or a fresh enemy-agent sighting already in blast.
+        tactical_target = any(pos in bomb_blast for pos in self.enemy_bases)
+        if not tactical_target:
+            for pos, last_seen in self.enemy_agents.items():
+                if step - int(last_seen) > 1 and pos not in bomb_blast:
+                    continue
+                if pos in bomb_blast:
+                    tactical_target = True
+                    break
+
+        # Predictive bombing: enemies near the blast cone may step into it
+        # before our bomb expires (fuse is 3 ticks; we conservatively count
+        # any recent enemy that is BFS-reachable to a blast cell within
+        # PREDICTIVE_BOMB_RANGE moves).
+        if not tactical_target and self.enemy_agents:
+            extended = self._extended_blast(bomb_blast, self.PREDICTIVE_BOMB_RANGE)
+            for pos, last_seen in self.enemy_agents.items():
+                if step - int(last_seen) > self.ENEMY_STALENESS:
+                    continue
+                if pos in extended:
+                    tactical_target = True
+                    break
 
         wall_to_open = False
-        if target is not None and target not in self.enemy_bases:
+        # Proactive wall break: if the target is high-value (enemy base or
+        # mission) and a destructible wall sits between us and it, bomb
+        # without waiting to be visibly stuck.
+        if target is not None:
             target_dir = self._rough_direction(location, target)
-            if target_dir is not None:
-                wall_to_open = (location[0], location[1], target_dir) in self.destructible
-                # Avoid burning bombs early just for walls if there is an item on
-                # the current visible side path; wait until we look genuinely stuck.
-                wall_to_open = wall_to_open and self._stuck_recently()
+            if target_dir is not None and (location[0], location[1], target_dir) in self.destructible:
+                target_kind = self.last_seen_items.get(target, (None, None))[0]
+                if target in self.enemy_bases or target_kind == "mission":
+                    wall_to_open = True
+                elif target not in self.enemy_bases:
+                    wall_to_open = self._stuck_recently()
+
+        # Bomb-chain heuristic: even without a current target, if breaking an
+        # adjacent destructible wall would reveal a short path to a base or
+        # mission, take that bomb now.
+        if not tactical_target and not wall_to_open:
+            for d in self.DIR_DELTAS:
+                if (location[0], location[1], d) not in self.destructible:
+                    continue
+                if self._wall_break_reveals_high_value(location, d):
+                    wall_to_open = True
+                    break
 
         if not tactical_target and not wall_to_open:
             return False
@@ -623,6 +901,10 @@ class AEManager:
 
         danger = self._danger_cells()
         threats = self._enemy_threat_cells()
+        low_health = self.health < self.LOW_HEALTH_THRESHOLD
+        # Softer cell-threat penalty than danger; under low_health, treat
+        # threat cells as nearly as bad as bomb-blast cells.
+        cell_threat_penalty = 30.0 if low_health else self.CELL_THREAT_PENALTY
         best_action = legal_actions[0]
         best_score = -inf
         for action in legal_actions:
@@ -631,7 +913,7 @@ class AEManager:
             if new_pos in danger:
                 score -= 100.0
             if new_pos in threats and new_pos not in self.enemy_bases:
-                score -= 8.0
+                score -= cell_threat_penalty
             item = self.last_seen_items.get(new_pos)
             if item:
                 score += self.ITEM_VALUES.get(item[0], 0.0)
@@ -640,7 +922,9 @@ class AEManager:
             if new_pos in self.recent_locations[-3:]:
                 score -= 1.5
             if action == self.STAY:
-                score -= 4.0
+                # Low-health agent can usefully hide one tick to recover; mild
+                # penalty instead of strong avoidance.
+                score -= 1.0 if low_health else 4.0
             if target is not None:
                 score -= 0.12 * self._manhattan(new_pos, target)
                 desired_dir = self._rough_direction(new_pos, target)

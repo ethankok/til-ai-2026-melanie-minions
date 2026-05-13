@@ -19,5 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copies your source files.
 COPY src .
 
-# Starts your model server.
-CMD uvicorn ae_server:app --port 5005 --host 0.0.0.0
+# Starts your model server. uvloop + httptools are already pulled in by
+# uvicorn[standard]; setting them explicitly ensures the faster event loop
+# and parser are used (gives a small per-request latency win for AE since
+# /ae is called every game tick).
+CMD ["uvicorn", "ae_server:app", "--host", "0.0.0.0", "--port", "5005", "--loop", "uvloop", "--http", "httptools"]
