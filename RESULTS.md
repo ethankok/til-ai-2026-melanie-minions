@@ -11,8 +11,9 @@ NLP    melanie-minions-nlp      latest      12/05/2026 03:23:35   0 / 700       
 ASR    melanie-minions-asr      ft-lora32-v1 13/05/2026 11:22:30  0 / 400       0.957   0.849
 CV     melanie-minions-cv       cv-yolo-ft-v1 14/05/2026 03:53:57 0 / 500       0.402   0.963
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
-AE     melanie-minions-ae       planner-v3b 13/05/2026 23:42:57   0 / 30        0.499   0.853
-AE (bc) melanie-minions-ae      bc-v1       14/05/2026 01:22:13   0 / 30        0.364   0.856  ← regressed; planner-v3b still shipped
+AE     melanie-minions-ae       ppo-v1      14/05/2026 04:36:51   0 / 30        0.507   0.861  ← new high; +0.008 vs v3b (within noise)
+AE (v3b) melanie-minions-ae     planner-v3b 13/05/2026 23:42:57   0 / 30        0.499   0.853
+AE (bc)  melanie-minions-ae     bc-v1       14/05/2026 01:22:13   0 / 30        0.364   0.856
 ```
 
 ## ASR submission history
@@ -55,6 +56,8 @@ planner-v3b 13/05 Workbench    0.80/0.61/0.66/0.65/0.64/0.63  6-run mean ≈ 0.6
 planner-v3b 13/05 23:42        0.499/0.853 official 0 / 30 official errors   Score essentially flat vs v2 (-0.002), but speed +0.082 from multi-source BFS + blast cache + uvloop. Blended +0.018.
 bc-v1       14/05 Workbench    0.689 direct / 0.672 container    149k-param CNN BC of planner-v3b, val_acc 0.8742; container mean within noise of direct eval and planner.
 bc-v1       14/05 01:22        0.364/0.856 official 0 / 30 official errors   REGRESSED -0.135 vs planner-v3b. Local→official gap ballooned 0.18 → 0.31. BC overfit to random-opponent local distribution.
+ppo-v1      14/05 Workbench    0.711/0.700/0.693 eval_policy + 0.766/0.634/0.708 container.  Tight variance vs prior runs; mixed-opponent PPO from bc.pt warm start, best @update 75 of 200 before idle shutdown.
+ppo-v1      14/05 04:36        0.507/0.861 official 0 / 30 official errors   NEW HIGH (+0.008 score, +0.008 speed vs v3b). Gap stayed at 0.19 — mixed-opponent training did NOT close the local→official gap.
 ```
 
 ## Qualifier weighted score estimate
@@ -74,12 +77,12 @@ Each scored challenge blends `75%` accuracy/reward and `25%` speed. Qualifier sp
 Using raw task scores only:
 
 ```text
-0.40 * AE 0.499  = 0.1996
+0.40 * AE 0.507  = 0.2028
 0.20 * NLP 0.301 = 0.0602
 0.20 * ASR 0.957 = 0.1914
 0.20 * CV 0.402  = 0.0804
 --------------------------------
-Estimated weighted qualifier score = 0.5316
+Estimated weighted qualifier score = 0.5348
 ```
 
 `planner-v3b` keeps AE accuracy flat at `0.499` (vs `planner-v2`'s `0.501`) — within noise — but speed jumped `0.771 → 0.853`. Local→official gap is unchanged at `~0.17` (local mean `0.681` → official `0.499`); heuristic ceiling is in sight. Next swing is a learned policy (see Next priority).
@@ -87,12 +90,12 @@ Estimated weighted qualifier score = 0.5316
 Using the observed ~75% score / 25% speed blend:
 
 ```text
-AE   contribution = 0.2350   (0.75*0.499 + 0.25*0.853 = 0.5876)
+AE   contribution = 0.2381   (0.75*0.507 + 0.25*0.861 = 0.5953)
 NLP  contribution = 0.0937
 ASR  contribution = 0.1860
 CV   contribution = 0.1085   (0.75*0.402 + 0.25*0.963 = 0.5423)
 --------------------------------
-Estimated blended qualifier score = 0.6231
+Estimated blended qualifier score = 0.6262
 ```
 
 ## Notes

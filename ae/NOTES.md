@@ -8,7 +8,11 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`planner-v3b` — official 0.499 / 0.853 (13 May 23:42 SGT, 0/30 errors).**
+**`ppo-v1` — official 0.507 / 0.861 (14 May 04:36 SGT, 0/30 errors).**
+
+Marginally above `planner-v3b` (+0.008 score, +0.008 speed) — within submission noise. The 8 hours of BC → PPO work netted essentially zero over the heuristic. **Key finding**: the local→official gap held at **0.19** for PPO (local mean 0.701 → official 0.507), nearly identical to v3b's 0.18 — mixed-opponent training did NOT close it. The gap is **not opponent-distribution alone**; it's something else about the hidden eval (different map, different episode length, different reward calibration, or a much harder fixed-seed scenario than local novice). Heuristic-tuning and RL both saturate at ~0.50 official until we instrument what the hidden eval is actually doing.
+
+Previous shipped tag: `planner-v3b` — official 0.499 / 0.853 (13 May 23:42 SGT, 0/30 errors).
 
 Score essentially flat vs `planner-v2` (-0.002, within noise), but **speed
 jumped +0.082** (`0.771 → 0.853`) from algorithmic wins kept from the
@@ -54,6 +58,7 @@ planner-v2  13/05 23:03        0.501   0.771   0/30    Bomb timer 4→3, bounded
 planner-v3  (not submitted)    —       —       9/9     Bigger v2 → multi-source BFS, predictive bombs (range 2), bomb chains, soft threat 1.0/3.0. Local regressed to 0.596, aborted.
 planner-v3b 13/05 23:42        0.499   0.853   0/30    v3 minus bomb-chains; predictive range=1 with ≥2 enemies; threat 2.0/5.0. Score flat, speed +0.082 from BFS/cache/uvloop.
 bc-v1       14/05 01:22        0.364   0.856   0/30    BC of planner-v3b regressed badly; deployment path works but policy overfit random-opponent local rollouts.
+ppo-v1      14/05 04:36        0.507   0.861   0/30    NEW HIGH (+0.008/+0.008 vs v3b). Mixed-opp PPO from bc.pt warm start; local→official gap 0.19 unchanged from heuristic.
 ```
 
 ## Local validation history
@@ -71,6 +76,9 @@ planner-v3b 13/05 Workbench    0.80/0.61/0.66/0.65/0.64/0.63   6-run local mean 
 planner-v3b 13/05 23:42        0.499 official           Score flat vs v2 (-0.002), speed +0.082. Local→official gap still ~0.18 — structural.
 bc-v1       14/05 eval_policy  0.7195/0.7193/0.6248/0.6908   Direct (no container) mean ≈ 0.689 — slightly above planner local.
 bc-v1       14/05 til test     0.6317/0.7037/0.6128/0.7398   Container mean ≈ 0.672 — within noise of direct eval and of planner.
+ppo-v1      14/05 eval_policy  0.7112/0.6998/0.6925         Direct mean ≈ 0.701, range 0.019 — TIGHT variance, best signal we've ever seen locally.
+ppo-v1      14/05 til test     0.766/0.634/0.708            Container mean ≈ 0.703 — faithful to direct eval.
+ppo-v1      14/05 04:36        0.507 official               Local→official gap 0.19, same as heuristic. Mixed-opponent training didn't close the gap.
 ```
 
 ## Detailed timeline
@@ -346,14 +354,12 @@ tuning. **Score is the hard problem** — needs a different approach.
 
 ## Next steps
 
-1. **Monitor the active PPO run**. It is warm-started from `bc.pt` and training with `--opponents mixed --eval-opponents mixed`. Capture best PPO eval, final `til test ae ppo-v1` score, and `0 / 30` error status before deciding to submit.
-2. **Deploy only if PPO is competitive**. Copy `training/ae/checkpoints/ppo.pt` to `ae/models/bc.pt`, build/test as `ppo-v1`, and submit only after review. `planner-v3b` remains shipped until PPO proves itself.
-3. **Per-game JSONL logging during `til test`** if PPO plateaus. Capture
-   `(obs, action, reward)` per step, post-mortem the low-score rounds.
-4. **Speed micro-optimizations** if blended score becomes the constraint
-   after PPO: ONNX-export the policy to onnxruntime (~30 MB, ~3× faster
-   CPU inference than torch CPU), or move from `python:3.11-slim` to a
-   slimmer base. Only worth it after PPO either lands or fails.
+PPO landed at 0.507 official — marginal +0.008 over heuristic. The 0.19 local→official gap is unchanged across heuristic + BC + RL, which means we can't beat it without understanding what hidden eval does differently. Two real paths:
+
+1. **Shift focus to NLP** (highest ROI in the repo). NLP at 0.301 is the biggest unforced loss. Going 0.30 → 0.60 buys +0.06 qualifier — same magnitude as a hypothetical AE 0.50 → 0.65 push and with much higher expected probability of success. AE is now in maintenance mode at `ppo-v1`.
+2. **Per-game JSONL logging + hidden-eval diagnosis**. The submission Debug/Eval URLs in the Discord notification probably expose per-game replays. Capture our local games the same way, diff scenarios where we score 1.0 locally and the hidden eval scores 0.3. Without this data, more AE training is throwing darts at the gap.
+3. (Deferred) **Speed micro-optimizations** — ONNX-export the policy to onnxruntime (~30 MB, ~3× faster CPU inference), or slimmer Docker base. Only after we know AE is the rate-limiting task in the qualifier.
+4. (Deferred) **Push PPO harder** — fix the v_loss explosion (reward normalization), 4× the updates, longer rollouts. Best case local 0.70 → 0.85 → official ~0.66. But this only matters if we've already mined NLP/CV gains and AE remains the bottleneck.
 
 ## Reproducibility / pointers
 
