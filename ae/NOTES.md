@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 13 May 2026 23:10 SGT
+Last updated: 13 May 2026 23:55 SGT
 
 Per-task working log for AE (Autonomous Exploration / Bomberman). For
 input/output spec see [README.md](README.md). For submission history across
@@ -8,18 +8,20 @@ all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`planner-v2` — official 0.501 / 0.771 (13 May 23:03 SGT, 0/30 errors).**
+**`planner-v3b` — official 0.499 / 0.853 (13 May 23:42 SGT, 0/30 errors).**
 
-+0.056 over `planner-v1` (0.445) from a single round of correctness fixes —
-most notably correcting `BOMB_TIMER = 4 → 3` so the env's true placement →
-detonation budget is respected. Speed dipped slightly (`0.788 → 0.771`) from
-the bounded-escape and threat-aware BFS — small price for the accuracy jump.
+Score essentially flat vs `planner-v2` (-0.002, within noise), but **speed
+jumped +0.082** (`0.771 → 0.853`) from algorithmic wins kept from the
+abandoned `planner-v3`: single multi-source BFS in `_choose_target`
+(replaces N per-target BFS calls), `_blast_cells` per-turn cache, and the
+Dockerfile pinning `uvloop`+`httptools`. Net blended qualifier estimate
+lifted `0.5561 → 0.5638` (+0.008).
 
-The local→official gap narrowed from ~0.25 (planner-v1: 0.697 → 0.445) to
-~0.17 (planner-v2: ~0.669 → 0.501). Better, but **not closed**. The residual
-gap is likely a mix of fixed-seed novice map being easier than hidden eval,
-random opponents locally vs whatever the hidden eval uses, and 6-round
-local variance.
+The local→official gap held at **~0.18** (local mean 0.681 → official
+0.499) — the same gap as `planner-v2`. Two rounds of heuristic tuning have
+not closed it. The gap is structural (env distribution mismatch),
+not a tunable knob. **Heuristic accuracy ceiling is in sight at ~0.50
+official.** Pushing past that needs a learned policy.
 
 AE is **40% of the qualifier** — biggest absolute lever in the whole repo.
 
@@ -30,7 +32,7 @@ AE is **40% of the qualifier** — biggest absolute lever in the whole repo.
 - **Source**: [src/ae_manager.py](src/ae_manager.py) (manager — what we edit) + [src/ae_server.py](src/ae_server.py) (server with the reset-robustness patch already applied — empty POST or `step == 0` triggers re-instantiation of `AEManager`; see top-level CLAUDE.md notes).
 - **State on `self`**: belief map, frontier set, turn counter, etc. — must NOT use module-level globals because the server re-instantiates the manager on reset.
 
-### Planner sketch (planner-v2)
+### Planner sketch (planner-v3b)
 
 - Stateful belief map updated each tick from the partial observation.
 - Objective + frontier BFS pathfinding to nearest unexplored / objective cell.
@@ -48,21 +50,23 @@ Tag         Submitted          Score   Speed   Errors  Outcome
 baseline    12/05 04:20        0.051   0.856   0/30    Periodic-forward + bomb-every-20 random walk
 planner-v1  13/05 11:33        0.445   0.788   0/30    Stateful planner — new team high score, but big local→official gap
 planner-v2  13/05 23:03        0.501   0.771   0/30    Bomb timer 4→3, bounded escape, enemy soft threat, frontier unseen-yield → +0.056 over v1
-planner-v3  pending            —       —       9/9     Multi-source BFS, predictive bombs, proactive wall break, respawn awareness, base defense, bomb chains, health retreat
-planner-v3  13/05 Workbench    0.588/0.629/0.570 (local mean ≈0.596, -0.07 vs v2). Aggressive bombing wasted bombs in random-opponent eval; not submitted.
-planner-v3b pending            —       —       9/9     v3 minus bomb-chains; predictive bomb requires ≥2 enemies in range-1 extended blast; threat penalty restored to 2.0/5.0
+planner-v3  (not submitted)    —       —       9/9     Bigger v2 → multi-source BFS, predictive bombs (range 2), bomb chains, soft threat 1.0/3.0. Local regressed to 0.596, aborted.
+planner-v3b 13/05 23:42        0.499   0.853   0/30    v3 minus bomb-chains; predictive range=1 with ≥2 enemies; threat 2.0/5.0. Score flat, speed +0.082 from BFS/cache/uvloop.
 ```
 
 ## Local validation history
 
 ```text
-Variant     Date/time          Local score        Notes
-baseline    12/05              0.051 official     Reference point only
-planner-v1  13/05 10:31 Mac    0.732 local        Stateful belief + BFS + LOS-safe tactical bombs, 0 invalid actions
-planner-v1  13/05 Workbench    0.697 local        Built/tested with official Workbench Docker flow before submission
-planner-v1  13/05 11:33        0.445 official     ← significant drop from both local environments
-planner-v2  13/05 Workbench    0.659/0.659/0.689  3-run local mean ≈ 0.669 (variance ±0.015)
-planner-v2  13/05 23:03        0.501 official     +0.056 over planner-v1; gap to local narrowed but not closed
+Variant     Date/time          Local score              Notes
+baseline    12/05              0.051 official           Reference point only
+planner-v1  13/05 10:31 Mac    0.732 local              Stateful belief + BFS + LOS-safe tactical bombs, 0 invalid actions
+planner-v1  13/05 Workbench    0.697 local              Built/tested with official Workbench Docker flow before submission
+planner-v1  13/05 11:33        0.445 official           ← significant drop from both local environments
+planner-v2  13/05 Workbench    0.659/0.659/0.689        3-run local mean ≈ 0.669 (variance ±0.015)
+planner-v2  13/05 23:03        0.501 official           +0.056 over planner-v1; gap to local narrowed but not closed
+planner-v3  13/05 Workbench    0.588/0.629/0.570        3-run local mean ≈ 0.596 (-0.07 vs v2). Aggressive bombing was wasteful. NOT submitted.
+planner-v3b 13/05 Workbench    0.80/0.61/0.66/0.65/0.64/0.63   6-run local mean ≈ 0.681 (variance ±0.07, big tail from one 0.80 outlier)
+planner-v3b 13/05 23:42        0.499 official           Score flat vs v2 (-0.002), speed +0.082. Local→official gap still ~0.18 — structural.
 ```
 
 ## Detailed timeline
@@ -136,39 +140,110 @@ Changes against planner-v1 (committed in [`cb13c4c`](../README.md)):
 Passes 9/9 unit tests. Workbench local: 0.659, 0.659, 0.689 (3 runs, mean
 ~0.669, ±0.015). Official: **0.501 / 0.771**, 0/30 errors.
 
+### planner-v3 (NOT submitted) — over-eager bombing
+
+Tried to push much further with seven changes bundled at once:
+
+- **Multi-source BFS** in `_choose_target` (one BFS, distance lookup per
+  candidate) — pure speed win.
+- **`_blast_cells` per-turn cache** + **dominant-action shortcut** for
+  obvious adjacent-enemy-base / adjacent-mission cases.
+- **Predictive bombing at range 2**: any enemy within 2 BFS steps of any
+  blast cell counts as a tactical target.
+- **Bomb chains** (`_wall_break_reveals_high_value`): simulate "break this
+  destructible wall" and re-run BFS; bomb if it reveals a base or mission
+  within 5 moves.
+- **Proactive wall-break** when BFS target is an enemy base or mission.
+- **Item respawn awareness** (re-candidate collected tiles after 40 ticks),
+  **base defense** (enemies near our base = 60.0-value candidates),
+  **health-aware retreat** (<20 hp drops aggressive targets), softened
+  threat penalty (1.0/3.0).
+- **Dockerfile** pinning `uvloop`+`httptools` for slightly faster HTTP.
+
+Workbench local: 0.588 / 0.629 / 0.570 → **mean 0.596, -0.07 vs v2**.
+Predictive bombing at range 2 fires almost every turn we have a bomb on
+a 16×16 map with 5 random enemies; bombs got burned on speculation. Bomb
+chains compounded the problem because mission tiles are scattered, so the
+"reveals high value within 5 moves" trigger was rarely false. **Not
+submitted.**
+
+### planner-v3b (13 May 23:42) — keep the speed wins, dial back bombs
+
+What changed vs v3:
+- `PREDICTIVE_BOMB_RANGE 2 → 1` AND require **≥2 enemies in the extended
+  blast** before triggering. Random opponents wander; betting that one of
+  N≥2 nearby enemies walks into a 1-step-extended blast is much better odds.
+- Bomb-chain trigger **disabled**. Helper kept for re-use against smarter
+  opponents but no longer called from `_should_place_bomb`.
+- Threat penalty **2.0 / 5.0** (between v2's 3.0/8.0 and v3's 1.0/3.0).
+
+What stayed from v3:
+- Multi-source BFS, blast cache, dominant-action shortcut (all speed).
+- Item respawn awareness, base defense, health-aware retreat, proactive
+  wall-break for enemy_base / mission targets (orthogonal).
+- Dockerfile uvloop/httptools.
+
+Workbench local 6-run: 0.80, 0.61, 0.66, 0.65, 0.64, 0.63 → **mean 0.681,
+variance ±0.07**. The 0.80 outlier is suspicious (one round hit lucky
+bomb-tactic conditions, contributing ~0.13/6 to the mean alone), median is
+~0.65. Officially: **0.499 / 0.853**, 0/30 errors.
+
+**Key finding from v2→v3b**: the local→official gap is consistent at
+~0.18 across two very different heuristic configurations. The gap is
+structural — likely env distribution mismatch (random opponents locally vs
+something else officially, fixed novice seed vs varied hidden seeds), not
+something heuristic tuning will close. **The heuristic ceiling is around
+0.50 official.**
+
+## Where we are vs target
+
+| Metric                  | planner-v3b | Target | Gap     |
+|-------------------------|-------------|--------|---------|
+| Official score          | 0.499       | 0.70   | +0.20   |
+| Official speed          | 0.853       | 0.90   | +0.05   |
+| Blended (0.75 / 0.25)   | 0.588       | 0.75   | +0.16   |
+
+Speed is within striking distance of target with more uvicorn/Docker
+tuning. **Score is the hard problem** — needs a different approach.
+
 ## Open questions
 
-- **What's still in the residual ~0.17 local→official gap?** The novice
-  local map is fixed-seed (seed 88) with random opponents over only 6 rounds.
-  Hidden eval probably has either non-novice maps or smarter/different
-  opponents. We don't know how the official 30 scenarios are drawn.
-- **Are the threat-penalty weights too conservative?** The `-3.0` per
-  threat-cell on path and `-8.0` for stepping into a threat were untuned.
-  In 6-random-opponent novice the agent may be running past harmless
-  enemies and avoiding items it could safely grab.
-- **Is wall-bombing too gated?** Currently `wall_to_open` requires
-  `_stuck_recently()`, which means we never proactively break a destructible
-  wall on the shortest path to a mission/base unless we're already stuck.
-  Could be leaving easy +5/+50 rewards on the table.
+- **Why is the gap so stable at ~0.18?** v2 and v3b have very different
+  bomb behavior but the same gap. Possible causes:
+  - Different opponent distribution in hidden eval (e.g. smarter agents
+    that don't wander into bombs we predicted at random).
+  - Different map distribution (advanced track? bigger grid?).
+  - Different episode lengths or reward calibration.
+- **Is `0 / 30 errors` masking some game-completion failures?** No
+  invalid-action errors doesn't mean no agent-deaths or timeouts.
+- **Could a learned policy generalize the gap better?** A policy trained
+  against a *mix* of opponents (random + frozen planner + self-copies)
+  inherits less bias than a planner tuned against one local distribution.
 
 ## Next steps
 
-1. **planner-v3 (cheap heuristic tuning)** — diminishing returns, but two
-   experiments are nearly free:
-   - **(a) Softer threat penalty**: drop `-3.0`/`-8.0` to `-1.0`/`-3.0` or
-     set `ENEMY_STALENESS = 1`. Workbench local should tell us if the
-     planner was being too cautious.
-   - **(b) Proactive wall-break**: in `_should_place_bomb`, drop the
-     `_stuck_recently()` gate when `target in self.enemy_bases` or
-     `target in self.last_seen_items` for missions specifically. Risk: more
-     bombs placed → more self-blast if escape check is wrong. Mitigate with
-     the now-bounded `_safe_escape_within`.
-2. **Per-game logging** if (1) plateaus. Capture step-by-step decisions to a
-   JSONL trail during `til test` — compare local-passing scenarios against
-   failure modes inferred from official low-score runs.
-3. **RL policy** (deferred). PPO/DQN against `til_environment.bomberman_env`
-   if rule-based hits a ceiling. Per [../SUMMARY.md "Phase 3"](../SUMMARY.md),
-   inference must stay fast — tiny MLP/CNN, not a transformer.
+1. **Behavior cloning + PPO** (started in [../training/ae/](../training/ae/)).
+   Scaffolded as of 13 May 23:55 SGT:
+   - `encoder.py` — observation → tensors (CNN-ready)
+   - `model.py` — `PolicyNetwork` (~150k params, designed for <5 ms CPU
+     inference so we don't lose the speed gains)
+   - `collect_bc.py` — rolls out the planner in `til_environment.bomberman_env`,
+     dumps (obs, action) pairs to `.npz`
+   - `train_bc.py` — supervised CE with `log(action_mask)` in the logits
+   - `eval_policy.py` — local eval harness reusing `test/test_ae.py` math
+   - **TODO**: `train_ppo.py` (single-agent gym wrapper around PettingZoo
+     env, BC-initialized PPO with mixed opponents), deployment path in
+     `ae/src/ae_manager.py` that loads weights if present and falls back
+     to the BFS planner.
+2. **Per-game logging during `til test`** if PPO doesn't help. Capture
+   step-by-step (obs, action, reward) JSONL during a local run, then
+   compare against post-mortem reasoning about what the official eval
+   probably did differently. Cheap and cumulative.
+3. **Speed micro-optimizations** if blended score becomes the constraint:
+   move from python:3.11-slim to a slimmer base, ahead-of-time-compile the
+   manager with mypyc, or split the BFS into native C with cython. Only
+   worth it after PPO either lands or fails — current speed (0.853) is
+   already close to target.
 
 ## Reproducibility / pointers
 

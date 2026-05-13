@@ -1,7 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 13 May 2026 23:10 SGT
+Last updated: 13 May 2026 23:55 SGT
 
 ## Latest submitted scores
 
@@ -11,7 +11,7 @@ NLP    melanie-minions-nlp      latest      12/05/2026 03:23:35   0 / 700       
 ASR    melanie-minions-asr      ft-lora32-v1 13/05/2026 11:22:30  0 / 400       0.957   0.849
 CV     melanie-minions-cv       latest      12/05/2026 03:52:32   4 / 500       0.000   0.981
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
-AE     melanie-minions-ae       planner-v2  13/05/2026 23:03:02   0 / 30        0.501   0.771
+AE     melanie-minions-ae       planner-v3b 13/05/2026 23:42:57   0 / 30        0.499   0.853
 ```
 
 ## ASR submission history
@@ -40,6 +40,9 @@ planner-v1  13/05 Workbench    0.697 local          til test completed       Bui
 planner-v1  13/05 11:33        0.445 official       0 / 30 official errors   New AE high score, but hidden evaluation underperformed local test
 planner-v2  13/05 Workbench    0.659/0.659/0.689    3-run mean ≈ 0.669       Bomb timer 4→3 (matches env), bounded escape check, enemy soft threat, frontier scoring by unseen yield
 planner-v2  13/05 23:03        0.501 official       0 / 30 official errors   New AE high score (+0.056 vs planner-v1); local→official gap narrowed from 0.25 → 0.17
+planner-v3  13/05 Workbench    0.588/0.629/0.570    3-run mean ≈ 0.596       Aggressive bombing (predictive range 2, bomb chains) + soft threat 1.0/3.0; regressed locally, NOT submitted
+planner-v3b 13/05 Workbench    0.80/0.61/0.66/0.65/0.64/0.63  6-run mean ≈ 0.681  v3 minus bomb-chains; predictive bomb requires ≥2 enemies in range-1 blast; threat 2.0/5.0
+planner-v3b 13/05 23:42        0.499/0.853 official 0 / 30 official errors   Score essentially flat vs v2 (-0.002), but speed +0.082 from multi-source BFS + blast cache + uvloop. Blended +0.018.
 ```
 
 ## Qualifier weighted score estimate
@@ -57,25 +60,25 @@ Noise has no direct qualifier weight observed
 Using raw task scores only:
 
 ```text
-0.40 * AE 0.501  = 0.2004
+0.40 * AE 0.499  = 0.1996
 0.20 * NLP 0.301 = 0.0602
 0.20 * ASR 0.957 = 0.1914
 0.20 * CV 0.000  = 0.0000
 --------------------------------
-Estimated weighted qualifier score = 0.4520
+Estimated weighted qualifier score = 0.4512
 ```
 
-`planner-v2` lifts AE official to `0.501` (+0.056 vs planner-v1's `0.445`). Workbench local mean was `~0.669` vs official `0.501` — gap shrank from `~0.25` (planner-v1) to `~0.17` (planner-v2), suggesting the bomb-timer fix mattered most.
+`planner-v3b` keeps AE accuracy flat at `0.499` (vs `planner-v2`'s `0.501`) — within noise — but speed jumped `0.771 → 0.853`. Local→official gap is unchanged at `~0.17` (local mean `0.681` → official `0.499`); heuristic ceiling is in sight. Next swing is a learned policy (see Next priority).
 
 Using the observed ~75% score / 25% speed blend:
 
 ```text
-AE   contribution = 0.2275
+AE   contribution = 0.2350   (0.75*0.499 + 0.25*0.853 = 0.5876)
 NLP  contribution = 0.0937
-ASR  contribution = 0.1858
+ASR  contribution = 0.1860
 CV   contribution = 0.0491
 --------------------------------
-Estimated blended qualifier score = 0.5561
+Estimated blended qualifier score = 0.5638
 ```
 
 ## Notes
@@ -89,10 +92,12 @@ Estimated blended qualifier score = 0.5561
 - CV submitted but had `4 / 500` errors and score `0.000`; fix robustness/schema edge cases before improving model quality.
 - AE `planner-v1` officially scored `0.445 / 0.788` with `0 / 30` errors — a new team high score and a large jump from `0.051`, but much worse than Workbench local `0.697`, so the planner likely overfit/easy-rolled local scenarios or hidden eval punished tactical choices differently.
 - **AE `planner-v2` lifts official to `0.501 / 0.771`** (`0 / 30` errors, 13/05 23:03 SGT). The single highest-value change was correcting `BOMB_TIMER = 4 → 3` to match the env config (placement→detonation budget is 3 movements, not 4); planner-v1 was almost certainly self-trapping in tactical bomb scenarios. Speed dipped slightly (`0.788 → 0.771`) from the bounded-escape and threat-aware BFS — well worth the +0.056 accuracy. The local→official gap narrowed from ~0.25 to ~0.17 but isn't closed; the remaining gap is likely (a) novice local map being fixed-seed and easier than hidden eval, (b) random opponents locally vs whatever the hidden eval uses, and (c) 6-round local variance.
+- **AE `planner-v3` (NOT submitted)** — bundled predictive-bombing at range 2, bomb-chain wall-break heuristic, soft threat penalty (1.0/3.0). Locally regressed to mean `0.596` (vs v2's `0.669`) — in 6-team random-opponent local, aggressive bombing burns the team's bomb budget on speculation. Reverted before submission.
+- **AE `planner-v3b` (submitted)**: `0.499 / 0.853` officially (`0 / 30` errors, 13/05 23:42 SGT). v3 minus the bomb-chain trigger, with predictive bombing tightened to `range=1` + `≥2 enemies in extended blast`, and threat penalty restored to 2.0/5.0. **Score essentially flat vs v2 (-0.002)** — heuristic accuracy ceiling is in sight. **Speed jumped +0.082** from the algorithmic wins kept from v3: single multi-source BFS in `_choose_target` (replaces N per-target BFS calls), `_blast_cells` per-turn cache, and the Dockerfile pinning `uvloop`+`httptools`. Net blended score lifted `0.5561 → 0.5638` (+0.008). The 6-run local mean was `0.681` and the local→official gap held at `~0.18` — the same gap as v2, which suggests it's structural (env distribution mismatch), not a tunable knob.
 
 ## Next priority
 
-1. **AE planner-v3** — diminishing-returns territory for pure heuristics, but two cheap experiments are open: (a) softer `ENEMY_STALENESS`/threat penalty (one Workbench run shows whether the current `-3.0`/`-8.0` weights are too conservative), and (b) more aggressive wall-breaking on the shortest path to high-value targets even when not "stuck". After that, consider RL fine-tune against `til_environment.bomberman_env` or per-game logging to diagnose the residual ~0.17 local→official gap.
+1. **AE behavior-cloning + PPO** — heuristic improvements are out. Pipeline scaffolded in `training/ae/` (encoder, ~150k-param CNN policy, BC dataset collector, BC trainer, local evaluator). Plan: roll out the planner for ~200 games → 40k (obs, action) pairs, supervised-train the policy to match the planner, then PPO fine-tune against mixed opponents (random + frozen planner + self-play) on the Workbench GPU. Risk: inference latency could regress speed; mitigation is keeping the network small and exporting to onnxruntime if torch CPU is too heavy. Realistic best-case: local 0.85+ → official 0.65+ (a +0.15 swing if the local-official gap stays at 0.18). PPO + deployment paths are still TODO.
 2. **ASR re-export `int8_float16`** — same LoRA-merged checkpoint, no retrain. Target: speed `0.849 → 0.90+` with accuracy delta `≤ 0.005`. Tag `ft-lora32-int8f16`.
 3. **NLP retrieval / chunking** upgrade — currently 0.301.
 4. **CV** — fix the `4 / 500` errors first, then drop in a pretrained detector.
