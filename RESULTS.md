@@ -30,6 +30,7 @@ Variant     Date/time          Local novice score   Errors/action validity   Not
 baseline    12/05              0.051 official       0 / 30 official errors   Periodic-forward + periodic bomb baseline
 planner-v1  13/05 10:31 +08    0.732 local Mac      0 invalid actions        Stateful belief map + objective/frontier BFS + LOS-safe tactical bombs
 planner-v1  13/05 Workbench    0.697 local          til test completed       Built/tested with official Workbench Docker flow before submission
+planner-v2  13/05 pending      —                    9/9 unit tests           Bomb timer 4→3 (matches env), bounded escape check, enemy soft threat, frontier scoring by unseen yield
 ```
 
 ## Qualifier weighted score estimate

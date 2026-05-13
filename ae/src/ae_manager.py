@@ -86,8 +86,13 @@ class AEManager:
     ITEM_VALUES = {"mission": 50.0, "resource": 25.0, "recon": 10.0}
 
     GRID_SIZE = 16
-    BOMB_TIMER = 4
+    # Bomb timer matches til_environment/bomberman_config.yaml (entities.bomb.timer).
+    # Phase order each round is: place → move → detonation → upkeep, so a bomb
+    # placed at step N detonates after the agent's movement at step N+timer.
+    BOMB_TIMER = 3
     BOMB_RADIUS = 2
+    # How long we still consider an enemy-agent sighting "threatening" in steps.
+    ENEMY_STALENESS = 3
 
     def __init__(self):
         self.grid_size = self.GRID_SIZE
@@ -300,14 +305,17 @@ class AEManager:
         danger: set[tuple[int, int]],
     ) -> tuple[tuple[int, int] | None, list[tuple[int, int]] | None]:
         candidates: list[tuple[float, tuple[int, int]]] = []
+        threats = self._enemy_threat_cells()
 
         for pos in self.enemy_bases:
             candidates.append((80.0, pos))
         for pos, (kind, _step) in self.last_seen_items.items():
             candidates.append((self.ITEM_VALUES.get(kind, 1.0), pos))
 
+        # Weight frontier cells by how much new area they likely reveal.
         for pos in self._frontier_cells():
-            candidates.append((6.0, pos))
+            unseen_neighbors = sum(1 for n in self._raw_neighbors(pos) if n not in self.seen)
+            candidates.append((4.0 + 1.0 * unseen_neighbors, pos))
 
         # Anti-stall fallback: known safe low-visit cells.
         for pos in self.seen:
@@ -327,6 +335,11 @@ class AEManager:
             score = base_value - 1.15 * dist - 0.25 * self.visit_count.get(pos, 0)
             if pos in self.recent_locations[-4:]:
                 score -= 2.0
+            # Discourage walking near a recently-seen enemy unless the target
+            # is the enemy itself or a base (attacks happen via bombs).
+            if pos not in self.enemy_bases:
+                path_threat = sum(1 for p in path[1:] if p in threats)
+                score -= 3.0 * path_threat
             if score > best_score:
                 best_score = score
                 best_target = pos
@@ -439,6 +452,25 @@ class AEManager:
             danger.update(self._blast_cells(bomb_pos))
         return danger
 
+    def _enemy_threat_cells(self) -> set[tuple[int, int]]:
+        """Recently-seen enemy positions plus their 4-neighbors.
+
+        Enemies move and attack adjacent cells, so a path that passes through
+        their immediate vicinity costs us health.  This is a soft signal — the
+        BFS still allows these cells, the scorer just penalizes them.
+        """
+
+        if not self.enemy_agents:
+            return set()
+        step = self.last_step if self.last_step is not None else 0
+        threats: set[tuple[int, int]] = set()
+        for pos, last_seen in self.enemy_agents.items():
+            if step - int(last_seen) > self.ENEMY_STALENESS:
+                continue
+            threats.add(pos)
+            threats.update(self._raw_neighbors(pos))
+        return threats
+
     def _blast_cells(self, bomb_pos: tuple[int, int]) -> set[tuple[int, int]]:
         bx, by = bomb_pos
         cells = set()
@@ -532,7 +564,7 @@ class AEManager:
 
         if not tactical_target and not wall_to_open:
             return False
-        escape_target = self._nearest_escape_cell(location, bomb_blast)
+        escape_target = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER)
         if escape_target is None:
             return False
 
@@ -541,22 +573,32 @@ class AEManager:
         self.escape_until_step = (self.last_step or 0) + self.BOMB_TIMER
         return True
 
-    def _has_escape_after_bomb(self, location: tuple[int, int]) -> bool:
-        blast = self._blast_cells(location)
+    def _safe_escape_within(
+        self,
+        location: tuple[int, int],
+        blast: set[tuple[int, int]],
+        max_moves: int,
+    ) -> tuple[int, int] | None:
+        """Return the closest cell outside ``blast`` reachable in ≤ max_moves.
+
+        The agent gets ``BOMB_TIMER`` movement actions between placing a bomb
+        and the detonation phase, so anything beyond that is not actually safe.
+        """
+
         queue = deque([(location, 0)])
         seen = {location}
         while queue:
             pos, dist = queue.popleft()
             if dist > 0 and pos not in blast:
-                return True
-            if dist >= self.BOMB_TIMER - 1:
+                return pos
+            if dist >= max_moves:
                 continue
             for nxt in self._neighbors(pos):
                 if nxt in seen or nxt not in self.seen:
                     continue
                 seen.add(nxt)
                 queue.append((nxt, dist + 1))
-        return False
+        return None
 
     def _stuck_recently(self) -> bool:
         if len(self.recent_locations) < 6:
@@ -580,6 +622,7 @@ class AEManager:
             return legal_actions[0]
 
         danger = self._danger_cells()
+        threats = self._enemy_threat_cells()
         best_action = legal_actions[0]
         best_score = -inf
         for action in legal_actions:
@@ -587,6 +630,8 @@ class AEManager:
             score = 0.0
             if new_pos in danger:
                 score -= 100.0
+            if new_pos in threats and new_pos not in self.enemy_bases:
+                score -= 8.0
             item = self.last_seen_items.get(new_pos)
             if item:
                 score += self.ITEM_VALUES.get(item[0], 0.0)
