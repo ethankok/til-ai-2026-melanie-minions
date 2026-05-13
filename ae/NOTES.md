@@ -49,6 +49,8 @@ baseline    12/05 04:20        0.051   0.856   0/30    Periodic-forward + bomb-e
 planner-v1  13/05 11:33        0.445   0.788   0/30    Stateful planner — new team high score, but big local→official gap
 planner-v2  13/05 23:03        0.501   0.771   0/30    Bomb timer 4→3, bounded escape, enemy soft threat, frontier unseen-yield → +0.056 over v1
 planner-v3  pending            —       —       9/9     Multi-source BFS, predictive bombs, proactive wall break, respawn awareness, base defense, bomb chains, health retreat
+planner-v3  13/05 Workbench    0.588/0.629/0.570 (local mean ≈0.596, -0.07 vs v2). Aggressive bombing wasted bombs in random-opponent eval; not submitted.
+planner-v3b pending            —       —       9/9     v3 minus bomb-chains; predictive bomb requires ≥2 enemies in range-1 extended blast; threat penalty restored to 2.0/5.0
 ```
 
 ## Local validation history

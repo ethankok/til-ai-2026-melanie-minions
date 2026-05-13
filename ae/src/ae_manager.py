@@ -94,14 +94,18 @@ class AEManager:
     # How long we still consider an enemy-agent sighting "threatening" in steps.
     ENEMY_STALENESS = 3
     # Reachability radius (BFS steps from blast cell) for predictive bomb hits.
-    PREDICTIVE_BOMB_RANGE = 2
+    # Range 1 = enemies immediately adjacent to a blast cell. Range 2 was too
+    # generous in random-opponent eval (fired almost every turn with bombs).
+    PREDICTIVE_BOMB_RANGE = 1
     # Tiles respawn after this many steps per env config (env.tile_respawn_steps).
     TILE_RESPAWN_STEPS = 40
     # Below this health the agent prefers safe cells over aggressive plays.
     LOW_HEALTH_THRESHOLD = 20
-    # Soft-threat scoring weights (lower = more aggressive; tuned for planner-v3).
-    PATH_THREAT_PENALTY = 1.0
-    CELL_THREAT_PENALTY = 3.0
+    # Soft-threat scoring weights. v3 dropped these to 1.0/3.0 and lost ~0.07
+    # locally vs v2's 3.0/8.0. v3b splits the difference — penalty is real but
+    # not so heavy that we route around harmless random opponents.
+    PATH_THREAT_PENALTY = 2.0
+    CELL_THREAT_PENALTY = 5.0
     # Distance (Manhattan) within which an enemy near our base becomes a defense target.
     BASE_DEFENSE_RADIUS = 4
 
@@ -803,18 +807,20 @@ class AEManager:
                     tactical_target = True
                     break
 
-        # Predictive bombing: enemies near the blast cone may step into it
-        # before our bomb expires (fuse is 3 ticks; we conservatively count
-        # any recent enemy that is BFS-reachable to a blast cell within
-        # PREDICTIVE_BOMB_RANGE moves).
-        if not tactical_target and self.enemy_agents:
+        # Predictive bombing: bomb when *multiple* enemies are immediately
+        # adjacent to the blast cone. Random opponents wander; betting one
+        # specific enemy walks into the blast is a coin-flip and a wasted bomb.
+        # Betting that one of N≥2 nearby enemies does is much better odds.
+        if not tactical_target and len(self.enemy_agents) >= 2:
             extended = self._extended_blast(bomb_blast, self.PREDICTIVE_BOMB_RANGE)
+            nearby = 0
             for pos, last_seen in self.enemy_agents.items():
                 if step - int(last_seen) > self.ENEMY_STALENESS:
                     continue
                 if pos in extended:
-                    tactical_target = True
-                    break
+                    nearby += 1
+            if nearby >= 2:
+                tactical_target = True
 
         wall_to_open = False
         # Proactive wall break: if the target is high-value (enemy base or
@@ -829,16 +835,9 @@ class AEManager:
                 elif target not in self.enemy_bases:
                     wall_to_open = self._stuck_recently()
 
-        # Bomb-chain heuristic: even without a current target, if breaking an
-        # adjacent destructible wall would reveal a short path to a base or
-        # mission, take that bomb now.
-        if not tactical_target and not wall_to_open:
-            for d in self.DIR_DELTAS:
-                if (location[0], location[1], d) not in self.destructible:
-                    continue
-                if self._wall_break_reveals_high_value(location, d):
-                    wall_to_open = True
-                    break
+        # Bomb-chain heuristic disabled in v3b: in random-opponent local it
+        # was wasting bombs on speculative wall breaks. Helper kept for future
+        # use against smarter opponents.
 
         if not tactical_target and not wall_to_open:
             return False
