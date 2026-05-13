@@ -37,7 +37,7 @@ async def cv(request: Request) -> dict[str, list[list[dict[str, Any]]]]:
         image_bytes = base64.b64decode(instance["b64"])
 
         # Performs object detection and appends the result.
-        detections = manager.cv(image_bytes)
+        detections = manager.cv(image_bytes, key=instance.get("key"))
         predictions.append(detections)
 
     return {"predictions": predictions}

@@ -1,6 +1,6 @@
 # CV — notes & history
 
-Last updated: 13 May 2026
+Last updated: 14 May 2026
 
 Per-task working log for CV (object detection). For input/output spec see
 [README.md](README.md). For submission history across all tasks see
@@ -17,15 +17,19 @@ schema bugs cause errors on some inputs.
 
 ## What our model runs on
 
-Nothing yet. Baseline manager returns `[]` (empty detection list) for every
-image. From [src/cv_manager.py](src/cv_manager.py):
+Current branch implementation: a schema-safe Ultralytics YOLO baseline in
+[src/cv_manager.py](src/cv_manager.py).
 
 ```python
-def cv(image_bytes: bytes) -> list[dict]:
-    return []   # no detections
+def cv(image_bytes: bytes, key=None) -> list[dict]:
+    # Decode robustly, run YOLO when available, convert xyxy -> xywh.
+    # Any decode/model failure returns [] and logs key/byte size.
 ```
 
-Valid JSON shape, scores 0.
+Default model is `yolov8n.pt`, cached during Docker build so runtime does not
+depend on network access. Outputs use standard COCO category IDs by default
+(`YOLO class index -> COCO category_id`), with `CV_CATEGORY_MAP` available as a
+JSON override if the Workbench annotations use a different ID space.
 
 ## Submission history
 
@@ -35,6 +39,40 @@ latest    12/05 03:52        0.000   0.981   4 / 500   Empty-detection baseline,
 ```
 
 ## Detailed timeline
+
+### yolo-baseline (14 May) — pretrained detector + robust fallback
+
+Implemented the notes plan:
+
+- Wrapped image decode and model inference so bad images return `[]` instead
+  of erroring the request. `cv_server.py` now passes the evaluator `key` into
+  the manager for debug logs.
+- Added `PIL.ImageOps.exif_transpose(...).convert("RGB")` so grayscale/RGBA/EXIF
+  oddities normalize before inference.
+- Added Ultralytics `yolov8n.pt` inference loaded once in `CVManager.__init__`.
+- Converts Ultralytics `xyxy` boxes to COCO-style `[x, y, w, h]`, clamps boxes
+  to image bounds, drops invalid zero-area boxes, and emits plain Python
+  `float`/`int` values.
+- Added default YOLO-index to COCO-category-id mapping. If Workbench
+  `annotations.json` uses different IDs, set `CV_CATEGORY_MAP` to either a JSON
+  dict like `{"0": 1, "1": 2}` or a path to that JSON file.
+- Added `pillow` and `ultralytics` to [requirements.txt](requirements.txt), and
+  Docker build now pre-caches `yolov8n.pt`.
+
+Local limitation: this worktree does not contain `/home/jupyter/<track>/cv`.
+Confirm the actual category IDs on GCP before trusting the score:
+
+```bash
+python - <<'PY'
+import json, os
+track = os.environ.get("TEAM_TRACK", "novice")
+with open(f"/home/jupyter/{track}/cv/annotations.json") as f:
+    ann = json.load(f)
+print(ann.get("categories", [])[:20])
+PY
+```
+
+If those IDs are standard COCO IDs, no override is needed.
 
 ### latest (12 May 03:52) — submission plumbing only
 
@@ -48,23 +86,24 @@ In priority order (per [../SUMMARY.md "CV"](../SUMMARY.md)):
 
 ### 1. Fix the `4 / 500` errors first
 
-We don't yet know what the 4 erroring inputs are. Possibilities:
+Status: implemented defensive fallbacks, pending Workbench submission to confirm
+the errors are gone. We don't yet know what the 4 erroring inputs are.
+Possibilities:
 - Corrupted / non-JPEG image bytes that `PIL.Image.open()` chokes on
 - Edge-case image dimensions or color modes (grayscale, RGBA)
 - Request payload variations the manager doesn't handle
 
-Cheapest diagnostic: wrap the manager body in a `try/except` that returns
-`[]` on any decode error AND logs the input key/size. Then rebuild, submit,
-and check the debug log via the submission's Debug URL.
+Diagnostic now in place: manager returns `[]` on decode/model errors and logs
+the input `key` plus byte size. Rebuild, submit, and check the Debug URL if
+errors remain.
 
 A 4-error-free submission with `[]` predictions would already be a "clean"
 baseline to compare model improvements against.
 
 ### 2. Drop in a pretrained detector
 
-Default choice per SUMMARY.md is **Ultralytics YOLOv8/v11** (easiest), or
-**RT-DETR** if accuracy beats speed. Pretrained COCO weights first; only
-fine-tune if categories don't match the eval's `category_id` set.
+Status: implemented with **Ultralytics YOLOv8n**. Pretrained COCO weights first;
+only fine-tune if categories don't match the eval's `category_id` set.
 
 Wire-up:
 - Load model once in `CVManager.__init__`
@@ -73,16 +112,16 @@ Wire-up:
   - Run detector
   - **Convert xyxy → xywh** (COCO style: top-left + width/height, NOT corners). The output schema is `[x, y, w, h]` per `category_id`. Getting this wrong scores 0 with a working model.
   - Apply confidence threshold (start ~0.25, tune)
-- Add `ultralytics`, `pillow` to [requirements.txt](requirements.txt)
-- Use a CUDA base image in [Dockerfile](Dockerfile) if eval has GPU access (check the wiki)
+- Added `ultralytics`, `pillow` to [requirements.txt](requirements.txt)
+- [Dockerfile](Dockerfile) already uses an NVIDIA PyTorch base and now caches
+  `yolov8n.pt` during build.
 
 ### 3. Class mapping is the actual work
 
-The eval has its own `category_id` set. The COCO IDs from YOLO won't match
-directly. There must be a lookup table from the dataset metadata — find it
-in the training images folder or wiki, build a `coco_id → eval_id` dict,
-apply at inference time. **Wrong class mapping scores 0 even with perfect
-boxes.**
+Status: default mapping is standard COCO. Still verify against Workbench
+`annotations.json`. If the eval has its own `category_id` set, provide
+`CV_CATEGORY_MAP` as a JSON dict/list and rebuild. **Wrong class mapping scores
+0 even with perfect boxes.**
 
 ### 4. Stretch (post-baseline)
 
@@ -92,11 +131,9 @@ boxes.**
 
 ## State
 
-CV is at 0.000 official. **Any working detector + correct class mapping is a
-huge raw-score jump** (potentially 0.5–0.7 for a vanilla pretrained
-YOLOv8-on-COCO if classes overlap well). Given the 20% qualifier weight,
-even a mediocre CV submission contributes meaningfully more than further
-ASR optimization.
+CV official score is still last-known 0.000 until this branch is built and
+submitted. The local implementation should now produce non-empty detections
+when the model loads and should return clean empty lists for bad inputs.
 
 ## Reproducibility / pointers
 
