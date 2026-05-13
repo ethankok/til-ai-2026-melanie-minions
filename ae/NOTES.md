@@ -231,7 +231,32 @@ Pipeline (scaffolded in [../training/ae/](../training/ae/)):
      runs before this was caught from the docker logs.
 6. **Container eval** (`til test`, 4×6-game runs): mean **0.672**. Within
    noise of direct eval — deployment is faithful.
-7. **Submitted** 14 May; awaiting official score.
+7. **Submitted** 14 May → **0.364 / 0.856, 0/30 errors** (14 May 01:22 SGT).
+   **Regressed -0.135 vs planner-v3b.** Local→official gap was 0.18 for
+   heuristics, ballooned to **0.31** for BC (container local 0.672 →
+   official 0.364). Speed held at 0.856 (BC inference doesn't hurt speed
+   meaningfully). **planner-v3b stays the shipped tag.**
+
+### Reading bc-v1's regression
+
+The container faithfully reproduces direct eval (0.672 vs 0.689) so the
+deployment is NOT the problem. The policy correctly imitates planner-v3b
+locally (val_acc 0.874, container mean ~planner). Yet official tanks.
+
+The gap blowup is the key signal: a 0.31 gap on a NN policy vs 0.18 for
+heuristics means the NN **memorized planner behavior against random
+local opponents** — patterns that don't transfer to the hidden eval's
+opponent distribution. Heuristics are explicit rules and degrade
+gracefully on new opponents; a BC policy keys on subtle obs features
+that correlate with planner-action in our local distribution but mean
+nothing officially.
+
+**Implication for PPO**: training against only random opponents will
+inherit this gap. PPO **must** use a mixed opponent pool to break the
+overfit — random + frozen planner-v3b + frozen self-copies + (ideally)
+scripted-aggressor agents. The deployment plumbing is validated, so the
+moment PPO produces better-than-v3b local-against-mixed-opponents
+weights, we drop them into `ae/models/bc.pt` and resubmit.
 
 What this submission is actually testing:
 - **End-to-end NN deployment path** (encoder + model + container + COPY +

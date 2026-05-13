@@ -12,6 +12,7 @@ ASR    melanie-minions-asr      ft-lora32-v1 13/05/2026 11:22:30  0 / 400       
 CV     melanie-minions-cv       latest      12/05/2026 03:52:32   4 / 500       0.000   0.981
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
 AE     melanie-minions-ae       planner-v3b 13/05/2026 23:42:57   0 / 30        0.499   0.853
+AE (bc) melanie-minions-ae      bc-v1       14/05/2026 01:22:13   0 / 30        0.364   0.856  ← regressed; planner-v3b still shipped
 ```
 
 ## ASR submission history
@@ -43,6 +44,8 @@ planner-v2  13/05 23:03        0.501 official       0 / 30 official errors   New
 planner-v3  13/05 Workbench    0.588/0.629/0.570    3-run mean ≈ 0.596       Aggressive bombing (predictive range 2, bomb chains) + soft threat 1.0/3.0; regressed locally, NOT submitted
 planner-v3b 13/05 Workbench    0.80/0.61/0.66/0.65/0.64/0.63  6-run mean ≈ 0.681  v3 minus bomb-chains; predictive bomb requires ≥2 enemies in range-1 blast; threat 2.0/5.0
 planner-v3b 13/05 23:42        0.499/0.853 official 0 / 30 official errors   Score essentially flat vs v2 (-0.002), but speed +0.082 from multi-source BFS + blast cache + uvloop. Blended +0.018.
+bc-v1       14/05 Workbench    0.689 direct / 0.672 container    149k-param CNN BC of planner-v3b, val_acc 0.8742; container mean within noise of direct eval and planner.
+bc-v1       14/05 01:22        0.364/0.856 official 0 / 30 official errors   REGRESSED -0.135 vs planner-v3b. Local→official gap ballooned 0.18 → 0.31. BC overfit to random-opponent local distribution.
 ```
 
 ## Qualifier weighted score estimate
@@ -97,7 +100,7 @@ Estimated blended qualifier score = 0.5638
 
 ## Next priority
 
-1. **AE behavior-cloning + PPO** — heuristic improvements are out. Pipeline scaffolded in `training/ae/` (encoder, ~150k-param CNN policy, BC dataset collector, BC trainer, local evaluator). Plan: roll out the planner for ~200 games → 40k (obs, action) pairs, supervised-train the policy to match the planner, then PPO fine-tune against mixed opponents (random + frozen planner + self-play) on the Workbench GPU. Risk: inference latency could regress speed; mitigation is keeping the network small and exporting to onnxruntime if torch CPU is too heavy. Realistic best-case: local 0.85+ → official 0.65+ (a +0.15 swing if the local-official gap stays at 0.18). PPO + deployment paths are still TODO.
+1. **AE PPO with mixed opponents** — bc-v1 shipped, scored `0.364/0.856` and **regressed -0.135 vs planner-v3b**. Local→official gap blew up from 0.18 (heuristic) to 0.31 (BC), confirming the gap is **environment-distribution mismatch**, not heuristic-specific: the BC policy memorized planner behavior against random opponents, which doesn't generalize to whatever the hidden eval uses. **Planner-v3b stays shipped** (`0.499` > `0.364`). Way forward: `train_ppo.py` initialized from `bc.pt`, trained against a **mixed opponent pool** (random + frozen planner-v3b + frozen self-copies + scripted aggressors) so the policy can't overfit to one distribution. Deployment plumbing already validated end-to-end through bc-v1. If PPO still loses to v3b official, fall back to v3b and pursue per-game logging.
 2. **ASR re-export `int8_float16`** — same LoRA-merged checkpoint, no retrain. Target: speed `0.849 → 0.90+` with accuracy delta `≤ 0.005`. Tag `ft-lora32-int8f16`.
 3. **NLP retrieval / chunking** upgrade — currently 0.301.
 4. **CV** — fix the `4 / 500` errors first, then drop in a pretrained detector.
