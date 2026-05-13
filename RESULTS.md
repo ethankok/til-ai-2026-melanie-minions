@@ -1,13 +1,14 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 14 May 2026 03:53 SGT
+Last updated: 14 May 2026 05:48 SGT
 
 ## Latest submitted scores
 
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
-NLP    melanie-minions-nlp      latest      12/05/2026 03:23:35   0 / 700       0.301   0.971
+NLP    melanie-minions-nlp      v3-id-parse 14/05/2026 05:33:21   0 / 700       0.000   0.888  ← REGRESSED; positional IDs wrong on cloud (eval format unknown)
+NLP    (prev best) latest       latest      12/05/2026 03:23:35   0 / 700       0.301   0.971
 ASR    melanie-minions-asr      ft-lora32-v1 13/05/2026 11:22:30  0 / 400       0.957   0.849
 CV     melanie-minions-cv       cv-yolo-ft-v1 14/05/2026 03:53:57 0 / 500       0.402   0.963
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
@@ -15,6 +16,17 @@ AE     melanie-minions-ae       ppo-v1      14/05/2026 04:36:51   0 / 30        
 AE (v3b) melanie-minions-ae     planner-v3b 13/05/2026 23:42:57   0 / 30        0.499   0.853
 AE (bc)  melanie-minions-ae     bc-v1       14/05/2026 01:22:13   0 / 30        0.364   0.856
 ```
+
+## NLP submission history
+
+```text
+Tag           Submitted          Score   Speed   Errors    Local        Notes
+latest        12/05 03:23        0.301   0.971   0 / 700   —            Sentence-split + lexical token-overlap retrieval (old eval, old schema)
+v2-hybrid-rag 14/05 ~04:00       0.000   ~      0 / 700   —            New eval. Hybrid BM25+BGE+rerank+RoBERTa-SQuAD2. Positional DOC-{i+1:04d}; 0.0 because filenames have 44 gaps in 0001..0340 and source_docs uses real filename IDs
+v3-id-parse   14/05 05:33        0.000   0.888   0 / 700   0.678 (1)    Same pipeline + defensive parser (DOC-XXXX prefix / dict / positional). Local 0.678 with prefix-prepended docs; cloud 0.000 confirms cloud sends plain strings with NO prefix and our positional fallback misaligns with real filename IDs
+```
+
+(1) Local test was patched to prepend `DOC-XXXX\n` to each document so the model could see filename IDs. Real cloud format is unconfirmed — see `ryan helps everyone with the NLP change` hackoverflow thread.
 
 ## ASR submission history
 
@@ -74,15 +86,17 @@ Noise has no direct Qualifier reward; it is a Finals CV-disruption component
 
 Each scored challenge blends `75%` accuracy/reward and `25%` speed. Qualifier speed is `1 - min(t_elapsed, 30 minutes) / 30 minutes` over the full test set.
 
-Using raw task scores only:
+Using raw task scores only (best-ever shipped per task on the CURRENT
+leaderboard — the old NLP score of 0.301 was wiped when organisers rolled
+out the new eval; `v3-id-parse` at 0.000 is now our only NLP submission):
 
 ```text
 0.40 * AE 0.507  = 0.2028
-0.20 * NLP 0.301 = 0.0602
+0.20 * NLP 0.000 = 0.0000   ← BLOCKED on doc-ID format clarification from Ryan; positional fallback misaligns with cloud IDs
 0.20 * ASR 0.957 = 0.1914
 0.20 * CV 0.402  = 0.0804
 --------------------------------
-Estimated weighted qualifier score = 0.5348
+Estimated weighted qualifier score = 0.4746
 ```
 
 `planner-v3b` keeps AE accuracy flat at `0.499` (vs `planner-v2`'s `0.501`) — within noise — but speed jumped `0.771 → 0.853`. Local→official gap is unchanged at `~0.17` (local mean `0.681` → official `0.499`); heuristic ceiling is in sight. Next swing is a learned policy (see Next priority).
@@ -91,11 +105,11 @@ Using the observed ~75% score / 25% speed blend:
 
 ```text
 AE   contribution = 0.2381   (0.75*0.507 + 0.25*0.861 = 0.5953)
-NLP  contribution = 0.0937
+NLP  contribution = 0.0444   (0.75*0.000 + 0.25*0.888 = 0.2220) ← speed only; 0.0 retrieval until ID format is fixed
 ASR  contribution = 0.1860
 CV   contribution = 0.1085   (0.75*0.402 + 0.25*0.963 = 0.5423)
 --------------------------------
-Estimated blended qualifier score = 0.6262
+Estimated blended qualifier score = 0.5770
 ```
 
 ## Notes
@@ -114,7 +128,7 @@ Estimated blended qualifier score = 0.6262
 
 ## Next priority
 
-1. **AE PPO with mixed opponents** — bc-v1 shipped, scored `0.364/0.856` and **regressed -0.135 vs planner-v3b**. Local→official gap blew up from 0.18 (heuristic) to 0.31 (BC), confirming the gap is **environment-distribution mismatch**, not heuristic-specific: the BC policy memorized planner behavior against random opponents, which doesn't generalize to whatever the hidden eval uses. **Planner-v3b stays shipped** (`0.499` > `0.364`). Way forward: `train_ppo.py` initialized from `bc.pt`, trained against a **mixed opponent pool** (random + frozen planner-v3b + frozen self-copies + scripted aggressors) so the policy can't overfit to one distribution. Deployment plumbing already validated end-to-end through bc-v1. If PPO still loses to v3b official, fall back to v3b and pursue per-game logging.
-2. **NLP retrieval / chunking** upgrade — currently 0.301. Official scorer gives `0.4` for successful retrieval with wrong answer, so top-3 document recall is the first lever.
+1. **NLP doc-ID format — blocked on Ryan** — `v3-id-parse` scored 0.000 with 0 errors on the cloud, which is empirical proof that the cloud sends documents in a format our defensive parser doesn't catch. Our positional fallback `DOC-{i+1:04d}` misaligns with the cloud's filename-style IDs because the local corpus has 44 ID gaps in 0001..0340; the cloud's held-out corpus likely has similar gaps. Local pipeline scored `0.678` with `DOC-XXXX\n`-prefixed docs, so the model itself is sound — only the ID-extraction step is wrong. Need Ryan's hackoverflow answer to know whether the cloud renumbers consecutively, sorts by filename, or uses a side-channel. Once answered, one ~10-line manager patch + rebuild + resubmit recovers a 0.4–0.7 NLP score.
+2. **AE PPO with mixed opponents** — bc-v1 shipped, scored `0.364/0.856` and **regressed -0.135 vs planner-v3b**. Local→official gap blew up from 0.18 (heuristic) to 0.31 (BC), confirming the gap is **environment-distribution mismatch**, not heuristic-specific: the BC policy memorized planner behavior against random opponents, which doesn't generalize to whatever the hidden eval uses. **Planner-v3b stays shipped** (`0.499` > `0.364`). Way forward: `train_ppo.py` initialized from `bc.pt`, trained against a **mixed opponent pool** (random + frozen planner-v3b + frozen self-copies + scripted aggressors) so the policy can't overfit to one distribution. Deployment plumbing already validated end-to-end through bc-v1. If PPO still loses to v3b official, fall back to v3b and pursue per-game logging.
 3. **CV v2 A/B only after AE/NLP** — `cv-yolo-ft-v1` is clean and much better (`0.402/0.963`) but has a large local→official gap (`0.885` local mAP50-95 → `0.402` official). If revisiting CV, try hidden-shift/generalization moves: stronger augmentation, class-balanced sampling, `yolov8m`, or lower confidence tuning. Do not spend time on output-format debugging unless errors appear.
 4. **ASR beam/prompt tweaks only if idle** — `ft-lora32-v1` already crosses 0.95 and `int8_float16` regressed to `0.923/0.856`, so speed quantization is off the table for this checkpoint.
