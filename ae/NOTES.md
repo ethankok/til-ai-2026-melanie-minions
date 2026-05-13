@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 13 May 2026 23:55 SGT
+Last updated: 14 May 2026 SGT
 
 Per-task working log for AE (Autonomous Exploration / Bomberman). For
 input/output spec see [README.md](README.md). For submission history across
@@ -52,6 +52,7 @@ planner-v1  13/05 11:33        0.445   0.788   0/30    Stateful planner — new 
 planner-v2  13/05 23:03        0.501   0.771   0/30    Bomb timer 4→3, bounded escape, enemy soft threat, frontier unseen-yield → +0.056 over v1
 planner-v3  (not submitted)    —       —       9/9     Bigger v2 → multi-source BFS, predictive bombs (range 2), bomb chains, soft threat 1.0/3.0. Local regressed to 0.596, aborted.
 planner-v3b 13/05 23:42        0.499   0.853   0/30    v3 minus bomb-chains; predictive range=1 with ≥2 enemies; threat 2.0/5.0. Score flat, speed +0.082 from BFS/cache/uvloop.
+bc-v1       14/05 submitted    pending pending —       BC of planner-v3b: 149k-param CNN policy, val_acc 0.8742; 4-run container mean 0.672 (matches planner). Awaiting eval.
 ```
 
 ## Local validation history
@@ -67,6 +68,8 @@ planner-v2  13/05 23:03        0.501 official           +0.056 over planner-v1; 
 planner-v3  13/05 Workbench    0.588/0.629/0.570        3-run local mean ≈ 0.596 (-0.07 vs v2). Aggressive bombing was wasteful. NOT submitted.
 planner-v3b 13/05 Workbench    0.80/0.61/0.66/0.65/0.64/0.63   6-run local mean ≈ 0.681 (variance ±0.07, big tail from one 0.80 outlier)
 planner-v3b 13/05 23:42        0.499 official           Score flat vs v2 (-0.002), speed +0.082. Local→official gap still ~0.18 — structural.
+bc-v1       14/05 eval_policy  0.7195/0.7193/0.6248/0.6908   Direct (no container) mean ≈ 0.689 — slightly above planner local.
+bc-v1       14/05 til test     0.6317/0.7037/0.6128/0.7398   Container mean ≈ 0.672 — within noise of direct eval and of planner.
 ```
 
 ## Detailed timeline
@@ -195,6 +198,53 @@ something else officially, fixed novice seed vs varied hidden seeds), not
 something heuristic tuning will close. **The heuristic ceiling is around
 0.50 official.**
 
+### bc-v1 (14 May, submitted) — first learned policy
+
+Pipeline (scaffolded in [../training/ae/](../training/ae/)):
+
+1. **Dataset**: 200 games × ~200 of our agent's turns = **40,000 samples**
+   collected by rolling out planner-v3b with random opponents
+   (`collect_bc.py`, ~8 min on Workbench). Action distribution:
+   `FORWARD 47.8% / BACKWARD 13.9% / RIGHT 15.0% / LEFT 12.7% /
+   PLACE_BOMB 10.3% / STAY 0.3%` — healthy, no class collapse.
+2. **Network**: `PolicyNetwork` (~149k params) — small CNN over each
+   viewcone (32→16 ch for agent_view 25×7×5, 16→8 ch for base_view
+   25×7×7) + MLP over 17-dim scalars → 6-way action head.
+3. **Training**: 20 epochs supervised CE with `log(action_mask)` added to
+   logits so the model can never assign mass to illegal actions. ~28 s
+   total on Workbench GPU. **Best val_acc 0.8742**; train/val gap ~4 pts
+   (no overfit).
+4. **Direct eval** (`eval_policy.py`, 4×6-game runs): mean **0.689**.
+5. **Container deploy**:
+   - `ae/src/{encoder,model,policy_manager}.py` mirror the training tree.
+   - `ae/src/ae_server.py` calls `_make_manager()` which tries
+     `PolicyAEManager` and falls back to `AEManager` on
+     `FileNotFoundError` (no checkpoint) or any other exception.
+   - `ae/requirements.txt` adds CPU-only torch via `--extra-index-url
+     https://download.pytorch.org/whl/cpu`. Image grows ~80 → 250 MB.
+   - `ae/Dockerfile` adds `COPY models /workspace/models`.
+   - **Path bug fix** (commit `22996fe`): `Path(__file__).parent.parent /
+     "models" / "bc.pt"` resolved to `/models/bc.pt` inside the container
+     (because `COPY src .` puts source at `/workspace/`, not
+     `/workspace/src/`). `policy_manager.py` now checks both candidate
+     paths. First bc-v1 build silently fell back to the heuristic for 4
+     runs before this was caught from the docker logs.
+6. **Container eval** (`til test`, 4×6-game runs): mean **0.672**. Within
+   noise of direct eval — deployment is faithful.
+7. **Submitted** 14 May; awaiting official score.
+
+What this submission is actually testing:
+- **End-to-end NN deployment path** (encoder + model + container + COPY +
+  fallback). Required for PPO later.
+- **Local→official gap for NN policies**. If it stays at ~0.18 (official
+  ≈ 0.49), the gap is environment-distribution, not algorithm; PPO must
+  close it through training against varied opponents. If it shrinks
+  (official ≈ 0.55+), NN policies *do* generalize better and BC alone is
+  a positive datapoint.
+- **Speed cost of torch CPU inference vs pure-Python BFS**. v3b speed was
+  0.853; BC inference is ~13 ms/call vs heuristic's ~1 ms, so speed will
+  likely drop to roughly 0.75–0.82.
+
 ## Where we are vs target
 
 | Metric                  | planner-v3b | Target | Gap     |
@@ -222,28 +272,26 @@ tuning. **Score is the hard problem** — needs a different approach.
 
 ## Next steps
 
-1. **Behavior cloning + PPO** (started in [../training/ae/](../training/ae/)).
-   Scaffolded as of 13 May 23:55 SGT:
-   - `encoder.py` — observation → tensors (CNN-ready)
-   - `model.py` — `PolicyNetwork` (~150k params, designed for <5 ms CPU
-     inference so we don't lose the speed gains)
-   - `collect_bc.py` — rolls out the planner in `til_environment.bomberman_env`,
-     dumps (obs, action) pairs to `.npz`
-   - `train_bc.py` — supervised CE with `log(action_mask)` in the logits
-   - `eval_policy.py` — local eval harness reusing `test/test_ae.py` math
-   - **TODO**: `train_ppo.py` (single-agent gym wrapper around PettingZoo
-     env, BC-initialized PPO with mixed opponents), deployment path in
-     `ae/src/ae_manager.py` that loads weights if present and falls back
-     to the BFS planner.
-2. **Per-game logging during `til test`** if PPO doesn't help. Capture
-   step-by-step (obs, action, reward) JSONL during a local run, then
-   compare against post-mortem reasoning about what the official eval
-   probably did differently. Cheap and cumulative.
-3. **Speed micro-optimizations** if blended score becomes the constraint:
-   move from python:3.11-slim to a slimmer base, ahead-of-time-compile the
-   manager with mypyc, or split the BFS into native C with cython. Only
-   worth it after PPO either lands or fails — current speed (0.853) is
-   already close to target.
+1. **Read the bc-v1 official result** when it comes back. Decision tree:
+   - **Score ≥ 0.55**: NN policies generalize better than heuristics —
+     local→official gap narrowed. PPO is now high-confidence.
+   - **Score 0.45–0.55**: gap is structural, same as heuristics. PPO is
+     still the right move but expectations capped at ~heuristic+ε
+     without varied-opponent training.
+   - **Score < 0.40**: deployment-specific bug we missed. Diff a single
+     observation's logits between `eval_policy.py` and the container.
+2. **`train_ppo.py`** (next session). Single-agent gym wrapper around
+   `til_environment.bomberman_env`; BC weights as the warm start; mixed
+   opponents (random + frozen planner-v3b + frozen self-copies) to fight
+   the local→official gap directly. Save best checkpoint by local-eval
+   score; replace `ae/models/bc.pt` with the PPO winner; resubmit as
+   `ppo-v1`.
+3. **Per-game JSONL logging during `til test`** if PPO plateaus. Capture
+   `(obs, action, reward)` per step, post-mortem the low-score rounds.
+4. **Speed micro-optimizations** if blended score becomes the constraint
+   after PPO: ONNX-export the policy to onnxruntime (~30 MB, ~3× faster
+   CPU inference than torch CPU), or move from `python:3.11-slim` to a
+   slimmer base. Only worth it after PPO either lands or fails.
 
 ## Reproducibility / pointers
 
