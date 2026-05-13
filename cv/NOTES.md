@@ -8,29 +8,32 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`yolo-til-map-v2` — official 0.044 / 0.961 (14 May 01:56 SGT, 0 of 500 errors).**
+**`cv-yolo-ft-v1` — official 0.402 / 0.963 (14 May 03:53 SGT, 0 of 500 errors).**
 
-Pretrained YOLOv8n + custom sparse COCO→TIL mapping. This fixed the old
-`4 / 500` errors and confirms the service/schema/fallback plumbing is clean.
-Score is still low because COCO YOLO cannot distinguish the 18 TIL-specific
-military/vehicle/ship subclasses. Next step: fine-tune a custom detector on the
-provided CV annotations, not more mapping guesses.
+YOLOv8s fine-tuned on the provided 18-class TIL CV annotations. Local Docker
+`til test` scored `mAP@.5:.05:.95 = 0.885`; official hidden eval scored
+`0.402`, so the model is much stronger than the COCO-mapped baseline but has a
+large local→official generalization gap. Serving/schema is clean: `0 / 500`
+errors and speed stayed high.
+
+The previous `yolo-til-map-v2` baseline scored `0.044 / 0.961`; fine-tuning is
++0.358 absolute official score with essentially unchanged speed.
 
 ## What our model runs on
 
-Current branch implementation: a schema-safe Ultralytics YOLO baseline in
-[src/cv_manager.py](src/cv_manager.py).
+Current branch implementation: a schema-safe Ultralytics YOLO service in
+[src/cv_manager.py](src/cv_manager.py), packaged by [Dockerfile](Dockerfile).
 
 ```python
 def cv(image_bytes: bytes, key=None) -> list[dict]:
-    # Decode robustly, run YOLO when available, convert xyxy -> xywh.
+    # Decode robustly, run YOLO, convert xyxy -> official LTWH.
     # Any decode/model failure returns [] and logs key/byte size.
 ```
 
-Default model is `yolov8n.pt`, cached during Docker build so runtime does not
-depend on network access. Outputs use the custom Workbench category IDs by
-default for the COCO classes YOLO can see, with `CV_CATEGORY_MAP` available as a
-JSON override for further tuning.
+Docker now expects the trained checkpoint at `/workspace/models/cv/best.pt`,
+copied from local `cv/models/best.pt` during build. `CV_CATEGORY_MAP` is an
+identity `0..17` map because the fine-tuned model was trained directly on the
+official TIL label order.
 
 ## Submission history
 
@@ -38,9 +41,30 @@ JSON override for further tuning.
 Tag              Submitted       Score   Speed   Errors    Notes
 latest           12/05 03:52     0.000   0.981   4 / 500   Empty-detection baseline, 4 inputs erroring
 yolo-til-map-v2  14/05 01:56     0.044   0.961   0 / 500   YOLOv8n + sparse COCO→TIL map; clean serving, weak domain fit
+cv-yolo-ft-v1    14/05 03:53     0.402   0.963   0 / 500   YOLOv8s fine-tuned on 18 TIL labels; local mAP50-95 0.885
 ```
 
 ## Detailed timeline
+
+### cv-yolo-ft-v1 (14 May 03:53) — trained 18-class YOLOv8s
+
+- Converted `/home/jupyter/novice/cv/annotations.json` into an Ultralytics YOLO
+  dataset with `4500` train images, `500` validation images, `16620` train boxes,
+  and `1881` validation boxes.
+- Trained `yolov8s.pt` for 60 epochs at `imgsz=640`, `batch=16`, `device=0` on a
+  Tesla T4. Training completed in `1.297` hours.
+- Final validation from Ultralytics: precision `0.964`, recall `0.936`,
+  `mAP50=0.975`, `mAP50-95=0.905`.
+- Docker `til test` on the full local novice CV set: `mAP@.5:.05:.95 = 0.885`,
+  `mAP50 = 0.951`, no errors, `1250/1250` batches in `08:30`.
+- Official hidden eval: `0.402 / 0.963`, `0 / 500` errors.
+
+Interpretation: not an LTWH/output-format failure. A bbox-format bug would likely
+score near `0.0` or cause result-loading/evaluation errors. The model improved
+`0.044 → 0.402` with unchanged speed and no errors, proving the schema and
+`xyxy → LTWH` adapter are working. The local→official gap (`0.885 → 0.402`) is
+more likely hidden distribution shift, harder images/small objects, label/domain
+differences, or confidence/recall behavior.
 
 ### yolo-baseline (14 May) — pretrained detector + robust fallback
 
@@ -106,52 +130,39 @@ accepts requests, the JSON shape is correct. No detection logic yet. Scored
 
 In priority order (per [../SUMMARY.md "CV"](../SUMMARY.md)):
 
-### 1. Fix the `4 / 500` errors first
+### 1. Keep `cv-yolo-ft-v1` shipped
 
-Status: fixed by `yolo-til-map-v2` (`0 / 500` errors officially). The robust
-manager fallback and RGB/EXIF normalization did their job. Keep this serving
-path as the safe baseline while changing model weights.
+Status: shipped and clean (`0.402 / 0.963`, `0 / 500` errors). It is the current
+best CV image. Do not revert to the COCO-mapped baseline.
 
-### 2. Pretrained detector baseline
+### 2. If revisiting CV, improve hidden-distribution generalization
 
-Status: implemented with **Ultralytics YOLOv8n**. It is useful only as a
-serving/sanity baseline: official score `0.044` proves COCO labels are too
-mismatched for the 18-class target list.
+The next CV score gap is not plumbing. Candidate A/Bs:
 
-Wire-up:
-- Load model once in `CVManager.__init__`
-- In `cv(image_bytes)`:
-  - `PIL.Image.open(io.BytesIO(image_bytes))`
-  - Run detector
-  - **Convert model boxes → LTWH** (official top-left + width/height, NOT corners and NOT center-XYWH). The output schema is `[l, t, w, h]` per `category_id`. Getting this wrong scores 0 with a working model.
-  - Apply confidence threshold (start ~0.25, tune)
-- Added `ultralytics`, `pillow` to [requirements.txt](requirements.txt)
-- [Dockerfile](Dockerfile) already uses an NVIDIA PyTorch base and caches
-  `yolov8n.pt` during build.
+- Try `yolov8m.pt` if speed budget remains high.
+- Add stronger augmentation or class-balanced sampling for rare/small classes.
+- Tune confidence/NMS for recall on small/ambiguous aircraft classes.
+- Consider `imgsz=768` if speed remains acceptable; official speed for v1 is
+  still `0.963`, so there is headroom.
 
-### 3. Class mapping was the baseline blocker; fine-tuning is now the work
+Do not spend time on COCO→TIL mapping guesses; the fine-tuned model already uses
+the official 18-class label order.
 
-Status: default mapping targets the official 18 labels. It is intentionally
-sparse because the pretrained COCO model only has broad `car/bus/truck/airplane/boat`
-classes. `CV_CATEGORY_MAP` can still override mappings, but the official
-mAP@.5:.05:.95 target requires a detector trained on the TIL category list.
-**Wrong class mapping scores 0 even with perfect boxes; correct mapping alone
-is still insufficient when the detector cannot see the target subclasses.**
+### 3. Output-format checks to preserve
 
-### 4. Stretch (post-baseline)
-
-- Fine-tune on the provided training set if categories diverge significantly from COCO.
-- TTA (test-time augmentation: flip + scale ensemble) if speed budget allows.
-- NMS tuning per class.
+- YOLO training labels are normalized center-XYWH; that is only the training
+  format.
+- API output must stay pixel LTWH `[left, top, width, height]`.
+- `cv_manager.py` currently converts Ultralytics `xyxy` to LTWH and clamps to
+  image bounds. Keep this adapter unchanged unless local `til test` catches a
+  regression.
 
 ## State
 
-CV official score is now `0.044 / 0.961` with `0 / 500` errors. That is a clean
-serving baseline but a weak detector. Next high-ROI work is machine learning:
-convert `/home/jupyter/novice/cv/annotations.json` to YOLO format, fine-tune a
-YOLO model for the 18 TIL labels, copy the best checkpoint into `cv/models/`, set
-`CV_MODEL_PATH` to that checkpoint in the Docker image, then `til build/test/submit`
-with a tag like `cv-yolo-ft-v1`.
+CV official score is now `0.402 / 0.963` with `0 / 500` errors. This is a real
+ML improvement over `yolo-til-map-v2` (`0.044 / 0.961`) and raises the estimated
+blended qualifier score materially. Further CV gains are possible, but AE/NLP
+probably have better ROI unless a quick `yolov8m` or augmentation A/B is cheap.
 
 ## Reproducibility / pointers
 

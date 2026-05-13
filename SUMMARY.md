@@ -143,7 +143,7 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 | ASR | `ft-lora32-v1` | 0.957 | 0.849 | Crossed 0.95 target. Parked; int8 speed re-export regressed accuracy. | [asr/NOTES.md](asr/NOTES.md) |
 | AE | `planner-v3b` | 0.499 | 0.853 | Best shipped. `bc-v1` regressed to 0.364, so next learned attempt needs mixed opponents/PPO. | [ae/NOTES.md](ae/NOTES.md) |
 | NLP | `latest` | 0.301 | 0.971 | Schema-valid lexical baseline. BM25/chunking upgrade is still the biggest free win. | [nlp/NOTES.md](nlp/NOTES.md) |
-| CV | `yolo-til-map-v2` | 0.044 | 0.961 | Clean serving with 0/500 errors, but weak detector; YOLO fine-tuning in progress. | [cv/NOTES.md](cv/NOTES.md) |
+| CV | `cv-yolo-ft-v1` | 0.402 | 0.963 | YOLOv8s fine-tune shipped cleanly. Big local→official gap remains (`0.885` local mAP50-95 → `0.402` official). | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `latest` | 1.000 | 0.970 | Qualifier-safe. Official spec says no direct Qualifier reward. | [noise/NOTES.md](noise/NOTES.md) |
 
 ---
@@ -160,14 +160,14 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 
 4. **AE** (40%) — `planner-v3b` remains shipped at 0.499/0.853; BC deployment works but `bc-v1` overfit hidden eval, so PPO must train against mixed opponents.
 5. **NLP** (20%) — fix around the official `{"documents": [...], "answer": "..."}` scoring contract: BM25 + better chunking first, then answer extraction.
-6. **CV** (20%) — `yolo-til-map-v2` fixed serving errors; train YOLO on the official 18-class LTWH/mAP task instead of guessing COCO mappings.
+6. **CV** (20%) — `cv-yolo-ft-v1` shipped at 0.402/0.963 after YOLOv8s fine-tuning; local mAP was 0.885, so remaining work is hidden-distribution generalization rather than format/plumbing.
 7. **ASR** (20%) — `ft-lora32-v1` shipped at 0.957. Parked; int8 re-export already proved low-ROI.
 
 **Week 2 — push scores**
 
 8. **AE**: heuristic scoring / fine-tuned policy. Test against `til-26-ae` env locally.
 9. **NLP**: hybrid retrieval (BM25 + dense embeddings) + extractive QA model on top-k.
-10. **CV**: fine-tune on provided training set if categories don't match COCO.
+10. **CV**: only revisit after AE/NLP unless a quick `yolov8m`, stronger augmentation, or confidence/NMS A/B is cheap.
 11. **Noise**: bounded FGSM perturbation if time and the score actually matters.
 
 **Always**
@@ -181,7 +181,7 @@ Why this order:
 
 - AE is 40% — every hour spent there is worth ~2× the same hour on a 20% task, but naive BC already failed, so PPO must solve distribution mismatch instead of just imitate the planner.
 - NLP's lexical baseline should jump with retrieval upgrades alone, and the official schema gives partial credit (`0.4`) for successful retrieval even when answer equivalence fails.
-- CV's COCO-mapped YOLO baseline is clean but low; the official target list is 18 custom classes and scoring is mAP@.5:.05:.95, so fine-tuning is the real lever.
+- CV's fine-tuned YOLOv8s is now clean and materially better; remaining CV gap is likely hidden distribution/small-object/generalization, not LTWH formatting.
 - ASR has crossed its target; marginal hour is low-ROI now.
 - Noise has no direct qualifier reward per the official spec; do it last unless preparing for Finals.
 

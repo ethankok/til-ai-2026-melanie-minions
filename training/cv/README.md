@@ -1,6 +1,6 @@
 # CV fine-tuning workflow
 
-Goal: replace the weak COCO `yolov8n.pt` baseline (`0.044 / 0.961`) with a detector trained on the 18 TIL CV classes from the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv). CV scoring is mAP@.5:.05:.95 plus speed; outputs must be LTWH `[l, t, w, h]` boxes with `category_id` 0-17.
+Goal: reproduce or improve the shipped `cv-yolo-ft-v1` detector. It replaced the weak COCO `yolov8n.pt` baseline (`0.044 / 0.961`) with a YOLOv8s detector trained on the 18 TIL CV classes from the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv). `cv-yolo-ft-v1` officially scored `0.402 / 0.963` with `0 / 500` errors; local Docker mAP50-95 was `0.885`. CV scoring is mAP@.5:.05:.95 plus speed; outputs must be LTWH `[l, t, w, h]` boxes with `category_id` 0-17.
 
 Run on GCP Workbench, not the Mac, because the data lives under `/home/jupyter/novice/cv`.
 
@@ -46,7 +46,7 @@ mkdir -p cv/models
 cp /home/jupyter/cv_runs/til-yolov8s-v1/weights/best.pt cv/models/best.pt
 ```
 
-Then patch `cv/Dockerfile` for the trained run:
+Then ensure `cv/Dockerfile` includes the trained model path (already true on `main` after `fix(cv): load trained YOLO checkpoint`):
 
 ```Dockerfile
 ENV CV_MODEL_PATH=/workspace/models/cv/best.pt

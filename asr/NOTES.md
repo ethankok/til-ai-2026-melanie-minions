@@ -210,7 +210,7 @@ lower-ROI than the same hour on:
 
 - **AE** (40% qualifier weight, best shipped `planner-v3b` at 0.499/0.853; learned policy needs mixed-opponent PPO after `bc-v1` regressed)
 - **NLP** (currently 0.301; official scorer gives partial credit for retrieval, so BM25/chunking has direct upside)
-- **CV** (currently 0.044/0.961 with 0/500 errors; official 18-class mAP task now needs custom detector fine-tuning)
+- **CV** (currently 0.402/0.963 with 0/500 errors; fine-tuned YOLOv8s shipped, but hidden eval is far below local mAP)
 
 The only ASR experiment worth a short cycle now is `beam_size=2` or a tiny
 prompt tweak since it can't regress our leaderboard entry. Speed quantization
