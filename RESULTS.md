@@ -1,7 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 12 May 2026
+Last updated: 13 May 2026
 
 ## Latest submitted scores
 
@@ -21,6 +21,14 @@ Tag        Submitted             Score   Speed   Local Eng-WER   Notes
 v1         12/05 03:42           0.000   0.993   —               Empty-string baseline
 norm-v1    12/05 16:23           0.877   0.864   0.0759          + digit verbalization + silence guard
 vad-off-v1 12/05 20:00           0.938   0.859   0.0554          + VAD off + hallucination guards + ordinals + decimal-safe
+```
+
+## AE local validation history
+
+```text
+Variant     Date/time          Local novice score   Errors/action validity   Notes
+baseline    12/05              0.051 official       0 / 30 official errors   Periodic-forward + periodic bomb baseline
+planner-v1  13/05 10:31 +08    0.732 local          0 invalid actions        Stateful belief map + objective/frontier BFS + LOS-safe tactical bombs
 ```
 
 ## Qualifier weighted score estimate
@@ -69,8 +77,8 @@ Estimated blended qualifier score = 0.4274
 
 ## Next priority
 
-1. **ASR LoRA fine-tune** ([training/asr/README.md](training/asr/README.md) quick-start; in progress). To hit `0.95+` we need WER ≤ 0.05 on the hidden set. Vad-off-v1 is at official WER 0.062 — LoRA realistically gets us 20-40% relative more.
-2. **ASR re-export `int8_float16`** after FT lands for the speed score (~0.86 → 0.90+).
-3. **AE rule-based planner** — 40% of the qualifier, still at 0.051. Biggest absolute lever.
+1. **Submit AE planner-v1 on Workbench** — local novice score is `0.732` with `0` invalid actions; official AE is still `0.051` until submitted.
+2. **ASR LoRA fine-tune** ([training/asr/README.md](training/asr/README.md) quick-start; in progress). To hit `0.95+` we need WER ≤ 0.05 on the hidden set. Vad-off-v1 is at official WER 0.062 — LoRA realistically gets us 20-40% relative more.
+3. **ASR re-export `int8_float16`** after FT lands for the speed score (~0.86 → 0.90+).
 4. **NLP retrieval / chunking** upgrade — currently 0.301.
 5. **CV** — fix the `4 / 500` errors first, then drop in a pretrained detector.
