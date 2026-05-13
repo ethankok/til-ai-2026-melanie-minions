@@ -24,7 +24,21 @@ from encoder import encode_observation
 from model import PolicyNetwork
 
 
-DEFAULT_CHECKPOINT = Path(__file__).resolve().parent.parent / "models" / "bc.pt"
+def _candidate_checkpoints() -> list[Path]:
+    """Paths to check, in priority order.
+
+    - In the Docker container, ``COPY src .`` puts source files directly at
+      ``/workspace/``, so weights live at ``/workspace/models/bc.pt`` and
+      ``__file__/../models/bc.pt`` is the right path.
+    - In local development, source lives at ``ae/src/`` and weights at
+      ``ae/models/``, so ``__file__/../../models/bc.pt`` is the right path.
+
+    Check both so the same code runs in both contexts.
+    """
+
+    here = Path(__file__).resolve().parent
+    return [here / "models" / "bc.pt", here.parent / "models" / "bc.pt"]
+
 
 _MODEL_CACHE: PolicyNetwork | None = None
 _DEVICE_CACHE: torch.device | None = None
@@ -34,7 +48,11 @@ def _resolve_checkpoint_path() -> Path:
     override = os.environ.get("AE_POLICY_CHECKPOINT")
     if override:
         return Path(override)
-    return DEFAULT_CHECKPOINT
+    for candidate in _candidate_checkpoints():
+        if candidate.exists():
+            return candidate
+    # Nothing found — return the first candidate for the not-found error message.
+    return _candidate_checkpoints()[0]
 
 
 def _load_model(checkpoint_path: Path) -> tuple[PolicyNetwork, torch.device]:
@@ -65,9 +83,11 @@ class PolicyAEManager:
         if _MODEL_CACHE is None:
             ckpt_path = _resolve_checkpoint_path()
             if not ckpt_path.exists():
+                searched = [str(p) for p in _candidate_checkpoints()]
                 raise FileNotFoundError(
-                    f"AE policy checkpoint not found at {ckpt_path}. "
-                    "Copy a trained checkpoint there or set AE_POLICY_CHECKPOINT."
+                    f"AE policy checkpoint not found. Searched: {searched}. "
+                    "Copy a trained checkpoint to one of those paths, or set "
+                    "AE_POLICY_CHECKPOINT to point at it explicitly."
                 )
             _MODEL_CACHE, _DEVICE_CACHE = _load_model(ckpt_path)
         self.model = _MODEL_CACHE
