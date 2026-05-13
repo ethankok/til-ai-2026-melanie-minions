@@ -1,9 +1,9 @@
-"""CV manager backed by a small Ultralytics YOLO detector.
+"""CV manager backed by an Ultralytics YOLO detector.
 
 The first job is still robustness: any image/model failure returns an empty
 detection list instead of taking down the request. When the model is available,
-we run a pretrained COCO detector and convert Ultralytics' xyxy boxes/class
-indices into the competition's COCO-style xywh/category_id schema.
+we run a YOLO detector and convert Ultralytics' xyxy boxes/class indices into
+the competition's LTWH bbox/category_id schema.
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ class CVManager:
             key: Optional evaluator key, used only for debug logging.
 
         Returns:
-            List of detections, each with bbox [x, y, w, h] and category_id.
+            List of detections, each with bbox [left, top, width, height] and category_id.
             Empty list means "no objects detected" and is explicitly valid.
         """
         try:

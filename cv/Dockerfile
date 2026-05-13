@@ -10,7 +10,8 @@ FROM nvcr.io/nvidia/pytorch:25.11-py3
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
-ENV CV_MODEL_PATH=yolov8n.pt
+ENV CV_MODEL_PATH=/workspace/models/cv/best.pt
+ENV CV_CATEGORY_MAP='[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]'
 WORKDIR /workspace
 
 # Installs your dependencies.
@@ -21,11 +22,9 @@ RUN pip install -U pip
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Cache the default pretrained detector during image build so runtime inference
-# does not depend on network access.
-RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt')"
-
-# Copies your source files.
+# Copies your model weights and source files.
+# Put the trained checkpoint at cv/models/best.pt before building/submitting.
+COPY models /workspace/models/cv
 COPY src .
 
 # Starts your model server.

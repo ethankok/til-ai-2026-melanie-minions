@@ -9,7 +9,8 @@
 # Scoped per task — AE's policy checkpoints are tiny (~600 KB), so we track
 # the directory and rely on ae/.gitignore to filter .pt/.onnx files.
 asr/models/
-cv/models/
+cv/models/*
+!cv/models/.gitkeep
 nlp/models/
 noise/models/
 **/results/
