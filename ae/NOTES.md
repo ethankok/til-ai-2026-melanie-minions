@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 13 May 2026
+Last updated: 13 May 2026 23:10 SGT
 
 Per-task working log for AE (Autonomous Exploration / Bomberman). For
 input/output spec see [README.md](README.md). For submission history across
@@ -8,11 +8,18 @@ all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`planner-v1` — official 0.445 / 0.788 (13 May 11:33 SGT, 0/30 errors).**
+**`planner-v2` — official 0.501 / 0.771 (13 May 23:03 SGT, 0/30 errors).**
 
-A team high score and a large jump from the `0.051` random-walk baseline, but
-**meaningfully worse than Workbench local 0.697 / Mac local 0.732**. The
-local→official gap (~0.25) is the dominant mystery and the main work item.
++0.056 over `planner-v1` (0.445) from a single round of correctness fixes —
+most notably correcting `BOMB_TIMER = 4 → 3` so the env's true placement →
+detonation budget is respected. Speed dipped slightly (`0.788 → 0.771`) from
+the bounded-escape and threat-aware BFS — small price for the accuracy jump.
+
+The local→official gap narrowed from ~0.25 (planner-v1: 0.697 → 0.445) to
+~0.17 (planner-v2: ~0.669 → 0.501). Better, but **not closed**. The residual
+gap is likely a mix of fixed-seed novice map being easier than hidden eval,
+random opponents locally vs whatever the hidden eval uses, and 6-round
+local variance.
 
 AE is **40% of the qualifier** — biggest absolute lever in the whole repo.
 
@@ -23,7 +30,7 @@ AE is **40% of the qualifier** — biggest absolute lever in the whole repo.
 - **Source**: [src/ae_manager.py](src/ae_manager.py) (manager — what we edit) + [src/ae_server.py](src/ae_server.py) (server with the reset-robustness patch already applied — empty POST or `step == 0` triggers re-instantiation of `AEManager`; see top-level CLAUDE.md notes).
 - **State on `self`**: belief map, frontier set, turn counter, etc. — must NOT use module-level globals because the server re-instantiates the manager on reset.
 
-### Planner sketch (planner-v1)
+### Planner sketch (planner-v2)
 
 - Stateful belief map updated each tick from the partial observation.
 - Objective + frontier BFS pathfinding to nearest unexplored / objective cell.
@@ -40,7 +47,7 @@ AE is **40% of the qualifier** — biggest absolute lever in the whole repo.
 Tag         Submitted          Score   Speed   Errors  Outcome
 baseline    12/05 04:20        0.051   0.856   0/30    Periodic-forward + bomb-every-20 random walk
 planner-v1  13/05 11:33        0.445   0.788   0/30    Stateful planner — new team high score, but big local→official gap
-planner-v2  pending            —       —       —       Bomb timer fix (4→3), bounded escape, enemy soft threat, frontier scoring
+planner-v2  13/05 23:03        0.501   0.771   0/30    Bomb timer 4→3, bounded escape, enemy soft threat, frontier unseen-yield → +0.056 over v1
 ```
 
 ## Local validation history
@@ -51,7 +58,8 @@ baseline    12/05              0.051 official     Reference point only
 planner-v1  13/05 10:31 Mac    0.732 local        Stateful belief + BFS + LOS-safe tactical bombs, 0 invalid actions
 planner-v1  13/05 Workbench    0.697 local        Built/tested with official Workbench Docker flow before submission
 planner-v1  13/05 11:33        0.445 official     ← significant drop from both local environments
-planner-v2  13/05 pending      9/9 unit tests     Bomb timer 4→3 (matches env), bounded escape check, enemy soft threat, frontier scoring by unseen-yield
+planner-v2  13/05 Workbench    0.659/0.659/0.689  3-run local mean ≈ 0.669 (variance ±0.015)
+planner-v2  13/05 23:03        0.501 official     +0.056 over planner-v1; gap to local narrowed but not closed
 ```
 
 ## Detailed timeline
@@ -99,49 +107,65 @@ Hypotheses for the local→official gap (in priority order):
    exploration. Planner-v2 weights frontier nodes by *unseen-yield* (how
    much new info they reveal) rather than raw distance.
 
-### planner-v2 (work in progress as of 13 May)
+### planner-v2 (13 May 23:03) — bomb-timer correctness + soft enemy threat
 
-Changes against planner-v1:
+Changes against planner-v1 (committed in [`cb13c4c`](../README.md)):
 
-- **Bomb fuse: 4 → 3 ticks**. Matches what's actually in the env. Previous
-  value was guessed from documentation.
-- **Bounded escape check**. Verifies that the planned escape path is
-  reachable WITHIN the fuse window AND accounts for at least one enemy
-  potentially blocking it.
-- **Enemy soft threat**. Tiles adjacent to enemies get a positive cost
-  contribution proportional to enemy step-probability into them, not a hard
-  block. This lets the planner traverse near enemies when necessary but
-  prefer wider berths when possible.
-- **Frontier scoring by unseen yield**. Each frontier cell scored by how
-  many new map cells it would reveal if visited, not just BFS distance.
+- **Bomb fuse: 4 → 3 ticks**. The single biggest signal. `til-26-ae` config
+  declares `entities.bomb.timer: 3`; with the phase order
+  `place → move → detonate → upkeep`, a bomb placed at step N detonates after
+  the agent's movement at step N+timer — i.e. the agent gets exactly 3
+  movement actions to escape. The previous `4` allowed `_should_place_bomb`
+  to commit to bombs whose escape path needed 4 moves; in those scenarios
+  the planner was self-trapping. Net official lift: +0.056.
+- **Bounded escape BFS**. Replaced the unbounded `_nearest_escape_cell` in
+  `_should_place_bomb` with `_safe_escape_within(loc, blast, BOMB_TIMER)`.
+  Refuses to place a bomb unless a safe cell is reachable within the fuse
+  window. Removed the dead `_has_escape_after_bomb` helper.
+- **Enemy soft threat**. Recently-seen enemies (within `ENEMY_STALENESS = 3`
+  steps) plus their 4-neighbors are penalized in path scoring (`-3.0` in
+  `_choose_target`, `-8.0` in `_fallback_action`). BFS still allows them so
+  attack paths to enemy bases aren't blocked.
+- **Frontier scoring by unseen yield**. Each frontier cell scored
+  `4.0 + 1.0 × (#unseen 4-neighbors)` instead of flat `6.0`, biasing
+  exploration toward frontiers that reveal more area.
 
-Passing 9/9 local unit tests. Pending Workbench full-game test and official
-submission.
+Passes 9/9 unit tests. Workbench local: 0.659, 0.659, 0.689 (3 runs, mean
+~0.669, ±0.015). Official: **0.501 / 0.771**, 0/30 errors.
 
 ## Open questions
 
-- **Is the local env actually representative?** AE doesn't have a per-game
-  WER-equivalent — the 0.25 local→official gap is large. Either the local
-  scenarios are systematically easier (random seed bias?) or the official
-  evaluator weights different things (e.g. objective completion > exploration).
-- **How many official runs do we have?** The shipped evaluator ran 30 games
-  with `0 / 30` errors. We don't know which 30 scenarios or whether they're
-  randomly drawn from the same distribution as our local tests.
-- **Should we instrument planner-v1 with detailed per-game logging** before
-  shipping planner-v2, so we can compare failure modes? The Workbench `til
-  test` does run a real game loop — could capture step-by-step decisions to
-  a JSONL trail for offline analysis. This is the cheapest diagnostic if
-  planner-v2 also under-delivers vs local.
+- **What's still in the residual ~0.17 local→official gap?** The novice
+  local map is fixed-seed (seed 88) with random opponents over only 6 rounds.
+  Hidden eval probably has either non-novice maps or smarter/different
+  opponents. We don't know how the official 30 scenarios are drawn.
+- **Are the threat-penalty weights too conservative?** The `-3.0` per
+  threat-cell on path and `-8.0` for stepping into a threat were untuned.
+  In 6-random-opponent novice the agent may be running past harmless
+  enemies and avoiding items it could safely grab.
+- **Is wall-bombing too gated?** Currently `wall_to_open` requires
+  `_stuck_recently()`, which means we never proactively break a destructible
+  wall on the shortest path to a mission/base unless we're already stuck.
+  Could be leaving easy +5/+50 rewards on the table.
 
 ## Next steps
 
-1. **Submit planner-v2** once Workbench `til test` confirms no regression
-   vs planner-v1 local (≥0.697).
-2. **If planner-v2 also drops to <0.55 official**: the local env is systematically misrepresenting hidden eval. Need to:
-   - Capture per-game logs from `til test` on Workbench
-   - Diff against the same scenarios on the Mac local env to find local-vs-Workbench scoring discrepancies
-   - Look at the official evaluator code in [../til-26-ae/](../til-26-ae/) (it's pulled in as a submodule) — submodule is read-only but reading it for understanding is fine
-3. **Eventually**: a learned policy (PPO/DQN) trained against `til_environment.bomberman_env` if rule-based hits a ceiling. Per [../SUMMARY.md "Phase 3"](../SUMMARY.md), inference must stay fast — tiny MLP/CNN, not a transformer.
+1. **planner-v3 (cheap heuristic tuning)** — diminishing returns, but two
+   experiments are nearly free:
+   - **(a) Softer threat penalty**: drop `-3.0`/`-8.0` to `-1.0`/`-3.0` or
+     set `ENEMY_STALENESS = 1`. Workbench local should tell us if the
+     planner was being too cautious.
+   - **(b) Proactive wall-break**: in `_should_place_bomb`, drop the
+     `_stuck_recently()` gate when `target in self.enemy_bases` or
+     `target in self.last_seen_items` for missions specifically. Risk: more
+     bombs placed → more self-blast if escape check is wrong. Mitigate with
+     the now-bounded `_safe_escape_within`.
+2. **Per-game logging** if (1) plateaus. Capture step-by-step decisions to a
+   JSONL trail during `til test` — compare local-passing scenarios against
+   failure modes inferred from official low-score runs.
+3. **RL policy** (deferred). PPO/DQN against `til_environment.bomberman_env`
+   if rule-based hits a ceiling. Per [../SUMMARY.md "Phase 3"](../SUMMARY.md),
+   inference must stay fast — tiny MLP/CNN, not a transformer.
 
 ## Reproducibility / pointers
 
