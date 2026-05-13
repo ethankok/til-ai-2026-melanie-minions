@@ -67,6 +67,7 @@ QA_DOC_STRIDE = 128
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+_DOC_ID_RE = re.compile(r"\bDOC-(\d{4})\b")
 _STOPWORDS = frozenset(
     {
         "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
@@ -78,9 +79,55 @@ _STOPWORDS = frozenset(
 _PRINTABLE = set(string.printable)
 
 
-def _doc_id(idx0: int) -> str:
-    """Positional, 1-indexed, zero-padded to 4 digits."""
+def _doc_id_positional(idx0: int) -> str:
+    """Positional fallback: 1-indexed, zero-padded to 4 digits."""
     return f"DOC-{idx0 + 1:04d}"
+
+
+def _parse_doc_payload(doc, idx0: int) -> tuple[str, str]:
+    """Return (id, text) for one entry of the corpus-load `documents` list.
+
+    Tries (in order):
+      1. Dict shape: {"id": "DOC-XXXX", "text": "..."} (or "content"/"document").
+      2. First non-empty line is exactly `DOC-XXXX` -> strip it off the body.
+      3. First 80 chars contain a `DOC-XXXX` token -> use it, leave body intact.
+      4. Positional fallback DOC-{idx0+1:04d}.
+
+    Defensive across the three plausible cloud formats; only #4 is wrong
+    when IDs aren't contiguous, but it's the right behavior to fall back to
+    if no marker is present.
+    """
+    if isinstance(doc, dict):
+        for k in ("text", "content", "document", "body"):
+            if k in doc:
+                text = doc[k]
+                break
+        else:
+            text = ""
+        did = doc.get("id") or doc.get("doc_id") or doc.get("document_id")
+        if did:
+            return str(did), str(text)
+        # fall through to text-based parsing on `text`
+        doc = text
+
+    text = str(doc)
+    stripped = text.lstrip()
+
+    # Case 2: first line is "DOC-XXXX" by itself.
+    first_line_end = stripped.find("\n")
+    first_line = stripped[:first_line_end] if first_line_end >= 0 else stripped
+    flmatch = re.fullmatch(r"\s*DOC-(\d{4})\s*", first_line)
+    if flmatch:
+        body = stripped[first_line_end + 1 :] if first_line_end >= 0 else ""
+        return f"DOC-{flmatch.group(1)}", body
+
+    # Case 3: DOC-XXXX appears in the first 80 chars (header, title, etc.).
+    head_match = _DOC_ID_RE.search(stripped[:80])
+    if head_match:
+        return f"DOC-{head_match.group(1)}", text
+
+    # Case 4: positional fallback.
+    return _doc_id_positional(idx0), text
 
 
 def _bm25_tokenize(text: str) -> list[str]:
@@ -135,6 +182,7 @@ class NLPManager:
 
         # Corpus state.
         self.documents: list[str] = []
+        self.doc_ids: list[str] = []  # i-th entry = ID for the i-th doc
         self.passages: list[str] = []
         self.passage_doc_idx: list[int] = []
         self.bm25: BM25Okapi | None = None
@@ -236,10 +284,24 @@ class NLPManager:
         hidden = F.normalize(hidden, p=2, dim=1)
         return hidden.float().cpu().squeeze(0)
 
-    def load_corpus(self, documents: list[str]) -> None:
+    def load_corpus(self, documents: list) -> None:
         self._init_models()
 
-        self.documents = list(documents)
+        self.documents = []
+        self.doc_ids = []
+        seen_ids: set[str] = set()
+        for idx, raw in enumerate(documents):
+            doc_id, text = _parse_doc_payload(raw, idx)
+            # Guard against duplicate IDs: append a positional disambiguator.
+            base_id = doc_id
+            n = 1
+            while doc_id in seen_ids:
+                n += 1
+                doc_id = f"{base_id}#{n}"
+            seen_ids.add(doc_id)
+            self.doc_ids.append(doc_id)
+            self.documents.append(text)
+
         self.passages = []
         self.passage_doc_idx = []
         for doc_idx, doc in enumerate(self.documents):
@@ -308,7 +370,7 @@ class NLPManager:
                 seen.append(d)
                 if len(seen) >= TOP_DOCS_RETURNED:
                     break
-        return [_doc_id(d) for d in seen]
+        return [self.doc_ids[d] for d in seen]
 
     # ------------------------------------------------------------ extraction
 
