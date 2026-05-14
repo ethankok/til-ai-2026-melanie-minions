@@ -1,9 +1,10 @@
 # CV fine-tuning and eval workflow
 
-Goal: improve the shipped `cv-yolo-ft-v1` detector without trusting the leaky
-full-local `til test` score. `cv-yolo-ft-v1` officially scored `0.402 / 0.963`
-with `0 / 500` errors; local Docker mAP50-95 was `0.885`, but that local number
-was measured on the same `/home/jupyter/novice/cv` images used for training.
+Goal: reproduce or improve the shipped `cv-yolo-v2-best` detector without
+trusting the leaky full-local `til test` score. `cv-yolo-v2-best` officially
+scored `0.549 / 0.960` with `0 / 500` errors, up from `cv-yolo-ft-v1`'s
+`0.402 / 0.963`. The useful local selection metric is the hard held-out HTTP
+eval (`0.8589` for v2-best), not the full local `til test` mAP (`0.8839`).
 
 Run this on GCP Workbench. The Mac checkout does not contain the CV images.
 
@@ -149,12 +150,12 @@ The sweep writes:
 ```
 
 Take the best held-out setting and bake it into the submitted image by editing
-`cv/Dockerfile`, or pass the same env values when doing extra local checks. For
-example, if the best row is `conf=0.10`, `iou=0.60`, `imgsz=768`, set:
+`cv/Dockerfile`, or pass the same env values when doing extra local checks.
+For `cv-yolo-v2-best`, the winning setting was:
 
 ```Dockerfile
-ENV CV_CONF=0.10
-ENV CV_IOU=0.60
+ENV CV_CONF=0.25
+ENV CV_IOU=0.50
 ENV CV_IMGSZ=768
 ```
 
@@ -171,6 +172,15 @@ til submit cv cv-yolo-v2-best
 Submit only if `til test` has `0` errors. A lower speed is acceptable if held-out
 mAP improves materially: CV's task score is approximately `0.75 * mAP + 0.25 *
 speed`.
+
+Observed v2-best results:
+
+```text
+Ultralytics val:            mAP50-95 0.920 on 500-val split
+Hard held-out HTTP eval:    mAP50-95 0.8589, mAP50 0.9414, small AP 0.5596
+Full local til test:        mAP50-95 0.8839, 0 errors
+Official hidden eval:       score 0.549, speed 0.960, 0 / 500 errors
+```
 
 ## What to look for
 

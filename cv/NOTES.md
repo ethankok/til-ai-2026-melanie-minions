@@ -1,6 +1,6 @@
 # CV — notes & history
 
-Last updated: 14 May 2026
+Last updated: 14 May 2026 14:10 SGT
 
 Per-task working log for CV (object detection). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv).
@@ -8,16 +8,15 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`cv-yolo-ft-v1` — official 0.402 / 0.963 (14 May 03:53 SGT, 0 of 500 errors).**
+**`cv-yolo-v2-best` — official 0.549 / 0.960 (14 May 14:00 SGT, 0 of 500 errors).**
 
-YOLOv8s fine-tuned on the provided 18-class TIL CV annotations. Local Docker
-`til test` scored `mAP@.5:.05:.95 = 0.885`; official hidden eval scored
-`0.402`, so the model is much stronger than the COCO-mapped baseline but has a
-large local→official generalization gap. Serving/schema is clean: `0 / 500`
-errors and speed stayed high.
+YOLOv8s retrained at `imgsz=768` on a non-leaky hard split, then selected through
+the actual Docker HTTP path. Full hard held-out HTTP eval scored `mAP50-95 =
+0.8589`; full local `til test` scored `0.8839`; official hidden eval scored
+`0.549`. Serving/schema is clean: `0 / 500` errors and speed stayed high.
 
-The previous `yolo-til-map-v2` baseline scored `0.044 / 0.961`; fine-tuning is
-+0.358 absolute official score with essentially unchanged speed.
+This is +0.147 official accuracy over `cv-yolo-ft-v1` (`0.402 / 0.963`) with
+essentially unchanged speed.
 
 ## What our model runs on
 
@@ -33,7 +32,8 @@ def cv(image_bytes: bytes, key=None) -> list[dict]:
 Docker now expects the trained checkpoint at `/workspace/models/cv/best.pt`,
 copied from local `cv/models/best.pt` during build. `CV_CATEGORY_MAP` is an
 identity `0..17` map because the fine-tuned model was trained directly on the
-official TIL label order.
+official TIL label order. The v2-best image uses tuned inference defaults:
+`CV_CONF=0.25`, `CV_IOU=0.50`, `CV_IMGSZ=768`.
 
 ## Submission history
 
@@ -42,9 +42,38 @@ Tag              Submitted       Score   Speed   Errors    Notes
 latest           12/05 03:52     0.000   0.981   4 / 500   Empty-detection baseline, 4 inputs erroring
 yolo-til-map-v2  14/05 01:56     0.044   0.961   0 / 500   YOLOv8n + sparse COCO→TIL map; clean serving, weak domain fit
 cv-yolo-ft-v1    14/05 03:53     0.402   0.963   0 / 500   YOLOv8s fine-tuned on 18 TIL labels; local mAP50-95 0.885
+cv-yolo-v2-best  14/05 14:00     0.549   0.960   0 / 500   YOLOv8s 768 hard-split retrain + tuned inference; local til test 0.8839, hard held-out 0.8589
 ```
 
 ## Detailed timeline
+
+### cv-yolo-v2-best (14 May 14:00) — hard split + 768 inference tuning
+
+- Created non-leaky hard splits from `/home/jupyter/novice/cv/annotations.json`:
+  `4000` train images, `500` val images, `500` test images. The hard test split
+  had `3334` boxes, denser than train and intentionally useful for stress eval.
+- Trained `yolov8s.pt` for 80 epochs at `imgsz=768`, `batch=12`, `device=0`,
+  with stronger augmentation (`close_mosaic=10`, `mixup=0.10`, `degrees=5`,
+  `scale=0.60`). Training took `2.329` hours on the Workbench T4.
+- Final Ultralytics validation on the 500-image val split: precision `0.984`,
+  recall `0.961`, `mAP50=0.985`, `mAP50-95=0.920`.
+- Default-container hard held-out HTTP eval (`CV_CONF=0.25`, `CV_IOU=0.70`,
+  `CV_IMGSZ=640`) scored `0.8043` mAP50-95.
+- HTTP sweep on 100 hard-test images found `imgsz=768` was the main win. Best
+  smoke setting was `CV_CONF=0.25`, `CV_IOU=0.50`, `CV_IMGSZ=768`, scoring
+  `0.8652` mAP50-95 on the 100-image slice.
+- Full hard held-out HTTP confirmation at those settings scored `0.8589`
+  mAP50-95, `0.9414` mAP50, small-object AP `0.5596`, medium AP `0.7557`,
+  large AP `0.8911`.
+- Full local `til test cv cv-yolo-v2-best`: `mAP@.5:.05:.95 = 0.8839`, `0`
+  errors, `1250/1250` batches in `13:59`.
+- Official hidden eval: `0.549 / 0.960`, `0 / 500` errors. New high score:
+  +0.147 official accuracy vs `cv-yolo-ft-v1`.
+
+Interpretation: the non-leaky held-out eval was directionally useful even though
+the hidden gap is still large (`0.8589 → 0.549`). The biggest confirmed lever was
+matching inference `imgsz=768` to training. Remaining weakness is likely hidden
+small-object and aircraft-subclass distribution shift, not output format.
 
 ### cv-yolo-ft-v1 (14 May 03:53) — trained 18-class YOLOv8s
 
@@ -130,20 +159,21 @@ accepts requests, the JSON shape is correct. No detection logic yet. Scored
 
 In priority order (per [../SUMMARY.md "CV"](../SUMMARY.md)):
 
-### 1. Keep `cv-yolo-ft-v1` shipped
+### 1. Keep `cv-yolo-v2-best` shipped
 
-Status: shipped and clean (`0.402 / 0.963`, `0 / 500` errors). It is the current
-best CV image. Do not revert to the COCO-mapped baseline.
+Status: shipped and clean (`0.549 / 0.960`, `0 / 500` errors). It is the current
+best CV image. Do not revert to `cv-yolo-ft-v1` or the COCO-mapped baseline.
 
 ### 2. If revisiting CV, improve hidden-distribution generalization
 
 The next CV score gap is not plumbing. Candidate A/Bs:
 
-- Try `yolov8m.pt` if speed budget remains high.
-- Add stronger augmentation or class-balanced sampling for rare/small classes.
-- Tune confidence/NMS for recall on small/ambiguous aircraft classes.
-- Consider `imgsz=768` if speed remains acceptable; official speed for v1 is
-  still `0.963`, so there is headroom.
+- Try `yolov8m.pt` at `imgsz=768` if time and speed budget allow.
+- Add class-balanced or aircraft-heavy sampling for rare/small classes.
+- Add stronger small-object augmentation/cropping. Hard held-out small AP is
+  improved (`0.5596`) but still the weakest area bucket.
+- Keep HTTP inference sweeps, but current best is already `CV_CONF=0.25`,
+  `CV_IOU=0.50`, `CV_IMGSZ=768`.
 
 Do not spend time on COCO→TIL mapping guesses; the fine-tuned model already uses
 the official 18-class label order.
@@ -177,10 +207,11 @@ instead of full-set `til test` mAP.
 
 ## State
 
-CV official score is now `0.402 / 0.963` with `0 / 500` errors. This is a real
-ML improvement over `yolo-til-map-v2` (`0.044 / 0.961`) and raises the estimated
-blended qualifier score materially. Further CV gains are possible, but AE/NLP
-probably have better ROI unless a quick `yolov8m` or augmentation A/B is cheap.
+CV official score is now `0.549 / 0.960` with `0 / 500` errors. This is a real
+ML improvement over `cv-yolo-ft-v1` (`0.402 / 0.963`) and materially raises the
+estimated blended qualifier score. Further CV gains are possible, but NLP/AE
+probably have better ROI unless a quick `yolov8m` or targeted small-object /
+aircraft A/B is cheap.
 
 ## Reproducibility / pointers
 

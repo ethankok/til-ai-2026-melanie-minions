@@ -12,6 +12,9 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
 ENV CV_MODEL_PATH=/workspace/models/cv/best.pt
 ENV CV_CATEGORY_MAP='[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]'
+ENV CV_CONF=0.25
+ENV CV_IOU=0.50
+ENV CV_IMGSZ=768
 WORKDIR /workspace
 
 # Installs your dependencies.
