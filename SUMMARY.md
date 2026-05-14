@@ -140,7 +140,7 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 
 | Task | Latest shipped tag | Acc/reward | Speed | Status | Working log |
 |---|---|---:|---:|---|---|
-| ASR | `ft-lora32-v1` | 0.957 | 0.849 | Crossed 0.95 target. Parked; int8 speed re-export regressed accuracy. | [asr/NOTES.md](asr/NOTES.md) |
+| ASR | `nemo-zs` | 0.956 | 0.946 | **NEW BLENDED HIGH.** Backbone switch from distil-whisper LoRA to NVIDIA Parakeet-TDT-0.6B-v2 zero-shot. Same accuracy, +0.097 speed → blended +0.025. CUDA-graph fast path (`cuda-python>=12.3`) staged in for `nemo-zs-v2`. | [asr/NOTES.md](asr/NOTES.md) |
 | AE | `hybrid-v3` | 0.555 | 0.849 | **NEW HIGH.** Hybrid + top-K policy cascade + opportunistic enemy-kill in heuristic dominant-action. Third consecutive AE high (+0.048 over ppo-v1); now top-quartile (top is 0.711). | [ae/NOTES.md](ae/NOTES.md) |
 | NLP | `v4-dict-id` | 0.483 | 0.888 | New-eval recovery after organiser format bug; next gains are answer quality and QA latency. | [nlp/NOTES.md](nlp/NOTES.md) |
 | CV | `cv-yolo-v2-tier1-best` | 0.556 | 0.956 | NEW HIGH (+0.007 vs v2-best). Tier 1 inference-only sweep landed; Tier 2 (YOLOv11m@1024 retrain) in flight to target 0.70. | [cv/NOTES.md](cv/NOTES.md) |
@@ -161,7 +161,7 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 4. **AE** (40%) — `hybrid-v3` is now team best at **0.555/0.849** (third consecutive AE high; +0.048 over ppo-v1). Builds on hybrid-v2's policy + heuristic safety-veto with two more lifts: a top-K policy cascade (try policy's #2/#3 actions when #1 is vetoed before falling back to heuristic) and an opportunistic-kill shortcut in the heuristic's dominant-action path (bomb adjacent enemy *agents* sighted this step, not just adjacent enemy *bases*). Top of leaderboard is 0.711; the heuristic-side ceiling is probably near. Next big swing if needed: state-augmented policy retrain (pass full 16×16 belief map as additional CNN input).
 5. **NLP** (20%) — `v4-dict-id` recovered to 0.483/0.888 after organiser eval-format fix; next work is quality/latency rather than schema.
 6. **CV** (20%) — `cv-yolo-v2-tier1-best` shipped at 0.556/0.956 (new high, +0.007 vs v2-best) using v2-best weights with TTA + imgsz=896 + score field. Tier 2 YOLOv11m@1024 retrain in flight to target 0.70.
-7. **ASR** (20%) — `ft-lora32-v1` shipped at 0.957. Parked; int8 re-export already proved low-ROI.
+7. **ASR** (20%) — `nemo-zs` shipped at 0.956/0.946 (Parakeet-TDT-0.6B-v2 zero-shot, +0.097 speed over `ft-lora32-v1`). cuda-python pinned for `nemo-zs-v2`.
 
 **Week 2 — push scores**
 

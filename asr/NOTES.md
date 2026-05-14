@@ -10,11 +10,12 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`ft-lora32-v1` — official 0.957 / 0.849 (13 May 11:22 SGT, 0/400 errors).**
-
-Crossed the 0.95 accuracy target. Blended score (75% acc + 25% speed) ≈ 0.930.
-Leaderboard keeps the high score, so subsequent worse submissions cannot demote
-us off this peak.
+**`nemo-zs` — official 0.956 / 0.946 (14 May 20:33 SGT, 0/400 errors).**
+Blended score `0.75*0.956 + 0.25*0.946 = 0.9535`, +0.025 over `ft-lora32-v1`.
+Same accuracy (within noise: -0.001), +0.097 speed. The leaderboard keeps
+the higher raw score for either dimension, but blended-per-challenge is what
+feeds the qualifier total via the 75/25 weighting, so this is the new ASR
+high.
 
 ## Active experiment: NeMo Parakeet-TDT backend
 
@@ -124,6 +125,30 @@ next submission.
 Submit `nemo-zs` first to bank the accuracy result; the leaderboard keeps
 the highest blended score so a worse `nemo-zs` cannot demote
 `ft-lora32-v1`.
+
+### nemo-zs — official result (14 May 20:33 SGT)
+
+```text
+errors: 0 / 400
+score:  0.956   (vs ft-lora32-v1 0.957 — flat within cloud noise of -0.001)
+speed:  0.946   (vs ft-lora32-v1 0.849 — +0.097)
+blended (75/25): 0.9535   (vs ft-lora32-v1 0.9285 — +0.025)
+```
+
+The cloud set was about 30% of t_max worth of wall clock without
+cuda-python; with cuda-python enabling the TDT CUDA-graph fast path,
+expect the speed score to climb further (current 0.946 → ~0.96+).
+Accuracy parity with the LoRA-tuned Whisper at zero-shot is the
+headline: this is the floor before any fine-tuning or slang biasing.
+
+Local→cloud generalization gap turned out NEGATIVE again (local WER
+`0.0429` → official ~`0.044`). Same pattern as `ft-lora32-v1`. The
+official 400-clip distribution is just slightly easier than our local
+4110-clip set on this dataset.
+
+`nemo-zs` is the new shipped tag. `ft-lora32-v1` stays as a fallback
+image but is no longer the live ASR contribution to the qualifier
+total.
 
 ## What our model runs on
 

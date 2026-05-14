@@ -1,17 +1,18 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 14 May 2026 19:50 SGT — AE hybrid-v3 0.555/0.849 + NLP v5c-no-para 0.483/0.912 (new blended high)
+Last updated: 14 May 2026 20:50 SGT — ASR nemo-zs 0.956/0.946 (new ASR blended high, +0.023 over ft-lora32-v1)
 
 ## Latest submitted scores
 
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
-NLP    melanie-minions-nlp      v5c-no-para 14/05/2026 19:44:08   0 / 700       0.483   0.912  ← NEW BLENDED HIGH; +0.024 speed from batched SQuAD2 (acc flat to v4)
-ASR    melanie-minions-asr      ft-lora32-v1 13/05/2026 11:22:30  0 / 400       0.957   0.849
+NLP    melanie-minions-nlp      v5c-no-para 14/05/2026 19:44:08   0 / 700       0.483   0.912
+ASR    melanie-minions-asr      nemo-zs     14/05/2026 20:33:36   0 / 400       0.956   0.946  ← NEW BLENDED HIGH; Parakeet-TDT-0.6B-v2 zero-shot, +0.097 speed vs ft-lora32-v1
 CV     melanie-minions-cv       cv-yolo-v2-tier1-best 14/05/2026 17:10:09 0 / 500 0.556 0.956
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
-AE     melanie-minions-ae       hybrid-v3   14/05/2026 19:26:06   0 / 30        0.555   0.849  ← NEW HIGH; +0.010 vs hybrid-v2 (top-K cascade + opportunistic enemy-kill)
+AE     melanie-minions-ae       hybrid-v3   14/05/2026 19:26:06   0 / 30        0.555   0.849
+ASR (ft-lora32-v1) melanie-minions-asr ft-lora32-v1 13/05/2026 11:22:30 0 / 400  0.957   0.849  ← prior ASR high (still on leaderboard via highest-score retention)
 AE (hybrid-v2) melanie-minions-ae hybrid-v2 14/05/2026 14:55:23   0 / 30        0.545   0.863
 AE (heur-restore-v2) melanie-minions-ae heuristic-restore-v2 14/05/2026 15:02:13 0 / 30   0.502   0.854
 AE (policy-fast-v2)  melanie-minions-ae policy-fast-v2       14/05/2026 14:42:05 0 / 30   0.425   0.859
@@ -43,6 +44,7 @@ v1            12/05 03:42        0.000   0.993   —               Empty-string 
 norm-v1       12/05 16:23        0.877   0.864   0.0759          + digit verbalization + silence guard
 vad-off-v1    12/05 20:00        0.938   0.859   0.0554          + VAD off + hallucination guards + ordinals + decimal-safe
 ft-lora32-v1  13/05 11:22        0.957   0.849   0.0299*         + LoRA rank-32 decoder fine-tune (3 epochs, lr 1e-4)
+nemo-zs       14/05 20:33        0.956   0.946   0.0429          BACKBONE SWITCH: Parakeet-TDT-0.6B-v2 zero-shot. Accuracy flat (-0.001), speed +0.097, blended +0.023. CUDA-graph fast path NOT yet enabled (cuda-python missing) — speed has more headroom
 ```
 
 ## CV submission history
@@ -120,9 +122,9 @@ leaderboard — old NLP score of 0.301 was wiped when organisers rolled out
 the new eval; `v5c-no-para` 0.483 is our recovery):
 
 ```text
-0.40 * AE 0.555  = 0.2220   ← NEW HIGH; hybrid-v3 (top-K cascade + opportunistic enemy-kill)
+0.40 * AE 0.555  = 0.2220
 0.20 * NLP 0.483 = 0.0966
-0.20 * ASR 0.957 = 0.1914
+0.20 * ASR 0.957 = 0.1914   ← raw accuracy held by leaderboard's max policy
 0.20 * CV 0.556  = 0.1112
 --------------------------------
 Estimated weighted qualifier score = 0.6212
@@ -130,15 +132,17 @@ Estimated weighted qualifier score = 0.6212
 
 AE has now incrementally climbed in three consecutive submissions (ppo-v1 0.507 → hybrid-v2 0.545 → hybrid-v3 0.555), each one moving the floor up by the size of cloud noise but in the same direction. The structural local→cloud gap (~0.23) is intact, but the floor itself has moved +0.048. Top of leaderboard is 0.711; we're now top-quartile.
 
+ASR `nemo-zs` (Parakeet-TDT-0.6B-v2 zero-shot) just shipped at `0.956/0.946` — a -0.001 accuracy nudge but +0.097 speed. The leaderboard keeps the higher score for raw accuracy, but the BLENDED score per challenge is what feeds the qualifier total via the 75/25 weighting below.
+
 Using the observed ~75% score / 25% speed blend:
 
 ```text
 AE   contribution = 0.2515   (0.40 * (0.75*0.555 + 0.25*0.849) = 0.40 * 0.6285 = 0.2514)
-NLP  contribution = 0.1180   (0.75*0.483 + 0.25*0.912 = 0.5903)  ← v5c speed +0.024
-ASR  contribution = 0.1860
+NLP  contribution = 0.1180   (0.75*0.483 + 0.25*0.912 = 0.5903)
+ASR  contribution = 0.1909   (0.75*0.956 + 0.25*0.946 = 0.9535)  ← +0.005 over ft-lora32-v1's 0.9285
 CV   contribution = 0.1307   (0.75*0.556 + 0.25*0.956 = 0.6560)
 --------------------------------
-Estimated blended qualifier score = 0.6862  (+0.0148 vs ppo-v1 baseline)
+Estimated blended qualifier score = 0.6911  (+0.005 vs ft-lora32-v1 baseline; +0.020 vs ppo-v1 baseline)
 ```
 
 ## Notes
@@ -158,11 +162,11 @@ Estimated blended qualifier score = 0.6862  (+0.0148 vs ppo-v1 baseline)
 
 ## Next priority
 
-1. **NLP `v6-roberta-large`** — `v5c-no-para` is shipped at `0.483/0.912` (new blended high). Error-bucket diagnostic shows retrieval at 95.5% hit rate (saturated; ceiling is +0.018 cloud); the dominant loss is `retrieval_hit_diff` at 45.8%. The next lever is QA span quality, addressed by swapping `deepset/roberta-base-squad2` → `deepset/roberta-large-squad2` (~1.4 GB extra container, per-question latency ~2.5× on GPU fp16, comfortably within budget given v5c's speed headroom). Expected impact: +0.05–0.10 cloud accuracy. NOTES recorded that paragraph chunking, bigger embedder, and low-confidence fallbacks are NOT good levers on this corpus and shouldn't be revisited.
-2. **AE hybrid is the new shipped tag at `0.545 / 0.863`.** The 0.49-0.51 cloud ceiling was real for individual approaches but broke under the policy + heuristic safety-veto combo (+0.038 over ppo-v1). To push toward 0.60 the cheap next moves all reuse the existing `HybridAEManager` plumbing — no retraining needed. Each is one env-var toggle + one rebuild:
+1. **ASR `nemo-zs-v2` (CUDA-graph fast path)** — `nemo-zs` shipped at `0.956/0.946`. Local startup logged "No conditional node support for Cuda. Cuda graphs with while loops are disabled" because cuda-python wasn't installed. `requirements-nemo.txt` now pins `cuda-python>=12.3`; rebuild as `nemo-zs-v2`, expect speed `0.946 → 0.96+` with accuracy unchanged. One env-only change, near-zero risk.
+2. **NLP `v6-roberta-large`** — `v5c-no-para` is shipped at `0.483/0.912` (new blended high). Error-bucket diagnostic shows retrieval at 95.5% hit rate (saturated; ceiling is +0.018 cloud); the dominant loss is `retrieval_hit_diff` at 45.8%. The next lever is QA span quality, addressed by swapping `deepset/roberta-base-squad2` → `deepset/roberta-large-squad2` (~1.4 GB extra container, per-question latency ~2.5× on GPU fp16, comfortably within budget given v5c's speed headroom). Expected impact: +0.05–0.10 cloud accuracy. NOTES recorded that paragraph chunking, bigger embedder, and low-confidence fallbacks are NOT good levers on this corpus and shouldn't be revisited.
+3. **AE hybrid is the new shipped tag at `0.555 / 0.849`.** The 0.49-0.51 cloud ceiling was real for individual approaches but broke under the policy + heuristic safety-veto combo (+0.048 over ppo-v1). To push toward 0.60 the cheap next moves all reuse the existing `HybridAEManager` plumbing — no retraining needed. Each is one env-var toggle + one rebuild:
    - **`AE_HYBRID_CONF=0.5`**: only use policy when its softmax top-action ≥ 0.5. Below that, fall back to heuristic. Tests whether the policy's *uncertain* outputs are the ones costing us score.
    - **`AE_HYBRID_VETO_BOMBS=0`** *or* **`AE_HYBRID_VETO_DANGER=0`**: turn one veto off at a time to find which one is actually doing work. If hybrid still scores >0.5 without bomb-vetoes, the heuristic's bomb-escape check was wrong and we can simplify.
    - **`AE_HYBRID_VETO_FROZEN_STAY=0`**: cheapest A/B; if STAY was the right call sometimes, we recover that.
-   Submit at most 2-3 of these — cloud variance is ±0.04 per run so we want big effect sizes, not micro-tunes. Speed is already evaluator-bound at ~0.86, no point optimizing further. If none beat 0.545, retraining the policy *knowing it has a heuristic safety net* (e.g. PPO with veto-aware rollouts) is the longer path.
-3. **CV next A/B is optional** — `cv-yolo-v2-best` is clean and materially better (`0.549/0.960`, `0 / 500` errors). Remaining gap is hidden distribution/small-object/aircraft-subclass generalization, not schema. Next CV swings if time allows: `yolov8m` at `imgsz=768`, class-balanced or aircraft-heavy sampling, and stronger small-object augmentation. Keep the non-leaky hard held-out eval and HTTP sweep loop; do not return to full-set `til test` as the selection metric.
-4. **ASR beam/prompt tweaks only if idle** — `ft-lora32-v1` already crosses 0.95 and `int8_float16` regressed to `0.923/0.856`, so speed quantization is off the table for this checkpoint.
+   Submit at most 2-3 of these — cloud variance is ±0.04 per run so we want big effect sizes, not micro-tunes. Speed is already evaluator-bound at ~0.86, no point optimizing further. If none beat 0.555, retraining the policy *knowing it has a heuristic safety net* (e.g. PPO with veto-aware rollouts) is the longer path.
+4. **CV next A/B is optional** — `cv-yolo-v2-tier1-best` is clean and materially better (`0.556/0.956`, `0 / 500` errors). Remaining gap is hidden distribution/small-object/aircraft-subclass generalization, not schema. Next CV swings if time allows: `yolov8m` at `imgsz=768`, class-balanced or aircraft-heavy sampling, and stronger small-object augmentation.
