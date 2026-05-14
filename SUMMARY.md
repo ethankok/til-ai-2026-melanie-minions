@@ -142,7 +142,7 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 |---|---|---:|---:|---|---|
 | ASR | `nemo-zs` | 0.956 | 0.946 | **NEW BLENDED HIGH.** Backbone switch from distil-whisper LoRA to NVIDIA Parakeet-TDT-0.6B-v2 zero-shot. Same accuracy, +0.097 speed → blended +0.025. CUDA-graph fast path (`cuda-python>=12.3`) staged in for `nemo-zs-v2`. | [asr/NOTES.md](asr/NOTES.md) |
 | AE | `hybrid-v3` | 0.555 | 0.849 | **NEW HIGH.** Hybrid + top-K policy cascade + opportunistic enemy-kill in heuristic dominant-action. Third consecutive AE high (+0.048 over ppo-v1); now top-quartile (top is 0.711). | [ae/NOTES.md](ae/NOTES.md) |
-| NLP | `v4-dict-id` | 0.483 | 0.888 | New-eval recovery after organiser format bug; next gains are answer quality and QA latency. | [nlp/NOTES.md](nlp/NOTES.md) |
+| NLP | `v5c-no-para` | 0.483 | 0.912 | **NEW BLENDED HIGH.** Batched SQuAD2 forward pass added +0.024 speed (accuracy flat to v4). Retrieval saturated at 95.5%; remaining lift is QA-side — `v7-finetuned` (fine-tune roberta-large-squad2 on local nlp.jsonl) is the strategic swing, expected cloud +0.15–0.30. | [nlp/NOTES.md](nlp/NOTES.md) |
 | CV | `cv-yolo-v2-tier1-best` | 0.556 | 0.956 | NEW HIGH (+0.007 vs v2-best). Tier 1 inference-only sweep landed; Tier 2 (YOLOv11m@1024 retrain) in flight to target 0.70. | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `latest` | 1.000 | 0.970 | Qualifier-safe. Official spec says no direct Qualifier reward. | [noise/NOTES.md](noise/NOTES.md) |
 
@@ -159,14 +159,14 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 **Week 1 — first real models (in progress)**
 
 4. **AE** (40%) — `hybrid-v3` is now team best at **0.555/0.849** (third consecutive AE high; +0.048 over ppo-v1). Builds on hybrid-v2's policy + heuristic safety-veto with two more lifts: a top-K policy cascade (try policy's #2/#3 actions when #1 is vetoed before falling back to heuristic) and an opportunistic-kill shortcut in the heuristic's dominant-action path (bomb adjacent enemy *agents* sighted this step, not just adjacent enemy *bases*). Top of leaderboard is 0.711; the heuristic-side ceiling is probably near. Next big swing if needed: state-augmented policy retrain (pass full 16×16 belief map as additional CNN input).
-5. **NLP** (20%) — `v4-dict-id` recovered to 0.483/0.888 after organiser eval-format fix; next work is quality/latency rather than schema.
+5. **NLP** (20%) — `v5c-no-para` ships at 0.483/0.912 (new blended high). Bisected the v5b regression to paragraph chunking (reverted); kept batched SQuAD2 forward pass for +0.024 speed. v7 fine-tuning scaffolded (`training/nlp/finetune_qa.py`); 0.95+ NLP teams have been observed on the leaderboard so this is now a priority lever.
 6. **CV** (20%) — `cv-yolo-v2-tier1-best` shipped at 0.556/0.956 (new high, +0.007 vs v2-best) using v2-best weights with TTA + imgsz=896 + score field. Tier 2 YOLOv11m@1024 retrain in flight to target 0.70.
 7. **ASR** (20%) — `nemo-zs` shipped at 0.956/0.946 (Parakeet-TDT-0.6B-v2 zero-shot, +0.097 speed over `ft-lora32-v1`). cuda-python pinned for `nemo-zs-v2`.
 
 **Week 2 — push scores**
 
 8. **AE**: hybrid-v3 shipped at 0.555/0.849. Heuristic-side ceiling appears near (three submissions climbed +0.010 each within ±0.04 noise). Further lift options: (a) env-var-toggle A/Bs on the existing hybrid (`AE_HYBRID_CONF=0.5`, drop one veto at a time) — cheap, expected ±0.02; (b) state-augmented policy retrain (16×16 belief map as additional CNN input) — 1–2 days, expected lift +0.05 to +0.15 if the local→cloud gap is largely a memory problem. Speed is evaluator-bound, not worth further work.
-9. **NLP**: hybrid retrieval (BM25 + dense embeddings) + extractive QA model on top-k.
+9. **NLP**: hybrid retrieval (BM25+BGE-small dense) + BGE-reranker-base + extractive QA shipped at 0.483/0.912. Retrieval saturated; next move is `v7-finetuned` — fine-tune `roberta-large-squad2` on local `nlp.jsonl` (`training/nlp/finetune_qa.py`, ~30-60 min on Workbench GPU). Confirmed regressors on this corpus: paragraph chunking, low-confidence sentence fallback. Do not revisit either.
 10. **CV**: Tier 1 SHIPPED at 0.556/0.956 (+0.007 vs v2-best) — same weights, env-only changes (`CV_IMGSZ=896`, `CV_IOU=0.60`, `CV_AUGMENT=1`, `CV_HALF=1`, emit real `score`). Tier 2 = YOLOv11m@1024 retrain with copy-paste/mosaic for small-object/aircraft-subclass generalization (`training/cv/train_v3.sh`, in flight ~4-5h on T4). `imgsz=1024` confirmed bad with v2-best 768-trained weights (resolution mismatch).
 11. **Noise**: bounded FGSM perturbation if time and the score actually matters.
 
