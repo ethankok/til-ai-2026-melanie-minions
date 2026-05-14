@@ -1,6 +1,131 @@
 # AE — notes & history
 
-Last updated: 14 May 2026 14:06 SGT — Codex AE recommendation added; ppo-v1 stays shipped
+Last updated: 14 May 2026 — Hybrid manager + speed fixes shipped to source tree (unbuilt). See "Hybrid + speed-fix plan" at top.
+
+## Hybrid + speed-fix plan (NEW — needs `til build/test/submit` on Workbench)
+
+User goal: AE score 0.60+, speed 0.90+. Net code changes (this commit):
+
+1. **`ae/src/policy_manager.py`** — speed rewrite. `torch.set_num_threads(1)` +
+   `torch.set_num_interop_threads(1)` at module load (kills uvicorn/torch
+   contention on a 1-vCPU container); `torch.inference_mode()` instead of
+   `no_grad()`; **warmup forward pass** at construction so first `/ae`
+   call doesn't pay JIT/cudnn init; **preallocated input tensors** that
+   we `copy_` into per tick instead of allocating new `from_numpy().to()`
+   each call. New helper `ae_logits(obs)` returns (action, masked
+   logits) in one forward pass — used by hybrid for confidence gating.
+   Expected per-call latency drop: **~13 ms → ~3-5 ms** on CPU; speed
+   score should rise from `0.861` toward `0.92+`.
+
+2. **`ae/src/hybrid_manager.py`** (NEW) — `HybridAEManager`: policy
+   action by default, **heuristic safety-veto** when the policy picks an
+   action the rule-based planner can prove is wrong:
+   - illegal action → use heuristic
+   - `PLACE_BOMB` without verified escape → use heuristic
+   - step into known bomb-blast → use heuristic (only if heuristic's
+     own action is safer)
+   - `STAY` with `frozen_ticks==0` and a non-STAY legal alternative →
+     use heuristic
+   - Fast path: if the heuristic is in an active "fleeing my own bomb"
+     state, trust the heuristic entirely (it owns bomb-safety mechanics).
+   - Optional `AE_HYBRID_CONF` env var: confidence gate — drop to
+     heuristic if policy top-action softmax probability is below this.
+
+   This is the **first structurally new AE attempt since ppo-v1**.
+   Heuristic-only (planner-v3b) and policy-only (bc-v1, ppo-v1, ppo-v2)
+   have *uncorrelated failure modes* — heuristic loses to over-caution,
+   policy loses to under-safety — so a per-tick arbiter is expected to
+   strictly dominate either alone when their disagreements fall in the
+   policy's failure-mode set.
+
+3. **`ae/src/ae_server.py`** — `AE_MODE` env var: `hybrid` (default),
+   `policy`, or `heuristic`. Lets the team ship three distinct builds
+   from a single source tree without code edits between rebuilds. All
+   modes degrade gracefully if their dependency (checkpoint, torch) is
+   missing.
+
+4. **`ae/src/ae_manager.py`** — two small conservative fixes:
+   - `TILE_RESPAWN_STEPS`: 40 → 20 (env doc says respawn is `random up
+     to 40` via perlin noise; reconsidering at 20 with 0.5x discount
+     captures average respawn rather than worst-case).
+   - **Stale enemy_agent eviction** after `ENEMY_AGENT_MEMORY_STEPS=30`
+     in `_age_bombs`. Prevents 30+-tick-old enemy sightings from being
+     used as base-defense candidates in `_choose_target`.
+
+5. **`training/ae/diagnose.py`** (NEW) — per-round reward-component
+   logger. Runs N local games against the bomberman env with a chosen
+   manager and emits JSON: per-round score, action counts, bombs
+   placed, freeze ticks seen, unique cells visited, and reward
+   attribution by component (mission/recon/resource/attack_damage/
+   attack_kill/destroy_enemy_base/own_base_destroyed/self_damage/
+   base_damage). This is the diagnostic harness CODEX called for —
+   gives us a *qualitative* breakdown of where local score comes from,
+   so when we eventually get any per-episode data from official Eval
+   URLs we can compare component-by-component instead of comparing
+   single mean scores.
+
+### Suggested A/B order on Workbench
+
+The first three builds should ship in this exact order and each one
+should run `0 / 30 errors` on `til test` before submission. Two slots
+of `til submit` produce the most information.
+
+```bash
+# Build 1 — speed-only A/B with the current best policy. Uses ppo-v1
+# weights (cp from backup if your local ae/models/bc.pt is the worse
+# ppo-v2). This isolates the speed fixes.
+cp ~/ae-checkpoints-backup/deployed-bc-v1.pt ae/models/bc.pt   # ppo-v1 weights
+AE_MODE=policy til build ae policy-fast-v1
+til test ae policy-fast-v1            # confirm 0 / 30 errors
+til submit ae policy-fast-v1          # expect: score ≈ 0.51 (noise), speed > 0.90
+
+# Build 2 — hybrid (THE new bet). Same weights, hybrid wrapper.
+AE_MODE=hybrid til build ae hybrid-v1
+til test ae hybrid-v1
+til submit ae hybrid-v1               # the headline submission
+
+# Build 3 — heuristic-only restore. Establishes whether the heuristic
+# was actually behind ppo-v1 officially (0.499 vs 0.507 = noise).
+AE_MODE=heuristic til build ae heuristic-restore-v1
+til test ae heuristic-restore-v1      # no torch, fastest cold-start
+til submit ae heuristic-restore-v1    # expect: speed > 0.92, score 0.49-0.51
+```
+
+If any submission scores >0.52, that's the new best. If `hybrid-v1`
+scores >0.55, the hybrid hypothesis works — start tuning veto
+thresholds. If `heuristic-restore-v1` ties policy-fast-v1, drop torch
+from the deployed build entirely and reclaim the +0.04 speed.
+
+### Diagnostic to run alongside the above
+
+```bash
+# Cheap — pure heuristic, no torch.
+python training/ae/diagnose.py --manager heuristic --games 30 \
+    --out /tmp/diag-heuristic.json
+
+# With ppo-v1 weights present:
+python training/ae/diagnose.py --manager hybrid --games 30 \
+    --checkpoint ae/models/bc.pt --out /tmp/diag-hybrid.json
+
+# Compare reward_component_sum across the two reports. If hybrid
+# collects more missions or more attack_kills, that's our explanation
+# for any score lift. If hybrid drops own_base_destroyed events vs
+# policy-only (run --manager policy too), the safety-veto is doing its
+# job.
+```
+
+### What I deliberately did NOT do
+
+Per CODEX recommendation and the v3b → ppo-v2 regression record:
+- No new heuristic tuning of item weights / frontier scoring / bomb
+  thresholds — these have been proven to not move official score.
+- No new training runs. The local→official gap is structural.
+- No frame-stacking. ppo-v2 widened the gap with frame stacking.
+- No bigger network. Same story.
+
+---
+
+
 
 Per-task working log for AE (Autonomous Exploration / Bomberman). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#ae).

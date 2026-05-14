@@ -98,7 +98,14 @@ class AEManager:
     # generous in random-opponent eval (fired almost every turn with bombs).
     PREDICTIVE_BOMB_RANGE = 1
     # Tiles respawn after this many steps per env config (env.tile_respawn_steps).
-    TILE_RESPAWN_STEPS = 40
+    # Env config note: 40 is the *max*; actual respawn is randomly generated
+    # via perlin noise, so a collected tile is back well before step+40 in
+    # expectation. Reconsider at 20 with a 0.5x discount.
+    TILE_RESPAWN_STEPS = 20
+    # Soft cap on how long we keep an unseen enemy_agent record around. Past
+    # this we drop the entry entirely (planning code also has its own
+    # staleness filter at ENEMY_STALENESS for threat scoring).
+    ENEMY_AGENT_MEMORY_STEPS = 30
     # Below this health the agent prefers safe cells over aggressive plays.
     LOW_HEALTH_THRESHOLD = 20
     # Soft-threat scoring weights. v3 dropped these to 1.0/3.0 and lost ~0.07
@@ -376,7 +383,7 @@ class AEManager:
         # the respawn is probabilistic, not guaranteed.
         for pos, (kind, collected_step) in self.collected_items.items():
             if step - collected_step >= self.TILE_RESPAWN_STEPS:
-                candidates.append((0.7 * self.ITEM_VALUES.get(kind, 1.0), pos))
+                candidates.append((0.5 * self.ITEM_VALUES.get(kind, 1.0), pos))
 
         # Weight frontier cells by how much new area they likely reveal.
         for pos in self._frontier_cells():
@@ -683,6 +690,11 @@ class AEManager:
             else:
                 data["timer"] = timer
                 data["last_step"] = step
+        # Drop very stale enemy_agent records so old sightings stop being
+        # used as base-defense candidates 30+ ticks after the enemy moved on.
+        for pos, last_seen in list(self.enemy_agents.items()):
+            if step - int(last_seen) > self.ENEMY_AGENT_MEMORY_STEPS:
+                self.enemy_agents.pop(pos, None)
 
     def _danger_cells(self) -> set[tuple[int, int]]:
         danger: set[tuple[int, int]] = set()

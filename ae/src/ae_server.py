@@ -1,25 +1,58 @@
-"""Runs the AE server."""
+"""Runs the AE server.
 
-# Unless you want to do something special with the server, you shouldn't need
-# to change anything in this file.
+Mode selection is controlled by the ``AE_MODE`` env var:
 
+- ``hybrid`` (default): policy with heuristic safety-veto. Falls back to
+  policy-only if heuristic load fails, and to heuristic-only if no
+  checkpoint is present.
+- ``policy``: pure neural policy. Falls back to heuristic if no
+  checkpoint is present.
+- ``heuristic``: pure rule-based planner. No torch import, no model
+  load, cheapest possible per-call latency.
+
+Set ``AE_MODE=heuristic`` to ship the planner-v3b-equivalent build for a
+clean speed-focused A/B, without rebuilding the image.
+"""
+
+
+import os
 
 from ae_manager import AEManager
 from fastapi import FastAPI, Request
 
 
 def _make_manager():
-    """Prefer the learned policy if a checkpoint is present; fall back to the
-    heuristic planner. Failures during policy load are logged and degrade
-    gracefully so a missing/broken checkpoint can't take the service down."""
+    """Construct the AE manager described by ``AE_MODE``.
 
+    Always degrades gracefully: if anything in the policy/hybrid path
+    fails (missing checkpoint, torch import error, etc.) we fall back to
+    the heuristic so the service can't refuse to start."""
+
+    mode = os.environ.get("AE_MODE", "hybrid").strip().lower() or "hybrid"
+
+    if mode == "heuristic":
+        print("AE: mode=heuristic — using rule-based planner only")
+        return AEManager()
+
+    if mode == "policy":
+        try:
+            from policy_manager import PolicyAEManager  # noqa: WPS433
+            return PolicyAEManager()
+        except FileNotFoundError as exc:
+            print(f"AE: mode=policy but no checkpoint — falling back to heuristic ({exc})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"AE: mode=policy load failed — falling back to heuristic ({exc!r})")
+        return AEManager()
+
+    # Default: hybrid.
     try:
-        from policy_manager import PolicyAEManager  # noqa: WPS433 (local import)
-        return PolicyAEManager()
+        from hybrid_manager import HybridAEManager  # noqa: WPS433
+        print("AE: mode=hybrid — policy + heuristic safety veto")
+        return HybridAEManager()
     except FileNotFoundError as exc:
-        print(f"AE: no policy checkpoint — using heuristic planner ({exc})")
+        print(f"AE: hybrid wanted but no policy checkpoint — using heuristic ({exc})")
     except Exception as exc:  # noqa: BLE001
-        print(f"AE: policy load failed — falling back to heuristic planner ({exc!r})")
+        print(f"AE: hybrid init failed — using heuristic ({exc!r})")
     return AEManager()
 
 
