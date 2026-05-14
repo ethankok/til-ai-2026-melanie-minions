@@ -125,27 +125,54 @@ class HybridAEManager:
             if top_p < self.policy_conf_threshold:
                 return heuristic_action
 
-        # Vetoes — only override the policy if we can prove it's wrong.
-        if not self._policy_action_legal(observation, policy_action):
-            return heuristic_action
+        # Top-K cascade: try the policy's #1 action first; if vetoed,
+        # try #2, then #3, then fall back to the heuristic. This stops
+        # the safety net from dragging us back to "explore frontier"
+        # in tactical situations where the policy had real opinions —
+        # the policy's second-best is typically still better-positioned
+        # than the heuristic's default in those scenarios.
+        candidates = self._top_k_actions(logits, k=3)
+        for action in candidates:
+            if self._action_acceptable(observation, action, heuristic_action):
+                return action
 
-        if self.veto_bombs and policy_action == self.PLACE_BOMB:
+        return heuristic_action
+
+    def _top_k_actions(self, logits, k: int = 3) -> list[int]:
+        """Return action indices sorted by masked logit, top-k."""
+
+        try:
+            import torch
+
+            sorted_idx = torch.argsort(logits, descending=True)
+            return [int(i) for i in sorted_idx[:k].tolist()]
+        except Exception:
+            return []
+
+    def _action_acceptable(self, observation: dict, action: int,
+                           heuristic_action: int) -> bool:
+        """Apply the same veto rules as before, but to an arbitrary
+        candidate (not just the policy's argmax)."""
+
+        if not self._policy_action_legal(observation, action):
+            return False
+
+        if self.veto_bombs and action == self.PLACE_BOMB:
             if not self._bomb_has_escape(observation):
-                return heuristic_action
+                return False
 
-        if self.veto_danger:
-            if self._steps_into_danger(observation, policy_action):
-                # Only override if the heuristic's choice is safer.
-                if not self._steps_into_danger(observation, heuristic_action):
-                    return heuristic_action
+        if self.veto_danger and self._steps_into_danger(observation, action):
+            # Same as before: only veto a danger-step if the heuristic's
+            # fallback is genuinely safer.
+            if not self._steps_into_danger(observation, heuristic_action):
+                return False
 
-        if self.veto_frozen_stay and policy_action == self.STAY:
+        if self.veto_frozen_stay and action == self.STAY:
             if self._frozen_ticks(observation) == 0 and heuristic_action != self.STAY:
-                # Only override if heuristic action is legal.
                 if self.heuristic._legal(observation, heuristic_action):
-                    return heuristic_action
+                    return False
 
-        return policy_action
+        return True
 
     # ------------------------------------------------------------------
     # Veto helpers — re-use the heuristic's already-updated belief state.

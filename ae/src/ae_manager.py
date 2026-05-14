@@ -541,24 +541,39 @@ class AEManager:
     ) -> int | None:
         """Skip full candidate scoring when an obvious move dominates.
 
-        Two short-circuits, both with the same safety constraints as the slow
+        Three short-circuits, all with the same safety constraints as the slow
         path:
 
-        - an enemy base sits in the immediate bomb blast, we have a bomb, the
-          cell is safe, and we have a verified escape → ``PLACE_BOMB``;
+        - an enemy base sits in the immediate bomb blast → ``PLACE_BOMB``;
+        - an enemy agent we saw THIS step sits in the blast and we have a
+          verified escape → ``PLACE_BOMB`` (opportunistic kill; +20 attack
+          damage + potential +15 kill bonus is the biggest single reward swing
+          in the game outside destroying a base, and the slow path was missing
+          these because BFS-targeting routed us toward items first);
         - a mission tile is one step away through a clear edge → step toward it.
         """
 
         # Hunting bombs are off when health is critically low.
+        step = self.last_step if self.last_step is not None else 0
         if (not low_health
                 and self._legal(observation, self.PLACE_BOMB)
                 and self._as_int(observation.get("team_bombs"), default=0) > 0
                 and location not in danger):
             bomb_blast = self._blast_cells(location)
             base_loc = self.base_location
-            if (base_loc is None or base_loc not in bomb_blast) and any(
-                pos in bomb_blast for pos in self.enemy_bases
-            ):
+            base_safe = base_loc is None or base_loc not in bomb_blast
+
+            enemy_base_hit = any(pos in bomb_blast for pos in self.enemy_bases)
+            # Fresh enemy_agent in blast — only this-step sightings to avoid
+            # speculative kills (random opponents wander; a 2-step-old sighting
+            # is no longer reliable). Stricter than the slow path's "step-1"
+            # tolerance because this is a *dominant-action* shortcut.
+            enemy_agent_hit = any(
+                int(last_seen) == step and pos in bomb_blast
+                for pos, last_seen in self.enemy_agents.items()
+            )
+
+            if base_safe and (enemy_base_hit or enemy_agent_hit):
                 escape = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER)
                 if escape is not None:
                     # Mirror the side effects of _should_place_bomb so escape

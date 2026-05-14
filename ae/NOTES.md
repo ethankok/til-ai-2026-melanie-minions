@@ -16,29 +16,56 @@ Local→official gap is still 0.23 on hybrid (0.774→0.545) — structural to t
 
 All three round-1 builds had **identical sha256 `2572b392...`** because `AE_MODE=foo til build …` set the env var only in the shell that ran the til CLI — `docker build` doesn't inherit shell env. Cloud container then defaulted to hybrid mode regardless of submitted tag. Local `til test` worked because docker run inherits the shell env, masking the bug. **Fixed** by adding `ENV AE_MODE=hybrid` to the Dockerfile and a `.ae_mode` file fallback the server reads at startup.
 
-## Next experiments to push toward 0.60
+## Path to 0.60+ — leaderboard context
 
-All reuse the existing `HybridAEManager` — no retraining, just env-var toggles + rebuild. Cloud variance is ±0.04 so big effect sizes only; submit ≤3 of these.
+Public leaderboard sample (14 May 14:00ish): top scores are 0.711, 0.671, 0.595; ours 0.545 is mid-pack. 0.6 is reachable — it's not a hard ceiling, it's our approach.
+
+Two changes shipped to source tree (unbuilt — next commit, `hybrid-v3`):
+
+1. **Top-K policy cascade in hybrid** ([ae/src/hybrid_manager.py](src/hybrid_manager.py)).
+   When the policy's argmax is vetoed, we now try the policy's #2 and #3 actions in turn before falling back to the heuristic. Premise: in tactical situations the policy has strong opinions and its second choice is often still better-positioned than the heuristic's default (which tends to be "go collect the nearest item"). The vetoes still hold — we only return an action that passes all safety checks.
+
+2. **Heuristic dominant-action: opportunistic kills** ([ae/src/ae_manager.py:_try_dominant_action](src/ae_manager.py)).
+   The fast-path shortcut now bombs not only adjacent enemy *bases* but also adjacent enemy *agents* sighted in the current step. Attack damage is +20 and a kill is +15 — these were the biggest reward swing the slow path was occasionally missing because BFS routed toward items first.
+
+Build & ship as `hybrid-v3`:
 
 ```bash
-# Common setup
-cp ~/ae-checkpoints-backup/deployed-bc-v1.pt ae/models/bc.pt   # ppo-v1 weights
+cp ~/ae-checkpoints-backup/deployed-bc-v1.pt ae/models/bc.pt
 echo hybrid > ae/src/.ae_mode
-
-# Experiment A — confidence gate: only use policy when softmax top ≥ 0.5
-sed -i 's/^ENV AE_MODE=.*/ENV AE_MODE=hybrid\nENV AE_HYBRID_CONF=0.5/' ae/Dockerfile
-til build ae hybrid-conf50 && til test ae hybrid-conf50 && til submit ae hybrid-conf50
-
-# Experiment B — drop the frozen-stay veto (cheapest)
-sed -i 's/^ENV AE_HYBRID_CONF=.*//; s/^ENV AE_MODE=.*/ENV AE_MODE=hybrid\nENV AE_HYBRID_VETO_FROZEN_STAY=0/' ae/Dockerfile
-til build ae hybrid-no-stay && til test ae hybrid-no-stay && til submit ae hybrid-no-stay
-
-# Experiment C — drop the danger-step veto (tests whether policy actually self-traps)
-sed -i 's/^ENV AE_HYBRID_VETO_FROZEN_STAY=.*//; s/^ENV AE_MODE=.*/ENV AE_MODE=hybrid\nENV AE_HYBRID_VETO_DANGER=0/' ae/Dockerfile
-til build ae hybrid-no-danger && til test ae hybrid-no-danger && til submit ae hybrid-no-danger
+til build ae hybrid-v3 && til test ae hybrid-v3 && til submit ae hybrid-v3
 ```
 
-If none cross 0.55: the hybrid is at its tunable ceiling and the next swing is to **retrain the policy knowing the heuristic safety net exists** — e.g. PPO with rollouts that veto in the loop, so the policy learns to take risks the heuristic will catch. That's a 1-2 day path, not a 1-hour path.
+If `hybrid-v3` lifts to 0.58+, the changes worked. If flat at 0.54±0.04, we've hit the limit of what these heuristic-side moves can do.
+
+### Other env-var-toggle experiments (no code change)
+
+Each one is a single `ENV …` line in the Dockerfile, cloud variance is ±0.04 so big effect sizes only; submit ≤3:
+
+```bash
+# Experiment A — confidence gate
+ENV AE_HYBRID_CONF=0.5            # only use policy when softmax top ≥ 0.5
+
+# Experiment B — drop the frozen-stay veto
+ENV AE_HYBRID_VETO_FROZEN_STAY=0
+
+# Experiment C — drop the danger-step veto
+ENV AE_HYBRID_VETO_DANGER=0
+```
+
+### Bigger swing — state-augmented policy retrain (1–2 days)
+
+The policy currently sees only the egocentric 7×5 and 7×7 viewcones. It has no memory of where it's been or where enemies were 5 steps ago. Adding a 16×16 belief-map channel as additional CNN input would:
+- give the policy persistent memory (currently relies entirely on its frame stack, which `ppo-v1` doesn't use)
+- mostly eliminate the policy's worst self-trapping behavior (it walks into known bomb blasts because it doesn't remember the bomb)
+- close the local→cloud gap by reducing distribution shift sensitivity (less reliance on the exact viewcone state the policy was trained against)
+
+Implementation outline:
+- Encoder: add a `belief_map` field (16×16×K channels) summarizing visited / wall / item / enemy / bomb state.
+- Network: new conv branch over the 16×16 tensor, concat with viewcone features.
+- Training: rebuild the BC dataset from planner-v3b rollouts including belief-map snapshots; warm-start PPO; train against mixed opponents.
+
+Expected lift: +0.05 to +0.15 cloud if the gap-from-memory hypothesis is right. This is the highest-EV move available; it's also the only thing that would plausibly get us to 0.65–0.70.
 
 ## Hybrid + speed-fix plan (shipped as `hybrid-v2`, `policy-fast-v2`, `heuristic-restore-v2`)
 
