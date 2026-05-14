@@ -283,21 +283,19 @@ def main() -> int:
     _setup_logging(args.output_dir)
 
     # --- imports (heavy) ---------------------------------------------------
-    try:
-        import pytorch_lightning as pl
-        from omegaconf import OmegaConf, open_dict
-        from nemo.collections.asr.models import ASRModel
-        from pytorch_lightning.callbacks import (
-            ModelCheckpoint,
-            EarlyStopping,
-            LearningRateMonitor,
-        )
-        from pytorch_lightning.loggers import CSVLogger
-    except ImportError as exc:  # pragma: no cover - env issue
-        raise SystemExit(
-            "Training deps missing. Install with `pip install -r "
-            "asr/requirements-nemo.txt` on Workbench."
-        ) from exc
+    # Don't wrap these in a try/except: a swallowed ImportError loses the
+    # actual cause and just prints "Training deps missing" even when deps
+    # ARE installed (e.g. a single-package version mismatch downstream of
+    # nemo_toolkit). Let Python's traceback name the failing module.
+    import pytorch_lightning as pl
+    from omegaconf import OmegaConf, open_dict
+    from nemo.collections.asr.models import ASRModel
+    from pytorch_lightning.callbacks import (
+        ModelCheckpoint,
+        EarlyStopping,
+        LearningRateMonitor,
+    )
+    from pytorch_lightning.loggers import CSVLogger
 
     pl.seed_everything(args.seed, workers=True)
 
