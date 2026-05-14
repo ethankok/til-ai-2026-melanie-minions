@@ -44,6 +44,26 @@ checkpoint and the last checkpoint.
 
 from __future__ import annotations
 
+# --- NumPy 2.0 / NeMo 2.0.0 compatibility shim --------------------------- #
+# NeMo 2.0.0's `AudioSegment._convert_samples_to_float32` uses
+# `np.sctypes['int']`, which was removed in NumPy 2.0. The Workbench env has
+# numpy 2.4.x. Without this shim the dataloader worker dies on the first
+# batch with `AttributeError: 'np.sctypes' was removed`. Restoring the
+# minimum subset NeMo accesses keeps everything self-contained — no env
+# downgrade, no NeMo bump.
+#
+# This MUST run before the heavy NeMo / torch imports below, since NeMo
+# resolves these dtype lists at module load.
+import numpy as _np_compat
+if not hasattr(_np_compat, "sctypes"):
+    _np_compat.sctypes = {
+        "int": [_np_compat.int8, _np_compat.int16, _np_compat.int32, _np_compat.int64],
+        "uint": [_np_compat.uint8, _np_compat.uint16, _np_compat.uint32, _np_compat.uint64],
+        "float": [_np_compat.float16, _np_compat.float32, _np_compat.float64],
+        "complex": [_np_compat.complex64, _np_compat.complex128],
+        "others": [bool, object, bytes, str, _np_compat.void],
+    }
+
 import argparse
 import json
 import os

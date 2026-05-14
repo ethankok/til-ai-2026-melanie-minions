@@ -76,8 +76,30 @@ def main() -> int:
     if not args.trained_nemo.exists():
         raise SystemExit(f"Trained .nemo not found at {args.trained_nemo}")
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
+    # Refuse to copy the zero-shot base over itself: that would silently
+    # produce a "ft-v1" image bit-identical to nemo-zs and waste a
+    # submission slot. The training script may have crashed before
+    # writing best.nemo, in which case --trained-nemo points to the
+    # base file (or doesn't exist at all).
     target = args.output_dir / args.filename
+    if args.trained_nemo.resolve() == target.resolve():
+        raise SystemExit(
+            f"Refusing to overwrite {target} with itself. The training run "
+            "probably crashed before producing best.nemo. Re-run "
+            "train_parakeet.py and verify it printed 'Saving best model to "
+            "...' before re-running this export."
+        )
+    if args.trained_nemo.stat().st_size < 100 * 1024 * 1024:
+        # Real Parakeet .nemo is ~2.4 GB. Anything under 100 MB is almost
+        # certainly an empty / partial / wrong file.
+        raise SystemExit(
+            f"Trained .nemo at {args.trained_nemo} is only "
+            f"{args.trained_nemo.stat().st_size / (1024*1024):.1f} MB. "
+            "That's too small to be a real Parakeet checkpoint; refusing "
+            "to stage it."
+        )
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
 
     # Buffer slang prompt if it's about to be inside the same dir we're
     # writing into. Mirror of the whisper export gotcha.
