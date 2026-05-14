@@ -125,10 +125,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--max-duration",
         type=float,
         default=30.0,
-        help="Drop training clips longer than this seconds. The Parakeet "
-             "manifest config says 40s but the RNNT loss memory grows with "
-             "clip length. Cap at 30s on T4 to leave headroom; 40s is fine "
-             "on bigger GPUs.",
+        help="Drop clips longer than this seconds during VALIDATION. The "
+             "Parakeet manifest config says 40s; capping at 30s on T4 gets "
+             "rid of the longest tail without skewing val WER much. Use "
+             "--train-max-duration to set a tighter training cap "
+             "independently.",
+    )
+    ap.add_argument(
+        "--train-max-duration",
+        type=float,
+        default=None,
+        help="Drop TRAINING clips longer than this seconds. Defaults to the "
+             "value of --max-duration. Set this lower than --max-duration "
+             "when running alongside another GPU job so train memory is "
+             "bounded but val WER still reflects the full distribution.",
     )
     ap.add_argument(
         "--min-duration",
@@ -296,13 +306,22 @@ def main() -> int:
 
     # Wire the manifests in. NeMo expects the cfg-driven dataloader, not a
     # raw torch DataLoader, so we hand it dict configs.
+    train_max_duration = (
+        args.train_max_duration if args.train_max_duration is not None
+        else args.max_duration
+    )
+    print(
+        f"Duration caps: train_max={train_max_duration}s, val_max={args.max_duration}s",
+        flush=True,
+    )
+
     model.setup_training_data(
         OmegaConf.create(
             _build_train_ds_cfg(
                 args.data_dir / "train_manifest.jsonl",
                 batch_size=args.batch_size,
                 num_workers=args.num_workers,
-                max_duration=args.max_duration,
+                max_duration=train_max_duration,
                 min_duration=args.min_duration,
             )
         )
