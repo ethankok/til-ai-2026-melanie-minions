@@ -150,6 +150,62 @@ official 400-clip distribution is just slightly easier than our local
 image but is no longer the live ASR contribution to the qualifier
 total.
 
+### nemo-zs-v2 — cuda-python CUDA-graph fast path (14 May 22:07 SGT)
+
+```text
+errors: 0 / 400
+score:  0.956   (vs nemo-zs 0.956 — exactly equal, leaderboard-ranked tie)
+speed:  0.946   (vs nemo-zs 0.946 — exactly equal)
+local:  WER 0.0429, wall clock 34:42 (vs nemo-zs 37:28, -7%)
+local per-batch: 2.03s (vs nemo-zs 2.62s, -22%)
+```
+
+cuda-python `12.3+` is being picked up correctly inside the container —
+the "No conditional node support for Cuda" startup warning is gone, and
+the local TDT decoder is measurably faster. **But cloud speed didn't move
+at all.** Why:
+
+- nemo-zs cloud speed 0.946 corresponds to ~97s wall on 400 clips =
+  ~0.24s/clip. Local nemo-zs-v2 is ~0.51s/clip. The cloud rig is already
+  ~2× faster per clip than our T4 — almost certainly L4 or A10.
+- On a faster GPU the TDT decoder loop is an even smaller fraction of
+  per-clip cost than locally. Audio decode (soundfile + librosa
+  resample), HTTP / base64 round-trip, batch assembly, and Python
+  overhead dominate.
+- A 22% speedup on something that's already maybe 10-15% of cloud
+  per-clip cost rounds to nothing visible at three-decimal score
+  precision.
+
+**Conclusion: cloud speed is no longer the TDT decoder. Speed is parked
+at 0.946 unless we change the serving shape (which is risky for
+diminishing returns).** The next ASR lever is accuracy, and that's what
+`train_parakeet.py` is for.
+
+### Next: Parakeet fine-tune (planned)
+
+Path is now wired end-to-end:
+
+```text
+training/asr/prepare_data_nemo.py    NEW: build NeMo-format manifests
+training/asr/train_parakeet.py       NEW: fine-tune Parakeet (PL Trainer)
+training/asr/export_parakeet.py      NEW: stage best.nemo into asr/models/
+training/asr/README.md               updated with Parakeet quick-start
+```
+
+Default recipe (from `train_parakeet.py`):
+
+- Encoder frozen (Parakeet's conformer is already strong on English; budget
+  goes to decoder + joint network, where slang/in-world adaptation lives).
+- 5 epochs, lr 5e-5, batch 8, grad-accum 2 → effective batch 16.
+- ModelCheckpoint(monitor=val_wer, save_top_k=2) + EarlyStopping(patience=3).
+- Wall clock estimate: 3-4 hr on T4.
+
+Decision gate before submitting `parakeet-ft-v1`: local Eng-WER ≤ 0.035
+(from current zero-shot 0.0429). If hit, expected official accuracy
+0.965-0.975. If not hit, rerun with `--epochs 8 --lr 3e-5` or unfreeze
+the encoder. Leaderboard keeps the higher score so a regression cannot
+demote `nemo-zs`.
+
 ## What our model runs on
 
 ### Inference (the shipped Docker container)

@@ -1,18 +1,92 @@
 # ASR training pipeline (Workbench-only)
 
-Fine-tunes `distil-whisper/distil-large-v3` on the novice ASR dataset with a
-slang-aware data prep step, then exports to CTranslate2 for the inference
-container in [../../asr/](../../asr/).
+Two parallel pipelines live here:
+
+* **Parakeet-TDT (NeMo)** — current shipped path. Fine-tunes
+  `nvidia/parakeet-tdt-0.6b-v2` and exports the `.nemo` directly.
+* **distil-whisper LoRA** — legacy path, kept as fallback while Parakeet
+  experiments run. Fine-tunes `distil-whisper/distil-large-v3` with PEFT
+  LoRA, then exports to CTranslate2.
 
 Nothing in this folder ships in the eval Docker image — it's all training-side
 tooling.
 
-**Current shipped artifact**: `ft-lora32-v1` — 3-epoch LoRA-rank-32 fine-tune,
-official **0.957 / 0.849** (13 May 11:22 SGT). Crosses the 0.95 accuracy target.
-Speed lever (`int8_float16` re-export) is the next action; see
-"Iteration knobs" at the bottom of this file.
+**Current shipped artifact**: `nemo-zs` — Parakeet-TDT-0.6B-v2 zero-shot,
+official **0.956 / 0.946** (14 May 20:33 SGT). `nemo-zs-v2` re-exported with
+`cuda-python>=12.3` enabled CUDA-graph fast path locally (37:28 → 34:42
+wall clock) but cloud speed is identical at 0.946 — the bottleneck is no
+longer the TDT decoder, it's HTTP / audio I/O / Python overhead. The next
+real lever is **accuracy**, which is what `train_parakeet.py` is for.
 
-## Design at a glance
+## Parakeet quick start: fine-tune on T4 (Workbench)
+
+The defaults in `train_parakeet.py` are tuned for T4 (16 GB) at fp16.
+
+```bash
+cd /home/jupyter/til
+export TIL_FOLDER=/home/jupyter/til
+
+# 0. Install training deps once.
+pip install -r asr/requirements-nemo.txt
+
+# 1. Refresh the slang prompt (idempotent).
+python training/asr/extract_slang.py \
+    --nlp-dir /home/jupyter/novice/nlp \
+    --out asr/models/slang_prompt.txt
+
+# 2. Make sure the base .nemo is on disk (no-op if it already is).
+python training/asr/download_models_nemo.py \
+    --model nvidia/parakeet-tdt-0.6b-v2 \
+    --out asr/models
+
+# 3. Build NeMo manifests with slang oversampling.
+python training/asr/prepare_data_nemo.py \
+    --data-dir /home/jupyter/novice/asr \
+    --slang-file asr/models/slang_prompt.txt \
+    --out-dir training/asr/data_nemo \
+    --slang-multiplier 2
+
+# 4. Fine-tune. Encoder frozen, decoder + joint trainable. ~3-4 hr on T4.
+python training/asr/train_parakeet.py \
+    --data-dir training/asr/data_nemo \
+    --base-model asr/models/parakeet-tdt-0.6b-v2.nemo \
+    --output-dir training/asr/runs/parakeet-ft-v1 \
+    --epochs 5 --lr 5e-5 --batch-size 8 --grad-accum 2
+
+# 5. Stage the fine-tuned .nemo where the docker build expects it.
+python training/asr/export_parakeet.py \
+    --trained-nemo training/asr/runs/parakeet-ft-v1/best.nemo \
+    --output-dir asr/models \
+    --slang-file asr/models/slang_prompt.txt
+
+# 6. Build, test, submit.
+docker build -f asr/Dockerfile.nemo -t melanie-minions-asr:parakeet-ft-v1 ./asr
+til test asr parakeet-ft-v1
+til submit asr parakeet-ft-v1   # only if local Eng-WER beats nemo-zs's 0.0429
+```
+
+If the val_wer plateaus before epoch 5, ModelCheckpoint + EarlyStopping
+inside `train_parakeet.py` will roll back to the best step automatically.
+If you see val_wer still falling at epoch 5, rerun with `--epochs 8` and a
+slightly tighter LR (`--lr 3e-5`).
+
+To unfreeze the encoder for one low-LR pass:
+```bash
+python training/asr/train_parakeet.py \
+    --no-freeze-encoder \
+    --lr 1e-5 --epochs 2 \
+    [other args]
+```
+This burns more T4 wall clock but can reclaim a small accuracy delta if
+decoder-only FT plateaus above the cloud-eval gate.
+
+## Whisper LoRA quick start (legacy fallback)
+
+The whisper pipeline is preserved as a fallback in case Parakeet
+experiments regress badly enough that we need to roll back. Skip this
+section unless you're rolling back.
+
+## Design at a glance (whisper)
 
 - **Base model**: `distil-whisper/distil-large-v3` — English-only distillation of large-v3. Same encoder quality, ~6× faster decoder. Right call for the Novice (English-only) track; avoids paying for a multilingual decoder we don't need.
 - **Fine-tune**: LoRA (rank 32, alpha 64) on decoder attention projections only. Encoder frozen (distil-v3 inherits a strong large-v3 encoder; budget should go to the decoder, which distillation shrank).
@@ -242,9 +316,45 @@ ENV ASR_SLANG_PROMPT_PATH=/workspace/models/asr/slang_prompt.txt
 - Don't commit `asr/models/` or `training/asr/runs/` — they're in
   `.gitignore`.
 
-## Iteration knobs (current state: `ft-lora32-v1` @ 0.957 / 0.849)
+## Iteration knobs (current state: `nemo-zs-v2` @ 0.956 / 0.946)
 
 Priority order, top is the next action:
+
+1. **Parakeet decoder-only fine-tune** — `train_parakeet.py` with the default
+   args (encoder frozen, lr 5e-5, 5 epochs, batch 8 × grad-accum 2). Val WER
+   target: ≤ 0.035 (from current zero-shot 0.0429). Wall-clock: ~3-4 hr on T4.
+   Expected official accuracy bump: 0.956 → 0.965-0.975.
+2. **Slang word-boost via NeMo `boosting_words`** — bump `nemo_toolkit[asr]`
+   to 2.1+ (or higher) and re-test. Currently `_configure_biasing` in
+   `asr_manager_nemo.py` falls back to "no biasing" because NeMo 2.0.0 doesn't
+   expose the boost API. Expected impact: +0.003-0.010 absolute on slang-heavy
+   clips. Cost: low (one config bump + re-test).
+3. **Encoder unfreeze for one low-LR pass** — only after step 1 plateaus.
+   `python training/asr/train_parakeet.py --no-freeze-encoder --lr 1e-5
+   --epochs 2`. Adds ~2-3 hr T4. Expected: +0.002-0.005 absolute beyond
+   decoder-only FT.
+
+Deferred (don't pursue unless steps 1-3 still leave us below 0.97):
+
+- **Larger Parakeet variant** — `parakeet-tdt-1.1b-v2` exists but is ~2× the
+  decoder cost. Speed score would drop below 0.92, likely a blended
+  regression for an accuracy gain we can probably get cheaper.
+- **Whisper LoRA rank-64 escalation** — only relevant if we roll back to the
+  fallback Whisper image.
+
+Speed knobs (mostly mined out for the current container shape):
+
+- `cuda-python` is already pinned in `requirements-nemo.txt` for the CUDA-graph
+  fast path. Local wall clock improved 7%; cloud speed unchanged from `nemo-zs`
+  to `nemo-zs-v2` because audio decode + HTTP / Python overhead dominate at
+  cloud-side latency.
+- Possible further speed lever: drop `librosa` resample (audio is already 16
+  kHz wav per the manifest spec). Small magnitude, risk of regression on
+  edge-case sample rates.
+
+## Whisper iteration knobs (legacy / fallback)
+
+Same content as before, kept for the fallback path:
 
 1. **Re-export `--quantization int8_float16`** — same merged checkpoint, no retrain. Expected speed `0.849 → 0.90+`, accuracy delta `≤ 0.005`. Tag the resulting image `ft-lora32-int8f16`. This is the **next submission**.
 2. **`beam_size=2`** (not 5) at [../../asr/src/asr_manager.py](../../asr/src/asr_manager.py) — only worth trying if step 1's int8 image has speed margin ≥ 0.92 AND accuracy is borderline. Typically buys 0.002–0.005 WER.

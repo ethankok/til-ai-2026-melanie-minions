@@ -44,7 +44,8 @@ v1            12/05 03:42        0.000   0.993   —               Empty-string 
 norm-v1       12/05 16:23        0.877   0.864   0.0759          + digit verbalization + silence guard
 vad-off-v1    12/05 20:00        0.938   0.859   0.0554          + VAD off + hallucination guards + ordinals + decimal-safe
 ft-lora32-v1  13/05 11:22        0.957   0.849   0.0299*         + LoRA rank-32 decoder fine-tune (3 epochs, lr 1e-4)
-nemo-zs       14/05 20:33        0.956   0.946   0.0429          BACKBONE SWITCH: Parakeet-TDT-0.6B-v2 zero-shot. Accuracy flat (-0.001), speed +0.097, blended +0.023. CUDA-graph fast path NOT yet enabled (cuda-python missing) — speed has more headroom
+nemo-zs       14/05 20:33        0.956   0.946   0.0429          BACKBONE SWITCH: Parakeet-TDT-0.6B-v2 zero-shot. Accuracy flat (-0.001), speed +0.097, blended +0.025
+nemo-zs-v2    14/05 22:07        0.956   0.946   0.0429          + cuda-python CUDA-graph fast path. Local wall clock -7% (37:28→34:42), cloud unchanged. Cloud speed bottleneck is now HTTP / audio I/O / Python overhead, NOT the TDT decoder. Speed parked at 0.946; next lever is accuracy (Parakeet FT).
 ```
 
 ## CV submission history
@@ -162,7 +163,7 @@ Estimated blended qualifier score = 0.6911  (+0.005 vs ft-lora32-v1 baseline; +0
 
 ## Next priority
 
-1. **ASR `nemo-zs-v2` (CUDA-graph fast path)** — `nemo-zs` shipped at `0.956/0.946`. Local startup logged "No conditional node support for Cuda. Cuda graphs with while loops are disabled" because cuda-python wasn't installed. `requirements-nemo.txt` now pins `cuda-python>=12.3`; rebuild as `nemo-zs-v2`, expect speed `0.946 → 0.96+` with accuracy unchanged. One env-only change, near-zero risk.
+1. **ASR `parakeet-ft-v1` (Parakeet decoder-only fine-tune)** — `nemo-zs-v2` proved cloud speed is parked at 0.946 (HTTP / audio I/O / Python overhead, not the TDT decoder). The remaining ASR lever is accuracy. Pipeline is wired end-to-end: `prepare_data_nemo.py` → `train_parakeet.py` (encoder frozen, lr 5e-5, 5 epochs, ~3-4 hr T4) → `export_parakeet.py`. Decision gate before submission: local Eng-WER ≤ 0.035 (from zero-shot 0.0429). Expected official: 0.965-0.975. Leaderboard keeps the higher blended score so regression cannot demote `nemo-zs`.
 2. **NLP `v6-roberta-large`** — `v5c-no-para` is shipped at `0.483/0.912` (new blended high). Error-bucket diagnostic shows retrieval at 95.5% hit rate (saturated; ceiling is +0.018 cloud); the dominant loss is `retrieval_hit_diff` at 45.8%. The next lever is QA span quality, addressed by swapping `deepset/roberta-base-squad2` → `deepset/roberta-large-squad2` (~1.4 GB extra container, per-question latency ~2.5× on GPU fp16, comfortably within budget given v5c's speed headroom). Expected impact: +0.05–0.10 cloud accuracy. NOTES recorded that paragraph chunking, bigger embedder, and low-confidence fallbacks are NOT good levers on this corpus and shouldn't be revisited.
 3. **AE hybrid is the new shipped tag at `0.555 / 0.849`.** The 0.49-0.51 cloud ceiling was real for individual approaches but broke under the policy + heuristic safety-veto combo (+0.048 over ppo-v1). To push toward 0.60 the cheap next moves all reuse the existing `HybridAEManager` plumbing — no retraining needed. Each is one env-var toggle + one rebuild:
    - **`AE_HYBRID_CONF=0.5`**: only use policy when its softmax top-action ≥ 0.5. Below that, fall back to heuristic. Tests whether the policy's *uncertain* outputs are the ones costing us score.
