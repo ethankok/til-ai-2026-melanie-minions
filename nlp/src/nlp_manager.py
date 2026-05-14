@@ -1,10 +1,10 @@
 """NLP RAG manager — hybrid retrieval + cross-encoder rerank + extractive QA.
 
 Pipeline at corpus load:
-  - Paragraph-aware chunking: split each document on blank lines, then within
-    each paragraph slide a 3-sentence window with 1-sentence overlap. Short
-    paragraphs are emitted as a single chunk. Each chunk carries its parent
-    document index (used to emit DOC-XXXX IDs).
+  - Sentence-window chunking across each document (3 sentences with 1-sentence
+    overlap). Each chunk carries its parent document index (used to emit
+    DOC-XXXX IDs). Tried paragraph-aware chunking in `v5b-no-fallback` and
+    it regressed cloud score by 0.027 — reverted in `v5c-no-para`.
   - Index every chunk in (a) BM25Okapi and (b) a dense BGE encoder.
 
 Pipeline at query:
@@ -70,7 +70,6 @@ QA_DOC_STRIDE = 128
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
-_PARAGRAPH_RE = re.compile(r"\n\s*\n")
 _DOC_ID_RE = re.compile(r"\bDOC-(\d{4})\b")
 _STOPWORDS = frozenset(
     {
@@ -150,10 +149,6 @@ def _split_sentences(document: str) -> list[str]:
     if not sents and document.strip():
         sents = [document.strip()]
     return sents
-
-
-def _split_paragraphs(document: str) -> list[str]:
-    return [p.strip() for p in _PARAGRAPH_RE.split(document) if p.strip()]
 
 
 def _zscore(arr: np.ndarray) -> np.ndarray:
@@ -239,41 +234,27 @@ class NLPManager:
     # ----------------------------------------------------------------- corpus
 
     def _chunk_document(self, doc: str) -> list[str]:
-        """Paragraph-aware chunking.
+        """Sentence-window chunking across the whole document.
 
-        For each paragraph (separated by blank lines):
-          - If it fits in CHUNK_SENTENCES sentences, emit as one chunk.
-          - Otherwise, slide a CHUNK_SENTENCES-window inside the paragraph
-            with CHUNK_OVERLAP overlap.
-
-        Falls back to whole-document sentence-window splitting when the
-        document has no blank-line structure, then a single whole-document
-        chunk as last resort.
+        Same behaviour as v4-dict-id. Earlier paragraph-aware variant in
+        `v5b-no-fallback` regressed cloud score -0.027 (likely because the
+        held-out corpus has different paragraph structure than the local
+        novice docs), so we are back on the v4 chunking.
         """
-        paragraphs = _split_paragraphs(doc)
-        if not paragraphs:
-            # No paragraph breaks — treat whole doc as one paragraph.
-            paragraphs = [doc.strip()] if doc.strip() else []
-
-        chunks: list[str] = []
+        sents = _split_sentences(doc)
+        if not sents:
+            return []
+        if len(sents) <= CHUNK_SENTENCES:
+            return [" ".join(sents)]
         step = max(1, CHUNK_SENTENCES - CHUNK_OVERLAP)
-        for para in paragraphs:
-            sents = _split_sentences(para)
-            if not sents:
-                continue
-            if len(sents) <= CHUNK_SENTENCES:
-                chunks.append(" ".join(sents))
-                continue
-            for i in range(0, len(sents), step):
-                window = sents[i : i + CHUNK_SENTENCES]
-                if not window:
-                    break
-                chunks.append(" ".join(window))
-                if i + CHUNK_SENTENCES >= len(sents):
-                    break
-
-        if not chunks and doc.strip():
-            chunks.append(doc.strip())
+        chunks: list[str] = []
+        for i in range(0, len(sents), step):
+            window = sents[i : i + CHUNK_SENTENCES]
+            if not window:
+                break
+            chunks.append(" ".join(window))
+            if i + CHUNK_SENTENCES >= len(sents):
+                break
         return chunks
 
     @torch.no_grad()

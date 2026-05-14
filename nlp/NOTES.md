@@ -1,6 +1,6 @@
 # NLP — notes & history
 
-Last updated: 14 May 2026 13:35 SGT
+Last updated: 14 May 2026 19:30 SGT
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
@@ -92,8 +92,11 @@ v2-hybrid-rag 14/05 ~04:00       0.000   ~       0 / 700   —            NEW EV
 v3-id-parse   14/05 05:33        0.000   0.888   0 / 700   0.678        Same hybrid stack + defensive parser. Still 0.0 because eval bug persisted; local 0.678 with prefix-patched test confirmed model was fine
 v4-dict-id    14/05 13:29        0.483   0.888   0 / 700   0.678        After Ryan fixed eval to send dicts. SAME IMAGE as v3-id-parse (just re-tagged); recovery to NEW HIGH on post-wipe leaderboard
 v5-multi      (not shipped)      —       —       —         0.628        Para-aware chunking + batched SQuAD2 + BM25 backfill + low-conf fallback. Local REGRESSED -0.050 vs v4; fallback was firing on every single-word answer. NOT submitted
-v5b-no-fallback (pending)        ?       ?       ?         ?            Same as v5-multi minus the low-conf fallback. Keep batching + para chunking + BM25 backfill
+v5b-no-fallback 14/05 19:10      0.456   0.916   0 / 700   0.674        Removed fallback; kept para chunking + batched SQuAD2 + BM25 backfill. Local OK (within 0.005 of v4), but cloud REGRESSED -0.027 vs v4 (speed +0.028 but blended worse -0.013). Para chunking is the suspect — local→cloud gap got bigger
+v5c-no-para   (pending)          ?       ?       ?         ?            Revert paragraph chunking to v4 sentence-windowing. Keep batched SQuAD2 + BM25 backfill. Isolates the regression
 ```
+
+If `v5c` recovers to ~v4's 0.483 (with +speed from batching), we know paragraph chunking was the culprit and we can commit to v6-roberta-large from a clean baseline.
 
 ## `v5-multi` REGRESSED locally (NOT submitted) — diagnosed
 
@@ -115,21 +118,22 @@ The other three changes look broadly fine:
 - Batched SQuAD2 is purely a speed change (`til test` ran at `1.56it/s` vs v4's `1.07it/s` — ~46% faster per batch).
 - BM25 backfill is purely additive — only adds doc IDs, never removes.
 
-## `v5b-no-fallback` (next submission)
+## `v5b-no-fallback` shipped → cloud REGRESSED (-0.027)
 
-Removed the low-confidence sentence fallback entirely. Kept the other three changes from v5-multi.
+Removed the low-confidence sentence fallback; kept paragraph chunking + batched SQuAD2 + BM25 backfill from v5-multi.
 
-Pipeline:
-1. **Batched SQuAD2 forward pass** — speed unlock.
-2. **Paragraph-aware chunking** — small retrieval regression locally but may transfer differently on cloud; keeping for one more A/B.
-3. **BM25 doc-diversity backfill** — fills empty top-3 slots from un-reranked hybrid.
+Local cleared the gate at 0.674 (within 0.005 of v4's 0.678) but **cloud scored 0.456 / 0.916** — accuracy −0.027 vs v4, speed +0.028, blended ~0.571 vs v4's 0.584 (net −0.013).
 
-What's **deliberately not changed**:
-- `TOP_K_RETRIEVE` / `TOP_K_RERANK` / `TOP_DOCS_RETURNED` constants.
-- Model choices (`bge-small`, `bge-reranker-base`, `roberta-base-squad2`).
-- Server (`nlp_server.py`).
+The local-cloud gap *widened* from v4's 0.195 to 0.218. That's the diagnostic signal: a change that's near-neutral on the local corpus but worse on the held-out corpus. Paragraph chunking is the prime suspect — local diagnostic on v5-multi already showed +5 retrieval misses (40 → 45) on the local corpus, and the cloud corpus likely amplifies that.
 
-Gate before submitting `v5b`: local accuracy must be ≥0.673 (within 0.005 of v4's 0.678). If still regressed, paragraph chunking is the next thing to revert (call it `v5c-no-para`).
+## `v5c-no-para` (next submission)
+
+Reverts `_chunk_document` to v4's plain sentence-window chunking (3-sentence windows with 1-sentence overlap across the whole document). Keeps the two changes that are functionally additive:
+
+1. **Batched SQuAD2 forward pass** — speed unlock; v5b cloud speed `0.916` vs v4's `0.888` confirms this is the right direction.
+2. **BM25 doc-diversity backfill** — purely additive (only fills empty top-3 slots, never replaces a reranker pick).
+
+Expected: cloud ≈ v4's 0.483 with the +speed retained. If `v5c` recovers, paragraph chunking is confirmed the regressor. If `v5c` is still below v4's 0.483, the suspect shifts to BM25 backfill or batching itself.
 
 ## Local diagnostic: [error_report.py](error_report.py)
 
@@ -154,10 +158,11 @@ The script prints estimated cloud-score lower/upper bounds; compare to `til test
 
 ## Next priority
 
-1. **Submit `v5b-no-fallback`** (current head). Rebuild + `til test`; if local ≥0.673, submit.
-2. **If `v5b` local is also regressed**, paragraph chunking is the next suspect — build `v5c-no-para` reverting `_chunk_document` to plain sentence-windowing and try again. Each revert is one tag.
-3. **The v4 error report shows where the actual headroom is** — retrieval is at 95.5% hit rate (only 40/883 misses), so retrieval tuning has at most +0.018 cloud headroom (from 4.5% × 0.4 partial-credit recovery). The big bucket is `retrieval_hit_diff` at 45.8% — most of that goes to the AE-decided fate. **QA quality is the dominant lever from here**: bigger QA model (`roberta-large-squad2`), better chunking, or span-selection refinements move cases from `diff` to `exact/substr`.
-4. **`v6` should be QA-focused**: try `deepset/roberta-large-squad2` (~1.4 GB) as the first lever, since the diagnostic puts retrieval near the ceiling. If still room after, switch embedder to `bge-base-en-v1.5`.
+1. **Submit `v5c-no-para`** (current head). Rebuild + `til test`; if local ≥0.673, submit. Expectation: cloud ≈ v4's 0.483 with v5b's +speed retained.
+2. **If `v5c` recovers** to ~v4 score, paragraph chunking is confirmed the regressor — never revisit it on this corpus. Move to v6.
+3. **If `v5c` is still <0.483**, BM25 backfill or batching itself is the issue. Next bisect: `v5d-no-backfill` strips the BM25 doc-diversity backfill but keeps batching. If THAT recovers, BM25 backfill is the regressor (somehow displacing good docs in the cloud distribution). If not, batching is the bug — revert to v4's per-context loop.
+4. **v4 error report places the headroom in QA**: retrieval is at 95.5% hit rate; retrieval-tuning ceiling is +0.018 cloud. The dominant loss bucket is `retrieval_hit_diff` (45.8%, AE-decided) — moving cases from `diff` to `exact/substr` via a better QA model is the biggest lever.
+5. **`v6-roberta-large`** (only after `v5c` lands a clean baseline): swap `deepset/roberta-base-squad2` → `deepset/roberta-large-squad2`. ~1.4 GB extra in container; per-question latency ~2.5× on GPU fp16, still well within budget. Expected impact: +0.05–0.10 cloud.
 
 ## What to edit, what not to
 
