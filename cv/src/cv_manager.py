@@ -49,6 +49,8 @@ class CVManager:
         self.iou = float(os.environ.get("CV_IOU", "0.70"))
         self.imgsz = int(os.environ.get("CV_IMGSZ", "640"))
         self.max_det = int(os.environ.get("CV_MAX_DET", "100"))
+        self.augment = os.environ.get("CV_AUGMENT", "0").lower() in ("1", "true", "yes")
+        self.half = os.environ.get("CV_HALF", "1").lower() in ("1", "true", "yes")
         self.device = os.environ.get("CV_DEVICE")
         self.category_map = self._load_category_map()
         self.model = None
@@ -61,7 +63,8 @@ class CVManager:
             self.model = YOLO(self.model_path)
             print(
                 f"[CVManager] loaded {self.model_path} "
-                f"conf={self.conf} iou={self.iou} imgsz={self.imgsz}",
+                f"conf={self.conf} iou={self.iou} imgsz={self.imgsz} "
+                f"max_det={self.max_det} augment={self.augment} half={self.half}",
                 flush=True,
             )
         except Exception as exc:
@@ -121,6 +124,8 @@ class CVManager:
                 "iou": self.iou,
                 "imgsz": self.imgsz,
                 "max_det": self.max_det,
+                "augment": self.augment,
+                "half": self.half,
                 "verbose": False,
             }
             if self.device:
@@ -138,7 +143,8 @@ class CVManager:
 
         xyxy = boxes.xyxy.cpu().numpy()
         classes = boxes.cls.cpu().numpy()
-        for box, cls_value in zip(xyxy, classes):
+        confs = boxes.conf.cpu().numpy()
+        for box, cls_value, conf_value in zip(xyxy, classes, confs):
             cls_idx = int(cls_value)
             category_id = self.category_map.get(cls_idx)
             if category_id is None:
@@ -158,6 +164,7 @@ class CVManager:
                 {
                     "bbox": [round(x1, 2), round(y1, 2), round(w, 2), round(h, 2)],
                     "category_id": int(category_id),
+                    "score": float(conf_value),
                 }
             )
         return detections

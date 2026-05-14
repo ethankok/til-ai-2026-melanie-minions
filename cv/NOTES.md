@@ -159,10 +159,30 @@ accepts requests, the JSON shape is correct. No detection logic yet. Scored
 
 In priority order (per [../SUMMARY.md "CV"](../SUMMARY.md)):
 
-### 1. Keep `cv-yolo-v2-best` shipped
+### 1. Tier 1 + Tier 2 push to ~0.70 (in progress, May 14)
 
-Status: shipped and clean (`0.549 / 0.960`, `0 / 500` errors). It is the current
-best CV image. Do not revert to `cv-yolo-ft-v1` or the COCO-mapped baseline.
+Code-side changes already in this branch:
+
+- `cv_manager.py` now emits a real `score` field per detection (Ultralytics
+  confidence). Local `test/test_cv.py` hard-codes `score=1.0` so this is a no-op
+  locally but may help official scoring if it consumes confidences.
+- `cv_manager.py` reads `CV_AUGMENT` and `CV_HALF` envs. `CV_AUGMENT=1` enables
+  Ultralytics flip+multi-scale TTA. `CV_HALF=1` runs FP16 on GPU.
+- Dockerfile defaults flipped to `CV_AUGMENT=1`, `CV_HALF=1`. Resolution stays
+  `imgsz=768` until the sweep confirms 896/1024 pays off; `CV_CONF=0.25` and
+  `CV_IOU=0.50` unchanged so v2-best behavior is recoverable by env override.
+- `training/cv/sweep_cv_http.py` extends conf range up to 0.60 (the test
+  evaluator pins all detection scores to 1.0 so over-detection hurts), adds
+  imgsz=1024 and a 0/1 `--augment` axis.
+- `training/cv/train_v3.sh` wraps a Tier 2 YOLOv11m@1024 retrain with
+  copy-paste/mosaic for small-object recall.
+
+Open work (run on Workbench):
+
+- Tier 1 sweep + smoke-submit on the current v2-best weights:
+  `til build cv cv-yolo-v2-tier1` -> sweep -> bake winners -> `til submit`.
+- Tier 2 retrain with `bash training/cv/train_v3.sh` (~4-5h on T4), then
+  rebuild and re-sweep.
 
 ### 2. If revisiting CV, improve hidden-distribution generalization
 

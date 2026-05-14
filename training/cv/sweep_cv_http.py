@@ -64,7 +64,7 @@ def _wait_for_health(port: int, timeout_s: float) -> None:
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["conf", "iou", "imgsz", "max_det", "map", "map50", "map75", "predictions"]
+    fields = ["conf", "iou", "imgsz", "max_det", "augment", "map", "map50", "map75", "predictions"]
     with path.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fields)
         writer.writeheader()
@@ -82,10 +82,11 @@ def main() -> None:
         default=Path("/home/jupyter/cv_yolo_dataset/coco/annotations_test.json"),
     )
     parser.add_argument("--out-dir", type=Path, default=Path("/home/jupyter/cv_eval_sweeps"))
-    parser.add_argument("--conf", default="0.05,0.10,0.15,0.20,0.25")
-    parser.add_argument("--iou", default="0.50,0.60,0.70")
-    parser.add_argument("--imgsz", default="640,768")
+    parser.add_argument("--conf", default="0.20,0.25,0.30,0.40,0.50,0.60")
+    parser.add_argument("--iou", default="0.45,0.50,0.55,0.60,0.70")
+    parser.add_argument("--imgsz", default="768,896,1024")
     parser.add_argument("--max-det", default="100")
+    parser.add_argument("--augment", default="0,1", help="Comma-separated 0/1 to toggle Ultralytics TTA")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--request-timeout", type=float, default=60.0)
     parser.add_argument("--startup-timeout", type=float, default=120.0)
@@ -114,16 +115,22 @@ def main() -> None:
             _parse_floats(args.iou),
             _parse_ints(args.imgsz),
             _parse_ints(args.max_det),
+            _parse_ints(args.augment),
         )
     )
 
-    for idx, (conf, iou, imgsz, max_det) in enumerate(combos, start=1):
-        print(f"\n[{idx}/{len(combos)}] conf={conf} iou={iou} imgsz={imgsz} max_det={max_det}")
+    for idx, (conf, iou, imgsz, max_det, augment) in enumerate(combos, start=1):
+        print(
+            f"\n[{idx}/{len(combos)}] conf={conf} iou={iou} imgsz={imgsz} "
+            f"max_det={max_det} augment={augment}"
+        )
         env = {
             "CV_CONF": str(conf),
             "CV_IOU": str(iou),
             "CV_IMGSZ": str(imgsz),
             "CV_MAX_DET": str(max_det),
+            "CV_AUGMENT": str(augment),
+            "CV_HALF": "1",
         }
         try:
             _start_container(args.image, container_name, args.port, env, use_gpus=not args.cpu)
@@ -144,6 +151,7 @@ def main() -> None:
             "iou": iou,
             "imgsz": imgsz,
             "max_det": max_det,
+            "augment": augment,
             "map": summary["map"],
             "map50": summary["map50"],
             "map75": summary["map75"],
@@ -151,12 +159,15 @@ def main() -> None:
             "summary": summary,
         }
         rows.append(row)
-        run_name = f"conf{conf:.2f}_iou{iou:.2f}_img{imgsz}_max{max_det}".replace(".", "p")
+        run_name = (
+            f"conf{conf:.2f}_iou{iou:.2f}_img{imgsz}_max{max_det}_aug{augment}".replace(".", "p")
+        )
         (args.out_dir / f"{run_name}.json").write_text(json.dumps(row, indent=2), encoding="utf-8")
         best = max(rows, key=lambda item: item["map"])
         print(
             f"mAP={summary['map']:.4f} mAP50={summary['map50']:.4f} "
-            f"best={best['map']:.4f} @ conf={best['conf']} iou={best['iou']} imgsz={best['imgsz']}"
+            f"best={best['map']:.4f} @ conf={best['conf']} iou={best['iou']} "
+            f"imgsz={best['imgsz']} aug={best['augment']}"
         )
 
     rows.sort(key=lambda item: item["map"], reverse=True)
@@ -166,7 +177,8 @@ def main() -> None:
     for row in rows[:10]:
         print(
             f"mAP={row['map']:.4f} mAP50={row['map50']:.4f} "
-            f"conf={row['conf']} iou={row['iou']} imgsz={row['imgsz']} max_det={row['max_det']}"
+            f"conf={row['conf']} iou={row['iou']} imgsz={row['imgsz']} "
+            f"max_det={row['max_det']} aug={row['augment']}"
         )
 
 
