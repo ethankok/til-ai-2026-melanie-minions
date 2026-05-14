@@ -1,71 +1,98 @@
 # AE — notes & history
 
-Last updated: 14 May 2026 — **hybrid-v2 is the shipped tag at 0.545/0.863 (new team high, +0.038 vs ppo-v1).**
+Last updated: 14 May 2026 19:30 SGT — **hybrid-v3 is the shipped tag at 0.555/0.849 (3rd consecutive new high; +0.048 vs ppo-v1).**
+
+## Round-3 cloud result (hybrid-v3, 14 May 19:26)
+
+`hybrid-v3` = `hybrid-v2` + **top-K policy cascade** (try policy's #2/#3 if #1 is vetoed before falling back to heuristic) + **opportunistic enemy-kill** (bomb adjacent enemy agents sighted this step in the heuristic's dominant-action shortcut, not just adjacent enemy bases).
+
+| Tag | Score | Speed | Note |
+|---|---|---|---|
+| `hybrid-v3` | **0.555 ⭐** | 0.849 | NEW HIGH. +0.010 over hybrid-v2 (within ±0.04 cloud noise but trending right); top-quartile on leaderboard (top 0.711). |
+
+Three consecutive AE submissions have each lifted the floor by ~one cloud-noise unit in the same direction: ppo-v1 0.507 → hybrid-v2 0.545 → hybrid-v3 0.555. Each individual lift is within noise; the cumulative +0.048 is not. We've moved the *floor*, but the local→cloud gap (~0.23) is structurally intact.
+
+**Top of leaderboard is 0.711.** We're still 0.16 short of that, and three rounds of heuristic-side moves netted +0.048. The remaining gap is unlikely to close from further heuristic tweaks.
 
 ## Round-2 cloud results (after AE_MODE bake fix)
 
 | Tag | Score | Speed | Local 1-run | Verdict |
 |---|---|---|---|---|
 | `policy-fast-v2`        | **0.425** | 0.859 | 0.654 | Regressed -0.082 vs ppo-v1 same weights. Almost certainly cloud variance (±0.04 on 30 games is normal). Speed flat — confirms speed is evaluator-bound, not torch-bound. |
-| `hybrid-v2`             | **0.545 ⭐** | 0.863 | 0.774 | **NEW HIGH.** First structurally new approach since ppo-v1; +0.038 over the 0.49-0.51 cloud ceiling 5 prior approaches all hit. Hypothesis confirmed: policy + heuristic safety-veto > either alone. |
+| `hybrid-v2`             | **0.545** | 0.863 | 0.774 | NEW HIGH at the time. First structurally new approach since ppo-v1; +0.038 over the 0.49-0.51 cloud ceiling 5 prior approaches all hit. |
 | `heuristic-restore-v2`  | **0.502** | 0.854 | 0.787 | +0.003 vs planner-v3b 0.499 (noise). Confirms the heuristic-only ceiling is real; TILE_RESPAWN 40→20 and enemy_agent eviction were no-ops on cloud. |
 
-Local→official gap is still 0.23 on hybrid (0.774→0.545) — structural to the hidden eval distribution. But the *floor* lifted, which is what mattered.
+Local→official gap is 0.23 on hybrid (0.774→0.545→0.555) — structural to the hidden eval distribution.
 
 ### Bug we shipped past (round-1 → round-2)
 
 All three round-1 builds had **identical sha256 `2572b392...`** because `AE_MODE=foo til build …` set the env var only in the shell that ran the til CLI — `docker build` doesn't inherit shell env. Cloud container then defaulted to hybrid mode regardless of submitted tag. Local `til test` worked because docker run inherits the shell env, masking the bug. **Fixed** by adding `ENV AE_MODE=hybrid` to the Dockerfile and a `.ae_mode` file fallback the server reads at startup.
 
-## Path to 0.60+ — leaderboard context
+## Path to 0.60+ from here
 
-Public leaderboard sample (14 May 14:00ish): top scores are 0.711, 0.671, 0.595; ours 0.545 is mid-pack. 0.6 is reachable — it's not a hard ceiling, it's our approach.
+We're at 0.555, leaderboard top is 0.711. Three rounds of heuristic-side moves climbed +0.048 within ±0.04 noise per submission; the *direction* is right but each individual lift is barely outside noise. The remaining 0.15 to top is unlikely to come from more heuristic tweaks.
 
-Two changes shipped to source tree (unbuilt — next commit, `hybrid-v3`):
+### Cheap A/Bs still on the table (no retraining)
 
-1. **Top-K policy cascade in hybrid** ([ae/src/hybrid_manager.py](src/hybrid_manager.py)).
-   When the policy's argmax is vetoed, we now try the policy's #2 and #3 actions in turn before falling back to the heuristic. Premise: in tactical situations the policy has strong opinions and its second choice is often still better-positioned than the heuristic's default (which tends to be "go collect the nearest item"). The vetoes still hold — we only return an action that passes all safety checks.
-
-2. **Heuristic dominant-action: opportunistic kills** ([ae/src/ae_manager.py:_try_dominant_action](src/ae_manager.py)).
-   The fast-path shortcut now bombs not only adjacent enemy *bases* but also adjacent enemy *agents* sighted in the current step. Attack damage is +20 and a kill is +15 — these were the biggest reward swing the slow path was occasionally missing because BFS routed toward items first.
-
-Build & ship as `hybrid-v3`:
+Each is one `ENV …` line in the Dockerfile, hybrid mode. Cloud variance ±0.04 so submit only the ones whose expected lift is ≥ that:
 
 ```bash
-cp ~/ae-checkpoints-backup/deployed-bc-v1.pt ae/models/bc.pt
-echo hybrid > ae/src/.ae_mode
-til build ae hybrid-v3 && til test ae hybrid-v3 && til submit ae hybrid-v3
-```
+# Confidence gate — only use policy when its top-action softmax ≥ 0.5
+ENV AE_HYBRID_CONF=0.5
 
-If `hybrid-v3` lifts to 0.58+, the changes worked. If flat at 0.54±0.04, we've hit the limit of what these heuristic-side moves can do.
-
-### Other env-var-toggle experiments (no code change)
-
-Each one is a single `ENV …` line in the Dockerfile, cloud variance is ±0.04 so big effect sizes only; submit ≤3:
-
-```bash
-# Experiment A — confidence gate
-ENV AE_HYBRID_CONF=0.5            # only use policy when softmax top ≥ 0.5
-
-# Experiment B — drop the frozen-stay veto
+# Drop the frozen-stay veto — maybe STAY when policy says STAY is right
 ENV AE_HYBRID_VETO_FROZEN_STAY=0
 
-# Experiment C — drop the danger-step veto
+# Drop the danger-step veto — tests whether policy actually self-traps
 ENV AE_HYBRID_VETO_DANGER=0
 ```
 
-### Bigger swing — state-augmented policy retrain (1–2 days)
+Expected lift per A/B: ±0.02. Worth one submission slot if `hybrid-v3` has spare queue capacity.
 
-The policy currently sees only the egocentric 7×5 and 7×7 viewcones. It has no memory of where it's been or where enemies were 5 steps ago. Adding a 16×16 belief-map channel as additional CNN input would:
-- give the policy persistent memory (currently relies entirely on its frame stack, which `ppo-v1` doesn't use)
-- mostly eliminate the policy's worst self-trapping behavior (it walks into known bomb blasts because it doesn't remember the bomb)
-- close the local→cloud gap by reducing distribution shift sensitivity (less reliance on the exact viewcone state the policy was trained against)
+### Bigger swing — state-augmented policy retrain (1–2 days, expected +0.05 to +0.15)
+
+**This is the only move with a realistic path to 0.65–0.70.** Three pieces of evidence point at it:
+
+1. **The policy has no persistent memory.** It sees only the egocentric 7×5 and 7×7 viewcones; the frame-stack ppo-v1 doesn't use one is empty. It can't remember a bomb it saw 4 ticks ago or an item it walked past. The heuristic *does* have memory (`AEManager`'s belief dicts), which is why hybrid wins: it patches the policy's blind spots.
+2. **The local→cloud gap (~0.23) hasn't moved across 7 approaches.** That kind of invariance points at distribution shift — the policy is keying on viewcone features that correlate with random-opponent local but mean less under hidden opponents. Richer state input would reduce that overfit.
+3. **The policy's wins on cloud (where it beats heuristic) almost certainly come from *tactical microbehaviors* in confined situations.** Add memory, and those microbehaviors stop being undermined by the policy's inability to remember basic facts.
 
 Implementation outline:
-- Encoder: add a `belief_map` field (16×16×K channels) summarizing visited / wall / item / enemy / bomb state.
-- Network: new conv branch over the 16×16 tensor, concat with viewcone features.
-- Training: rebuild the BC dataset from planner-v3b rollouts including belief-map snapshots; warm-start PPO; train against mixed opponents.
 
-Expected lift: +0.05 to +0.15 cloud if the gap-from-memory hypothesis is right. This is the highest-EV move available; it's also the only thing that would plausibly get us to 0.65–0.70.
+```text
+ae/src/encoder.py
+  + Add a `belief_map` field (16 × 16 × K channels). K=8-10:
+      - visited_recent / visited_long
+      - wall (4 directions packed into 1 channel)
+      - destructible_wall
+      - mission, recon, resource (each one channel, value = freshness)
+      - enemy_agent (freshness-weighted)
+      - enemy_base
+      - bomb_blast_imminent (cells in known-bomb blast, weighted by timer)
+      - own_position (sparse 1-hot)
+
+ae/src/model.py
+  + New conv branch in `PolicyNetwork`:
+      Conv2d(K, 16, 3) → ReLU → Conv2d(16, 16, 3) → ReLU → Flatten
+      Concat into the existing head input.
+
+ae/src/policy_manager.py
+  + Rasterize the heuristic's belief into the belief_map tensor every
+    /ae call (the AEManager already maintains all the source state).
+
+training/ae/{train_bc.py, train_ppo.py, collect_bc.py}
+  + Collect belief snapshots alongside obs.
+  + Pass belief_map through the network.
+  + Retrain BC (~30 min) → warm-start PPO against mixed opponents
+    (~3-6 hours on Workbench T4).
+
+ae/src/hybrid_manager.py
+  + No changes — `PolicyAEManager.ae_logits` interface stays the same.
+```
+
+Risk: this is exactly the kind of "make local higher" change that previously didn't help (ppo-v2 with frame stacking widened the gap). The reason to expect this one is different: memory is *strictly more information* per call, where frame stacking just gave the policy 4 stale viewcones it didn't know how to use. The belief map encodes things the policy literally cannot derive from any number of stacked viewcones (e.g., walls the agent observed but isn't currently looking at).
+
+If we're going to do it: start with BC alone (~30 min) and submit a `bc-belief` build before doing PPO. If BC-belief alone scores >0.50 cloud, the memory hypothesis is real and PPO will compound it. If BC-belief regresses to <0.40, abort — the architecture change isn't helping.
 
 ## Hybrid + speed-fix plan (shipped as `hybrid-v2`, `policy-fast-v2`, `heuristic-restore-v2`)
 
