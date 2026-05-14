@@ -89,19 +89,26 @@ Do not trust random-opponent local score alone. `bc-v1` looked fine locally and 
 
 ## Step 5 — deploy
 
-The inference path already exists in [../../ae/src/ae_server.py](../../ae/src/ae_server.py): it loads `PolicyAEManager` if a checkpoint is present and falls back to the BFS planner if not.
+The inference path in [../../ae/src/ae_server.py](../../ae/src/ae_server.py) now supports three modes selected by `AE_MODE` (env var) or `ae/src/.ae_mode` (file fallback):
 
-Deploy PPO by copying/renaming the best actor checkpoint:
+- `hybrid` (default, **current shipped tag is `hybrid-v2` at 0.545/0.863**) — policy chooses, heuristic vetoes illegal / unsafe-bomb / step-into-blast / frozen-stay actions. See [../../ae/src/hybrid_manager.py](../../ae/src/hybrid_manager.py).
+- `policy` — pure `PolicyAEManager`.
+- `heuristic` — pure rule-based `AEManager` (no torch needed in the image at all).
+
+Deploy a new policy checkpoint by copying it into the model slot:
 
 ```bash
 mkdir -p ae/models
 cp training/ae/checkpoints/ppo.pt ae/models/bc.pt
-til build ae ppo-v1
-til test ae ppo-v1
-til submit ae ppo-v1
+echo hybrid > ae/src/.ae_mode        # or 'policy' / 'heuristic'
+til build ae <tag>                   # bakes AE_MODE into the image
+til test ae <tag>
+til submit ae <tag>
 ```
 
 Keep `ae/models/bc.pt` as the expected filename unless you also set `AE_POLICY_CHECKPOINT`, because `policy_manager.py` searches for that path by default.
+
+**Important**: `AE_MODE=foo til build …` does NOT work — `docker build` doesn't inherit the shell env, so the cloud container would default to hybrid regardless. Either edit the `ENV AE_MODE=…` line in `ae/Dockerfile` or write the mode into `ae/src/.ae_mode` (gitignored) before each build.
 
 ## Notes / gotchas
 

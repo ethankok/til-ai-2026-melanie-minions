@@ -141,7 +141,7 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 | Task | Latest shipped tag | Acc/reward | Speed | Status | Working log |
 |---|---|---:|---:|---|---|
 | ASR | `ft-lora32-v1` | 0.957 | 0.849 | Crossed 0.95 target. Parked; int8 speed re-export regressed accuracy. | [asr/NOTES.md](asr/NOTES.md) |
-| AE | `ppo-v1` | 0.507 | 0.861 | Team best. `ppo-v2` regressed to 0.489, so keep v1 while investigating official gap. | [ae/NOTES.md](ae/NOTES.md) |
+| AE | `hybrid-v2` | 0.545 | 0.863 | **NEW HIGH.** Hybrid manager (policy + heuristic safety-veto) broke the 0.49–0.51 cloud ceiling 5 prior approaches hit; +0.038 over ppo-v1. | [ae/NOTES.md](ae/NOTES.md) |
 | NLP | `v4-dict-id` | 0.483 | 0.888 | New-eval recovery after organiser format bug; next gains are answer quality and QA latency. | [nlp/NOTES.md](nlp/NOTES.md) |
 | CV | `cv-yolo-v2-tier1-best` | 0.556 | 0.956 | NEW HIGH (+0.007 vs v2-best). Tier 1 inference-only sweep landed; Tier 2 (YOLOv11m@1024 retrain) in flight to target 0.70. | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `latest` | 1.000 | 0.970 | Qualifier-safe. Official spec says no direct Qualifier reward. | [noise/NOTES.md](noise/NOTES.md) |
@@ -158,14 +158,14 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 
 **Week 1 — first real models (in progress)**
 
-4. **AE** (40%) — `ppo-v1` remains team best at 0.507/0.861; `ppo-v2` overfit local varied maps and regressed officially.
+4. **AE** (40%) — `hybrid-v2` is now team best at **0.545/0.863** (+0.038 over ppo-v1). The hybrid manager combines policy action selection with a heuristic safety-veto on illegal / unsafe-bomb / step-into-blast / frozen-stay actions; this is the first AE approach to break the 0.49–0.51 cloud ceiling that ppo-v1, ppo-v2, planner-v3b, and bc-v1 all hit. Local→cloud gap is still ~0.23 but the floor moved up. Next moves are env-var toggles on the same hybrid (`AE_HYBRID_CONF` / `AE_HYBRID_VETO_*`).
 5. **NLP** (20%) — `v4-dict-id` recovered to 0.483/0.888 after organiser eval-format fix; next work is quality/latency rather than schema.
 6. **CV** (20%) — `cv-yolo-v2-tier1-best` shipped at 0.556/0.956 (new high, +0.007 vs v2-best) using v2-best weights with TTA + imgsz=896 + score field. Tier 2 YOLOv11m@1024 retrain in flight to target 0.70.
 7. **ASR** (20%) — `ft-lora32-v1` shipped at 0.957. Parked; int8 re-export already proved low-ROI.
 
 **Week 2 — push scores**
 
-8. **AE**: heuristic scoring / fine-tuned policy. Test against `til-26-ae` env locally.
+8. **AE**: hybrid-v2 shipped at 0.545/0.863; further lift via veto-tuning A/Bs (`AE_HYBRID_CONF=0.5`, drop one veto at a time), or — longer path — retrain the policy *aware* of the heuristic safety net (PPO with vetoes in the rollout loop). Speed is evaluator-bound at ~0.86, not worth further work.
 9. **NLP**: hybrid retrieval (BM25 + dense embeddings) + extractive QA model on top-k.
 10. **CV**: Tier 1 SHIPPED at 0.556/0.956 (+0.007 vs v2-best) — same weights, env-only changes (`CV_IMGSZ=896`, `CV_IOU=0.60`, `CV_AUGMENT=1`, `CV_HALF=1`, emit real `score`). Tier 2 = YOLOv11m@1024 retrain with copy-paste/mosaic for small-object/aircraft-subclass generalization (`training/cv/train_v3.sh`, in flight ~4-5h on T4). `imgsz=1024` confirmed bad with v2-best 768-trained weights (resolution mismatch).
 11. **Noise**: bounded FGSM perturbation if time and the score actually matters.
