@@ -11,7 +11,9 @@
 asr/models/
 cv/models/*
 !cv/models/.gitkeep
-nlp/models/
+nlp/models/*
+!nlp/models/.gitkeep
+training/nlp/runs/
 noise/models/
 **/results/
 training/asr/data/

@@ -1,6 +1,6 @@
 # NLP — notes & history
 
-Last updated: 14 May 2026 19:50 SGT
+Last updated: 15 May 2026 — v7 fine-tune plan staged
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
@@ -94,6 +94,7 @@ v4-dict-id    14/05 13:29        0.483   0.888   0 / 700   0.678        After Ry
 v5-multi      (not shipped)      —       —       —         0.628        Para-aware chunking + batched SQuAD2 + BM25 backfill + low-conf fallback. Local REGRESSED -0.050 vs v4; fallback was firing on every single-word answer. NOT submitted
 v5b-no-fallback 14/05 19:10      0.456   0.916   0 / 700   0.674        Removed fallback; kept para chunking + batched SQuAD2 + BM25 backfill. Local OK (within 0.005 of v4), but cloud REGRESSED -0.027 vs v4 (speed +0.028 but blended worse -0.013). Para chunking is the suspect — local→cloud gap got bigger
 v5c-no-para   14/05 19:44        0.483   0.912   0 / 700   0.678        SHIPPED. Reverted paragraph chunking; kept batched SQuAD2 + BM25 backfill. Score matches v4 exactly + speed kept the +0.024 gain from batching → blended high 0.590 (vs v4 0.584). Confirmed paragraph chunking was the cloud regressor
+v7-finetuned  (pending)          ?       ?       ?         ?            Fine-tune roberta-large-squad2 on local nlp.jsonl (883 Q/A/doc tuples). Strategic swing for the ~0.467 gap to leaderboard 0.950. Run training/nlp/finetune_qa.py on Workbench, then til build/test/submit
 ```
 
 Paragraph chunking is confirmed the v5b regressor; don't revisit on this corpus. v5c is a clean baseline for v6-roberta-large.
@@ -162,11 +163,29 @@ Use the script to decide which lever to pull for `v6`:
 
 The script prints estimated cloud-score lower/upper bounds; compare to `til test`'s actual `equiv_rate` to triangulate where the AE model is finding extra credit beyond exact/substr.
 
-## Next priority
+## Next priority — `v7-finetuned`
 
-1. **`v6-roberta-large` — swap the QA model**. The v4/v5c error report puts retrieval at 95.5% hit rate; the dominant loss bucket is `retrieval_hit_diff` at 45.8% (404/883). That's cases where we have the right doc but the AE 0.9 threshold deemed our SQuAD2 answer non-equivalent — i.e. span quality is the bottleneck. Swap `deepset/roberta-base-squad2` → `deepset/roberta-large-squad2`. ~1.4 GB extra container size; per-question latency ~2.5× on GPU fp16, comfortably within budget given the batching headroom. Expected impact: +0.05–0.10 cloud, moving cases from `diff` to `exact/substr`.
-2. **If v6 lands a real lift**, *then* consider a retrieval-side change for the last +0.018 of headroom (`bge-base-en-v1.5`, or asymmetric BM25⊕dense weighting). Ship one at a time.
-3. **Don't combine changes on this task again.** v5-multi → v5b → v5c bisect cost three submissions; sequential A/B would have been one.
+A novice team has been observed scoring `0.950 / 0.995` on NLP. To even get close, span quality has to jump dramatically — retrieval is already at 95.5%, so the answer-equivalence side is where the gap lives. Stock `roberta-base-squad2` doesn't know Clairos proper nouns, IDs, dates, or the canonical answer wording style; **fine-tuning a SQuAD-pretrained encoder on local `nlp.jsonl` is the lever**.
+
+Approach (see [training/nlp/finetune_qa.py](../training/nlp/finetune_qa.py) and [training/nlp/README.md](../training/nlp/README.md)):
+
+1. Build SQuAD-format training data from `/home/jupyter/<track>/nlp/`: for each row in `nlp.jsonl`, take its `question` + `answer` + first `source_docs` entry whose document contains the answer string verbatim. Typical retention ~70-80% of 883 pairs.
+2. Fine-tune `deepset/roberta-large-squad2` for 3 epochs (`lr=3e-5`, `bs=8`, fp16 on GPU). HF `Trainer` with `load_best_model_at_end=True`. ~30–60 min on Workbench.
+3. Save to `nlp/models/roberta-finetuned-squad2/`. Manager prefers fine-tuned weights over the stock SQuAD2 weights (which we still bundle as a fallback via `download_models.py`); Dockerfile bundles the fine-tuned dir when present.
+4. Container log on first request should print `[nlp_manager] QA model: finetuned (...)` confirming the swap.
+
+Expected impact: cloud `+0.15–0.30` (moves cases from `retrieval_hit_diff` to `exact/substr`). Realistic ceiling for this single change: cloud `0.65–0.80`. Hitting `0.95` likely needs the fine-tune plus retrieval-saturation work.
+
+What's deliberately deferred:
+- `v6-roberta-large` (stock weights, no fine-tune) — superseded by v7. If v7 training fails, fall back to v6 as plan B.
+- Larger embedder / reranker — retrieval is at 95.5%, so a +0.018 cloud ceiling at best. Don't spend latency budget there until v7 lands.
+- Generative LLM (Qwen / Phi) — risk that AE 0.9 threshold punishes paraphrases. Try only if extractive plateaus.
+
+Avoid revisiting on this corpus (confirmed regressors): paragraph-aware chunking, low-confidence sentence fallback.
+
+## Submission cadence rule
+
+v5-multi → v5b → v5c bisect cost three submissions; sequential A/B would have been one. **Ship one knob at a time from here on.**
 
 ## What to edit, what not to
 

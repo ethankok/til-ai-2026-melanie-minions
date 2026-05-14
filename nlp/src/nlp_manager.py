@@ -52,7 +52,10 @@ from transformers import (
 MODEL_DIR = Path(os.getenv("NLP_MODEL_DIR", "/workspace/models"))
 DENSE_DIR = MODEL_DIR / "bge-small-en-v1.5"
 RERANKER_DIR = MODEL_DIR / "bge-reranker-base"
-QA_DIR = MODEL_DIR / "roberta-base-squad2"
+# Prefer the fine-tuned QA model when present (see training/nlp/finetune_qa.py);
+# fall back to the stock SQuAD2 weights otherwise.
+QA_FINETUNED_DIR = MODEL_DIR / "roberta-finetuned-squad2"
+QA_BASE_DIR = MODEL_DIR / "roberta-base-squad2"
 
 CHUNK_SENTENCES = 3
 CHUNK_OVERLAP = 1
@@ -200,7 +203,17 @@ class NLPManager:
         rerank_path = (
             str(RERANKER_DIR) if RERANKER_DIR.exists() else "BAAI/bge-reranker-base"
         )
-        qa_path = str(QA_DIR) if QA_DIR.exists() else "deepset/roberta-base-squad2"
+        if QA_FINETUNED_DIR.exists():
+            qa_path = str(QA_FINETUNED_DIR)
+            qa_source = "finetuned"
+        elif QA_BASE_DIR.exists():
+            qa_path = str(QA_BASE_DIR)
+            qa_source = "base"
+        else:
+            qa_path = "deepset/roberta-base-squad2"
+            qa_source = "hub"
+        # Visible in container logs so we can confirm which weights are loaded.
+        print(f"[nlp_manager] QA model: {qa_source} ({qa_path})", flush=True)
 
         from transformers import AutoModel
 
