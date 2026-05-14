@@ -13,9 +13,8 @@ Pipeline at query:
   - documents: top-3 *unique* parent doc IDs in reranked order, then
     backfilled from the un-reranked hybrid list if the reranker concentrated
     on too few parent docs.
-  - answer: batched extractive QA across the top reranked passages; if the
-    best span is too short/weak, fall back to the highest token-overlap
-    sentence from the top contexts.
+  - answer: batched extractive QA across the top reranked passages; return
+    the highest-confidence span ≤64 tokens.
 
 Doc IDs are derived in `_parse_doc_payload`. The official cloud format (as
 of 14 May 2026) is `{"id": "DOC-XXXX", "document": "..."}` dicts; the
@@ -61,8 +60,6 @@ TOP_K_RETRIEVE = 30          # passages handed to reranker
 TOP_K_RERANK = 10            # passages handed to QA
 TOP_DOCS_RETURNED = 3        # eval considers first 3
 QA_MAX_ANSWER_TOKENS = 64    # eval truncates beyond this
-QA_LOWCONF_MIN_CHARS = 3     # below this, fall back to sentence
-QA_LOWCONF_MIN_WORDS = 2     # ditto
 EMBED_BATCH = 64
 RERANK_BATCH = 32
 QA_BATCH = 16
@@ -70,7 +67,6 @@ DENSE_MAX_LEN = 256
 RERANK_MAX_LEN = 256
 QA_MAX_SEQ_LEN = 384
 QA_DOC_STRIDE = 128
-FALLBACK_SENTENCE_CHAR_CAP = 300  # server truncates to 64 tokens anyway
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
@@ -167,36 +163,6 @@ def _zscore(arr: np.ndarray) -> np.ndarray:
     if std < 1e-9:
         return np.zeros_like(arr)
     return (arr - arr.mean()) / std
-
-
-def _best_sentence_for_question(question: str, contexts: list[str]) -> str:
-    """Pick the sentence across the top contexts with highest q-token overlap.
-
-    Used as a low-confidence fallback when SQuAD2 returns a tiny/empty span.
-    The answer-equivalence model (0.9 threshold) rewards near-verbatim wording
-    from the source, and a concise sentence is more likely to clear the bar
-    than a one-token guess.
-    """
-    q_tokens = set(_bm25_tokenize(question))
-    if not q_tokens:
-        return ""
-    best_sentence = ""
-    best_score = 0.0
-    # Only walk the very top contexts — the cheapest way to keep this fast
-    # while still spanning the highest-confidence retrieval candidates.
-    for ctx in contexts[:3]:
-        for sent in _split_sentences(ctx):
-            s_tokens = set(_bm25_tokenize(sent))
-            if not s_tokens:
-                continue
-            overlap = len(q_tokens & s_tokens)
-            if overlap == 0:
-                continue
-            score = overlap / max(len(s_tokens) ** 0.5, 1.0)
-            if score > best_score:
-                best_score = score
-                best_sentence = sent
-    return _clean_answer(best_sentence[:FALLBACK_SENTENCE_CHAR_CAP])
 
 
 # ----------------------------------------------------------------------------
@@ -536,22 +502,7 @@ class NLPManager:
                     best_score = score
                     best_text = cand
 
-        best_text = _clean_answer(best_text)
-
-        # Low-confidence fallback: SQuAD2 sometimes returns a single word or
-        # an empty span when the context doesn't contain a clean extractive
-        # answer. In that case, the AE 0.9 threshold almost never passes.
-        # Returning the highest-overlap sentence from the top contexts gives
-        # the eval more signal to compare against the reference.
-        if (
-            len(best_text) < QA_LOWCONF_MIN_CHARS
-            or len(best_text.split()) < QA_LOWCONF_MIN_WORDS
-        ):
-            fallback = _best_sentence_for_question(question, contexts)
-            if fallback:
-                best_text = fallback
-
-        return best_text
+        return _clean_answer(best_text)
 
     # ----------------------------------------------------------------- query
 

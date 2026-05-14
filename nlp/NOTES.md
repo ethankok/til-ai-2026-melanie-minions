@@ -91,22 +91,45 @@ latest        12/05 03:23        0.301   0.971   0 / 700   —            OLD EV
 v2-hybrid-rag 14/05 ~04:00       0.000   ~       0 / 700   —            NEW EVAL. Hybrid stack + positional IDs. 0.0 — eval server bug; was sending plain strings, not dicts (see v4-dict-id)
 v3-id-parse   14/05 05:33        0.000   0.888   0 / 700   0.678        Same hybrid stack + defensive parser. Still 0.0 because eval bug persisted; local 0.678 with prefix-patched test confirmed model was fine
 v4-dict-id    14/05 13:29        0.483   0.888   0 / 700   0.678        After Ryan fixed eval to send dicts. SAME IMAGE as v3-id-parse (just re-tagged); recovery to NEW HIGH on post-wipe leaderboard
-v5-multi      (pending)          ?       ?       ?         ?            Para-aware chunking + batched SQuAD2 + BM25 doc-diversity backfill + low-conf sentence fallback. NOT yet submitted; run til test first
+v5-multi      (not shipped)      —       —       —         0.628        Para-aware chunking + batched SQuAD2 + BM25 backfill + low-conf fallback. Local REGRESSED -0.050 vs v4; fallback was firing on every single-word answer. NOT submitted
+v5b-no-fallback (pending)        ?       ?       ?         ?            Same as v5-multi minus the low-conf fallback. Keep batching + para chunking + BM25 backfill
 ```
 
-## What's in `v5-multi` (built but not yet submitted)
+## `v5-multi` REGRESSED locally (NOT submitted) — diagnosed
 
-This bundles Codex's recommended steps 1, 2, 4 (diversity), and 6 in one image. They were combined rather than shipped sequentially because the changes are independent and small; the error-report script lets us still attribute headroom afterward.
+Built `v5-multi` with four changes (paragraph chunking + batched SQuAD2 + BM25 doc-diversity backfill + low-conf sentence fallback). Local `equiv_rate` 0.678 → **0.628** (−0.050). Error-bucket diagnostic identified the cause immediately:
 
-1. **Batched SQuAD2 forward pass.** `_extract_answer` now tokenizes all `[question]*N + [contexts]` at once and forwards in batches of `QA_BATCH=16`. Functionally identical span-selection logic to before; should reduce QA latency 50–80% (one-or-two forwards per question vs N). Cloud speed `0.888` → expected ~0.92+.
-2. **Paragraph-aware chunking.** `_chunk_document` splits on blank lines first, then sentence-windows within each paragraph. Short paragraphs emit as a single chunk so cross-sentence answer spans aren't fragmented.
-3. **BM25 backfill for doc diversity.** `_top_doc_ids` now takes both the reranker output and the un-reranked hybrid list; if the reranker concentrated on <3 unique docs, fills the remaining slots from the hybrid list. Protects against leaving doc-recall on the table.
-4. **Low-confidence sentence fallback.** When SQuAD2's best span is <3 chars or <2 words, returns the highest token-overlap sentence from the top contexts instead. The AE 0.9 threshold almost never passes single-token guesses; a concise source sentence has a real shot.
+| Bucket | v4 (cloud 0.483) | v5-multi local | Δ |
+|---|---:|---:|---:|
+| retrieval_miss | 40 (4.5%) | 45 (5.1%) | +5 |
+| retrieval_hit_exact | 183 (20.7%) | 105 (11.9%) | **−78** |
+| retrieval_hit_substr | 256 (29.0%) | 231 (26.2%) | −25 |
+| retrieval_hit_diff | 404 (45.8%) | 502 (56.9%) | **+98** |
 
-What's **deliberately not changed** in `v5-multi`:
-- `TOP_K_RETRIEVE` / `TOP_K_RERANK` / `TOP_DOCS_RETURNED` constants. Codex suggested bumping them; we'll do that in `v6-retrieval-tune` only if the error report shows retrieval is the binding constraint.
-- Model choices (`bge-small`, `bge-reranker-base`, `roberta-base-squad2`). Save bigger models for `v7-/v8-` after diagnosing what bucket dominates.
-- Server (`nlp_server.py`). Ryan's pre-written verbatim.
+Smoking gun in answer-length stats: median answer chars went **12 → 37**, mean **21 → 82**. The low-confidence fallback was firing on a huge fraction of queries (its `< 2 words` clause triggers on every single-word answer — "Velez", "1992", "blue", price tokens) and replacing correct-but-short SQuAD2 spans with too-long sentences that fail the AE 0.9 threshold.
+
+Verdict: the fallback is **net negative**. `v4-dict-id` already had 0 `retrieval_hit_empty` cases, so there was nothing to fall back *from*; its only effect was replacing valid spans with worse ones. Single-word answers are common (especially L1: dates, prices, names) and we were destroying them.
+
+The other three changes look broadly fine:
+- Paragraph chunking is slightly worse on retrieval (+5 misses) — possibly noise, not the main loss.
+- Batched SQuAD2 is purely a speed change (`til test` ran at `1.56it/s` vs v4's `1.07it/s` — ~46% faster per batch).
+- BM25 backfill is purely additive — only adds doc IDs, never removes.
+
+## `v5b-no-fallback` (next submission)
+
+Removed the low-confidence sentence fallback entirely. Kept the other three changes from v5-multi.
+
+Pipeline:
+1. **Batched SQuAD2 forward pass** — speed unlock.
+2. **Paragraph-aware chunking** — small retrieval regression locally but may transfer differently on cloud; keeping for one more A/B.
+3. **BM25 doc-diversity backfill** — fills empty top-3 slots from un-reranked hybrid.
+
+What's **deliberately not changed**:
+- `TOP_K_RETRIEVE` / `TOP_K_RERANK` / `TOP_DOCS_RETURNED` constants.
+- Model choices (`bge-small`, `bge-reranker-base`, `roberta-base-squad2`).
+- Server (`nlp_server.py`).
+
+Gate before submitting `v5b`: local accuracy must be ≥0.673 (within 0.005 of v4's 0.678). If still regressed, paragraph chunking is the next thing to revert (call it `v5c-no-para`).
 
 ## Local diagnostic: [error_report.py](error_report.py)
 
@@ -125,16 +148,16 @@ Buckets:
 Use the script to decide which lever to pull for `v6`:
 - If `retrieval_miss` dominates → tune retrieval (bigger embedder, asymmetric BM25⊕dense weighting, larger `TOP_K_RETRIEVE`).
 - If `retrieval_hit_diff` dominates → tune QA (bigger model, better chunking, span-selection refinements).
-- If `retrieval_hit_empty` is large → the low-conf fallback in `v5-multi` should already help; check the bucket on `v5-multi` results.
+- If `retrieval_hit_empty` is large → SQuAD2 is returning empty/degenerate spans on a non-trivial fraction of cases; revisit a narrower low-conf fallback that only fires on truly empty answers, not single-word ones.
 
 The script prints estimated cloud-score lower/upper bounds; compare to `til test`'s actual `equiv_rate` to triangulate where the AE model is finding extra credit beyond exact/substr.
 
 ## Next priority
 
-1. **Submit `v5-multi`.** Rebuild on Workbench (`til build nlp v5-multi`), run `til test nlp v5-multi`, verify local accuracy is **≥ 0.678** (the v4 baseline; if it drops by more than 0.005 that's a regression somewhere in the new code), submit.
-2. **Run `error_report.py` on v4 results** *while* v5 is rebuilding. That gives us the bucket distribution at the 0.483 cloud baseline. The same script run on v5 results tells us which buckets the new changes moved.
-3. **`v6` based on what the report shows** — retrieval tuning (`TOP_K_RETRIEVE=50`, asymmetric weighting), or larger embedder/reranker, or larger QA. Decision driven by buckets, not guesswork.
-4. **`v7+` only if `v6` is still leaving headroom.** Bigger models (`bge-base`, `roberta-large-squad2`) cost build time and container size; reserve for when the bucket diagnostic justifies them.
+1. **Submit `v5b-no-fallback`** (current head). Rebuild + `til test`; if local ≥0.673, submit.
+2. **If `v5b` local is also regressed**, paragraph chunking is the next suspect — build `v5c-no-para` reverting `_chunk_document` to plain sentence-windowing and try again. Each revert is one tag.
+3. **The v4 error report shows where the actual headroom is** — retrieval is at 95.5% hit rate (only 40/883 misses), so retrieval tuning has at most +0.018 cloud headroom (from 4.5% × 0.4 partial-credit recovery). The big bucket is `retrieval_hit_diff` at 45.8% — most of that goes to the AE-decided fate. **QA quality is the dominant lever from here**: bigger QA model (`roberta-large-squad2`), better chunking, or span-selection refinements move cases from `diff` to `exact/substr`.
+4. **`v6` should be QA-focused**: try `deepset/roberta-large-squad2` (~1.4 GB) as the first lever, since the diagnostic puts retrieval near the ceiling. If still room after, switch embedder to `bge-base-en-v1.5`.
 
 ## What to edit, what not to
 
