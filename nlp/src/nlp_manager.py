@@ -1,22 +1,26 @@
 """NLP RAG manager — hybrid retrieval + cross-encoder rerank + extractive QA.
 
 Pipeline at corpus load:
-  - Sentence-split each document, slide a 3-sentence window with 1-sentence
-    overlap to build passages. Each passage remembers its parent document
-    index (used to emit DOC-XXXX IDs).
-  - Index every passage in (a) BM25Okapi and (b) a dense BGE encoder.
+  - Paragraph-aware chunking: split each document on blank lines, then within
+    each paragraph slide a 3-sentence window with 1-sentence overlap. Short
+    paragraphs are emitted as a single chunk. Each chunk carries its parent
+    document index (used to emit DOC-XXXX IDs).
+  - Index every chunk in (a) BM25Okapi and (b) a dense BGE encoder.
 
 Pipeline at query:
   - Hybrid score = z(BM25) + z(dense_cos). Take top-K passages.
   - Cross-encoder rerank the top-K to refine ordering.
-  - documents: top-3 *unique* parent doc IDs in reranked order.
-  - answer: run an extractive QA span model over the top reranked passages,
-    pick the highest-confidence span, return ≤64 tokens.
+  - documents: top-3 *unique* parent doc IDs in reranked order, then
+    backfilled from the un-reranked hybrid list if the reranker concentrated
+    on too few parent docs.
+  - answer: batched extractive QA across the top reranked passages; if the
+    best span is too short/weak, fall back to the highest token-overlap
+    sentence from the top contexts.
 
-Document ID assignment is positional 1-indexed: the i-th document in the
-load list becomes "DOC-{i+1:04d}". The evaluator has no other way to
-identify documents (it only sends a list of plain strings), so this is the
-only viable scheme.
+Doc IDs are derived in `_parse_doc_payload`. The official cloud format (as
+of 14 May 2026) is `{"id": "DOC-XXXX", "document": "..."}` dicts; the
+parser also handles a couple of plausible alternatives plus a positional
+fallback.
 
 Models (all bundled into the image; see download_models.py):
   - dense:    BAAI/bge-small-en-v1.5
@@ -57,6 +61,8 @@ TOP_K_RETRIEVE = 30          # passages handed to reranker
 TOP_K_RERANK = 10            # passages handed to QA
 TOP_DOCS_RETURNED = 3        # eval considers first 3
 QA_MAX_ANSWER_TOKENS = 64    # eval truncates beyond this
+QA_LOWCONF_MIN_CHARS = 3     # below this, fall back to sentence
+QA_LOWCONF_MIN_WORDS = 2     # ditto
 EMBED_BATCH = 64
 RERANK_BATCH = 32
 QA_BATCH = 16
@@ -64,9 +70,11 @@ DENSE_MAX_LEN = 256
 RERANK_MAX_LEN = 256
 QA_MAX_SEQ_LEN = 384
 QA_DOC_STRIDE = 128
+FALLBACK_SENTENCE_CHAR_CAP = 300  # server truncates to 64 tokens anyway
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+_PARAGRAPH_RE = re.compile(r"\n\s*\n")
 _DOC_ID_RE = re.compile(r"\bDOC-(\d{4})\b")
 _STOPWORDS = frozenset(
     {
@@ -88,22 +96,21 @@ def _parse_doc_payload(doc, idx0: int) -> tuple[str, str]:
     """Return (id, text) for one entry of the corpus-load `documents` list.
 
     Tries (in order):
-      1. Dict shape: {"id": "DOC-XXXX", "text": "..."} (or "content"/"document").
+      1. Dict shape: {"id": "DOC-XXXX", "document": "..."} (or "text"/"content"/"body").
       2. First non-empty line is exactly `DOC-XXXX` -> strip it off the body.
       3. First 80 chars contain a `DOC-XXXX` token -> use it, leave body intact.
       4. Positional fallback DOC-{idx0+1:04d}.
 
-    Defensive across the three plausible cloud formats; only #4 is wrong
-    when IDs aren't contiguous, but it's the right behavior to fall back to
-    if no marker is present.
+    The cloud uses #1. The other branches are kept defensive — they cost
+    nothing and saved us once already when the eval-server briefly sent the
+    wrong format.
     """
     if isinstance(doc, dict):
+        text = ""
         for k in ("text", "content", "document", "body"):
             if k in doc:
                 text = doc[k]
                 break
-        else:
-            text = ""
         did = doc.get("id") or doc.get("doc_id") or doc.get("document_id")
         if did:
             return str(did), str(text)
@@ -149,6 +156,10 @@ def _split_sentences(document: str) -> list[str]:
     return sents
 
 
+def _split_paragraphs(document: str) -> list[str]:
+    return [p.strip() for p in _PARAGRAPH_RE.split(document) if p.strip()]
+
+
 def _zscore(arr: np.ndarray) -> np.ndarray:
     if arr.size == 0:
         return arr
@@ -156,6 +167,36 @@ def _zscore(arr: np.ndarray) -> np.ndarray:
     if std < 1e-9:
         return np.zeros_like(arr)
     return (arr - arr.mean()) / std
+
+
+def _best_sentence_for_question(question: str, contexts: list[str]) -> str:
+    """Pick the sentence across the top contexts with highest q-token overlap.
+
+    Used as a low-confidence fallback when SQuAD2 returns a tiny/empty span.
+    The answer-equivalence model (0.9 threshold) rewards near-verbatim wording
+    from the source, and a concise sentence is more likely to clear the bar
+    than a one-token guess.
+    """
+    q_tokens = set(_bm25_tokenize(question))
+    if not q_tokens:
+        return ""
+    best_sentence = ""
+    best_score = 0.0
+    # Only walk the very top contexts — the cheapest way to keep this fast
+    # while still spanning the highest-confidence retrieval candidates.
+    for ctx in contexts[:3]:
+        for sent in _split_sentences(ctx):
+            s_tokens = set(_bm25_tokenize(sent))
+            if not s_tokens:
+                continue
+            overlap = len(q_tokens & s_tokens)
+            if overlap == 0:
+                continue
+            score = overlap / max(len(s_tokens) ** 0.5, 1.0)
+            if score > best_score:
+                best_score = score
+                best_sentence = sent
+    return _clean_answer(best_sentence[:FALLBACK_SENTENCE_CHAR_CAP])
 
 
 # ----------------------------------------------------------------------------
@@ -232,20 +273,41 @@ class NLPManager:
     # ----------------------------------------------------------------- corpus
 
     def _chunk_document(self, doc: str) -> list[str]:
-        sents = _split_sentences(doc)
-        if not sents:
-            return []
-        if len(sents) <= CHUNK_SENTENCES:
-            return [" ".join(sents)]
-        step = max(1, CHUNK_SENTENCES - CHUNK_OVERLAP)
+        """Paragraph-aware chunking.
+
+        For each paragraph (separated by blank lines):
+          - If it fits in CHUNK_SENTENCES sentences, emit as one chunk.
+          - Otherwise, slide a CHUNK_SENTENCES-window inside the paragraph
+            with CHUNK_OVERLAP overlap.
+
+        Falls back to whole-document sentence-window splitting when the
+        document has no blank-line structure, then a single whole-document
+        chunk as last resort.
+        """
+        paragraphs = _split_paragraphs(doc)
+        if not paragraphs:
+            # No paragraph breaks — treat whole doc as one paragraph.
+            paragraphs = [doc.strip()] if doc.strip() else []
+
         chunks: list[str] = []
-        for i in range(0, len(sents), step):
-            window = sents[i : i + CHUNK_SENTENCES]
-            if not window:
-                break
-            chunks.append(" ".join(window))
-            if i + CHUNK_SENTENCES >= len(sents):
-                break
+        step = max(1, CHUNK_SENTENCES - CHUNK_OVERLAP)
+        for para in paragraphs:
+            sents = _split_sentences(para)
+            if not sents:
+                continue
+            if len(sents) <= CHUNK_SENTENCES:
+                chunks.append(" ".join(sents))
+                continue
+            for i in range(0, len(sents), step):
+                window = sents[i : i + CHUNK_SENTENCES]
+                if not window:
+                    break
+                chunks.append(" ".join(window))
+                if i + CHUNK_SENTENCES >= len(sents):
+                    break
+
+        if not chunks and doc.strip():
+            chunks.append(doc.strip())
         return chunks
 
     @torch.no_grad()
@@ -362,14 +424,33 @@ class NLPManager:
         order = sorted(range(len(passage_idxs)), key=lambda i: -scores[i])
         return [passage_idxs[i] for i in order]
 
-    def _top_doc_ids(self, ranked_passage_idxs: Iterable[int]) -> list[str]:
+    def _top_doc_ids(
+        self,
+        ranked_passage_idxs: Iterable[int],
+        fallback: Iterable[int] | None = None,
+    ) -> list[str]:
+        """Collect up to TOP_DOCS_RETURNED unique parent doc IDs.
+
+        Walks `ranked_passage_idxs` first (reranker output). If the reranker
+        concentrated on too few parent docs to fill the top-3 slots, backfills
+        from `fallback` (the un-reranked hybrid-retrieved list). This protects
+        retrieval recall — the new eval gates every case on retrieval, so
+        returning fewer than 3 unique doc IDs leaves credit on the table.
+        """
         seen: list[int] = []
         for pidx in ranked_passage_idxs:
             d = self.passage_doc_idx[pidx]
             if d not in seen:
                 seen.append(d)
                 if len(seen) >= TOP_DOCS_RETURNED:
-                    break
+                    return [self.doc_ids[d] for d in seen]
+        if fallback is not None:
+            for pidx in fallback:
+                d = self.passage_doc_idx[pidx]
+                if d not in seen:
+                    seen.append(d)
+                    if len(seen) >= TOP_DOCS_RETURNED:
+                        break
         return [self.doc_ids[d] for d in seen]
 
     # ------------------------------------------------------------ extraction
@@ -380,66 +461,97 @@ class NLPManager:
             return ""
         contexts = [self.passages[i] for i in passage_idxs[:TOP_K_RERANK]]
 
+        # Tokenize all (question, context) pairs at once. Long contexts overflow
+        # into multiple windows; `overflow_to_sample_mapping` tells us which
+        # context each output feature came from.
+        enc = self._qa_tok(
+            [question] * len(contexts),
+            contexts,
+            max_length=QA_MAX_SEQ_LEN,
+            truncation="only_second",
+            stride=QA_DOC_STRIDE,
+            return_overflowing_tokens=True,
+            return_offsets_mapping=True,
+            padding="max_length",
+            return_tensors="pt",
+        )
+        offset_mapping = enc.pop("offset_mapping")
+        sample_mapping = enc.pop("overflow_to_sample_mapping")
+        num_features = enc["input_ids"].shape[0]
+        if num_features == 0:
+            return ""
+
+        # Batched forward over features. With QA_BATCH=16 and TOP_K_RERANK=10
+        # contexts, most queries fit in a single forward pass — replacing the
+        # previous N sequential forwards.
+        start_logits_chunks: list[torch.Tensor] = []
+        end_logits_chunks: list[torch.Tensor] = []
+        tensor_inputs = {k: v for k, v in enc.items() if isinstance(v, torch.Tensor)}
+        for s_idx in range(0, num_features, QA_BATCH):
+            e_idx = min(s_idx + QA_BATCH, num_features)
+            batch_inputs = {
+                k: v[s_idx:e_idx].to(self.device) for k, v in tensor_inputs.items()
+            }
+            out = self._qa_model(**batch_inputs)
+            start_logits_chunks.append(out.start_logits.float().cpu())
+            end_logits_chunks.append(out.end_logits.float().cpu())
+        start_logits = torch.cat(start_logits_chunks, dim=0)
+        end_logits = torch.cat(end_logits_chunks, dim=0)
+
         best_text = ""
         best_score = -1e9
-        # Process each context separately so a long context doesn't dominate
-        # via shared softmax; pick the highest-scoring answer span overall.
-        for ctx in contexts:
-            enc = self._qa_tok(
-                question,
-                ctx,
-                max_length=QA_MAX_SEQ_LEN,
-                truncation="only_second",
-                stride=QA_DOC_STRIDE,
-                return_overflowing_tokens=True,
-                return_offsets_mapping=True,
-                padding="max_length",
-                return_tensors="pt",
+        for feat in range(num_features):
+            ctx_idx = int(sample_mapping[feat])
+            ctx = contexts[ctx_idx]
+            seq_ids = enc.sequence_ids(feat)
+            valid = torch.tensor(
+                [1.0 if sid == 1 else 0.0 for sid in seq_ids], dtype=torch.float32
             )
-            offset_mapping = enc.pop("offset_mapping")
-            enc.pop("overflow_to_sample_mapping", None)
-            enc_gpu = {k: v.to(self.device) for k, v in enc.items()}
-            outputs = self._qa_model(**enc_gpu)
-            start_logits = outputs.start_logits.float().cpu()
-            end_logits = outputs.end_logits.float().cpu()
+            # Mask out non-context tokens with a large negative number so any
+            # span chosen comes from the context, never the question.
+            mask = (1.0 - valid) * -1e4
+            s = start_logits[feat] + mask
+            e = end_logits[feat] + mask
 
-            # Identify context-token positions (sequence_ids == 1) so we never
-            # pick a span inside the question.
-            for feat in range(start_logits.shape[0]):
-                seq_ids = enc.sequence_ids(feat)
-                valid = torch.tensor(
-                    [1.0 if sid == 1 else 0.0 for sid in seq_ids], dtype=torch.float32
-                )
-                # Mask out non-context tokens with a large negative number.
-                mask = (1.0 - valid) * -1e4
-                s = start_logits[feat] + mask
-                e = end_logits[feat] + mask
+            top_starts = torch.topk(s, k=min(20, s.shape[0])).indices.tolist()
+            top_ends = torch.topk(e, k=min(20, e.shape[0])).indices.tolist()
+            offsets = offset_mapping[feat].tolist()
 
-                # Take top-k starts/ends, search the best valid span.
-                top_starts = torch.topk(s, k=min(20, s.shape[0])).indices.tolist()
-                top_ends = torch.topk(e, k=min(20, e.shape[0])).indices.tolist()
-                offsets = offset_mapping[feat].tolist()
+            for si in top_starts:
+                for ei in top_ends:
+                    if ei < si or ei - si + 1 > QA_MAX_ANSWER_TOKENS:
+                        continue
+                    if seq_ids[si] != 1 or seq_ids[ei] != 1:
+                        continue
+                    score = float(s[si] + e[ei])
+                    if score <= best_score:
+                        continue
+                    start_char, _ = offsets[si]
+                    _, end_char = offsets[ei]
+                    if end_char <= start_char:
+                        continue
+                    cand = ctx[start_char:end_char].strip()
+                    if not cand:
+                        continue
+                    best_score = score
+                    best_text = cand
 
-                for si in top_starts:
-                    for ei in top_ends:
-                        if ei < si or ei - si + 1 > QA_MAX_ANSWER_TOKENS:
-                            continue
-                        if seq_ids[si] != 1 or seq_ids[ei] != 1:
-                            continue
-                        score = float(s[si] + e[ei])
-                        if score <= best_score:
-                            continue
-                        start_char, _ = offsets[si]
-                        _, end_char = offsets[ei]
-                        if end_char <= start_char:
-                            continue
-                        cand = ctx[start_char:end_char].strip()
-                        if not cand:
-                            continue
-                        best_score = score
-                        best_text = cand
+        best_text = _clean_answer(best_text)
 
-        return _clean_answer(best_text)
+        # Low-confidence fallback: SQuAD2 sometimes returns a single word or
+        # an empty span when the context doesn't contain a clean extractive
+        # answer. In that case, the AE 0.9 threshold almost never passes.
+        # Returning the highest-overlap sentence from the top contexts gives
+        # the eval more signal to compare against the reference.
+        if (
+            len(best_text) < QA_LOWCONF_MIN_CHARS
+            or len(best_text.split()) < QA_LOWCONF_MIN_WORDS
+        ):
+            fallback = _best_sentence_for_question(question, contexts)
+            if fallback:
+                best_text = fallback
+
+        return best_text
 
     # ----------------------------------------------------------------- query
 
@@ -449,7 +561,7 @@ class NLPManager:
 
         retrieved = self._retrieve(question, TOP_K_RETRIEVE)
         reranked = self._rerank(question, retrieved)
-        documents = self._top_doc_ids(reranked)
+        documents = self._top_doc_ids(reranked, fallback=retrieved)
         answer = self._extract_answer(question, reranked)
         return {"documents": documents, "answer": answer}
 
