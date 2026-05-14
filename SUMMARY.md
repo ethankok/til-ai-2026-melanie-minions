@@ -143,7 +143,7 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 | ASR | `ft-lora32-v1` | 0.957 | 0.849 | Crossed 0.95 target. Parked; int8 speed re-export regressed accuracy. | [asr/NOTES.md](asr/NOTES.md) |
 | AE | `ppo-v1` | 0.507 | 0.861 | Team best. `ppo-v2` regressed to 0.489, so keep v1 while investigating official gap. | [ae/NOTES.md](ae/NOTES.md) |
 | NLP | `v4-dict-id` | 0.483 | 0.888 | New-eval recovery after organiser format bug; next gains are answer quality and QA latency. | [nlp/NOTES.md](nlp/NOTES.md) |
-| CV | `cv-yolo-v2-best` | 0.549 | 0.960 | New high. YOLOv8s 768 hard-split retrain + tuned inference beat v1 by +0.147 official accuracy. | [cv/NOTES.md](cv/NOTES.md) |
+| CV | `cv-yolo-v2-best` | 0.549 | 0.960 | New high. YOLOv8s 768 hard-split retrain + tuned inference beat v1 by +0.147 official accuracy. Tier 1+2 push in progress (target 0.70). | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `latest` | 1.000 | 0.970 | Qualifier-safe. Official spec says no direct Qualifier reward. | [noise/NOTES.md](noise/NOTES.md) |
 
 ---
@@ -160,14 +160,14 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 
 4. **AE** (40%) — `ppo-v1` remains team best at 0.507/0.861; `ppo-v2` overfit local varied maps and regressed officially.
 5. **NLP** (20%) — `v4-dict-id` recovered to 0.483/0.888 after organiser eval-format fix; next work is quality/latency rather than schema.
-6. **CV** (20%) — `cv-yolo-v2-best` shipped at 0.549/0.960 after YOLOv8s 768 hard-split retrain and HTTP inference sweep.
+6. **CV** (20%) — `cv-yolo-v2-best` shipped at 0.549/0.960 after YOLOv8s 768 hard-split retrain and HTTP inference sweep. Tier 1 (TTA + FP16 + score field + sweep up to conf=0.60, imgsz=896/1024) and Tier 2 (YOLOv11m@1024 retrain) in flight to target 0.70.
 7. **ASR** (20%) — `ft-lora32-v1` shipped at 0.957. Parked; int8 re-export already proved low-ROI.
 
 **Week 2 — push scores**
 
 8. **AE**: heuristic scoring / fine-tuned policy. Test against `til-26-ae` env locally.
 9. **NLP**: hybrid retrieval (BM25 + dense embeddings) + extractive QA model on top-k.
-10. **CV**: optional only after higher-ROI work. If revisiting, try `yolov8m` at 768, class-balanced/aircraft-heavy sampling, or small-object augmentation using the hard held-out HTTP eval loop.
+10. **CV**: Tier 1 (TTA + FP16 + emit score field + sweep `conf` up to 0.60 since `test_cv.py` pins detection scores to 1.0; current sweep showing `imgsz=896 + aug=1` leading at local 0.9042). Tier 2 = YOLOv11m@1024 retrain with copy-paste/mosaic for small-object/aircraft-subclass generalization (`training/cv/train_v3.sh`). `imgsz=1024` confirmed bad with v2-best weights (resolution mismatch).
 11. **Noise**: bounded FGSM perturbation if time and the score actually matters.
 
 **Always**

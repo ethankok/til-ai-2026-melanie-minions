@@ -177,12 +177,33 @@ Code-side changes already in this branch:
 - `training/cv/train_v3.sh` wraps a Tier 2 YOLOv11m@1024 retrain with
   copy-paste/mosaic for small-object recall.
 
+Tier 1 sweep partial results (May 14, in-flight on Workbench, first 8/144 runs
+on `cv-yolo-v2-tier1` against `annotations_test.json`):
+
+```text
+[1] conf=0.20 iou=0.45 imgsz=768  aug=0   mAP=0.9014  small=0.647
+[2] conf=0.20 iou=0.45 imgsz=768  aug=1   mAP=0.8986  small=0.628
+[3] conf=0.20 iou=0.45 imgsz=896  aug=0   mAP=0.9016  small=0.741
+[4] conf=0.20 iou=0.45 imgsz=896  aug=1   mAP=0.9042  small=0.746  ← best so far
+[5] conf=0.20 iou=0.45 imgsz=1024 aug=0   mAP=0.8355  small=0.586  ← regression
+[6] conf=0.20 iou=0.45 imgsz=1024 aug=1   mAP=0.8727  small=0.608  ← regression
+[7] conf=0.20 iou=0.50 imgsz=768  aug=0   mAP=0.9014  (iou=0.45 vs 0.50 ≈ tie at 768)
+```
+
+Findings already actionable:
+
+- `imgsz=1024` is **actively bad** with v2-best (768-trained) weights —
+  resolution mismatch. Drop from sweep, rely on Tier 2's 1024-retrained model.
+- `imgsz=896 + aug=1` is the leader with notably stronger small-object AP
+  (0.746 vs 0.647 at 768). Local lift +0.045 over v2-best's 0.8589.
+- Confidence/IoU axes still need to clear before locking the bake.
+
 Open work (run on Workbench):
 
-- Tier 1 sweep + smoke-submit on the current v2-best weights:
-  `til build cv cv-yolo-v2-tier1` -> sweep -> bake winners -> `til submit`.
-- Tier 2 retrain with `bash training/cv/train_v3.sh` (~4-5h on T4), then
-  rebuild and re-sweep.
+- Finish (or narrow) Tier 1 sweep, bake winning envs into Dockerfile, run
+  `til test cv cv-yolo-v2-tier1-best` and `til submit`.
+- Then run `bash training/cv/train_v3.sh` (~4-5h on T4) for Tier 2; do not run
+  concurrent with the sweep on the same T4 (memory contention slows both).
 
 ### 2. If revisiting CV, improve hidden-distribution generalization
 
@@ -224,6 +245,27 @@ instead of full-set `til test` mAP.
 - `cv_manager.py` currently converts Ultralytics `xyxy` to LTWH and clamps to
   image bounds. Keep this adapter unchanged unless local `til test` catches a
   regression.
+- `cv_manager.py` emits a `score` field per detection (Ultralytics conf). The
+  official `cv/README.md` schema does not list `score`, but `test/test_cv.py`
+  silently appends `"score": 1.0` regardless. Including the real confidence is
+  free upside if the official cloud evaluator consumes it, and a no-op
+  otherwise.
+
+### 5. Gotcha: `test_cv.py` pins `"score": 1.0` on every detection
+
+`test/test_cv.py` (the local evaluator that powers `til test`) hardcodes
+`score=1.0` on every box before running pycocotools. Standard COCO mAP
+integrates the precision-recall curve over confidences; pinning all scores to
+1.0 turns mAP into a yes/no precision metric where every false positive at
+score 1.0 directly hurts you, regardless of underlying conf.
+
+This is why the optimal `CV_CONF` is **higher** than the COCO-default 0.001:
+lower conf adds FPs as score-1.0 ties and tanks precision. We cannot
+unilaterally change the evaluator (it's competition scaffolding), so the
+best we can do is sweep conf upward in the 0.20-0.60 range and pick the F1
+optimum on the held-out hard split. Whether the official cloud evaluator does
+the same or actually consumes our `score` field is not knowable without
+submitting, but the env-driven design lets us pivot either way.
 
 ## State
 
