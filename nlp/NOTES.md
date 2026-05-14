@@ -101,6 +101,30 @@ v4-dict-id    14/05 13:29        0.483   0.888   0 / 700   0.678        After Ry
 
 Estimated reachable: cloud `0.55–0.65` with #1+#2 alone, more with #3/#4.
 
+## CODEX recommendation with the way forward
+
+NLP is the cleanest immediate score lever after the `v4-dict-id` recovery. It is worth 20% of the overall qualifier score, the current cloud score is still only `0.483`, and the cloud speed `0.888` leaves room to trade some latency for accuracy. Because the evaluator gates every case on document retrieval before answer equivalence, the way forward should protect retrieval first, then improve answer extraction once the right doc is reliably in the top 3.
+
+Recommended order:
+
+1. **Patch batching first, then re-test `v4` behavior.** `_extract_answer` currently runs RoBERTa-SQuAD2 one context at a time even though `QA_BATCH=16` exists. Batch the QA tokenization/model forward over the top reranked contexts, keep the same span-selection logic, and submit only if local accuracy stays flat or improves. This is mainly a speed-budget unlock: if cloud speed rises, we can spend that budget on stronger retrieval/QA without harming the 25% speed component.
+2. **Make chunking paragraph-aware before changing models.** Split documents into paragraphs first, then build overlapping sentence windows inside each paragraph, with a fallback that also emits a short whole-paragraph chunk when the paragraph is not too long. This should improve L1/L2 answer spans without changing dependencies or image size, and it is safer than jumping straight to larger models.
+3. **Add a retrieval/answer error report on local `nlp.jsonl`.** For each local question, save target docs, returned docs, answer, reference answer, equivalence probability, and level/metadata if present. Bucket failures into `retrieval miss`, `retrieval hit + answer fail`, and `format/empty fail`. The scoring contract makes this crucial: retrieval misses are `0.0`, retrieval hits with bad answers are still `0.4`, so the report tells us whether to tune BM25/dense/reranker or QA.
+4. **Tune retrieval before QA if misses dominate.** Try `TOP_K_RETRIEVE=50`, `TOP_K_RERANK=12-16`, and score weighting such as `1.2*z(BM25)+z(dense)` vs `z(BM25)+1.2*z(dense)`. Also return unique parent docs from the reranker, but consider a fallback that backfills with high-scoring BM25 parent docs when reranker diversity is low. Top-3 doc overlap is the first gate, so a slightly noisier answer is acceptable if document recall improves.
+5. **Only then spend the saved latency on bigger models.** If batching keeps speed healthy, A/B `bge-base-en-v1.5` first because it improves the retrieval gate. Try `bge-reranker-large` next if reranker mistakes are visible in the error report. Move to `roberta-large-squad2` only when retrieval-hit/answer-fail is the main bucket.
+6. **Add a conservative low-confidence fallback.** When the QA span score is weak or the answer is tiny/generic, return the best sentence or compact paragraph around the highest reranked chunk instead of an empty or over-short span. The equivalence model rewards close source wording and truncates to 64 tokens, so a concise extract from the right chunk can beat an overconfident bad span.
+
+Concrete next tag plan:
+
+```text
+v5-qa-batch       batch QA only; expected same accuracy, better speed
+v6-para-chunks    QA batch + paragraph-aware chunking; expected accuracy lift
+v7-retrieval-ab   v6 + retrieval sweep winner from local error buckets
+v8-bge-base       v7 + larger embedder if speed remains acceptable
+```
+
+Do not touch `nlp/src/nlp_server.py` unless the upstream contract changes again. Keep `_parse_doc_payload` defensive even though the official corpus-load shape is now dicts with `id` and `document`; it saved the recovery once already.
+
 ## What to edit, what not to
 
 - [src/nlp_manager.py](src/nlp_manager.py) — main logic. All next-priority work lives here.

@@ -1,6 +1,6 @@
 # ASR — notes & history
 
-Last updated: 13 May 2026
+Last updated: 14 May 2026
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -163,6 +163,66 @@ LoRA-merged weight distribution amplifying int8 quantization noise.
 Leaderboard kept the higher `ft-lora32-v1` score, so no rollback was needed.
 The `int8_float16` lever for the speed score is **off the table** for this
 checkpoint.
+
+## CODEX recommendation
+
+ASR is no longer the section that should receive major engineering time. The
+current `ft-lora32-v1` image already gives a strong ASR blended score:
+
+```text
+0.75 * accuracy 0.957 + 0.25 * speed 0.849 = 0.930 blended
+```
+
+Because ASR is only 20% of the qualifier, the live contribution is about
+`0.186`. The remaining theoretical gain from perfecting ASR is real but small:
+
+```text
+Current ASR contribution:   0.20 * 0.930 = 0.186
+Perfect ASR contribution:   0.20 * 1.000 = 0.200
+Remaining headroom:         ~0.014 overall qualifier score
+```
+
+That means the way forward is **protect the shipped peak, then only run short
+A/B tests when AE/NLP/CV are blocked**. Do not spend another long training cycle
+here unless the team explicitly decides ASR is the bottleneck.
+
+Recommended ASR path:
+
+1. **Keep `ft-lora32-v1` as the shipped baseline.** It has `0 / 400` errors,
+   official `0.957 / 0.849`, and the best known blended score. Do not replace it
+   unless a new tag beats it on official submission.
+2. **Ignore CT2 int8 speed quantization for this checkpoint.**
+   `ft-lora32-int8f16` already proved the trade is bad: accuracy fell
+   `0.957 -> 0.923` while speed barely moved `0.849 -> 0.856`. That is a
+   blended-score loss, not an optimization.
+3. **Run one low-cost inference A/B if idle: `beam_size=2`.** Submit only if the
+   local English WER improves enough that the speed hit is likely worth it. Rule
+   of thumb: for blended score, `0.75 * accuracy_gain` must beat
+   `0.25 * speed_loss`, so a `+0.003` accuracy gain can only afford about
+   `-0.009` speed loss.
+4. **Run one prompt-size A/B if beam is neutral:** regenerate `slang_prompt.txt`
+   with top-100 or top-50 terms, still highest-frequency first. This might save
+   a little decode overhead and reduce proper-noun over-priming. Reject it
+   quickly if local English WER worsens or in-world noun errors increase.
+5. **Only consider rank-64 / 5-epoch LoRA if the team needs the last ASR point.**
+   Val WER was still falling, so there may be `0.005-0.010` accuracy left, but it
+   costs another long Workbench run and does not fix the speed side. It is a
+   late-stage polish move, not the next best competition move.
+6. **Do not ensemble, TTA, or re-enable VAD.** Ensembles and speed-perturb voting
+   likely lower blended score by doubling inference time; VAD already caused the
+   dominant long-clip truncation failure.
+
+Submission gate for any ASR experiment:
+
+```text
+Required: 0 / 400 errors, schema unchanged, official blended score > ft-lora32-v1
+Local signal: track english error rate (WER), not local 1 - MER
+Fallback: leaderboard keeps ft-lora32-v1 if an experiment regresses
+```
+
+Practically: ASR can maybe contribute another `0.002-0.006` overall with a
+lucky beam/prompt tweak, but AE/NLP/CV have larger reachable headroom. Treat ASR
+as a stable high-scoring module and use it as a reliability anchor.
 
 ## Gotchas hit (8 so far, all patched)
 

@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 14 May 2026 13:35 SGT — ppo-v2 regressed, ppo-v1 stays shipped
+Last updated: 14 May 2026 14:06 SGT — Codex AE recommendation added; ppo-v1 stays shipped
 
 Per-task working log for AE (Autonomous Exploration / Bomberman). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#ae).
@@ -359,6 +359,61 @@ tuning. **Score is the hard problem** — needs a different approach.
 - **Could a learned policy generalize the gap better?** A policy trained
   against a *mix* of opponents (random + frozen planner + self-copies)
   inherits less bias than a planner tuned against one local distribution.
+
+## CODEX recommendation with the way forward/
+
+**Recommendation: keep AE shipped at `ppo-v1` and stop spending blind training
+cycles until we can explain the hidden-eval gap.** AE is still the largest
+qualifier lever at 40%, but the evidence now says the bottleneck is not
+"train longer" or "make local score higher." Every serious local win has
+collapsed to about the same official band: `planner-v3b` local ~0.681 →
+official 0.499, `ppo-v1` local ~0.703 → official 0.507, and `ppo-v2` local
+~0.763 → official 0.489. That means local AE score is currently a poor
+selection metric, so new AE submissions should be treated as official A/B
+experiments, not as validated improvements.
+
+Immediate way forward:
+
+1. **Protect the best submission.** `ppo-v1` is the team-best official AE
+   result (`0.507 / 0.861`). Before any rebuild or resubmit, verify the
+   Workbench deploy slot points at the `ppo-v1` checkpoint, not the regressed
+   `ppo-v2` checkpoint. If unsure, restore with
+   `cp ~/ae-checkpoints-backup/deployed-bc-v1.pt ae/models/bc.pt` and build a
+   clearly named restore tag.
+2. **Get hidden-eval evidence before changing the policy.** Pull every useful
+   detail from the official Debug/Eval URLs: per-round reward totals, deaths or
+   freeze counts, bomb damage, base damage, map/seed hints, step counts, and
+   whether the agent is losing score through failed attacks, missed objectives,
+   or base defense failures. Without this, AE work is guesswork.
+3. **Make a replay/diagnostic harness.** Add logging to local AE eval that
+   records per-episode reward components, final position, collected mission /
+   recon / resource counts, bombs placed, bomb hits, self-damage, base damage,
+   freezes, and visited-cell coverage. Compare local failures against any
+   official debug traces. The first target is not a better model; it is a
+   believable explanation for why official is ~0.18-0.27 lower.
+4. **Only then run targeted official A/Bs.** Candidate low-risk A/Bs are:
+   restored `planner-v3b` vs `ppo-v1`; a conservative heuristic variant with
+   fewer speculative bombs and stronger objective collection; a `ppo-v1`-style
+   single-frame policy trained/evaluated on adversarial scripted opponents; and
+   a hybrid gate that uses the heuristic planner when the policy confidence is
+   low or when bomb/base-defense situations appear. Do not submit another
+   "higher local mean" policy unless it tests a concrete hidden-gap hypothesis.
+5. **Do not prioritize speed unless reward is protected.** AE speed is already
+   healthy (`0.861` on `ppo-v1`). A perfect speed score would only move the
+   blended AE score modestly; a +0.05 reward improvement is much more valuable
+   than shaving a few milliseconds.
+
+What to avoid:
+
+- Do not repeat `ppo-v2`'s pattern: frame stacking, broader local maps, or
+  longer PPO runs can improve local score while hurting official score.
+- Do not trust six-game local means; the local evaluator has high variance and
+  the wrong distribution.
+- Do not tune frontier/exploration reward for its own sake. The spec rewards
+  missions, resources, recon, attacks, kills, and base destruction; exploration
+  only matters when it finds those rewards.
+- Do not commit large checkpoints. Keep weights on Workbench / backup storage
+  and copy into `ae/models/bc.pt` only for a deliberate build.
 
 ## Next steps
 
