@@ -15,7 +15,15 @@ nemo_toolkit[asr]==2.0.0
 #    disabled, decoding speed will be slower"
 # This is one of the bigger speed levers Parakeet has over Whisper. The
 # version pin matches the CUDA 12 runtime in the base image.
-cuda-python>=12.3
+#
+# IMPORTANT: cap below 13. The 13.x release restructured the package so
+# `from cuda import cuda` (which numba 0.65.x's CUDA driver does on import)
+# no longer works:
+#   ImportError: cannot import name 'cuda' from 'cuda' (unknown location)
+# This breaks ALL numba-based GPU paths inside NeMo (RNNT loss, spec
+# augment, ...), not just our trainer. Until numba lands its 13.x-compatible
+# release, pin to 12.x — that's the version NeMo logs originally suggested.
+cuda-python>=12.3,<13
 # NeMo expects a recent libsndfile and resampler. soundfile + librosa mirror
 # the whisper image so audio decode behavior matches.
 soundfile>=0.12.1
