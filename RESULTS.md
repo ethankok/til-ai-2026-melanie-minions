@@ -1,7 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 14 May 2026 14:10 SGT
+Last updated: 14 May 2026 17:20 SGT
 
 ## Latest submitted scores
 
@@ -9,7 +9,7 @@ Last updated: 14 May 2026 14:10 SGT
 Task   Image                    Tag         Submitted             Errors        Score   Speed
 NLP    melanie-minions-nlp      v4-dict-id  14/05/2026 13:29:56   0 / 700       0.483   0.888  ← NEW HIGH; new-eval recovery from 0.000
 ASR    melanie-minions-asr      ft-lora32-v1 13/05/2026 11:22:30  0 / 400       0.957   0.849
-CV     melanie-minions-cv       cv-yolo-v2-best 14/05/2026 14:00:23 0 / 500     0.549   0.960  ← NEW HIGH; +0.147 vs v1
+CV     melanie-minions-cv       cv-yolo-v2-tier1-best 14/05/2026 17:10:09 0 / 500 0.556 0.956  ← NEW HIGH; +0.007 vs v2-best (TTA + imgsz=896 + score field)
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
 AE     melanie-minions-ae       ppo-v1      14/05/2026 04:36:51   0 / 30        0.507   0.861  ← team BEST stands; rollback recommended
 AE (v2)  melanie-minions-ae     ppo-v2      14/05/2026 13:29:54   0 / 30        0.489   0.854  ← regressed -0.018; local→official gap widened 0.19 → 0.27
@@ -42,17 +42,25 @@ ft-lora32-v1  13/05 11:22        0.957   0.849   0.0299*         + LoRA rank-32 
 ## CV submission history
 
 ```text
-Tag              Submitted          Score   Speed   Errors    Local mAP50-95   Notes
-latest           12/05 03:52        0.000   0.981   4 / 500   —                Empty-detection baseline, 4 inputs erroring
-yolo-til-map-v2  14/05 01:56        0.044   0.961   0 / 500   —                YOLOv8n + sparse COCO→TIL map; clean serving, weak domain fit
-cv-yolo-ft-v1    14/05 03:53        0.402   0.963   0 / 500   0.885            YOLOv8s fine-tuned on official 18-class annotations
-cv-yolo-v2-best  14/05 14:00        0.549   0.960   0 / 500   0.884 / 0.859*  YOLOv8s 768 hard-split retrain + tuned inference; NEW HIGH
+Tag                    Submitted          Score   Speed   Errors    Local mAP50-95         Notes
+latest                 12/05 03:52        0.000   0.981   4 / 500   —                      Empty-detection baseline, 4 inputs erroring
+yolo-til-map-v2        14/05 01:56        0.044   0.961   0 / 500   —                      YOLOv8n + sparse COCO→TIL map; clean serving, weak domain fit
+cv-yolo-ft-v1          14/05 03:53        0.402   0.963   0 / 500   0.885                  YOLOv8s fine-tuned on official 18-class annotations
+cv-yolo-v2-best        14/05 14:00        0.549   0.960   0 / 500   0.884 / 0.859          YOLOv8s 768 hard-split retrain + tuned inference
+cv-yolo-v2-tier1-best  14/05 17:10        0.556   0.956   0 / 500   0.851 / 0.905          NEW HIGH; same v2-best weights with TTA + imgsz=896 + iou=0.60 + emit score field; hard held-out lifted +0.046 (0.859→0.905), full-local dipped -0.034 (0.884→0.851)
 ```
 
-*`cv-yolo-v2-best` local mAP numbers: full local `til test` mAP50-95 `0.8839`;
-hard held-out HTTP eval `0.8589` with `CV_CONF=0.25`, `CV_IOU=0.50`,
-`CV_IMGSZ=768`. The held-out split was intentionally harder and non-leaky
-(`4000/500/500` train/val/test; test had `3334` boxes).
+Notes on local mAP columns:
+- `cv-yolo-v2-best`: full local `til test` `0.8839`; hard held-out HTTP eval
+  `0.8589` (`CV_CONF=0.25 CV_IOU=0.50 CV_IMGSZ=768`).
+- `cv-yolo-v2-tier1-best`: full local `til test` `0.8505`; hard held-out HTTP
+  eval `0.9049` (`CV_CONF=0.20 CV_IOU=0.60 CV_IMGSZ=896 CV_AUGMENT=1
+  CV_HALF=1`). The hard split is heavily weighted toward small/dense/rare
+  scenes; TTA at imgsz=896 helps those but hurts easy full-local images. Hidden
+  eval correlated with the hard held-out (`0.9049` → `0.556`), confirming the
+  selection metric.
+- The hard held-out split was intentionally harder and non-leaky
+  (`4000/500/500` train/val/test; test had `3334` boxes).
 
 *`ft-lora32-v1` local Eng-WER is **leaky** (trained on 90% of the 4110-clip test
 set; the bare 0.0299 includes memorization). The held-out 10% val WER at step

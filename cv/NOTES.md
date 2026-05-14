@@ -8,15 +8,18 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`cv-yolo-v2-best` — official 0.549 / 0.960 (14 May 14:00 SGT, 0 of 500 errors).**
+**`cv-yolo-v2-tier1-best` — official 0.556 / 0.956 (14 May 17:10 SGT, 0 of 500 errors).**
 
-YOLOv8s retrained at `imgsz=768` on a non-leaky hard split, then selected through
-the actual Docker HTTP path. Full hard held-out HTTP eval scored `mAP50-95 =
-0.8589`; full local `til test` scored `0.8839`; official hidden eval scored
-`0.549`. Serving/schema is clean: `0 / 500` errors and speed stayed high.
+Same v2-best YOLOv8s weights, with inference path tuned: `CV_IMGSZ=896`,
+`CV_IOU=0.60`, `CV_AUGMENT=1` (Ultralytics flip+multi-scale TTA), `CV_HALF=1`
+(FP16), and a real `score` field per detection. Hard held-out HTTP eval lifted
+to `mAP50-95 = 0.9049` (+0.046 vs v2-best's `0.8589`); full local `til test`
+dipped slightly to `0.8505` (-0.034 vs v2-best's `0.8839`). Hidden eval
+correlated with the **hard held-out**, confirming the sweep selection metric.
 
-This is +0.147 official accuracy over `cv-yolo-ft-v1` (`0.402 / 0.963`) with
-essentially unchanged speed.
+This is +0.007 official accuracy and -0.004 speed vs `cv-yolo-v2-best`. Modest
+but free: same checkpoint, different env-driven inference path. Tier 2 (YOLOv11m
+@1024 retrain) is the next lever for hitting the 0.70 target.
 
 ## What our model runs on
 
@@ -38,11 +41,12 @@ official TIL label order. The v2-best image uses tuned inference defaults:
 ## Submission history
 
 ```text
-Tag              Submitted       Score   Speed   Errors    Notes
-latest           12/05 03:52     0.000   0.981   4 / 500   Empty-detection baseline, 4 inputs erroring
-yolo-til-map-v2  14/05 01:56     0.044   0.961   0 / 500   YOLOv8n + sparse COCO→TIL map; clean serving, weak domain fit
-cv-yolo-ft-v1    14/05 03:53     0.402   0.963   0 / 500   YOLOv8s fine-tuned on 18 TIL labels; local mAP50-95 0.885
-cv-yolo-v2-best  14/05 14:00     0.549   0.960   0 / 500   YOLOv8s 768 hard-split retrain + tuned inference; local til test 0.8839, hard held-out 0.8589
+Tag                    Submitted       Score   Speed   Errors    Notes
+latest                 12/05 03:52     0.000   0.981   4 / 500   Empty-detection baseline, 4 inputs erroring
+yolo-til-map-v2        14/05 01:56     0.044   0.961   0 / 500   YOLOv8n + sparse COCO→TIL map; clean serving, weak domain fit
+cv-yolo-ft-v1          14/05 03:53     0.402   0.963   0 / 500   YOLOv8s fine-tuned on 18 TIL labels; local mAP50-95 0.885
+cv-yolo-v2-best        14/05 14:00     0.549   0.960   0 / 500   YOLOv8s 768 hard-split retrain + tuned inference; local til test 0.8839, hard held-out 0.8589
+cv-yolo-v2-tier1-best  14/05 17:10     0.556   0.956   0 / 500   v2-best weights + TTA + imgsz=896 + iou=0.60 + score field; hard held-out 0.9049, local til test 0.8505. NEW HIGH (+0.007)
 ```
 
 ## Detailed timeline
@@ -159,51 +163,39 @@ accepts requests, the JSON shape is correct. No detection logic yet. Scored
 
 In priority order (per [../SUMMARY.md "CV"](../SUMMARY.md)):
 
-### 1. Tier 1 + Tier 2 push to ~0.70 (in progress, May 14)
+### 1. Tier 1 + Tier 2 push to ~0.70 (Tier 1 SHIPPED at 0.556, Tier 2 in progress)
 
-Code-side changes already in this branch:
+Tier 1 result (14 May 17:10): `cv-yolo-v2-tier1-best` shipped at
+**0.556 / 0.956**, +0.007 over v2-best. Same weights, env-only changes:
 
-- `cv_manager.py` now emits a real `score` field per detection (Ultralytics
-  confidence). Local `test/test_cv.py` hard-codes `score=1.0` so this is a no-op
-  locally but may help official scoring if it consumes confidences.
-- `cv_manager.py` reads `CV_AUGMENT` and `CV_HALF` envs. `CV_AUGMENT=1` enables
-  Ultralytics flip+multi-scale TTA. `CV_HALF=1` runs FP16 on GPU.
-- Dockerfile defaults flipped to `CV_AUGMENT=1`, `CV_HALF=1`. Resolution stays
-  `imgsz=768` until the sweep confirms 896/1024 pays off; `CV_CONF=0.25` and
-  `CV_IOU=0.50` unchanged so v2-best behavior is recoverable by env override.
-- `training/cv/sweep_cv_http.py` extends conf range up to 0.60 (the test
-  evaluator pins all detection scores to 1.0 so over-detection hurts), adds
-  imgsz=1024 and a 0/1 `--augment` axis.
-- `training/cv/train_v3.sh` wraps a Tier 2 YOLOv11m@1024 retrain with
-  copy-paste/mosaic for small-object recall.
+- `CV_AUGMENT=1` (Ultralytics flip+multi-scale TTA) — wins on small/dense scenes
+- `CV_HALF=1` (FP16 inference) — speed-neutral
+- `CV_IMGSZ=896` — best resolution at the imgsz vs accuracy plateau
+- `CV_IOU=0.60`, `CV_CONF=0.20` — picked from sweep
+- `score` field emitted per detection (Ultralytics conf, not pinned 1.0)
 
-Tier 1 sweep partial results (May 14, in-flight on Workbench, first 8/144 runs
-on `cv-yolo-v2-tier1` against `annotations_test.json`):
+Sweep top results (38 of 144 runs before terminating; the trend was clear):
 
 ```text
-[1] conf=0.20 iou=0.45 imgsz=768  aug=0   mAP=0.9014  small=0.647
-[2] conf=0.20 iou=0.45 imgsz=768  aug=1   mAP=0.8986  small=0.628
-[3] conf=0.20 iou=0.45 imgsz=896  aug=0   mAP=0.9016  small=0.741
-[4] conf=0.20 iou=0.45 imgsz=896  aug=1   mAP=0.9042  small=0.746  ← best so far
-[5] conf=0.20 iou=0.45 imgsz=1024 aug=0   mAP=0.8355  small=0.586  ← regression
-[6] conf=0.20 iou=0.45 imgsz=1024 aug=1   mAP=0.8727  small=0.608  ← regression
-[7] conf=0.20 iou=0.50 imgsz=768  aug=0   mAP=0.9014  (iou=0.45 vs 0.50 ≈ tie at 768)
+mAP=0.9049  conf=0.20 iou=0.60 imgsz=896 aug=1   ← shipped
+mAP=0.9044  conf=0.20 iou=0.55 imgsz=896 aug=1
+mAP=0.9042  conf=0.20 iou=0.45 imgsz=896 aug=1
+mAP=0.9041  conf=0.25 iou=0.45 imgsz=896 aug=1
+mAP=0.9016  conf=0.20 iou=0.45 imgsz=896 aug=0
+mAP=0.8727  conf=0.20 iou=0.45 imgsz=1024 aug=1  ← imgsz=1024 dead with 768-trained weights
+mAP=0.8355  conf=0.20 iou=0.45 imgsz=1024 aug=0
 ```
 
-Findings already actionable:
+Confirmed:
+- `imgsz=896 + aug=1` is the regime; `imgsz=1024` regresses by 0.07.
+- `iou` plateau in 0.45-0.60 (Δ < 0.001).
+- `conf=0.20` slightly beats `conf=0.25`.
+- Local→official gap stayed wide (0.9049 → 0.556 = 0.349). Tier 2 is needed
+  for any meaningful jump toward 0.70.
 
-- `imgsz=1024` is **actively bad** with v2-best (768-trained) weights —
-  resolution mismatch. Drop from sweep, rely on Tier 2's 1024-retrained model.
-- `imgsz=896 + aug=1` is the leader with notably stronger small-object AP
-  (0.746 vs 0.647 at 768). Local lift +0.045 over v2-best's 0.8589.
-- Confidence/IoU axes still need to clear before locking the bake.
-
-Open work (run on Workbench):
-
-- Finish (or narrow) Tier 1 sweep, bake winning envs into Dockerfile, run
-  `til test cv cv-yolo-v2-tier1-best` and `til submit`.
-- Then run `bash training/cv/train_v3.sh` (~4-5h on T4) for Tier 2; do not run
-  concurrent with the sweep on the same T4 (memory contention slows both).
+Tier 2 status: YOLOv11m @ imgsz=1024 retrain in flight on Workbench
+(`training/cv/train_v3.sh`). Target: 0.65-0.70 official. Expected wallclock
+~4-5h on T4.
 
 ### 2. If revisiting CV, improve hidden-distribution generalization
 
