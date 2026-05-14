@@ -1,8 +1,46 @@
 # AE — notes & history
 
-Last updated: 14 May 2026 — Hybrid manager + speed fixes shipped to source tree (unbuilt). See "Hybrid + speed-fix plan" at top.
+Last updated: 14 May 2026 — **hybrid-v2 is the shipped tag at 0.545/0.863 (new team high, +0.038 vs ppo-v1).**
 
-## Hybrid + speed-fix plan (NEW — needs `til build/test/submit` on Workbench)
+## Round-2 cloud results (after AE_MODE bake fix)
+
+| Tag | Score | Speed | Local 1-run | Verdict |
+|---|---|---|---|---|
+| `policy-fast-v2`        | **0.425** | 0.859 | 0.654 | Regressed -0.082 vs ppo-v1 same weights. Almost certainly cloud variance (±0.04 on 30 games is normal). Speed flat — confirms speed is evaluator-bound, not torch-bound. |
+| `hybrid-v2`             | **0.545 ⭐** | 0.863 | 0.774 | **NEW HIGH.** First structurally new approach since ppo-v1; +0.038 over the 0.49-0.51 cloud ceiling 5 prior approaches all hit. Hypothesis confirmed: policy + heuristic safety-veto > either alone. |
+| `heuristic-restore-v2`  | **0.502** | 0.854 | 0.787 | +0.003 vs planner-v3b 0.499 (noise). Confirms the heuristic-only ceiling is real; TILE_RESPAWN 40→20 and enemy_agent eviction were no-ops on cloud. |
+
+Local→official gap is still 0.23 on hybrid (0.774→0.545) — structural to the hidden eval distribution. But the *floor* lifted, which is what mattered.
+
+### Bug we shipped past (round-1 → round-2)
+
+All three round-1 builds had **identical sha256 `2572b392...`** because `AE_MODE=foo til build …` set the env var only in the shell that ran the til CLI — `docker build` doesn't inherit shell env. Cloud container then defaulted to hybrid mode regardless of submitted tag. Local `til test` worked because docker run inherits the shell env, masking the bug. **Fixed** by adding `ENV AE_MODE=hybrid` to the Dockerfile and a `.ae_mode` file fallback the server reads at startup.
+
+## Next experiments to push toward 0.60
+
+All reuse the existing `HybridAEManager` — no retraining, just env-var toggles + rebuild. Cloud variance is ±0.04 so big effect sizes only; submit ≤3 of these.
+
+```bash
+# Common setup
+cp ~/ae-checkpoints-backup/deployed-bc-v1.pt ae/models/bc.pt   # ppo-v1 weights
+echo hybrid > ae/src/.ae_mode
+
+# Experiment A — confidence gate: only use policy when softmax top ≥ 0.5
+sed -i 's/^ENV AE_MODE=.*/ENV AE_MODE=hybrid\nENV AE_HYBRID_CONF=0.5/' ae/Dockerfile
+til build ae hybrid-conf50 && til test ae hybrid-conf50 && til submit ae hybrid-conf50
+
+# Experiment B — drop the frozen-stay veto (cheapest)
+sed -i 's/^ENV AE_HYBRID_CONF=.*//; s/^ENV AE_MODE=.*/ENV AE_MODE=hybrid\nENV AE_HYBRID_VETO_FROZEN_STAY=0/' ae/Dockerfile
+til build ae hybrid-no-stay && til test ae hybrid-no-stay && til submit ae hybrid-no-stay
+
+# Experiment C — drop the danger-step veto (tests whether policy actually self-traps)
+sed -i 's/^ENV AE_HYBRID_VETO_FROZEN_STAY=.*//; s/^ENV AE_MODE=.*/ENV AE_MODE=hybrid\nENV AE_HYBRID_VETO_DANGER=0/' ae/Dockerfile
+til build ae hybrid-no-danger && til test ae hybrid-no-danger && til submit ae hybrid-no-danger
+```
+
+If none cross 0.55: the hybrid is at its tunable ceiling and the next swing is to **retrain the policy knowing the heuristic safety net exists** — e.g. PPO with rollouts that veto in the loop, so the policy learns to take risks the heuristic will catch. That's a 1-2 day path, not a 1-hour path.
+
+## Hybrid + speed-fix plan (shipped as `hybrid-v2`, `policy-fast-v2`, `heuristic-restore-v2`)
 
 User goal: AE score 0.60+, speed 0.90+. Net code changes (this commit):
 
