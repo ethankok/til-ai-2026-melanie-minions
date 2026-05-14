@@ -79,6 +79,11 @@ bc-v1       14/05 til test     0.6317/0.7037/0.6128/0.7398   Container mean ≈ 
 ppo-v1      14/05 eval_policy  0.7112/0.6998/0.6925         Direct mean ≈ 0.701, range 0.019 — TIGHT variance, best signal we've ever seen locally.
 ppo-v1      14/05 til test     0.766/0.634/0.708            Container mean ≈ 0.703 — faithful to direct eval.
 ppo-v1      14/05 04:36        0.507 official               Local→official gap 0.19, same as heuristic. Mixed-opponent training didn't close the gap.
+ppo-v2 BC   14/05 eval_policy  0.6788 novice                30-epoch supervised BC on 40k stacked samples, val_acc 0.8898 (vs v1 BC's 0.8742). Net frame-stacking gain over single-frame BC.
+ppo-v2      14/05 eval_policy  0.7138/0.7752/0.7885 novice  Mean 0.759 (+0.058 vs ppo-v1 novice). Best single run 0.789.
+ppo-v2      14/05 eval_policy  0.6353/0.6910/0.6768 varied  Mean 0.668 — policy generalizes to non-novice maps.
+ppo-v2      14/05 til test     0.7282/0.8260/0.7352         Container mean 0.763 (faithful to direct). 0.826 single-run high.
+ppo-v2      14/05 submitted    pending                       awaiting official; bc-v2 / ppo-v2 plumbing validated.
 ```
 
 ## Detailed timeline

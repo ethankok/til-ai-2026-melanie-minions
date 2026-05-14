@@ -70,6 +70,9 @@ bc-v1       14/05 Workbench    0.689 direct / 0.672 container    149k-param CNN 
 bc-v1       14/05 01:22        0.364/0.856 official 0 / 30 official errors   REGRESSED -0.135 vs planner-v3b. Local→official gap ballooned 0.18 → 0.31. BC overfit to random-opponent local distribution.
 ppo-v1      14/05 Workbench    0.711/0.700/0.693 eval_policy + 0.766/0.634/0.708 container.  Tight variance vs prior runs; mixed-opponent PPO from bc.pt warm start, best @update 75 of 200 before idle shutdown.
 ppo-v1      14/05 04:36        0.507/0.861 official 0 / 30 official errors   NEW HIGH (+0.008 score, +0.008 speed vs v3b). Gap stayed at 0.19 — mixed-opponent training did NOT close the local→official gap.
+ppo-v2      14/05 eval_policy  0.7138/0.7752/0.7885 novice + 0.6353/0.6910/0.6768 varied   PPO from BC warm start with frame-stacking (N=4), reward-scale 50, value-loss clip, vary-maps, 162/200 updates before idle shutdown. Novice mean 0.759, varied mean 0.668.
+ppo-v2      14/05 til test     0.7282/0.8260/0.7352   Container mean ≈ 0.763 (highest single run 0.826 — best AE local ever).
+ppo-v2      14/05 submitted    pending — awaiting official result.
 ```
 
 ## Qualifier weighted score estimate
