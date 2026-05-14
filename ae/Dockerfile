@@ -11,6 +11,13 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
 WORKDIR /workspace
 
+# Runtime manager selection (hybrid | policy | heuristic). Bake it into
+# the image so the cloud evaluator (which doesn't inherit our shell env)
+# uses the right mode. Edit this line before each `til build` to switch
+# modes, OR write the mode into `ae/src/.ae_mode` (the server reads that
+# file at startup if AE_MODE is unset in the container env).
+ENV AE_MODE=hybrid
+
 # Installs your dependencies.
 RUN pip install -U pip
 COPY requirements.txt .

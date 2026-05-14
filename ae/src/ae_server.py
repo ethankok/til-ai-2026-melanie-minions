@@ -16,9 +16,34 @@ clean speed-focused A/B, without rebuilding the image.
 
 
 import os
+from pathlib import Path
 
 from ae_manager import AEManager
 from fastapi import FastAPI, Request
+
+
+def _read_mode() -> str:
+    """Resolve the runtime mode, with three fallbacks:
+
+    1. ``AE_MODE`` env var (set in Dockerfile or by docker run -e).
+    2. ``.ae_mode`` file next to this source (handy when ``til build``
+       won't let you pass env vars / build args — just write the mode
+       into the file and rebuild).
+    3. Default ``hybrid``.
+    """
+
+    mode = os.environ.get("AE_MODE")
+    if mode and mode.strip():
+        return mode.strip().lower()
+    mode_file = Path(__file__).resolve().parent / ".ae_mode"
+    if mode_file.exists():
+        try:
+            content = mode_file.read_text().strip().lower()
+            if content:
+                return content
+        except OSError:
+            pass
+    return "hybrid"
 
 
 def _make_manager():
@@ -28,7 +53,7 @@ def _make_manager():
     fails (missing checkpoint, torch import error, etc.) we fall back to
     the heuristic so the service can't refuse to start."""
 
-    mode = os.environ.get("AE_MODE", "hybrid").strip().lower() or "hybrid"
+    mode = _read_mode()
 
     if mode == "heuristic":
         print("AE: mode=heuristic — using rule-based planner only")

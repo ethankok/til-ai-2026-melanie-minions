@@ -64,36 +64,58 @@ User goal: AE score 0.60+, speed 0.90+. Net code changes (this commit):
    URLs we can compare component-by-component instead of comparing
    single mean scores.
 
-### Suggested A/B order on Workbench
+### How to pick the runtime mode for a build — IMPORTANT
 
-The first three builds should ship in this exact order and each one
-should run `0 / 30 errors` on `til test` before submission. Two slots
-of `til submit` produce the most information.
+**`AE_MODE` must be baked into the image, not just set in the shell.**
+`til build` invokes `docker build` without inheriting our shell env, so
+`AE_MODE=policy til build ...` produces an image with no `AE_MODE` set;
+the cloud evaluator then defaults to `hybrid` regardless of the tag.
+The first A/B round (2026-05-14) hit this — all three builds had the
+same sha256 `2572b392...` and ran hybrid mode on the cloud.
+
+Two ways to set the mode correctly, pick one:
 
 ```bash
-# Build 1 — speed-only A/B with the current best policy. Uses ppo-v1
-# weights (cp from backup if your local ae/models/bc.pt is the worse
-# ppo-v2). This isolates the speed fixes.
-cp ~/ae-checkpoints-backup/deployed-bc-v1.pt ae/models/bc.pt   # ppo-v1 weights
-AE_MODE=policy til build ae policy-fast-v1
-til test ae policy-fast-v1            # confirm 0 / 30 errors
-til submit ae policy-fast-v1          # expect: score ≈ 0.51 (noise), speed > 0.90
+# (A) Edit one line in ae/Dockerfile before each build:
+#     ENV AE_MODE=hybrid   →   ENV AE_MODE=policy   etc.
 
-# Build 2 — hybrid (THE new bet). Same weights, hybrid wrapper.
-AE_MODE=hybrid til build ae hybrid-v1
-til test ae hybrid-v1
-til submit ae hybrid-v1               # the headline submission
-
-# Build 3 — heuristic-only restore. Establishes whether the heuristic
-# was actually behind ppo-v1 officially (0.499 vs 0.507 = noise).
-AE_MODE=heuristic til build ae heuristic-restore-v1
-til test ae heuristic-restore-v1      # no torch, fastest cold-start
-til submit ae heuristic-restore-v1    # expect: speed > 0.92, score 0.49-0.51
+# (B) Write the mode into the file the server reads at startup:
+echo hybrid    > ae/src/.ae_mode
+echo policy    > ae/src/.ae_mode
+echo heuristic > ae/src/.ae_mode
 ```
 
-If any submission scores >0.52, that's the new best. If `hybrid-v1`
+Both are picked up by `ae_server._read_mode()` (env var wins, file is
+the fallback). `.ae_mode` lives next to the source and is gitignored.
+
+### Suggested A/B order on Workbench
+
+Wait for Violet's "model received" message before queueing the next
+tag; submitting a second tag while the first is in queue **overwrites**
+it (we lost two submissions to this on the first attempt).
+
+```bash
+# Common: pick the right weights up front.
+cp ~/ae-checkpoints-backup/deployed-bc-v1.pt ae/models/bc.pt   # ppo-v1
+
+# Build 1 — speed-only A/B (policy mode).
+echo policy > ae/src/.ae_mode
+til build ae policy-fast-v2 && til test ae policy-fast-v2 && til submit ae policy-fast-v2
+# expect: score ≈ 0.51 (noise vs ppo-v1 0.507), speed > 0.90
+
+# Build 2 — hybrid (THE new bet).
+echo hybrid > ae/src/.ae_mode
+til build ae hybrid-v2 && til test ae hybrid-v2 && til submit ae hybrid-v2
+
+# Build 3 — heuristic-only restore.
+echo heuristic > ae/src/.ae_mode
+til build ae heuristic-restore-v2 && til test ae heuristic-restore-v2 && til submit ae heuristic-restore-v2
+# expect: speed > 0.92, score 0.49–0.51
+```
+
+If any submission scores >0.52, that's the new best. If `hybrid-v2`
 scores >0.55, the hybrid hypothesis works — start tuning veto
-thresholds. If `heuristic-restore-v1` ties policy-fast-v1, drop torch
+thresholds. If `heuristic-restore-v2` ties policy-fast-v2, drop torch
 from the deployed build entirely and reclaim the +0.04 speed.
 
 ### Diagnostic to run alongside the above
