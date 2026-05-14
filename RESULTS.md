@@ -1,19 +1,20 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 14 May 2026 — AE hybrid-v2 0.545/0.863 NEW HIGH
+Last updated: 14 May 2026 19:50 SGT — AE hybrid-v3 0.555/0.849 + NLP v5c-no-para 0.483/0.912 (new blended high)
 
 ## Latest submitted scores
 
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
-NLP    melanie-minions-nlp      v4-dict-id  14/05/2026 13:29:56   0 / 700       0.483   0.888  ← NEW HIGH; new-eval recovery from 0.000
+NLP    melanie-minions-nlp      v5c-no-para 14/05/2026 19:44:08   0 / 700       0.483   0.912  ← NEW BLENDED HIGH; +0.024 speed from batched SQuAD2 (acc flat to v4)
 ASR    melanie-minions-asr      ft-lora32-v1 13/05/2026 11:22:30  0 / 400       0.957   0.849
 CV     melanie-minions-cv       cv-yolo-v2-tier1-best 14/05/2026 17:10:09 0 / 500 0.556 0.956
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
-AE     melanie-minions-ae       hybrid-v2   14/05/2026 14:55:23   0 / 30        0.545   0.863  ← NEW HIGH; +0.038 vs ppo-v1 (policy + heuristic safety-veto)
-AE (heur-restore-v2) melanie-minions-ae heuristic-restore-v2 14/05/2026 15:02:13 0 / 30   0.502   0.854  ← noise vs planner-v3b 0.499; confirms heuristic ceiling
-AE (policy-fast-v2)  melanie-minions-ae policy-fast-v2       14/05/2026 14:42:05 0 / 30   0.425   0.859  ← regressed -0.082 vs ppo-v1 same weights; cloud noise (30-game sample)
+AE     melanie-minions-ae       hybrid-v3   14/05/2026 19:26:06   0 / 30        0.555   0.849  ← NEW HIGH; +0.010 vs hybrid-v2 (top-K cascade + opportunistic enemy-kill)
+AE (hybrid-v2) melanie-minions-ae hybrid-v2 14/05/2026 14:55:23   0 / 30        0.545   0.863
+AE (heur-restore-v2) melanie-minions-ae heuristic-restore-v2 14/05/2026 15:02:13 0 / 30   0.502   0.854
+AE (policy-fast-v2)  melanie-minions-ae policy-fast-v2       14/05/2026 14:42:05 0 / 30   0.425   0.859
 AE (ppo-v1) melanie-minions-ae   ppo-v1      14/05/2026 04:36:51   0 / 30        0.507   0.861
 AE (ppo-v2) melanie-minions-ae   ppo-v2      14/05/2026 13:29:54   0 / 30        0.489   0.854
 AE (v3b)  melanie-minions-ae    planner-v3b 13/05/2026 23:42:57   0 / 30        0.499   0.853
@@ -26,7 +27,10 @@ Tag           Submitted          Score   Speed   Errors    Local        Notes
 latest        12/05 03:23        0.301   0.971   0 / 700   —            OLD EVAL; pre-wipe; lexical token-overlap baseline (no longer on leaderboard)
 v2-hybrid-rag 14/05 ~04:00       0.000   ~       0 / 700   —            New eval. Hybrid BM25+BGE+rerank+RoBERTa-SQuAD2 + positional DOC-{i+1:04d}. 0.0 because cloud was buggy: organisers' eval server was sending plain strings while the spec called for dicts (see v4-dict-id)
 v3-id-parse   14/05 05:33        0.000   0.888   0 / 700   0.678 (1)    Same pipeline + defensive parser (DOC-XXXX prefix / dict / positional). Cloud 0.000 caused by Ryan's eval bug (still sending plain strings); local 0.678 with prefix patch proved the model itself was sound
-v4-dict-id    14/05 13:29        0.483   0.888   0 / 700   0.678        After Ryan FIXED the eval to send {"id":"DOC-XXXX","document":"..."}. Same image as v3-id-parse (just re-tagged); defensive parser's dict-shape branch caught the format immediately. NEW HIGH on the post-wipe leaderboard
+v4-dict-id    14/05 13:29        0.483   0.888   0 / 700   0.678        After Ryan FIXED the eval to send {"id":"DOC-XXXX","document":"..."}. Same image as v3-id-parse (just re-tagged); defensive parser's dict-shape branch caught the format immediately
+v5-multi      (not shipped)      —       —       —         0.628        Para-aware chunking + batched SQuAD2 + BM25 doc backfill + low-conf sentence fallback. Local REGRESSED -0.050 vs v4; error-bucket report showed fallback was firing on every single-word answer ("Velez", "1992", ...) and replacing correct-but-short SQuAD2 spans. NOT submitted
+v5b-no-fallback 14/05 19:10      0.456   0.916   0 / 700   0.674        Dropped fallback; kept the other three. Local OK (within 0.005 of v4) but cloud REGRESSED -0.027 vs v4. Local→cloud gap widened from 0.195 → 0.218 — clear signal that one of the remaining changes hurt on the held-out corpus
+v5c-no-para   14/05 19:44        0.483   0.912   0 / 700   0.678        Reverted paragraph chunking; kept batched SQuAD2 + BM25 backfill. Cloud RECOVERED to v4's 0.483 with v5b's speed gain (+0.024) retained → blended 0.590 (vs v4 0.584). NEW BLENDED HIGH. Confirms paragraph chunking was the v5b regressor
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.
@@ -94,6 +98,7 @@ ppo-v2      14/05 13:29        0.489/0.854 official 0 / 30 official errors   REG
 policy-fast-v2 14/05 14:42       0.425/0.859 official 0 / 30 official errors   ppo-v1 weights + speed fixes (single-thread torch, inference_mode, warmup, preallocated tensors). Local mean 0.654 (1 run). Score regressed -0.082 from ppo-v1 — almost certainly cloud variance on 30-game sample (we've seen ±0.04 between identical runs). Speed flat at 0.859.
 hybrid-v2    14/05 14:55         0.545/0.863 official 0 / 30 official errors   *** NEW HIGH ***. Hybrid manager: policy chooses, heuristic safety-veto on illegal / no-escape-bomb / step-into-blast / frozen-stay. First structurally new approach since ppo-v1. Local 0.774 (1 run, 6 rounds). Local→official gap 0.23 — same band as everything else, but the *floor* lifted by 0.038. Speed 0.863 (+0.002 vs ppo-v1).
 heuristic-restore-v2 14/05 15:02 0.502/0.854 official 0 / 30 official errors   Pure heuristic (planner-v3b + TILE_RESPAWN 40→20 + enemy_agent eviction). Local 0.787 (1 run). +0.003 vs planner-v3b 0.499 — confirms heuristic-only ceiling and that the 40→20 / eviction tweaks were noise on cloud. Speed flat at 0.854.
+hybrid-v3    14/05 19:26         0.555/0.849 official 0 / 30 official errors   *** NEW HIGH ***. Hybrid + top-K policy cascade (try policy's #2/#3 actions when #1 is vetoed before falling back to heuristic) + opportunistic enemy-kill in heuristic dominant-action shortcut. +0.010 score vs hybrid-v2 (within ±0.04 cloud noise but trending right); -0.014 speed (likely more bomb-escape work or noise). Now top-quartile on the leaderboard (top is 0.711).
 ```
 
 ## Qualifier weighted score estimate
@@ -112,35 +117,34 @@ Each scored challenge blends `75%` accuracy/reward and `25%` speed. Qualifier sp
 
 Using raw task scores only (best-ever shipped per task on the CURRENT
 leaderboard — old NLP score of 0.301 was wiped when organisers rolled out
-the new eval; `v4-dict-id` 0.483 is our recovery):
+the new eval; `v5c-no-para` 0.483 is our recovery):
 
 ```text
-0.40 * AE 0.545  = 0.2180   ← NEW HIGH; hybrid manager (policy + heuristic safety-veto)
+0.40 * AE 0.555  = 0.2220   ← NEW HIGH; hybrid-v3 (top-K cascade + opportunistic enemy-kill)
 0.20 * NLP 0.483 = 0.0966
 0.20 * ASR 0.957 = 0.1914
-0.20 * CV 0.549  = 0.1098
+0.20 * CV 0.556  = 0.1112
 --------------------------------
-Estimated weighted qualifier score = 0.6158
+Estimated weighted qualifier score = 0.6212
 ```
 
-AE `hybrid-v2` is the first **structurally new** AE approach since ppo-v1 and broke the 0.49-0.51 cloud ceiling that five prior approaches (planner-v1/v2/v3b, bc-v1, ppo-v1/v2) all hit. Lift came from policy + heuristic safety-veto: policy chooses, heuristic overrides illegal/unsafe/self-trapping actions. Local→official gap is still ~0.23 (local 0.774 → cloud 0.545) — structural, but the *floor* moved up.
+AE has now incrementally climbed in three consecutive submissions (ppo-v1 0.507 → hybrid-v2 0.545 → hybrid-v3 0.555), each one moving the floor up by the size of cloud noise but in the same direction. The structural local→cloud gap (~0.23) is intact, but the floor itself has moved +0.048. Top of leaderboard is 0.711; we're now top-quartile.
 
 Using the observed ~75% score / 25% speed blend:
 
 ```text
-AE   contribution = 0.2272   (0.75*0.545 + 0.25*0.863 = 0.5803  — wait, 0.40-weight: 0.40*0.6244 = 0.2497)
-                     simpler: 0.40 * (0.75*0.545 + 0.25*0.863) = 0.40 * 0.6245 = 0.2498
-NLP  contribution = 0.1168   (0.75*0.483 + 0.25*0.888 = 0.5843)
+AE   contribution = 0.2515   (0.40 * (0.75*0.555 + 0.25*0.849) = 0.40 * 0.6285 = 0.2514)
+NLP  contribution = 0.1180   (0.75*0.483 + 0.25*0.912 = 0.5903)  ← v5c speed +0.024
 ASR  contribution = 0.1860
-CV   contribution = 0.1304   (0.75*0.549 + 0.25*0.960 = 0.6518)
+CV   contribution = 0.1307   (0.75*0.556 + 0.25*0.956 = 0.6560)
 --------------------------------
-Estimated blended qualifier score = 0.6830  (+0.0116 vs ppo-v1)
+Estimated blended qualifier score = 0.6862  (+0.0148 vs ppo-v1 baseline)
 ```
 
 ## Notes
 
 - All 5 tasks have been submitted successfully at least once.
-- **NLP recovered to `0.483` on `v4-dict-id`** (14/05 13:29 SGT). The new eval was rolled out 14 May with a strict top-3-docs schema and 0.9 equivalence threshold; the old `0.301` was wiped. Two prior new-eval attempts (`v2-hybrid-rag`, `v3-id-parse`) both scored `0.000` — root cause was Ryan's eval server bug (sending plain strings instead of `{"id": "DOC-XXXX", "document": "..."}` dicts). Our manager's defensive parser was already correct; resubmitting the *same image* under `v4-dict-id` after Ryan's fix landed `0.483/0.888`. Local→cloud gap of `~0.20` (local 0.678) is consistent with AE/CV gaps on this competition. Pipeline: 3-sentence sliding chunks + BM25 ⊕ BGE-small dense ⊕ BGE-reranker-base + RoBERTa-SQuAD2 extractive QA, all GPU fp16.
+- **NLP `v5c-no-para` is shipped at `0.483/0.912`** (14/05 19:44 SGT, new blended high 0.590). Same accuracy as `v4-dict-id` but `+0.024` speed from batched SQuAD2. The intervening `v5b-no-fallback` regressed −0.027 on cloud (paragraph-aware chunking); we bisected, identified paragraph chunking as the regressor, and reverted just that one change. Lesson recorded in [nlp/NOTES.md](nlp/NOTES.md): ship sequentially, not bundled. Local error-bucket diagnostic puts retrieval at 95.5% hit rate (saturated); the remaining headroom is in QA — `retrieval_hit_diff` at 45.8% (404/883 local cases) is the dominant loss bucket, addressable by upgrading to `roberta-large-squad2`.
 - **ASR crossed the 0.95 accuracy target**: `ft-lora32-v1` officially scored `0.957 / 0.849` (errors `0 / 400`). That's **+0.019 absolute accuracy** over `vad-off-v1`, achieved by a single 3-epoch LoRA-rank-32 decoder fine-tune of `distil-whisper/distil-large-v3` on the full 4110-clip novice manifest. Speed dipped by `0.010` (CT2 file size noise; recoverable via int8_float16 re-export, see Next priority). Generalization gap turned out **negative**: held-out val WER `0.04662` → official WER `~0.043`, i.e. the official 400-clip distribution is slightly easier than the local held-out slice — a useful piece of leaderboard intuition for future runs.
 - **`vad-off-v1` (the prior peak)**: inference-only fixes (`vad_filter=False`, hallucination guards, spoken-form ordinals, coordinate-safe decimal regex, tighter silence guard) took accuracy from `norm-v1`'s `0.877` to `0.938` with speed barely changed (-0.005). Local-official WER gap on that run was +0.007 absolute. Those fixes stayed in `ft-lora32-v1` and compounded with the LoRA gains.
 - The local `1 - MER` number is a **scoring artifact** of the local manifest being English-only (three other language buckets contribute 0 to the divide-by-4 mean). Track the bare `english error rate (WER)` line instead.
@@ -154,7 +158,7 @@ Estimated blended qualifier score = 0.6830  (+0.0116 vs ppo-v1)
 
 ## Next priority
 
-1. **NLP quality push (now unblocked)** — `v4-dict-id` recovered to `0.483 / 0.888` on the cloud, local 0.678 → cloud 0.483 gap of `~0.20`. Pipeline is hybrid BM25+BGE-small + BGE-reranker-base + RoBERTa-SQuAD2; same proportional gap we see on AE/CV, so it's likely distribution shift on the held-out corpus rather than a bug. Levers in increasing cost/impact: (a) **batch the SQuAD2 forward pass** (currently sequential over top-10 chunks in `_extract_answer`; `QA_BATCH=16` is defined but unused — should free 50–80% of QA latency), (b) **paragraph-aware chunking** (split on `\n\n` before sentence-windowing, preserves longer answer spans), (c) **bigger embedder/reranker** (`bge-base-en-v1.5`, `bge-reranker-large` — costs latency budget, possibly worth trading against the saved time from QA batching), (d) **sentence-of-best-chunk fallback** for when SQuAD2 confidence is low. Estimated reachable: 0.55–0.65 cloud.
+1. **NLP `v6-roberta-large`** — `v5c-no-para` is shipped at `0.483/0.912` (new blended high). Error-bucket diagnostic shows retrieval at 95.5% hit rate (saturated; ceiling is +0.018 cloud); the dominant loss is `retrieval_hit_diff` at 45.8%. The next lever is QA span quality, addressed by swapping `deepset/roberta-base-squad2` → `deepset/roberta-large-squad2` (~1.4 GB extra container, per-question latency ~2.5× on GPU fp16, comfortably within budget given v5c's speed headroom). Expected impact: +0.05–0.10 cloud accuracy. NOTES recorded that paragraph chunking, bigger embedder, and low-confidence fallbacks are NOT good levers on this corpus and shouldn't be revisited.
 2. **AE hybrid is the new shipped tag at `0.545 / 0.863`.** The 0.49-0.51 cloud ceiling was real for individual approaches but broke under the policy + heuristic safety-veto combo (+0.038 over ppo-v1). To push toward 0.60 the cheap next moves all reuse the existing `HybridAEManager` plumbing — no retraining needed. Each is one env-var toggle + one rebuild:
    - **`AE_HYBRID_CONF=0.5`**: only use policy when its softmax top-action ≥ 0.5. Below that, fall back to heuristic. Tests whether the policy's *uncertain* outputs are the ones costing us score.
    - **`AE_HYBRID_VETO_BOMBS=0`** *or* **`AE_HYBRID_VETO_DANGER=0`**: turn one veto off at a time to find which one is actually doing work. If hybrid still scores >0.5 without bomb-vetoes, the heuristic's bomb-escape check was wrong and we can simplify.
