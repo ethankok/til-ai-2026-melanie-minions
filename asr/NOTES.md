@@ -83,6 +83,48 @@ Phase plan with kill switches at each step:
 Submission gate: zero `errors`, schema unchanged, official blended score
 strictly above `ft-lora32-v1`'s `0.957/0.849` (i.e. blended ≥ `0.930`).
 
+### nemo-zs — local result (14 May 2026)
+
+```text
+english error rate (WER): 0.0429
+chinese error rate (CER): 0.0000
+malay error rate (WER):   0.0000
+tamil error rate (WER):   0.0000
+1 - MER: 0.9893
+1028 batches × 2.62s avg → 37:28 wall clock on the 4110-clip local set
+```
+
+Compared against `ft-lora32-v1` (leaky local WER `0.0299`, held-out val
+`0.04662`, official `0.957`):
+
+- Parakeet-TDT-0.6B-v2 **zero-shot** (no fine-tune, no slang biasing) lands
+  at WER `0.0429` on the full local set. Whisper LoRA's *held-out* val WER
+  was `0.04662`, so Parakeet starts roughly on par with our trained model
+  before any in-domain adaptation. The accuracy gate (≤ 0.05) is cleared.
+- Local set is ~10× larger than the cloud set (4110 vs 400). Cloud wall
+  clock projection: 4110 / 400 × 37:28 / 30 min ≈ 30% of t_max → cloud
+  speed score `~0.70`. **This is below `ft-lora32-v1`'s `0.849` and is
+  exactly why `cuda-python` is the very next change.**
+
+NeMo logged at startup:
+
+```text
+No conditional node support for Cuda. Cuda graphs with while loops are
+disabled, decoding speed will be slower
+Reason: No `cuda-python` module. Please do `pip install cuda-python>=12.3`
+```
+
+The TDT decoder's while-loop is its main per-clip cost. With the CUDA-graph
+fast path disabled, the decode loop runs as eager Python kernels; with it
+enabled, the whole loop fuses into a CUDA graph and Parakeet gets the
+multi-thousand-RTFx numbers it advertises. `cuda-python>=12.3` is now in
+`requirements-nemo.txt`; rebuild as `nemo-zs-v2` and re-test before the
+next submission.
+
+Submit `nemo-zs` first to bank the accuracy result; the leaderboard keeps
+the highest blended score so a worse `nemo-zs` cannot demote
+`ft-lora32-v1`.
+
 ## What our model runs on
 
 ### Inference (the shipped Docker container)
