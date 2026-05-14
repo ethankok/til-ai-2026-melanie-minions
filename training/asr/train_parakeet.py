@@ -98,8 +98,21 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Where checkpoints and logs land.",
     )
     ap.add_argument("--epochs", type=int, default=5)
-    ap.add_argument("--batch-size", type=int, default=8)
-    ap.add_argument("--grad-accum", type=int, default=2)
+    ap.add_argument(
+        "--batch-size",
+        type=int,
+        default=4,
+        help="Per-GPU train batch. T4 (16 GB) OOMs at batch 8 because the "
+             "RNNT loss is O(B*T*U*V). Batch 4 + grad-accum 4 keeps the "
+             "effective batch at 16 with ~6-7 GB peak loss memory. Bump to "
+             "8 only on a >=24 GB GPU.",
+    )
+    ap.add_argument(
+        "--grad-accum",
+        type=int,
+        default=4,
+        help="Gradient accumulation steps. effective_batch = batch_size * grad_accum.",
+    )
     ap.add_argument("--lr", type=float, default=5e-5)
     ap.add_argument(
         "--warmup-steps",
@@ -108,6 +121,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Linear warmup steps. Short to keep Workbench wall clock down.",
     )
     ap.add_argument("--num-workers", type=int, default=2)
+    ap.add_argument(
+        "--max-duration",
+        type=float,
+        default=30.0,
+        help="Drop training clips longer than this seconds. The Parakeet "
+             "manifest config says 40s but the RNNT loss memory grows with "
+             "clip length. Cap at 30s on T4 to leave headroom; 40s is fine "
+             "on bigger GPUs.",
+    )
+    ap.add_argument(
+        "--min-duration",
+        type=float,
+        default=0.5,
+        help="Drop training clips shorter than this seconds. Mirror of the "
+             "value used by prepare_data_nemo.py.",
+    )
     ap.add_argument(
         "--val-every",
         type=int,
@@ -168,10 +197,29 @@ def _setup_logging(output_dir: Path) -> None:
     # Keep NeMo's verbose dataloader / RNNT decoding logs out of the way; the
     # ones we care about (val_wer per validation pass) still print.
     os.environ.setdefault("HYDRA_FULL_ERROR", "1")
+    # Force the RNNT/TDT loss to compute in fp16 instead of falling back to
+    # fp32 — the fallback is the dominant T4 OOM cause. NeMo's warning at
+    # training step 0 was:
+    #   "Provided RNNT Joint tensor is of dtype torch.float16, but RNNT loss
+    #    could not be calculated in fp16 due to following reason ... Env
+    #    variable NUMBA_CUDA_USE_NVIDIA_BINDING is not available or has not
+    #    set to `1`."
+    # Setting it BEFORE numba imports the cuda backend keeps fp16 math.
+    os.environ.setdefault("NUMBA_CUDA_USE_NVIDIA_BINDING", "1")
+    # Mitigates the fragmented-reserved-memory pattern reported in the OOM:
+    #   "Of the allocated memory 8.79 GiB is allocated by PyTorch, and
+    #    1.85 GiB is reserved by PyTorch but unallocated."
+    # `expandable_segments` is the allocator-recommended setting in the OOM
+    # message. Free for any model we'd train on T4.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 
 def _build_train_ds_cfg(
-    manifest: Path, batch_size: int, num_workers: int
+    manifest: Path,
+    batch_size: int,
+    num_workers: int,
+    max_duration: float,
+    min_duration: float,
 ) -> dict:
     return {
         "manifest_filepath": str(manifest),
@@ -180,14 +228,19 @@ def _build_train_ds_cfg(
         "shuffle": True,
         "num_workers": num_workers,
         "pin_memory": True,
-        "max_duration": 40.0,
-        "min_duration": 0.5,
+        "max_duration": max_duration,
+        "min_duration": min_duration,
         "trim_silence": False,
         "use_lhotse": False,
     }
 
 
-def _build_val_ds_cfg(manifest: Path, batch_size: int, num_workers: int) -> dict:
+def _build_val_ds_cfg(
+    manifest: Path,
+    batch_size: int,
+    num_workers: int,
+    max_duration: float,
+) -> dict:
     return {
         "manifest_filepath": str(manifest),
         "sample_rate": 16000,
@@ -195,7 +248,7 @@ def _build_val_ds_cfg(manifest: Path, batch_size: int, num_workers: int) -> dict
         "shuffle": False,
         "num_workers": num_workers,
         "pin_memory": True,
-        "max_duration": 40.0,
+        "max_duration": max_duration,
         "use_lhotse": False,
     }
 
@@ -249,6 +302,8 @@ def main() -> int:
                 args.data_dir / "train_manifest.jsonl",
                 batch_size=args.batch_size,
                 num_workers=args.num_workers,
+                max_duration=args.max_duration,
+                min_duration=args.min_duration,
             )
         )
     )
@@ -258,6 +313,7 @@ def main() -> int:
                 args.data_dir / "val_manifest.jsonl",
                 batch_size=args.batch_size,
                 num_workers=args.num_workers,
+                max_duration=args.max_duration,
             )
         )
     )

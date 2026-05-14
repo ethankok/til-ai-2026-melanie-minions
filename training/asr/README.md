@@ -47,11 +47,13 @@ python training/asr/prepare_data_nemo.py \
     --slang-multiplier 2
 
 # 4. Fine-tune. Encoder frozen, decoder + joint trainable. ~3-4 hr on T4.
+#    Defaults are T4-safe (batch 4, grad-accum 4, max-duration 30s) — the
+#    RNNT loss is O(B*T*U*V) so larger batches OOM. Effective batch is 16.
 python training/asr/train_parakeet.py \
     --data-dir training/asr/data_nemo \
     --base-model asr/models/parakeet-tdt-0.6b-v2.nemo \
     --output-dir training/asr/runs/parakeet-ft-v1 \
-    --epochs 5 --lr 5e-5 --batch-size 8 --grad-accum 2
+    --epochs 5 --lr 5e-5
 
 # 5. Stage the fine-tuned .nemo where the docker build expects it.
 python training/asr/export_parakeet.py \
