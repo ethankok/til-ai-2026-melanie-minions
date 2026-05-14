@@ -9,21 +9,17 @@ uvicorn[standard]==0.34.2
 # omegaconf, and a handful of audio libs. Pin a known-good 2.x release that
 # supports the Parakeet-TDT-0.6B-v2 checkpoint.
 nemo_toolkit[asr]==2.0.0
-# cuda-python enables NeMo's CUDA-graph fast path for the TDT decoder
-# while-loop. Without it NeMo logs:
-#   "No conditional node support for Cuda. Cuda graphs with while loops are
-#    disabled, decoding speed will be slower"
-# This is one of the bigger speed levers Parakeet has over Whisper. The
-# version pin matches the CUDA 12 runtime in the base image.
-#
-# IMPORTANT: cap below 13. The 13.x release restructured the package so
-# `from cuda import cuda` (which numba 0.65.x's CUDA driver does on import)
-# no longer works:
+# NOTE: cuda-python (for the TDT decoder's CUDA-graph fast path) is NOT
+# pinned here. It used to be, but in November 2026 cuda-python 13.x landed
+# with a package restructure that breaks numba 0.65.x on import:
 #   ImportError: cannot import name 'cuda' from 'cuda' (unknown location)
-# This breaks ALL numba-based GPU paths inside NeMo (RNNT loss, spec
-# augment, ...), not just our trainer. Until numba lands its 13.x-compatible
-# release, pin to 12.x — that's the version NeMo logs originally suggested.
-cuda-python>=12.3,<13
+# Pinning cuda-python<13 in this file then triggered a cascade through pip's
+# resolver that downgraded torch 2.12.0 -> 2.9.1 on the Workbench host
+# (because <13 forces nvidia-*-cu12 libs, but torch 2.12.0 was built against
+# cu13). That broke torchvision and pytorch-lightning host-side.
+# cuda-python is now installed via a dedicated `RUN pip install` line in
+# Dockerfile.nemo with --no-deps, so the inference container still gets the
+# CUDA-graph fast path while the host env stays untouched.
 # NeMo expects a recent libsndfile and resampler. soundfile + librosa mirror
 # the whisper image so audio decode behavior matches.
 soundfile>=0.12.1

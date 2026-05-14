@@ -193,9 +193,33 @@ Confirmed:
 - Local→official gap stayed wide (0.9049 → 0.556 = 0.349). Tier 2 is needed
   for any meaningful jump toward 0.70.
 
-Tier 2 status: YOLOv11m @ imgsz=1024 retrain in flight on Workbench
-(`training/cv/train_v3.sh`). Target: 0.65-0.70 official. Expected wallclock
-~4-5h on T4.
+Tier 2 status (in flight, May 14):
+
+- Trainer: `training/cv/train_v3.sh`, YOLOv11m @ imgsz=1024, batch=6, AdamW
+  cos_lr, copy_paste=0.30 + mosaic=1.0 + mixup=0.15.
+- Wallclock estimate revised: original 4-5h was wrong. YOLOv11m@1024 actually
+  runs ~6:30/epoch on T4, so 120 epochs is ~13h. v8s@768 was 80 epochs in 2.3h
+  for reference; m vs s + 768 vs 1024 + 80 vs 120 epochs compound to ~5.6x.
+- First run died at epoch 58/120 from CUDA OOM caused by docker squatter
+  containers from the earlier sweep eating ~10GB of VRAM. `best.pt` was saved
+  (epoch 56, val mAP50-95 = 0.895).
+- Sweep on the partially-trained `best.pt` against the hard test split topped
+  out at `mAP50-95 = 0.8276` (conf=0.001, iou=0.70, imgsz=1024, aug=1). That is
+  **0.077 below v8s tier1's hard held-out 0.9049**, so submitting v11m at
+  epoch 56 would regress official below 0.556.
+- Diagnosis: cosine LR was still at ~40% of decay at the crash. v11m has ~4x
+  v8s parameters and needs more epochs to stabilize, especially with the
+  aggressive copy-paste augmentation. The val 500-image split shows fine
+  numbers (0.895), but the harder test split exposes the underconvergence.
+- Resumed from `last.pt` at 16:48 SGT to let cosine LR finish properly. ETA
+  ~23:00 SGT for full 120 epochs, earlier if patience=30 triggers around
+  epoch 85. Best-case projected official: 0.62-0.66 if hard held-out climbs
+  to 0.91-0.93.
+- Memory: training holds ~8.5GB; ASR docker container holds ~3GB on the same
+  T4. Total ~11.4GB / 15.4GB. Tight but stable; no other processes squatting.
+
+If the resume crashes, do NOT restart from epoch 0. Resume again from
+`last.pt`. Ultralytics handles the cosine schedule continuation correctly.
 
 ### 2. If revisiting CV, improve hidden-distribution generalization
 

@@ -24,6 +24,12 @@ WORKDIR /workspace
 RUN pip install -U pip
 COPY requirements-nemo.txt .
 RUN pip install --no-cache-dir -r requirements-nemo.txt
+# cuda-python is needed for the TDT decoder's CUDA-graph fast path. Pin to
+# 12.x because numba 0.65.x can't import cuda-python 13.x (package
+# restructure broke `from cuda import cuda`). Use --no-deps so pip cannot
+# downgrade torch / torchvision / cuDNN to satisfy cuda-bindings's nvidia-*
+# requirements — the base image already ships a consistent CUDA 12 stack.
+RUN pip install --no-cache-dir --no-deps "cuda-python>=12.3,<13"
 
 # Copy source.
 COPY src .
