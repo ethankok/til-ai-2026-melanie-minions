@@ -206,6 +206,141 @@ Decision gate before submitting `parakeet-ft-v1`: local Eng-WER ≤ 0.035
 the encoder. Leaderboard keeps the higher score so a regression cannot
 demote `nemo-zs`.
 
+## Creative options for pushing past 0.99
+
+Decoder-only FT + NeMo word-boosting probably caps at ~0.97-0.98. To
+break 0.99 (official WER ≤ 0.009) the levers below attack what's left,
+which per [../training/asr/ERROR_ANALYSIS.md](../training/asr/ERROR_ANALYSIS.md)
+is almost entirely in-world proper-noun substitutions (Sarento→Sorrento,
+Cyanite→cyanide, Phyrexis→Pyrex's, Mewan→Mee-one, Kestrelian→Castilian,
+Belford Straits→Belford Streets). Leaderboard reference: Overflow
+0.991/0.925, OpenLarp 0.986/0.940, suite108 0.982/0.920 — so 0.99 is
+empirically reachable.
+
+Roughly ordered by expected impact × creativity. Not yet tried.
+
+### A. Phonetic + world-frequency post-correction (cheap, no retrain)
+
+Pure inference-side. For every token in the hypothesis:
+
+- If OOV for an English word list AND within Double-Metaphone edit
+  distance ≤ 1 of an NLP-corpus term → substitute.
+- If the token IS an English word but a phonetically-equivalent
+  NLP-corpus term has ≫ in-world frequency (`cyanide` vs `cyanite`) →
+  substitute, gated by Parakeet token confidence (NeMo exposes
+  `hypothesis.score`).
+
+Add as a new stage in [src/asr_postprocess.py](src/asr_postprocess.py).
+Runs in milliseconds, no GPU. Directly targets the
+[ERROR_ANALYSIS.md "Proper-noun substitutions"](../training/asr/ERROR_ANALYSIS.md)
+failure bucket. Expected +0.005-0.015 absolute.
+
+### B. CTC + TDT dual-head ensemble (free inside Parakeet)
+
+Parakeet-TDT exposes both a TDT decoder and a CTC head trained jointly.
+They make different proper-noun errors. ROVER-vote at word level inside
+one model invocation — no extra encoder forward pass. NeMo has a
+`hybrid_rnnt_ctc_bpe` path that does this natively. Expected +0.002-0.005
+official for ~0 speed cost.
+
+### C. Retrieval-aware ASR (most creative, untried, blue-sky upside)
+
+Slang prompt was mined from the NLP corpus, so audio transcripts likely
+share phrasing with corpus sentences. Pipeline:
+
+1. Parakeet emits hypothesis.
+2. Embed hypothesis with BGE-small (already in the NLP container).
+3. Retrieve top-1 corpus sentence by cosine.
+4. If cosine > 0.92 AND word-level WER (hyp vs retrieved) ≤ 0.2, replace
+   hypothesis with the retrieved sentence.
+
+If transcripts are paraphrased from corpus content, one corpus hit fixes
+every slang error in that sentence at once. 30-minute A/B on local data
+to check whether retrieval similarities cluster high before investing
+further. Risk: paraphrase too loose → false replacements; gate hard.
+
+### D. KenLM in-domain shallow fusion (canonical, not yet wired)
+
+Train a 4-gram KenLM on the NLP corpus, plug into NeMo's beam decoder.
+TDT supports beam + LM rescoring. Every published ASR benchmark gets
++0.5-2 WER points absolute from this; on a vocabulary-driven failure
+profile like ours it could be +1-2. Tradeoff: beam decoding is slower
+than greedy. Cloud speed is currently 0.946 — there's some headroom but
+not infinite. Pair with option H (conditional beam) to preserve speed.
+
+### E. TTS-augmented training for slang coverage
+
+The 4110 clips have median 1-3 hits per rare in-world noun. Synthesize
+50-100 additional clips per top-200 slang term using a fast TTS (Piper,
+Coqui, XTTS) reading templates like
+`"Approach the Sarento checkpoint at zero six hundred."` Mix into FT at
+~10% of batches. Targets the failure distribution directly. Risk:
+TTS-bias leakage — small because Parakeet wasn't pretrained on this
+synth data.
+
+### F. Active-learning targeted FT
+
+Run zero-shot Parakeet over all 4110 clips, identify the ~200 worst-WER
+ones, oversample 8× alongside slang oversampling. Direct attack on the
+long-tail failure distribution. Adds nothing to wall clock; just a
+manifest change in
+[../training/asr/prepare_data_nemo.py](../training/asr/prepare_data_nemo.py).
+
+### G. Conditional Whisper fallback (uses both backbones)
+
+Run Parakeet first. For each clip, check TDT confidence
+(`hypothesis.score`). For the bottom ~5% by confidence, fall back to
+`ft-lora32-v1` Whisper and ROVER-vote at word level. ~5% extra wall
+clock (Whisper only fires sometimes). The two models miss different
+things — Whisper's vocab attention captures some slang Parakeet munges,
+and vice versa. Fallback image already exists; just need to load both
+managers.
+
+### H. Conditional N-best beam rescoring (speed-preserving)
+
+Greedy TDT for high-confidence clips (~90% of test), beam-4 + KenLM
+rescoring only for low-confidence ones. Cherry-picks the accuracy gain
+of option D while keeping the speed score intact.
+
+### I. Vocab extension on the SentencePiece tokenizer
+
+Parakeet splits `Sarento` into pieces it never saw co-occur. Add ~200
+in-world proper nouns as new SentencePiece tokens, randomly initialize
+their embeddings, fine-tune the embedding matrix + joint head for 1
+epoch. Now `Sarento` is one emission, not three risky pieces. NeMo
+supports tokenizer extension via `change_vocabulary`. Higher
+implementation cost; addresses the root cause.
+
+### J. External pretraining-data fine-tune (orthogonal)
+
+LibriSpeech / CommonVoice / GigaSpeech mixed in at ~10% weight during
+FT for one epoch reduces generic residual ~1% WER (not slang, but
+real-world variety). Won't break 0.99 alone but stacks.
+
+### Recommended stack if we commit to chasing 0.99
+
+These compose. Rough 9-day budget to deadline:
+
+1. **Day 1**: A (phonetic post-correction) + B (CTC+TDT hybrid head) —
+   both pure inference-time, A/B against `nemo-zs` without retraining.
+   If either lands +0.01, ship immediately.
+2. **Day 2-3**: C (retrieval-aware ASR) — fastest creative experiment
+   with the biggest blue-sky upside. Validate retrieval similarity
+   distribution on local first.
+3. **Day 3-5**: queued Parakeet FT + F (active-learning oversampling) +
+   E (TTS-augmented data). Single training run, three levers stacked.
+4. **Day 6-7**: D (KenLM shallow fusion) for the final accuracy push.
+   Validate speed stays ≥ 0.92 — pair with H if it doesn't.
+5. **Day 8-9**: only if still below 0.99 — G (conditional Whisper
+   fallback) or I (vocab extension).
+
+The two ideas that exploit competition-specific assets and most likely
+distinguish 0.99-tier teams from 0.97-tier teams:
+
+- **C (retrieval-aware ASR)** and **D (KenLM on the NLP corpus)** both
+  leverage the fact that we have the full in-world text corpus.
+  Generic ASR teams don't have this lever.
+
 ## What our model runs on
 
 ### Inference (the shipped Docker container)
