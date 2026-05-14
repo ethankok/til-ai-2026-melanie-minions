@@ -7,8 +7,7 @@ Last updated: 14 May 2026 13:35 SGT
 
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
-NLP    melanie-minions-nlp      v3-id-parse 14/05/2026 05:33:21   0 / 700       0.000   0.888  ← REGRESSED; positional IDs wrong on cloud (eval format unknown)
-NLP    (prev best) latest       latest      12/05/2026 03:23:35   0 / 700       0.301   0.971
+NLP    melanie-minions-nlp      v4-dict-id  14/05/2026 13:29:56   0 / 700       0.483   0.888  ← NEW HIGH; new-eval recovery from 0.000
 ASR    melanie-minions-asr      ft-lora32-v1 13/05/2026 11:22:30  0 / 400       0.957   0.849
 CV     melanie-minions-cv       cv-yolo-ft-v1 14/05/2026 03:53:57 0 / 500       0.402   0.963
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
@@ -22,12 +21,13 @@ AE (bc)  melanie-minions-ae     bc-v1       14/05/2026 01:22:13   0 / 30        
 
 ```text
 Tag           Submitted          Score   Speed   Errors    Local        Notes
-latest        12/05 03:23        0.301   0.971   0 / 700   —            Sentence-split + lexical token-overlap retrieval (old eval, old schema)
-v2-hybrid-rag 14/05 ~04:00       0.000   ~      0 / 700   —            New eval. Hybrid BM25+BGE+rerank+RoBERTa-SQuAD2. Positional DOC-{i+1:04d}; 0.0 because filenames have 44 gaps in 0001..0340 and source_docs uses real filename IDs
-v3-id-parse   14/05 05:33        0.000   0.888   0 / 700   0.678 (1)    Same pipeline + defensive parser (DOC-XXXX prefix / dict / positional). Local 0.678 with prefix-prepended docs; cloud 0.000 confirms cloud sends plain strings with NO prefix and our positional fallback misaligns with real filename IDs
+latest        12/05 03:23        0.301   0.971   0 / 700   —            OLD EVAL; pre-wipe; lexical token-overlap baseline (no longer on leaderboard)
+v2-hybrid-rag 14/05 ~04:00       0.000   ~       0 / 700   —            New eval. Hybrid BM25+BGE+rerank+RoBERTa-SQuAD2 + positional DOC-{i+1:04d}. 0.0 because cloud was buggy: organisers' eval server was sending plain strings while the spec called for dicts (see v4-dict-id)
+v3-id-parse   14/05 05:33        0.000   0.888   0 / 700   0.678 (1)    Same pipeline + defensive parser (DOC-XXXX prefix / dict / positional). Cloud 0.000 caused by Ryan's eval bug (still sending plain strings); local 0.678 with prefix patch proved the model itself was sound
+v4-dict-id    14/05 13:29        0.483   0.888   0 / 700   0.678        After Ryan FIXED the eval to send {"id":"DOC-XXXX","document":"..."}. Same image as v3-id-parse (just re-tagged); defensive parser's dict-shape branch caught the format immediately. NEW HIGH on the post-wipe leaderboard
 ```
 
-(1) Local test was patched to prepend `DOC-XXXX\n` to each document so the model could see filename IDs. Real cloud format is unconfirmed — see `ryan helps everyone with the NLP change` hackoverflow thread.
+(1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.
 
 ## ASR submission history
 
@@ -91,16 +91,16 @@ Noise has no direct Qualifier reward; it is a Finals CV-disruption component
 Each scored challenge blends `75%` accuracy/reward and `25%` speed. Qualifier speed is `1 - min(t_elapsed, 30 minutes) / 30 minutes` over the full test set.
 
 Using raw task scores only (best-ever shipped per task on the CURRENT
-leaderboard — the old NLP score of 0.301 was wiped when organisers rolled
-out the new eval; `v3-id-parse` at 0.000 is now our only NLP submission):
+leaderboard — old NLP score of 0.301 was wiped when organisers rolled out
+the new eval; `v4-dict-id` 0.483 is our recovery):
 
 ```text
 0.40 * AE 0.507  = 0.2028
-0.20 * NLP 0.000 = 0.0000   ← BLOCKED on doc-ID format clarification from Ryan; positional fallback misaligns with cloud IDs
+0.20 * NLP 0.483 = 0.0966   ← NEW HIGH; recovered from 0.000 after Ryan fixed eval server bug
 0.20 * ASR 0.957 = 0.1914
 0.20 * CV 0.402  = 0.0804
 --------------------------------
-Estimated weighted qualifier score = 0.4746
+Estimated weighted qualifier score = 0.5712
 ```
 
 `planner-v3b` keeps AE accuracy flat at `0.499` (vs `planner-v2`'s `0.501`) — within noise — but speed jumped `0.771 → 0.853`. Local→official gap is unchanged at `~0.17` (local mean `0.681` → official `0.499`); heuristic ceiling is in sight. Next swing is a learned policy (see Next priority).
@@ -109,16 +109,17 @@ Using the observed ~75% score / 25% speed blend:
 
 ```text
 AE   contribution = 0.2381   (0.75*0.507 + 0.25*0.861 = 0.5953)
-NLP  contribution = 0.0444   (0.75*0.000 + 0.25*0.888 = 0.2220) ← speed only; 0.0 retrieval until ID format is fixed
+NLP  contribution = 0.1168   (0.75*0.483 + 0.25*0.888 = 0.5843)  ← +0.0724 vs the 0.000 / speed-only state
 ASR  contribution = 0.1860
 CV   contribution = 0.1085   (0.75*0.402 + 0.25*0.963 = 0.5423)
 --------------------------------
-Estimated blended qualifier score = 0.5770
+Estimated blended qualifier score = 0.6494
 ```
 
 ## Notes
 
 - All 5 tasks have been submitted successfully at least once.
+- **NLP recovered to `0.483` on `v4-dict-id`** (14/05 13:29 SGT). The new eval was rolled out 14 May with a strict top-3-docs schema and 0.9 equivalence threshold; the old `0.301` was wiped. Two prior new-eval attempts (`v2-hybrid-rag`, `v3-id-parse`) both scored `0.000` — root cause was Ryan's eval server bug (sending plain strings instead of `{"id": "DOC-XXXX", "document": "..."}` dicts). Our manager's defensive parser was already correct; resubmitting the *same image* under `v4-dict-id` after Ryan's fix landed `0.483/0.888`. Local→cloud gap of `~0.20` (local 0.678) is consistent with AE/CV gaps on this competition. Pipeline: 3-sentence sliding chunks + BM25 ⊕ BGE-small dense ⊕ BGE-reranker-base + RoBERTa-SQuAD2 extractive QA, all GPU fp16.
 - **ASR crossed the 0.95 accuracy target**: `ft-lora32-v1` officially scored `0.957 / 0.849` (errors `0 / 400`). That's **+0.019 absolute accuracy** over `vad-off-v1`, achieved by a single 3-epoch LoRA-rank-32 decoder fine-tune of `distil-whisper/distil-large-v3` on the full 4110-clip novice manifest. Speed dipped by `0.010` (CT2 file size noise; recoverable via int8_float16 re-export, see Next priority). Generalization gap turned out **negative**: held-out val WER `0.04662` → official WER `~0.043`, i.e. the official 400-clip distribution is slightly easier than the local held-out slice — a useful piece of leaderboard intuition for future runs.
 - **`vad-off-v1` (the prior peak)**: inference-only fixes (`vad_filter=False`, hallucination guards, spoken-form ordinals, coordinate-safe decimal regex, tighter silence guard) took accuracy from `norm-v1`'s `0.877` to `0.938` with speed barely changed (-0.005). Local-official WER gap on that run was +0.007 absolute. Those fixes stayed in `ft-lora32-v1` and compounded with the LoRA gains.
 - The local `1 - MER` number is a **scoring artifact** of the local manifest being English-only (three other language buckets contribute 0 to the divide-by-4 mean). Track the bare `english error rate (WER)` line instead.
@@ -132,7 +133,7 @@ Estimated blended qualifier score = 0.5770
 
 ## Next priority
 
-1. **NLP doc-ID format — blocked on Ryan** — `v3-id-parse` scored 0.000 with 0 errors on the cloud, which is empirical proof that the cloud sends documents in a format our defensive parser doesn't catch. Our positional fallback `DOC-{i+1:04d}` misaligns with the cloud's filename-style IDs because the local corpus has 44 ID gaps in 0001..0340; the cloud's held-out corpus likely has similar gaps. Local pipeline scored `0.678` with `DOC-XXXX\n`-prefixed docs, so the model itself is sound — only the ID-extraction step is wrong. Need Ryan's hackoverflow answer to know whether the cloud renumbers consecutively, sorts by filename, or uses a side-channel. Once answered, one ~10-line manager patch + rebuild + resubmit recovers a 0.4–0.7 NLP score.
-2. **AE PPO with mixed opponents** — bc-v1 shipped, scored `0.364/0.856` and **regressed -0.135 vs planner-v3b**. Local→official gap blew up from 0.18 (heuristic) to 0.31 (BC), confirming the gap is **environment-distribution mismatch**, not heuristic-specific: the BC policy memorized planner behavior against random opponents, which doesn't generalize to whatever the hidden eval uses. **Planner-v3b stays shipped** (`0.499` > `0.364`). Way forward: `train_ppo.py` initialized from `bc.pt`, trained against a **mixed opponent pool** (random + frozen planner-v3b + frozen self-copies + scripted aggressors) so the policy can't overfit to one distribution. Deployment plumbing already validated end-to-end through bc-v1. If PPO still loses to v3b official, fall back to v3b and pursue per-game logging.
+1. **NLP quality push (now unblocked)** — `v4-dict-id` recovered to `0.483 / 0.888` on the cloud, local 0.678 → cloud 0.483 gap of `~0.20`. Pipeline is hybrid BM25+BGE-small + BGE-reranker-base + RoBERTa-SQuAD2; same proportional gap we see on AE/CV, so it's likely distribution shift on the held-out corpus rather than a bug. Levers in increasing cost/impact: (a) **batch the SQuAD2 forward pass** (currently sequential over top-10 chunks in `_extract_answer`; `QA_BATCH=16` is defined but unused — should free 50–80% of QA latency), (b) **paragraph-aware chunking** (split on `\n\n` before sentence-windowing, preserves longer answer spans), (c) **bigger embedder/reranker** (`bge-base-en-v1.5`, `bge-reranker-large` — costs latency budget, possibly worth trading against the saved time from QA batching), (d) **sentence-of-best-chunk fallback** for when SQuAD2 confidence is low. Estimated reachable: 0.55–0.65 cloud.
+2. **AE PPO regression analysis** — `ppo-v2` (`0.489/0.854`) regressed -0.018 vs `ppo-v1` (`0.507/0.861`), with the local→official gap widening from `~0.19` to `~0.27`. Frame-stacking + varied-map training did not generalize. `ppo-v1` stays shipped. Path forward: per-game logging on official eval to characterise the gap (which scenarios punish the policy most), then targeted curriculum. Alternative: dial back to a leaner PPO variant without frame-stacking.
 3. **CV v2 A/B only after AE/NLP** — `cv-yolo-ft-v1` is clean and much better (`0.402/0.963`) but has a large local→official gap (`0.885` local mAP50-95 → `0.402` official). If revisiting CV, try hidden-shift/generalization moves: stronger augmentation, class-balanced sampling, `yolov8m`, or lower confidence tuning. Do not spend time on output-format debugging unless errors appear.
 4. **ASR beam/prompt tweaks only if idle** — `ft-lora32-v1` already crosses 0.95 and `int8_float16` regressed to `0.923/0.856`, so speed quantization is off the table for this checkpoint.
