@@ -1,0 +1,39 @@
+# Dockerfile for building the ASR image on the NeMo / Parakeet-TDT backend.
+#
+# Build with:
+#   docker build -f Dockerfile.nemo -t TEAM_ID-asr:nemo-v1 .
+# (or `til build asr nemo-v1` after copying this file to Dockerfile)
+#
+# The shipped distil-whisper image still uses `Dockerfile`. This file is the
+# parallel build path used for A/B testing the Parakeet backend.
+
+FROM nvcr.io/nvidia/pytorch:25.11-py3
+
+# Configures settings for the image.
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PIP_ROOT_USER_ACTION=ignore
+# Keep model loaders fully offline at runtime — eval container has no internet.
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+# Switch the server to the NeMo backend.
+ENV ASR_BACKEND=nemo
+WORKDIR /workspace
+
+# Install dependencies. NeMo is a heavy install; this is the longest layer.
+RUN pip install -U pip
+COPY requirements-nemo.txt .
+RUN pip install --no-cache-dir -r requirements-nemo.txt
+
+# Copy source.
+COPY src .
+
+# Bake in the Parakeet `.nemo` weights and the slang prompt. Populated on the
+# GCP Workbench instance via training/asr/download_models_nemo.py before
+# `til build asr nemo-v1`. Layout:
+#   models/parakeet-tdt-0.6b-v2.nemo
+#   models/slang_prompt.txt
+COPY models /workspace/models/asr
+
+# Starts your model server.
+CMD uvicorn asr_server:app --port 5001 --host 0.0.0.0

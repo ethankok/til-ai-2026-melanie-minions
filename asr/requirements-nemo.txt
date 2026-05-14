@@ -1,0 +1,16 @@
+# Dependencies for the NeMo / Parakeet-TDT variant of the ASR container.
+# Used by Dockerfile.nemo. The shipped float16 distil-whisper image keeps
+# using requirements.txt; this file is a parallel build path for A/B testing.
+
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+
+# NeMo ASR runtime. nemo_toolkit[asr] pulls in pytorch-lightning, hydra-core,
+# omegaconf, and a handful of audio libs. Pin a known-good 2.x release that
+# supports the Parakeet-TDT-0.6B-v2 checkpoint.
+nemo_toolkit[asr]==2.0.0
+# NeMo expects a recent libsndfile and resampler. soundfile + librosa mirror
+# the whisper image so audio decode behavior matches.
+soundfile>=0.12.1
+librosa>=0.10.0
+numpy

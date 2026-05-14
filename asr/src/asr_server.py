@@ -1,16 +1,28 @@
-"""Runs the ASR server."""
+"""Runs the ASR server.
 
-# Unless you want to do something special with the server, you shouldn't need
-# to change anything in this file.
+Backend selection is via the `ASR_BACKEND` env var:
+  - `whisper` (default): faster-whisper distil-large-v3 from `asr_manager.py`
+  - `nemo`:              NVIDIA Parakeet-TDT from `asr_manager_nemo.py`
 
+Defaulting to whisper keeps the shipped image bit-identical when this file is
+deployed without the env var set. The nemo path is opt-in so the existing
+Dockerfile and build pipeline are unaffected.
+"""
 
 import base64
+import os
 
-from asr_manager import ASRManager
 from fastapi import FastAPI, Request
 
+_BACKEND = os.environ.get("ASR_BACKEND", "whisper").lower()
+
+if _BACKEND == "nemo":
+    from asr_manager_nemo import NemoASRManager as _ManagerCls
+else:
+    from asr_manager import ASRManager as _ManagerCls
+
 app = FastAPI()
-manager = ASRManager()
+manager = _ManagerCls()
 
 
 @app.post("/asr")

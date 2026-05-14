@@ -16,6 +16,73 @@ Crossed the 0.95 accuracy target. Blended score (75% acc + 25% speed) ≈ 0.930.
 Leaderboard keeps the high score, so subsequent worse submissions cannot demote
 us off this peak.
 
+## Active experiment: NeMo Parakeet-TDT backend
+
+Leaderboard inspection on 14 May shows multiple Novice teams above
+`0.97 / 0.92` simultaneously (Overflow `0.991/0.925`, OpenLarp `0.986/0.940`,
+suite108 `0.982/0.920`). distil-large-v3 cannot reach that frontier
+structurally — its autoregressive cross-attention decoder is the speed
+bottleneck. Our hypothesis: top teams are on a NeMo transducer, most likely
+**Parakeet-TDT-0.6B-v2** (top of the HF Open ASR English leaderboard, RTFx in
+the thousands on T4, non-autoregressive over cross-attention).
+
+Two pieces of evidence support switching the backbone:
+
+1. **Air-gap is fine for NeMo.** README + CLAUDE.md confirm `til test` runs
+   on a no-internet docker network. NeMo loads from a local `.nemo` file via
+   `ASRModel.restore_from(restore_path=...)`, no network calls. Same
+   bake-into-image pattern the NLP container already uses.
+2. **Transcript style favors Parakeet.** All numbers in the manifest are
+   spelled out (`"zero six hundred"`, `"twenty third"`, `"two-seven-zero"`,
+   `"three hundred and sixty-five"`). Whisper-family models emit digits and
+   need `_digits_to_words` to recover; Parakeet emits spelled-out numbers
+   natively, removing the riskiest part of post-processing. The post-processor
+   now lives in `asr/src/asr_postprocess.py` and stays as a safety net.
+
+Parallel build path (does not touch the shipped distil-whisper image):
+
+```text
+asr/src/asr_postprocess.py          shared digits->words (extracted from manager)
+asr/src/asr_manager.py              UNCHANGED behavior; now imports postprocess
+asr/src/asr_manager_nemo.py         NEW: NemoASRManager (Parakeet-TDT)
+asr/src/asr_server.py               picks backend via ASR_BACKEND env (default whisper)
+asr/requirements-nemo.txt           NEW: nemo_toolkit[asr]==2.0.0 + audio libs
+asr/Dockerfile.nemo                 NEW: parallel image, ENV ASR_BACKEND=nemo
+training/asr/download_models_nemo.py NEW: stage parakeet-tdt-0.6b-v2.nemo into asr/models/
+```
+
+Phase plan with kill switches at each step:
+
+1. **Zero-shot Parakeet on the held-out 10% val.**
+   ```bash
+   pip install -r asr/requirements-nemo.txt   # ~10 min on Workbench
+   python training/asr/download_models_nemo.py \
+       --model nvidia/parakeet-tdt-0.6b-v2 \
+       --out asr/models
+   # Quick local eval against the held-out val (Workbench-side script TBD;
+   # for now just `til test` against the new image).
+   docker build -f asr/Dockerfile.nemo -t melanie-minions-asr:nemo-zs .
+   til test asr nemo-zs
+   ```
+   Decision gate: official-style Eng-WER ≤ 0.05 on the held-out val.
+   - If **yes**, submit as `nemo-zs-v1` and continue to phase 2.
+   - If **no**, abort. The shipped `ft-lora32-v1` stays unaffected because
+     none of the whisper files changed.
+
+2. **Add slang context biasing.** `NemoASRManager._configure_biasing` already
+   tries newer-NeMo APIs (`set_context_biasing`, `set_boosting_words`,
+   `configure_biasing`); if the installed NeMo version exposes one, slang
+   biasing engages automatically. If not, the manager logs and skips — no
+   crash. Worth +0.005-0.015 on slang-heavy clips.
+
+3. **Fine-tune Parakeet on the 4110 novice clips** (only if phases 1-2 fall
+   short of 0.99). NeMo supports adapter-based PEFT and full FT; 0.6B fits T4
+   for full FT at small batch. Same Option B held-out 10% as the current LoRA
+   run.
+
+Submission gate: zero `errors`, schema unchanged, official blended score
+strictly above `ft-lora32-v1`'s `0.957/0.849` (i.e. blended ≥ `0.930`).
+
 ## What our model runs on
 
 ### Inference (the shipped Docker container)
