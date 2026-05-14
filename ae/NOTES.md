@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 14 May 2026 SGT — PPO run started
+Last updated: 14 May 2026 13:35 SGT — ppo-v2 regressed, ppo-v1 stays shipped
 
 Per-task working log for AE (Autonomous Exploration / Bomberman). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#ae).
@@ -8,11 +8,13 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`ppo-v1` — official 0.507 / 0.861 (14 May 04:36 SGT, 0/30 errors).**
+**`ppo-v1` — official 0.507 / 0.861 (14 May 04:36 SGT, 0/30 errors).** Team-best AE score. **ppo-v2 regressed and should be rolled back if a fresh AE submission is needed.**
 
-Marginally above `planner-v3b` (+0.008 score, +0.008 speed) — within submission noise. The 8 hours of BC → PPO work netted essentially zero over the heuristic. **Key finding**: the local→official gap held at **0.19** for PPO (local mean 0.701 → official 0.507), nearly identical to v3b's 0.18 — mixed-opponent training did NOT close it. The gap is **not opponent-distribution alone**; it's something else about the hidden eval (different map, different episode length, different reward calibration, or a much harder fixed-seed scenario than local novice). Heuristic-tuning and RL both saturate at ~0.50 official until we instrument what the hidden eval is actually doing.
+`ppo-v1` is marginally above `planner-v3b` (+0.008 score, +0.008 speed) — within submission noise. The follow-up `ppo-v2` (frame stacking N=4, value-loss fix, varied-maps training) hit a **0.763 local mean** but only **0.489 official** — the local→official gap **widened** from 0.19 (v3b/ppo-v1) to 0.27 (ppo-v2). Varied-map training was the wrong bet; whatever the hidden eval uses, it's *neither* novice nor `novice=False` random seeds.
 
-Previous shipped tag: `planner-v3b` — official 0.499 / 0.853 (13 May 23:42 SGT, 0/30 errors).
+**Cumulative finding across v1 → v3b → bc-v1 → ppo-v1 → ppo-v2**: the local→official gap is ≥ 0.18 for every approach we've tried (heuristics, BC, mixed-opp PPO, frame-stacked PPO + varied maps). The gap is structural to the hidden eval distribution and **none of our training-side interventions have moved it**. Heuristic-tuning and RL both saturate at ~0.50 official.
+
+Previous shipped tag: `planner-v3b` — official 0.499 / 0.853 (13 May 23:42 SGT, 0/30 errors). v1 weights are backed up at `~/ae-checkpoints-backup/deployed-bc-v1.pt` on Workbench.
 
 Score essentially flat vs `planner-v2` (-0.002, within noise), but **speed
 jumped +0.082** (`0.771 → 0.853`) from algorithmic wins kept from the
@@ -59,6 +61,7 @@ planner-v3  (not submitted)    —       —       9/9     Bigger v2 → multi-s
 planner-v3b 13/05 23:42        0.499   0.853   0/30    v3 minus bomb-chains; predictive range=1 with ≥2 enemies; threat 2.0/5.0. Score flat, speed +0.082 from BFS/cache/uvloop.
 bc-v1       14/05 01:22        0.364   0.856   0/30    BC of planner-v3b regressed badly; deployment path works but policy overfit random-opponent local rollouts.
 ppo-v1      14/05 04:36        0.507   0.861   0/30    NEW HIGH (+0.008/+0.008 vs v3b). Mixed-opp PPO from bc.pt warm start; local→official gap 0.19 unchanged from heuristic.
+ppo-v2      14/05 13:29        0.489   0.854   0/30    REGRESSED -0.018. Frame-stacked + value-loss-fixed + varied-maps PPO. Local 0.763 → official 0.489; gap widened 0.19 → 0.27.
 ```
 
 ## Local validation history
@@ -83,7 +86,7 @@ ppo-v2 BC   14/05 eval_policy  0.6788 novice                30-epoch supervised 
 ppo-v2      14/05 eval_policy  0.7138/0.7752/0.7885 novice  Mean 0.759 (+0.058 vs ppo-v1 novice). Best single run 0.789.
 ppo-v2      14/05 eval_policy  0.6353/0.6910/0.6768 varied  Mean 0.668 — policy generalizes to non-novice maps.
 ppo-v2      14/05 til test     0.7282/0.8260/0.7352         Container mean 0.763 (faithful to direct). 0.826 single-run high.
-ppo-v2      14/05 submitted    pending                       awaiting official; bc-v2 / ppo-v2 plumbing validated.
+ppo-v2      14/05 13:29        0.489 official                REGRESSED -0.018 vs ppo-v1. Local→official gap widened 0.19 → 0.27. Varied-map training was the wrong bet.
 ```
 
 ## Detailed timeline
@@ -359,12 +362,12 @@ tuning. **Score is the hard problem** — needs a different approach.
 
 ## Next steps
 
-PPO landed at 0.507 official — marginal +0.008 over heuristic. The 0.19 local→official gap is unchanged across heuristic + BC + RL, which means we can't beat it without understanding what hidden eval does differently. Two real paths:
+Five AE approaches submitted (v1, v2, v3b heuristics + bc-v1 + ppo-v1 + ppo-v2 RL), best official is **0.507 (ppo-v1)**. The local→official gap is ≥ 0.18 across **every** approach, and ppo-v2's varied-map training actively *widened* it to 0.27. We've spent the budget for training-side experiments. **AE is in maintenance mode at ppo-v1.**
 
-1. **Shift focus to NLP** (highest ROI in the repo). NLP at 0.301 is the biggest unforced loss. Going 0.30 → 0.60 buys +0.06 qualifier — same magnitude as a hypothetical AE 0.50 → 0.65 push and with much higher expected probability of success. AE is now in maintenance mode at `ppo-v1`.
-2. **Per-game JSONL logging + hidden-eval diagnosis**. The submission Debug/Eval URLs in the Discord notification probably expose per-game replays. Capture our local games the same way, diff scenarios where we score 1.0 locally and the hidden eval scores 0.3. Without this data, more AE training is throwing darts at the gap.
-3. (Deferred) **Speed micro-optimizations** — ONNX-export the policy to onnxruntime (~30 MB, ~3× faster CPU inference), or slimmer Docker base. Only after we know AE is the rate-limiting task in the qualifier.
-4. (Deferred) **Push PPO harder** — fix the v_loss explosion (reward normalization), 4× the updates, longer rollouts. Best case local 0.70 → 0.85 → official ~0.66. But this only matters if we've already mined NLP/CV gains and AE remains the bottleneck.
+1. **Rollback if a new AE submission is ever needed.** ppo-v2 weights are currently in `ae/models/bc.pt` on Workbench, which means a re-build picks up the worse policy. To revert: `cp ~/ae-checkpoints-backup/deployed-bc-v1.pt ae/models/bc.pt && til build ae ppo-v1-restore`.
+2. **Don't run more local-eval-driven AE training.** Five runs proved local mean is not a signal for official score on AE. Local 0.681 → official 0.499, local 0.701 → official 0.507, local 0.763 → **official 0.489**. The relationship is essentially uncorrelated.
+3. **Only AE work worth doing now: hidden-eval data.** The Discord submissions include Debug/Eval URLs. If those expose per-game replays/scores, comparing them against our local replays could tell us *what* the hidden eval does differently (map layout, opponent style, episode length). Without that data, every further AE training run is a coin flip.
+4. (Deferred forever unless we get hidden-eval data) **Speed micro-opts**, **bigger network**, **longer training**, **richer reward shaping** — none have a reason to help when local doesn't predict official.
 
 ## Reproducibility / pointers
 

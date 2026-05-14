@@ -1,7 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 14 May 2026 05:48 SGT
+Last updated: 14 May 2026 13:35 SGT
 
 ## Latest submitted scores
 
@@ -12,7 +12,8 @@ NLP    (prev best) latest       latest      12/05/2026 03:23:35   0 / 700       
 ASR    melanie-minions-asr      ft-lora32-v1 13/05/2026 11:22:30  0 / 400       0.957   0.849
 CV     melanie-minions-cv       cv-yolo-ft-v1 14/05/2026 03:53:57 0 / 500       0.402   0.963
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
-AE     melanie-minions-ae       ppo-v1      14/05/2026 04:36:51   0 / 30        0.507   0.861  ← new high; +0.008 vs v3b (within noise)
+AE     melanie-minions-ae       ppo-v1      14/05/2026 04:36:51   0 / 30        0.507   0.861  ← team BEST stands; rollback recommended
+AE (v2)  melanie-minions-ae     ppo-v2      14/05/2026 13:29:54   0 / 30        0.489   0.854  ← regressed -0.018; local→official gap widened 0.19 → 0.27
 AE (v3b) melanie-minions-ae     planner-v3b 13/05/2026 23:42:57   0 / 30        0.499   0.853
 AE (bc)  melanie-minions-ae     bc-v1       14/05/2026 01:22:13   0 / 30        0.364   0.856
 ```
@@ -72,7 +73,7 @@ ppo-v1      14/05 Workbench    0.711/0.700/0.693 eval_policy + 0.766/0.634/0.708
 ppo-v1      14/05 04:36        0.507/0.861 official 0 / 30 official errors   NEW HIGH (+0.008 score, +0.008 speed vs v3b). Gap stayed at 0.19 — mixed-opponent training did NOT close the local→official gap.
 ppo-v2      14/05 eval_policy  0.7138/0.7752/0.7885 novice + 0.6353/0.6910/0.6768 varied   PPO from BC warm start with frame-stacking (N=4), reward-scale 50, value-loss clip, vary-maps, 162/200 updates before idle shutdown. Novice mean 0.759, varied mean 0.668.
 ppo-v2      14/05 til test     0.7282/0.8260/0.7352   Container mean ≈ 0.763 (highest single run 0.826 — best AE local ever).
-ppo-v2      14/05 submitted    pending — awaiting official result.
+ppo-v2      14/05 13:29        0.489/0.854 official 0 / 30 official errors   REGRESSED -0.018 vs ppo-v1. Local 0.763 → official 0.489: gap WIDENED 0.19 → 0.27. Frame-stacking + varied-map training did NOT generalize; the policy overfit the varied-maps distribution.
 ```
 
 ## Qualifier weighted score estimate
