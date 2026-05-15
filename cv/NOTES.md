@@ -268,6 +268,11 @@ python training/cv/sweep_cv_http.py \
 # 6 runs * ~50s = ~5 min
 ```
 
+The sweep script now records per-run wall-clock time and prints an estimated
+`0.75*mAP + 0.25*speed` blend extrapolated to 500 images / 30 minutes. Use the
+"Top estimated blended results" block, not just the mAP ranking, when deciding
+whether v11m@1280-noaug is worth submitting.
+
 If revisiting CV, the actual ROI levers are now (in order):
 - Try the v11m@1280 sweep and re-submit if it clears 0.91 hard held-out.
 - Stop training and accept tier1's 0.556 as the CV high. CV is 20% of

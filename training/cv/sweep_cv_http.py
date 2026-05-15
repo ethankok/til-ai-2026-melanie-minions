@@ -64,7 +64,22 @@ def _wait_for_health(port: int, timeout_s: float) -> None:
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["conf", "iou", "imgsz", "max_det", "augment", "map", "map50", "map75", "predictions"]
+    fields = [
+        "conf",
+        "iou",
+        "imgsz",
+        "max_det",
+        "augment",
+        "map",
+        "map50",
+        "map75",
+        "elapsed_s",
+        "images_per_s",
+        "est_full_s",
+        "est_speed",
+        "est_blended",
+        "predictions",
+    ]
     with path.open("w", newline="", encoding="utf-8") as csv_file:
         writer = csv.DictWriter(csv_file, fieldnames=fields)
         writer.writeheader()
@@ -93,6 +108,20 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=5002)
     parser.add_argument("--limit", type=int, default=0, help="Limit images for a quick smoke sweep")
     parser.add_argument("--cpu", action="store_true", help="Run Docker without --gpus all")
+    parser.add_argument(
+        "--speed-images",
+        type=int,
+        default=500,
+        help="Image count used to extrapolate challenge speed from subset sweeps",
+    )
+    parser.add_argument(
+        "--speed-max-seconds",
+        type=float,
+        default=1800.0,
+        help="Challenge speed denominator; qualifier uses 30 minutes",
+    )
+    parser.add_argument("--accuracy-weight", type=float, default=0.75)
+    parser.add_argument("--speed-weight", type=float, default=0.25)
     args = parser.parse_args()
 
     annotations = json.loads(args.annotations.read_text())
@@ -135,6 +164,7 @@ def main() -> None:
         try:
             _start_container(args.image, container_name, args.port, env, use_gpus=not args.cpu)
             _wait_for_health(args.port, args.startup_timeout)
+            eval_start = time.time()
             predictions = collect_predictions(
                 annotations=annotations,
                 images_dir=args.data_dir / "images",
@@ -142,10 +172,16 @@ def main() -> None:
                 batch_size=args.batch_size,
                 timeout=args.request_timeout,
             )
+            elapsed_s = time.time() - eval_start
             summary = score_predictions(predictions, annotations)
         finally:
             _stop_container(container_name)
 
+        image_count = max(1, len(annotations["images"]))
+        images_per_s = image_count / elapsed_s if elapsed_s > 0 else 0.0
+        est_full_s = elapsed_s * (args.speed_images / image_count)
+        est_speed = 1.0 - min(est_full_s, args.speed_max_seconds) / args.speed_max_seconds
+        est_blended = args.accuracy_weight * summary["map"] + args.speed_weight * est_speed
         row = {
             "conf": conf,
             "iou": iou,
@@ -155,6 +191,11 @@ def main() -> None:
             "map": summary["map"],
             "map50": summary["map50"],
             "map75": summary["map75"],
+            "elapsed_s": elapsed_s,
+            "images_per_s": images_per_s,
+            "est_full_s": est_full_s,
+            "est_speed": est_speed,
+            "est_blended": est_blended,
             "predictions": len(predictions),
             "summary": summary,
         }
@@ -166,6 +207,8 @@ def main() -> None:
         best = max(rows, key=lambda item: item["map"])
         print(
             f"mAP={summary['map']:.4f} mAP50={summary['map50']:.4f} "
+            f"elapsed={elapsed_s:.1f}s est_speed={est_speed:.3f} "
+            f"est_blended={est_blended:.4f} "
             f"best={best['map']:.4f} @ conf={best['conf']} iou={best['iou']} "
             f"imgsz={best['imgsz']} aug={best['augment']}"
         )
@@ -177,6 +220,15 @@ def main() -> None:
     for row in rows[:10]:
         print(
             f"mAP={row['map']:.4f} mAP50={row['map50']:.4f} "
+            f"est_speed={row['est_speed']:.3f} est_blended={row['est_blended']:.4f} "
+            f"conf={row['conf']} iou={row['iou']} imgsz={row['imgsz']} "
+            f"max_det={row['max_det']} aug={row['augment']}"
+        )
+    print("\nTop estimated blended results")
+    for row in sorted(rows, key=lambda item: item["est_blended"], reverse=True)[:10]:
+        print(
+            f"blend={row['est_blended']:.4f} mAP={row['map']:.4f} "
+            f"est_speed={row['est_speed']:.3f} elapsed={row['elapsed_s']:.1f}s "
             f"conf={row['conf']} iou={row['iou']} imgsz={row['imgsz']} "
             f"max_det={row['max_det']} aug={row['augment']}"
         )
