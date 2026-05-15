@@ -1,17 +1,20 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 16 May 2026 02:30 SGT — CV Pass A failure analysis + tiled
-inference A/B done (no qualifier-positive variant on tier1 weights);
-`v8s-1024` retrain running on Workbench. NLP `v9-doc-ensemble` remains best
-submitted blend at 0.683/0.883; `v11-canonical-answer` staged for Workbench
-test.
+Last updated: 16 May 2026 — NLP `v11-canonical-answer` SUBMITTED twice (15/05
+21:26, 21:39 SGT) and REGRESSED to 0.680/0.881 and 0.680/0.873. v9-doc-ensemble
+(0.683/0.883) STILL the best submitted blend; v11 canonicalizer's +10 replay
+proxy did not transfer through the 0.9 AE threshold. CV Pass A failure analysis
++ tiled inference A/B done (no qualifier-positive variant on tier1 weights);
+`v8s-1024` retrain still running on Workbench.
 
 ## Latest submitted scores
 
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
 NLP    melanie-minions-nlp      v9-doc-ensemble 15/05/2026 19:46:01 0 / 700 0.683   0.883  ← BEST BLEND; same image resubmit, speed variance helped
+NLP (v11 regressed) melanie-minions-nlp v11-canonical-answer 15/05/2026 21:26:38 0 / 700 0.680 0.881  ← REGRESSED -0.003 vs v9; canonicalizer rewrites didn't pass 0.9 AE threshold
+NLP (v11 resubmit) melanie-minions-nlp v11-canonical-answer 15/05/2026 21:39:55 0 / 700 0.680 0.873  ← Same image resubmit confirms accuracy is real -0.003, speed within variance
 NLP (v10 neutral) melanie-minions-nlp v10-template-lite 15/05/2026 20:16:17 0 / 700 0.683 0.882
 NLP (v9 first) melanie-minions-nlp v9-doc-ensemble 15/05/2026 19:25:50 0 / 700 0.683 0.868
 NLP (prior v8b) melanie-minions-nlp v8b-chunked-context 15/05/2026 18:35:19 0 / 700 0.679 0.872
@@ -48,7 +51,8 @@ v8b-chunked-context 15/05 18:35  0.679   0.872   0 / 700   0.708        NEW HIGH
 v9-doc-ensemble 15/05 19:25      0.683   0.868   0 / 700   0.711        NEW HIGH (+0.004 cloud vs v8b). Whole-doc BM25+BGE prior/seeding reduced local retrieval misses 40→37 and nudged cloud accuracy. Small speed cost (-0.004); blended 0.729
 v9-doc-ensemble 15/05 19:46      0.683   0.883   0 / 700   0.711        Same image resubmitted. Accuracy unchanged, speed +0.015; best NLP blend ~0.733. Do not over-interpret speed deltas at this scale.
 v10-template-lite 15/05 20:16     0.683   0.882   0 / 700   0.711        NEUTRAL. Narrow deterministic answer layer for elapsed days/years and percentage-point deltas. Local substr +1 / diff -1, retrieval unchanged; cloud accuracy unchanged.
-v11-canonical-answer (candidate) —       —       —         replay +10    Staged. Full-document canonicalizer over top returned docs: codenames, penalties, event-year differences, unit/name aliases. Replay exact/substr 451→461, diff 395→385 on v9 predictions.
+v11-canonical-answer 15/05 21:26  0.680   0.881   0 / 700   0.711(old)   REGRESSED -0.003 vs v9. Full-doc canonicalizer's +10 replay (exact/substr 451→461 on OLD-eval proxy) did not transfer through the 0.9 AE threshold; rewrites either weren't sampled on the hidden corpus, or were canonicalized into forms that the ModernBERT equivalence model rated below 0.9. Blended 0.730 vs v9 0.733.
+v11-canonical-answer 15/05 21:39  0.680   0.873   0 / 700   0.711(old)   Same image resubmit. Accuracy stable at 0.680 (confirms the -0.003 is real, not variance); speed dropped slightly. v9-doc-ensemble retains the leaderboard slot.
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.

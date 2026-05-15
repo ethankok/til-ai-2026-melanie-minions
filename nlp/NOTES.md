@@ -1,6 +1,6 @@
 # NLP — notes & history
 
-Last updated: 15 May 2026 21:20 SGT — v11-canonical-answer staged; v9-doc-ensemble still best submitted blend 0.683/0.883
+Last updated: 16 May 2026 — v11-canonical-answer SUBMITTED twice (15/05 21:26 and 21:39 SGT), both 0.680 (speeds 0.881/0.873). REGRESSED -0.003 vs v9; canonicalizer's +10 replay proxy did NOT transfer through the 0.9 AE threshold. v9-doc-ensemble (0.683/0.883) remains the best submitted blend. Local test_nlp.py was on the pre-14-May rubric until 16/05; the new upstream local eval (threshold 0.9, 0.4 retrieval-only partial credit) is now the proper ship gate.
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
@@ -82,6 +82,24 @@ After : exact 280, substr 181, diff 385, miss 37
 ```
 
 That is a +10 exact/substr proxy move with no proxy regressions. Expected cloud gain is modest but real if hidden eval shares these answer-syntax patterns; if cloud stays flat, the next lever is bigger than regex/canonicalization: generative QA or stronger supervised answer formatting.
+
+### Cloud result (15/05 21:26 + 21:39) — REGRESSED -0.003
+
+Submitted v11 twice on 15/05:
+
+```text
+21:26:38   0.680 / 0.881   0 / 700
+21:39:55   0.680 / 0.873   0 / 700
+```
+
+Accuracy stable at 0.680 across both runs, so the -0.003 vs v9 (0.683) is real, not run-to-run variance. Speed dropped slightly on the resubmit (0.881 → 0.873), consistent with the speed noise we already documented.
+
+Two hypotheses for why the +10 replay didn't transfer:
+
+1. **Replay was against the OLD local eval.** The replay script used the pre-14-May rubric (binary equiv ≥ 0.5, plain-string doc shape) on stored v9 predictions. The upstream test_nlp.py we just synced (16/05) reveals the new rubric: threshold 0.9 + 0.4 retrieval-only partial credit. A rewrite that flipped an answer from "substr-of-truth" → "canonicalized form" might still fail the 0.9 ModernBERT threshold, so the proxy gain doesn't translate into cloud points.
+2. **Canonicalizer patterns were not sampled on the hidden corpus.** The +10 cases came from specific phrasings in the local pack (codename SEASTITCH, "four in favor to one against", `(2.5bn)`). If those exact patterns are absent from the held-out questions, the rewrites either no-op (best case) or fire incorrectly on lookalike phrasings (worst case, -3 net).
+
+**Verdict:** v11 is not a ship. v9-doc-ensemble keeps the leaderboard slot. **Net cost: 2 submissions and we learned that deterministic canonicalization over top-3 docs is too narrow to overcome the 0.9 threshold.** The next swing has to be a different *answer formatter*, not more regex.
 
 ## New eval (FINAL — pinned 14 May)
 
@@ -174,7 +192,8 @@ v8b-chunked-context 15/05 18:35   0.679   0.872   0 / 700   0.708        Prior h
 v9-doc-ensemble 15/05 19:25       0.683   0.868   0 / 700   0.711        SHIPPED, NEW HIGH (+0.004 cloud vs v8b). Whole-document BM25+BGE retrieval prior/seeding rescued 3 local retrieval misses (40→37), exact unchanged, substr +1, diff +2. Small accuracy lift with small speed cost; blended 0.729
 v9-doc-ensemble 15/05 19:46       0.683   0.883   0 / 700   0.711        Same image resubmitted; accuracy unchanged, speed +0.015. Best NLP blend ~0.733. Treat speed deltas of this scale as evaluator noise.
 v10-template-lite 15/05 20:16      0.683   0.882   0 / 700   0.711        NEUTRAL. v9 + conservative regex arithmetic/date answer layer. Local substr +1 / diff -1, retrieval unchanged; cloud accuracy unchanged. Safe but too narrow.
-v11-canonical-answer (candidate)   —       —       —         replay +10  Staged. Full-document answer canonicalizer over top returned docs. Replay exact/substr 451→461, diff 395→385 on v9 predictions. Build/test before submit.
+v11-canonical-answer 15/05 21:26    0.680   0.881   0 / 700   0.711(old)  REGRESSED -0.003 vs v9. Full-doc canonicalizer; replay +10 exact/substr on OLD-eval proxy did NOT transfer through the 0.9 AE threshold. Blended 0.730.
+v11-canonical-answer 15/05 21:39    0.680   0.873   0 / 700   0.711(old)  Same image resubmit; accuracy unchanged → -0.003 is real, not variance. Speed -0.008 within evaluator noise.
 ```
 
 Paragraph chunking is confirmed the v5b regressor; don't revisit on this corpus. v5c is a clean baseline for v6-roberta-large.
