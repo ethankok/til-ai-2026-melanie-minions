@@ -49,6 +49,58 @@ ENV AE_HYBRID_VETO_DANGER=0
 
 Expected lift per A/B: ±0.02. Worth one submission slot if `hybrid-v3` has spare queue capacity.
 
+### Belief-map BC train — local result (15 May)
+
+First end-to-end BC run on Workbench (CPU torch, ~3 min):
+
+| Metric | bc-v1 (no belief) | **bc-belief** | Delta |
+|---|---:|---:|---:|
+| Best val_acc        | 0.874  | **0.897** | +0.023 |
+| Params              | 149k   | 704k      | +555k (mostly head dense) |
+| Best epoch          | 17/20  | 19/20     | similar |
+| Local 6-game score  | 0.689  | 0.656     | -0.033 (within ±0.07 noise) |
+
+**Read.** Higher val_acc on bc-belief means the policy is fitting
+planner-v3b's behavior *better* with the belief input — i.e., the
+planner's decisions correlate with belief-map state in ways the
+egocentric viewcones alone couldn't capture. That's the *prerequisite*
+signal for the memory hypothesis. Local game score is roughly flat to
+bc-v1, but local has been an unreliable predictor of cloud all along
+(local 0.689 → cloud 0.364 for bc-v1), and the whole hypothesis is
+that belief reduces the *gap*, not increases the local. Cloud probe
+is the only informative test from here.
+
+Workbench env note: had to reinstall torch as CPU wheel
+(`pip install --user --force-reinstall torch --index-url cpu`)
+because the host's CUDA 13 driver / libcupti.so.13 didn't match
+the user-local torch wheel. CPU is fine for BC at this scale (3 min
+for 20 epochs on 40k samples). For PPO (1-3 h) we'll either need to
+fix the GPU env or commit to a longer CPU run.
+
+Code fix shipped 4878cd2: `eval_policy.py` was missing
+`sys.path.insert(0, REPO_ROOT/"ae"/"src")` for the new ae_manager
+import — crashed on first eval after BC train succeeded.
+
+### Cloud probe — bc-belief in hybrid mode (in flight)
+
+Deployed bc-belief.pt as `ae/models/bc.pt`, AE_MODE=hybrid, submitted
+as `bc-belief-hybrid`. Reasoning for hybrid (not pure policy) for the
+first probe:
+- Apples-to-apples comparison with `hybrid-v3` (same wrapper).
+- Hybrid catches BC's known failure mode (bombing without escape — BC
+  imitates planner-v3b's bomb actions but doesn't know about the
+  planner's escape-verification step that gates them).
+- If it lands ≥0.55 cloud the architecture is at minimum neutral and
+  PPO is justified. If it lands ≥0.58 the architecture is a real lift.
+
+Decision tree from the cloud score:
+
+| Cloud score | Interpretation | Next move |
+|---|---|---|
+| ≥ 0.58 | Architecture lift confirmed; new high. | PPO with `--use-belief --opponents league`. |
+| 0.50 – 0.57 | Within noise of hybrid-v3; architecture might compound with PPO. | PPO anyway (last big swing). |
+| < 0.50 | Memory hypothesis wrong, or BC alone insufficient. | Roll back to hybrid-v3 shipped; consider MCTS-light or call it. |
+
 ### State-augmented policy retrain — IMPLEMENTED, runs on Workbench
 
 Code shipped (15 May, commit follows): belief-map architecture is now
