@@ -21,6 +21,9 @@ Pipeline at query:
     on too few parent docs.
   - answer: batched extractive QA across the top reranked passages; return
     the highest-confidence span ≤64 tokens.
+  - v10 candidate: optional narrow regex rules for computed date/year/percentage
+    answers. The default conservative mode only overrides diffuse or missing
+    learned spans; set NLP_RULE_MODE=off/aggressive for A/Bs.
 
 Doc IDs are derived in `_parse_doc_payload`. The official cloud format (as
 of 14 May 2026) is `{"id": "DOC-XXXX", "document": "..."}` dicts; the
@@ -38,6 +41,7 @@ from __future__ import annotations
 import os
 import re
 import string
+from datetime import date
 from pathlib import Path
 from typing import Iterable
 
@@ -85,10 +89,15 @@ DENSE_MAX_LEN = 256
 RERANK_MAX_LEN = 256
 QA_MAX_SEQ_LEN = 384
 QA_DOC_STRIDE = 128
+RULE_MODE = os.getenv("NLP_RULE_MODE", "conservative").strip().lower()
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 _DOC_ID_RE = re.compile(r"\bDOC-(\d{4})\b")
+_DATE_RE = re.compile(r"\b(\d{2})-(\d{2})-(\d{2})\b")
+_PCE_YEAR_RE = re.compile(r"\b(\d{1,3})\s*PCE\b", re.I)
+_CE_YEAR_RE = re.compile(r"\b((?:20|21)\d{2})\s*CE\b", re.I)
+_PERCENT_RE = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*%")
 _STOPWORDS = frozenset(
     {
         "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
@@ -160,6 +169,28 @@ def _bm25_tokenize(text: str) -> list[str]:
 def _clean_answer(text: str) -> str:
     """Strip non-printable chars (matches the eval's preprocessing)."""
     return "".join(c for c in text if c in _PRINTABLE).strip()
+
+
+def _format_number(value: float) -> str:
+    if abs(value - round(value)) < 1e-9:
+        return str(int(round(value)))
+    return f"{value:.2f}".rstrip("0").rstrip(".")
+
+
+def _parse_eval_date(yy: str, mm: str, dd: str) -> date | None:
+    """Parse synthetic eval dates like 77-03-15.
+
+    The absolute century is irrelevant for day deltas, so we anchor the
+    two-digit year in 2000+YY.
+    """
+    try:
+        return date(2000 + int(yy), int(mm), int(dd))
+    except ValueError:
+        return None
+
+
+def _unique_sorted_ints(values: Iterable[int]) -> list[int]:
+    return sorted(set(values))
 
 
 def _split_sentences(document: str) -> list[str]:
@@ -624,6 +655,122 @@ class NLPManager:
 
         return _clean_answer(best_text)
 
+    # --------------------------------------------------------------- rules
+
+    def _rule_context(self, passage_idxs: list[int], n: int = 4) -> str:
+        chunks = [self.passages[i] for i in passage_idxs[:n]]
+        return " ".join(chunks)
+
+    def _rule_elapsed_days(self, question: str, text: str) -> str:
+        ql = question.lower()
+        if "day" not in ql:
+            return ""
+        if not any(
+            w in ql for w in ("between", "separate", "elapsed", "after", "before")
+        ):
+            return ""
+
+        dates: list[date] = []
+        for yy, mm, dd in _DATE_RE.findall(text):
+            parsed = _parse_eval_date(yy, mm, dd)
+            if parsed is not None:
+                dates.append(parsed)
+        dates = sorted(set(dates))
+        if len(dates) < 2 or len(dates) > 4:
+            return ""
+
+        delta = abs((dates[-1] - dates[0]).days)
+        if delta <= 0 or delta > 500:
+            return ""
+        return f"{delta} days"
+
+    def _rule_elapsed_years(self, question: str, text: str) -> str:
+        ql = question.lower()
+        if "year" not in ql:
+            return ""
+        if not any(
+            w in ql
+            for w in ("between", "separate", "elapsed", "after", "before", "passed")
+        ):
+            return ""
+
+        # Prefer in-universe PCE years over CE years; they are what the local
+        # docs use for most synthetic chronology questions.
+        years = _unique_sorted_ints(int(y) for y in _PCE_YEAR_RE.findall(text))
+        if len(years) < 2:
+            years = _unique_sorted_ints(int(y) for y in _CE_YEAR_RE.findall(text))
+        if len(years) < 2 or len(years) > 6:
+            return ""
+
+        delta = years[-1] - years[0]
+        if delta <= 0 or delta > 200:
+            return ""
+        prefix = (
+            "approximately "
+            if any(w in ql for w in ("approx", "roughly", "about"))
+            else ""
+        )
+        return f"{prefix}{delta} years"
+
+    def _rule_percentage_points(self, question: str, text: str) -> str:
+        ql = question.lower()
+        if "percentage point" not in ql:
+            return ""
+        values = [float(v) for v in _PERCENT_RE.findall(text)]
+        # Only trust the arithmetic when the nearby context is unambiguous.
+        unique = []
+        for v in values:
+            if v not in unique:
+                unique.append(v)
+        if len(unique) != 2:
+            return ""
+        delta = abs(unique[1] - unique[0])
+        if delta <= 0:
+            return ""
+        return f"{_format_number(delta)} percentage points"
+
+    def _rule_answer(self, question: str, passage_idxs: list[int]) -> str:
+        if RULE_MODE in {"0", "off", "false", "none"} or not passage_idxs:
+            return ""
+        text = self._rule_context(passage_idxs)
+        for rule in (
+            self._rule_elapsed_days,
+            self._rule_elapsed_years,
+            self._rule_percentage_points,
+        ):
+            answer = rule(question, text)
+            if answer:
+                return answer
+        return ""
+
+    def _choose_answer(self, question: str, model_answer: str, rule_answer: str) -> str:
+        if not rule_answer:
+            return model_answer
+        if RULE_MODE == "aggressive":
+            return rule_answer
+        if not model_answer:
+            return rule_answer
+
+        ql = question.lower()
+        model_lower = model_answer.lower()
+        model_words = model_answer.split()
+        rule_number = re.search(r"\d+(?:\.\d+)?", rule_answer)
+        same_number = bool(rule_number and rule_number.group(0) in model_answer)
+
+        # Conservative default: prefer the learned QA span unless it is clearly
+        # too diffuse for arithmetic/date questions or lacks the computed value.
+        if "percentage point" in ql:
+            if "percentage point" not in model_lower or len(model_words) > 14:
+                return rule_answer
+        if any(unit in ql for unit in ("day", "year")):
+            if not same_number and (
+                len(model_words) > 12 or not re.search(r"\d", model_answer)
+            ):
+                return rule_answer
+            if len(model_words) > 18 and same_number:
+                return rule_answer
+        return model_answer
+
     # ----------------------------------------------------------------- query
 
     def _answer_one(self, question: str) -> dict:
@@ -635,7 +782,9 @@ class NLPManager:
         documents = self._top_doc_ids(
             reranked, fallback=retrieved, doc_fallback=doc_candidates
         )
-        answer = self._extract_answer(question, reranked)
+        model_answer = self._extract_answer(question, reranked)
+        rule_answer = self._rule_answer(question, reranked)
+        answer = self._choose_answer(question, model_answer, rule_answer)
         return {"documents": documents, "answer": answer}
 
     def qa_batch(self, questions: list[str]) -> list[dict]:

@@ -9,6 +9,18 @@ Two training paths, picked by which one we want to ship:
 
 The container's [nlp_manager.py](../../nlp/src/nlp_manager.py) auto-detects which is bundled (via `config.is_encoder_decoder`) and routes inference to either span extraction or `.generate()` accordingly. Container log prints `QA model: gen-finetuned (generative) ...` or `ext-finetuned (extractive) ...` on first request.
 
+## Local corpus inspection
+
+When a local novice corpus snapshot is available under gitignored `data/`, use:
+
+```bash
+python training/nlp/analyze_answer_templates.py \
+  --data data/novice-nlp-light-20260515/novice/nlp/nlp.jsonl \
+  --docs data/novice-nlp-light-20260515/novice/nlp/documents
+```
+
+This is stdlib-only and does not train on the data. It summarizes question templates, answer types, and whether each gold answer appears literally in its source docs. The 15 May snapshot showed `481/883` answers are not literal source substrings, including `225/592` L1 cases, so the next lever after `v9-doc-ensemble` is answer syntax / canonicalization rather than another retrieval-only push.
+
 ## v7 — extractive fine-tune (shipped at 0.517/0.880)
 
 `finetune_qa.py` takes the local `/home/jupyter/<track>/nlp/nlp.jsonl` ground-truth (883 question / answer / source_docs tuples for novice), pulls the corresponding documents from `/home/jupyter/<track>/nlp/documents/`, builds SQuAD-style training examples, and fine-tunes a SQuAD2-pretrained encoder on them.
