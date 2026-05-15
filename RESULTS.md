@@ -1,13 +1,14 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 15 May 2026 18:35 SGT — NLP `v8b-chunked-context` NEW HIGH 0.679/0.872. Local 0.708 looked flat vs v7-v1's 0.709, but hidden cloud rewarded chunked-context training.
+Last updated: 15 May 2026 19:25 SGT — NLP `v9-doc-ensemble` NEW HIGH 0.683/0.868. Document-level retrieval ensemble nudged local retrieval hit 95.5%→95.8% and cloud accuracy 0.679→0.683.
 
 ## Latest submitted scores
 
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
-NLP    melanie-minions-nlp      v8b-chunked-context 15/05/2026 18:35:19 0 / 700 0.679   0.872  ← NEW HIGH; chunked-context RoBERTa fine-tune, huge hidden transfer despite local flat
+NLP    melanie-minions-nlp      v9-doc-ensemble 15/05/2026 19:25:50 0 / 700 0.683   0.868  ← NEW HIGH; doc-level retrieval ensemble on top of v8b
+NLP (prior v8b) melanie-minions-nlp v8b-chunked-context 15/05/2026 18:35:19 0 / 700 0.679 0.872
 NLP (prior v7) melanie-minions-nlp v7-finetuned-v1 15/05/2026 11:39:09 0 / 700 0.517 0.880
 NLP (prior v5c) melanie-minions-nlp v5c-no-para 14/05/2026 19:44:08 0 / 700     0.483   0.912
 ASR    melanie-minions-asr      nemo-zs     14/05/2026 20:33:36   0 / 400       0.956   0.946  ← NEW BLENDED HIGH; Parakeet-TDT-0.6B-v2 zero-shot, +0.097 speed vs ft-lora32-v1
@@ -38,6 +39,7 @@ v5c-no-para   14/05 19:44        0.483   0.912   0 / 700   0.678        Reverted
 v7-finetuned-v1 15/05 11:39      0.517   0.880   0 / 700   0.709        NEW HIGH (+0.034 cloud vs v5c). Fine-tuned roberta-large-squad2 on local nlp.jsonl (353/883 examples retained via exact + case-insensitive matching; trained 3 epochs, load_best_model_at_end picked epoch 1 with eval_loss 0.614). Local-cloud gap held at 0.19 — fine-tune transferred 1:1. Speed dipped -0.032 from roberta-large's 2.5x latency. Blended 0.608 (vs v5c 0.590). Error-bucket shift: L1 exact-match 29.7% → 39.7%, retrieval_hit_exact 183 → 242
 v7-finetuned-v2 (not shipped)    —       —       —         0.698        v2 data-prep: variants + flexible regex + rapidfuzz fuzzy fallback. Retained 431/883 (+78 vs v1) but local regressed from v1; fuzzy-matched spans were noisy
 v8b-chunked-context 15/05 18:35  0.679   0.872   0 / 700   0.708        NEW HIGH (+0.162 cloud vs v7-v1). --use-answer-chunk + rapidfuzz off, 353/883 retained; span realignment bug fixed in 627c9ce before retrain. Local aggregate looked flat (0.708 vs 0.709), but cloud strongly rewarded chunked-context training. Blended 0.727
+v9-doc-ensemble 15/05 19:25      0.683   0.868   0 / 700   0.711        NEW HIGH (+0.004 cloud vs v8b). Whole-doc BM25+BGE prior/seeding reduced local retrieval misses 40→37 and nudged cloud accuracy. Small speed cost (-0.004); blended 0.729
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.
@@ -142,16 +144,16 @@ the new eval):
 
 ```text
 0.40 * AE 0.555  = 0.2220
-0.20 * NLP 0.679 = 0.1358   ← NEW HIGH; v8b-chunked-context
+0.20 * NLP 0.683 = 0.1366   ← NEW HIGH; v9-doc-ensemble
 0.20 * ASR 0.957 = 0.1914   ← raw accuracy held by leaderboard's max policy
 0.20 * CV 0.556  = 0.1112
 --------------------------------
-Estimated weighted qualifier score = 0.6604
+Estimated weighted qualifier score = 0.6612
 ```
 
 AE has now incrementally climbed in three consecutive submissions (ppo-v1 0.507 → hybrid-v2 0.545 → hybrid-v3 0.555), each one moving the floor up by the size of cloud noise but in the same direction. The structural local→cloud gap (~0.23) is intact, but the floor itself has moved +0.048. Top of leaderboard is 0.711; we're now top-quartile.
 
-The belief-map state-augmentation attempt (`bc-belief-hybrid`, 15/05) regressed to 0.287 — far outside cloud noise and a clean rejection of the memory hypothesis as implemented through BC. The bigger network (704k params) with belief input found *more* spurious correlations to the local random-opponent distribution rather than fewer. AE rolled back to `hybrid-v3`. Remaining AE moves (veto-tuning A/Bs, MCTS-light) have realistic ceiling ~0.58; the higher-EV qualifier lift has now come from NLP `v8b-chunked-context`.
+The belief-map state-augmentation attempt (`bc-belief-hybrid`, 15/05) regressed to 0.287 — far outside cloud noise and a clean rejection of the memory hypothesis as implemented through BC. The bigger network (704k params) with belief input found *more* spurious correlations to the local random-opponent distribution rather than fewer. AE rolled back to `hybrid-v3`. Remaining AE moves (veto-tuning A/Bs, MCTS-light) have realistic ceiling ~0.58; the higher-EV qualifier lift has now come from NLP `v8b/v9`.
 
 ASR `nemo-zs` (Parakeet-TDT-0.6B-v2 zero-shot) just shipped at `0.956/0.946` — a -0.001 accuracy nudge but +0.097 speed. The leaderboard keeps the higher score for raw accuracy, but the BLENDED score per challenge is what feeds the qualifier total via the 75/25 weighting below.
 
@@ -159,17 +161,17 @@ Using the observed ~75% score / 25% speed blend:
 
 ```text
 AE   contribution = 0.2515   (0.40 * (0.75*0.555 + 0.25*0.849) = 0.40 * 0.6285 = 0.2514)
-NLP  contribution = 0.1455   (0.75*0.679 + 0.25*0.872 = 0.7273)  ← NEW HIGH; +0.0239 over v7-v1 blended
+NLP  contribution = 0.1459   (0.75*0.683 + 0.25*0.868 = 0.7293)  ← NEW HIGH; +0.0004 over v8b blended contribution
 ASR  contribution = 0.1907   (0.75*0.956 + 0.25*0.946 = 0.9535)
 CV   contribution = 0.1312   (0.75*0.556 + 0.25*0.956 = 0.6560)
 --------------------------------
-Estimated blended qualifier score = 0.7188  (+0.0239 vs v7-v1 baseline)
+Estimated blended qualifier score = 0.7192  (+0.0004 vs v8b baseline)
 ```
 
 ## Notes
 
 - All 5 tasks have been submitted successfully at least once.
-- **NLP `v8b-chunked-context` is shipped at `0.679/0.872`** (15/05 18:35 SGT, NEW HIGH +0.162 acc over v7-v1). It fine-tuned `deepset/roberta-large-squad2` on answer-containing inference chunks (`--use-answer-chunk`) after fixing the chunk span realignment bug in `627c9ce`. Local looked flat (`0.708` vs v7-v1's `0.709`), but hidden cloud jumped massively, so local aggregate `equiv_rate` is now a diagnostic rather than a scalar ship gate. Blended NLP improved `0.608 → 0.727`, adding about `+0.0239` to the overall blended qualifier estimate.
+- **NLP `v9-doc-ensemble` is shipped at `0.683/0.868`** (15/05 19:25 SGT, NEW HIGH +0.004 acc over v8b). It keeps the `v8b` chunked-context RoBERTa answerer and adds whole-document BM25+BGE retrieval as a light prior/reranker seeder. Local retrieval misses dropped `40→37`; exact stayed 273, substr 176→177, diff 394→396. The gain is real but small: retrieval improved, answer syntax/equivalence remains the blocker.
 - **ASR crossed the 0.95 accuracy target**: `ft-lora32-v1` officially scored `0.957 / 0.849` (errors `0 / 400`). That's **+0.019 absolute accuracy** over `vad-off-v1`, achieved by a single 3-epoch LoRA-rank-32 decoder fine-tune of `distil-whisper/distil-large-v3` on the full 4110-clip novice manifest. Speed dipped by `0.010` (CT2 file size noise; recoverable via int8_float16 re-export, see Next priority). Generalization gap turned out **negative**: held-out val WER `0.04662` → official WER `~0.043`, i.e. the official 400-clip distribution is slightly easier than the local held-out slice — a useful piece of leaderboard intuition for future runs.
 - **`vad-off-v1` (the prior peak)**: inference-only fixes (`vad_filter=False`, hallucination guards, spoken-form ordinals, coordinate-safe decimal regex, tighter silence guard) took accuracy from `norm-v1`'s `0.877` to `0.938` with speed barely changed (-0.005). Local-official WER gap on that run was +0.007 absolute. Those fixes stayed in `ft-lora32-v1` and compounded with the LoRA gains.
 - The local `1 - MER` number is a **scoring artifact** of the local manifest being English-only (three other language buckets contribute 0 to the divide-by-4 mean). Track the bare `english error rate (WER)` line instead.
@@ -184,7 +186,7 @@ Estimated blended qualifier score = 0.7188  (+0.0239 vs v7-v1 baseline)
 ## Next priority
 
 1. **ASR `parakeet-ft-v1` (Parakeet decoder-only fine-tune)** — `nemo-zs-v2` proved cloud speed is parked at 0.946 (HTTP / audio I/O / Python overhead, not the TDT decoder). The remaining ASR lever is accuracy. Pipeline is wired end-to-end: `prepare_data_nemo.py` → `train_parakeet.py` (encoder frozen, lr 5e-5, 5 epochs, ~3-4 hr T4) → `export_parakeet.py`. Decision gate before submission: local Eng-WER ≤ 0.035 (from zero-shot 0.0429). Expected official: 0.965-0.975. Leaderboard keeps the higher blended score so regression cannot demote `nemo-zs`.
-2. **NLP next: protect `v8b-chunked-context`, test `v9-doc-ensemble`, then probe `v8a-genqa` only if time allows.** `v8b` is now shipped at `0.679/0.872`, a huge hidden-cloud lift despite flat local `equiv_rate`. The lesson is to stop using local aggregate score as the only gate; bucket shifts and hidden-transfer hypotheses matter. `v9-doc-ensemble` is staged in code: whole-document BM25 + BGE retrieval lightly boosts chunk scores and seeds a few top-doc passages into the reranker to attack the 4.5% retrieval-miss bucket without changing the v8b answerer. Submit only if local retrieval misses drop without meaningful equiv-rate/speed regression. The bigger swing remains `v8a-genqa`: Flan-T5-style seq2seq on all 883 `(Q, context, A)` triples. Risk: AE 0.9 threshold punishes paraphrases and generation can cost speed. Confirmed regressors: paragraph chunking, low-confidence sentence fallback, noisy rapidfuzz span training.
+2. **NLP next: protect `v9-doc-ensemble`, then move from retrieval to answer syntax.** `v9` is now shipped at `0.683/0.868`; retrieval hit is still only `95.8%` locally, but the bigger headroom is not retrieval. Local upper bound is `0.958` if every retrieved answer were accepted, while actual local is `0.711`. Next high-ROI work is question-template / answer-type canonicalization on top of retrieved chunks: dates, money, names, orgs, IDs, and measure/value patterns. The bigger swing remains `v8a-genqa`, but only if outputs stay short/canonical enough for the AE 0.9 threshold and speed remains acceptable.
 3. **AE hybrid is the new shipped tag at `0.555 / 0.849`.** The 0.49-0.51 cloud ceiling was real for individual approaches but broke under the policy + heuristic safety-veto combo (+0.048 over ppo-v1). To push toward 0.60 the cheap next moves all reuse the existing `HybridAEManager` plumbing — no retraining needed. Each is one env-var toggle + one rebuild:
    - **`AE_HYBRID_CONF=0.5`**: only use policy when its softmax top-action ≥ 0.5. Below that, fall back to heuristic. Tests whether the policy's *uncertain* outputs are the ones costing us score.
    - **`AE_HYBRID_VETO_BOMBS=0`** *or* **`AE_HYBRID_VETO_DANGER=0`**: turn one veto off at a time to find which one is actually doing work. If hybrid still scores >0.5 without bomb-vetoes, the heuristic's bomb-escape check was wrong and we can simplify.
