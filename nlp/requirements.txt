@@ -9,3 +9,6 @@ transformers==4.46.3
 tokenizers==0.20.3
 safetensors==0.4.5
 rank_bm25==0.2.2
+# Flan-T5 tokenizer is SentencePiece-based; required for v8a-genqa. Harmless
+# for extractive RoBERTa builds.
+sentencepiece==0.2.0

@@ -367,10 +367,13 @@ class NLPManager:
 
         if self.device.type == "cuda":
             # Half precision is a ~2x speedup on these small models with no
-            # measurable quality loss in our regime.
+            # measurable quality loss in our regime. T5 (the generative QA
+            # backbone) has known fp16 overflow in attention; keep it at fp32
+            # to avoid NaN logits at generate time. Extractive RoBERTa is fine.
             self._dense_model = self._dense_model.half()
             self._rerank_model = self._rerank_model.half()
-            self._qa_model = self._qa_model.half()
+            if not self._qa_is_generative:
+                self._qa_model = self._qa_model.half()
 
         self._models_initialized = True
 

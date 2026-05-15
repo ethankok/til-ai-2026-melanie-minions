@@ -101,6 +101,55 @@ Two hypotheses for why the +10 replay didn't transfer:
 
 **Verdict:** v11 is not a ship. v9-doc-ensemble keeps the leaderboard slot. **Net cost: 2 submissions and we learned that deterministic canonicalization over top-3 docs is too narrow to overcome the 0.9 threshold.** The next swing has to be a different *answer formatter*, not more regex.
 
+## `v8a-genqa` — generative QA candidate (Flan-T5)
+
+Decided 16/05 after v11 regressed. Hypothesis: deterministic answer rewriting is exhausted; the remaining `retrieval_hit_diff` bucket (~395 cases) needs a model that *generates* the canonical answer form, not extracts a span. Flan-T5 fine-tuned on all 883 `(question, context, answer)` triples — including the ~530 paraphrased answers that extractive training has to skip.
+
+### Scaffolding state (already in place, verified 16/05)
+
+- Training: [training/nlp/finetune_genqa.py](../training/nlp/finetune_genqa.py) — full script, Flan-T5-base default, 3 epochs, `load_best_model_at_end`, outputs to `nlp/models/flan-t5-finetuned/`.
+- Manager: [src/nlp_manager.py](src/nlp_manager.py) — QA selection ladder prefers `flan-t5-finetuned` over `roberta-finetuned-squad2` over stock base. Auto-detects `is_encoder_decoder` from config and routes to `_generate_answer` (beam=4, max_new_tokens=64, conditioned on top-1 reranked chunk only).
+- Docker: [Dockerfile](Dockerfile) lines 34-36 already bundle `flan-t5-finetuned/` if present.
+
+### Two bugs fixed 16/05 before any v8a-genqa build
+
+1. **Missing `sentencepiece` dep.** Flan-T5 tokenizer is SentencePiece-based; without it `AutoTokenizer.from_pretrained()` fails at runtime. Added to [requirements.txt](requirements.txt).
+2. **T5 + `.half()` NaN trap.** [src/nlp_manager.py:368-374](src/nlp_manager.py) unconditionally called `.half()` on all three models. T5 has known fp16 overflow in attention ops → NaN logits at generate time. Patched to keep the generative QA model at fp32; extractive still uses fp16.
+
+### Workbench runbook (user executes)
+
+```bash
+# 1. Train (on Workbench GPU). --use-chunk-context matches inference behavior
+#    (manager conditions on the top reranked chunk, so train on chunk too).
+python training/nlp/finetune_genqa.py --use-chunk-context
+
+# 2. Verify weights landed where the Dockerfile expects.
+ls nlp/models/flan-t5-finetuned/
+
+# 3. Build the image.
+til build nlp v8a-genqa
+
+# 4. Ship gate: local equiv_rate vs v9 under the NEW test_nlp.py (synced
+#    16/05 from upstream — threshold 0.9, 0.4 retrieval-only partial credit).
+til test nlp v8a-genqa
+# Compare against v9 under the same test_nlp.py first if not already baselined.
+
+# 5. Submit only if local does not regress.
+til submit nlp v8a-genqa
+```
+
+### Known risks (front and center)
+
+- **Speed.** Flan-T5-base autoregressive generation at beam=4 is ~50-100ms per question on a single chunk. 700 questions → +35-70s vs v9. Speed score `(1 - t/1800)` is currently 0.883 (~211s used); v8a-genqa likely lands ~0.82-0.85. Accuracy needs to lift by **>= +0.02** to keep blended even with a -0.05 speed hit.
+- **0.9 threshold punishes paraphrase.** The generative head could paraphrase a correct answer into a form the ModernBERT equivalence model rates < 0.9. Training with `--use-chunk-context` and on the exact answer text (no rapidfuzz, no variants) keeps outputs close to the source phrasing.
+- **One-shot generation, not batched.** Current `_generate_answer` processes one question at a time. If speed regression is the only blocker, follow-up tag `v8a-genqa-batched` can batch 8-16 questions through `model.generate` for a 5-10× speedup.
+
+### Decision rule
+
+- Local equiv_rate (new test) ≥ v9 under new test → submit.
+- Local equiv_rate (new test) within -0.005 of v9 AND retrieval_hit_diff ↓ by >= 20 → submit (the chunked-context lesson: cloud sometimes rewards distribution shift that local doesn't reveal).
+- Otherwise: drop, freeze on v9.
+
 ## New eval (FINAL — pinned 14 May)
 
 Per organisers, the NLP evaluator is now frozen in this state:
