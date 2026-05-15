@@ -1,7 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 14 May 2026 20:50 SGT — ASR nemo-zs 0.956/0.946 (new ASR blended high, +0.023 over ft-lora32-v1)
+Last updated: 15 May 2026 11:40 SGT — CV `cv-yolo11m-v3-pre` REGRESSED to 0.376/0.955 (Tier 2 v11m@1024 retrain lost to Tier 1's 0.556; tier1 stays on leaderboard via highest-score retention)
 
 ## Latest submitted scores
 
@@ -10,6 +10,7 @@ Task   Image                    Tag         Submitted             Errors        
 NLP    melanie-minions-nlp      v5c-no-para 14/05/2026 19:44:08   0 / 700       0.483   0.912
 ASR    melanie-minions-asr      nemo-zs     14/05/2026 20:33:36   0 / 400       0.956   0.946  ← NEW BLENDED HIGH; Parakeet-TDT-0.6B-v2 zero-shot, +0.097 speed vs ft-lora32-v1
 CV     melanie-minions-cv       cv-yolo-v2-tier1-best 14/05/2026 17:10:09 0 / 500 0.556 0.956
+CV (v3-pre) melanie-minions-cv  cv-yolo11m-v3-pre 15/05/2026 11:34:42 0 / 500   0.376   0.955  ← REGRESSED -0.180; v11m fully trained but matched-imgsz lost to v8s+upscaled. Tier1 stays on leaderboard.
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
 AE     melanie-minions-ae       hybrid-v3   14/05/2026 19:26:06   0 / 30        0.555   0.849
 ASR (ft-lora32-v1) melanie-minions-asr ft-lora32-v1 13/05/2026 11:22:30 0 / 400  0.957   0.849  ← prior ASR high (still on leaderboard via highest-score retention)
@@ -56,7 +57,8 @@ latest                 12/05 03:52        0.000   0.981   4 / 500   —         
 yolo-til-map-v2        14/05 01:56        0.044   0.961   0 / 500   —                      YOLOv8n + sparse COCO→TIL map; clean serving, weak domain fit
 cv-yolo-ft-v1          14/05 03:53        0.402   0.963   0 / 500   0.885                  YOLOv8s fine-tuned on official 18-class annotations
 cv-yolo-v2-best        14/05 14:00        0.549   0.960   0 / 500   0.884 / 0.859          YOLOv8s 768 hard-split retrain + tuned inference
-cv-yolo-v2-tier1-best  14/05 17:10        0.556   0.956   0 / 500   0.851 / 0.905          NEW HIGH; same v2-best weights with TTA + imgsz=896 + iou=0.60 + emit score field; hard held-out lifted +0.046 (0.859→0.905), full-local dipped -0.034 (0.884→0.851)
+cv-yolo-v2-tier1-best  14/05 17:10        0.556   0.956   0 / 500   0.851 / 0.905          NEW HIGH (still on leaderboard); v2-best weights + TTA + imgsz=896 + iou=0.60 + score field
+cv-yolo11m-v3-pre      15/05 11:34        0.376   0.955   0 / 500   0.937 / 0.867          REGRESSED -0.180; YOLOv11m@1024 fully trained 120ep. Local val 0.937, hard held-out 0.867 (-0.038 vs tier1) — bigger model + matched-imgsz lost to v8s + upscaled inference. Tier1 stays on leaderboard.
 ```
 
 Notes on local mAP columns:
@@ -68,6 +70,13 @@ Notes on local mAP columns:
   scenes; TTA at imgsz=896 helps those but hurts easy full-local images. Hidden
   eval correlated with the hard held-out (`0.9049` → `0.556`), confirming the
   selection metric.
+- `cv-yolo11m-v3-pre`: Ultralytics val mAP50-95 `0.937` on the 500-image val
+  split; hard held-out HTTP eval top sweep row `0.8673` at `CV_CONF=0.001
+  CV_IOU=0.70 CV_IMGSZ=1024 CV_AUGMENT=1`. Hard small AP `0.587` (vs tier1's
+  `0.746`) — the regression is driven by small-object bbox precision in the
+  high-IoU bins, almost certainly a resolution-mismatch story (trained at
+  1024, never tested at 1280 inference). Hidden eval correlated tightly with
+  hard held-out (`0.8673` → `0.376`), so the gap diagnosis is confirmed.
 - The hard held-out split was intentionally harder and non-leaky
   (`4000/500/500` train/val/test; test had `3334` boxes).
 

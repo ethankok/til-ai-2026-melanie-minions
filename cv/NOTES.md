@@ -46,7 +46,8 @@ latest                 12/05 03:52     0.000   0.981   4 / 500   Empty-detection
 yolo-til-map-v2        14/05 01:56     0.044   0.961   0 / 500   YOLOv8n + sparse COCO→TIL map; clean serving, weak domain fit
 cv-yolo-ft-v1          14/05 03:53     0.402   0.963   0 / 500   YOLOv8s fine-tuned on 18 TIL labels; local mAP50-95 0.885
 cv-yolo-v2-best        14/05 14:00     0.549   0.960   0 / 500   YOLOv8s 768 hard-split retrain + tuned inference; local til test 0.8839, hard held-out 0.8589
-cv-yolo-v2-tier1-best  14/05 17:10     0.556   0.956   0 / 500   v2-best weights + TTA + imgsz=896 + iou=0.60 + score field; hard held-out 0.9049, local til test 0.8505. NEW HIGH (+0.007)
+cv-yolo-v2-tier1-best  14/05 17:10     0.556   0.956   0 / 500   v2-best weights + TTA + imgsz=896 + iou=0.60 + score field; hard held-out 0.9049, local til test 0.8505. NEW HIGH (+0.007); STILL ON LEADERBOARD.
+cv-yolo11m-v3-pre      15/05 11:34     0.376   0.955   0 / 500   YOLOv11m@1024 fully trained 120ep; val 0.937, hard held-out 0.8673. REGRESSED -0.180; matched-imgsz lost to v8s+upscaled inference.
 ```
 
 ## Detailed timeline
@@ -193,7 +194,7 @@ Confirmed:
 - Local→official gap stayed wide (0.9049 → 0.556 = 0.349). Tier 2 is needed
   for any meaningful jump toward 0.70.
 
-Tier 2 status (in flight, May 14):
+Tier 2 status (SHIPPED & REGRESSED, May 15):
 
 - Trainer: `training/cv/train_v3.sh`, YOLOv11m @ imgsz=1024, batch=6, AdamW
   cos_lr, copy_paste=0.30 + mosaic=1.0 + mixup=0.15.
@@ -203,20 +204,43 @@ Tier 2 status (in flight, May 14):
 - First run died at epoch 58/120 from CUDA OOM caused by docker squatter
   containers from the earlier sweep eating ~10GB of VRAM. `best.pt` was saved
   (epoch 56, val mAP50-95 = 0.895).
-- Sweep on the partially-trained `best.pt` against the hard test split topped
-  out at `mAP50-95 = 0.8276` (conf=0.001, iou=0.70, imgsz=1024, aug=1). That is
-  **0.077 below v8s tier1's hard held-out 0.9049**, so submitting v11m at
-  epoch 56 would regress official below 0.556.
-- Diagnosis: cosine LR was still at ~40% of decay at the crash. v11m has ~4x
-  v8s parameters and needs more epochs to stabilize, especially with the
-  aggressive copy-paste augmentation. The val 500-image split shows fine
-  numbers (0.895), but the harder test split exposes the underconvergence.
-- Resumed from `last.pt` at 16:48 SGT to let cosine LR finish properly. ETA
-  ~23:00 SGT for full 120 epochs, earlier if patience=30 triggers around
-  epoch 85. Best-case projected official: 0.62-0.66 if hard held-out climbs
-  to 0.91-0.93.
-- Memory: training holds ~8.5GB; ASR docker container holds ~3GB on the same
-  T4. Total ~11.4GB / 15.4GB. Tight but stable; no other processes squatting.
+- Resumed from `last.pt` and ran to completion at 120 epochs (~7h after
+  resume). Final Ultralytics val mAP50-95 = **0.937**, mAP50 = **0.994** on
+  the 500-image val split. Per-class lowest was `warship` at 0.862, top was
+  `car` at 0.988.
+- Sweep on the fully-trained `best.pt` against the hard test split topped at
+  `mAP50-95 = 0.8673` (`conf=0.001 iou=0.70 imgsz=1024 aug=1`). That is
+  **0.038 below v8s tier1's hard held-out 0.9049**. Small-object AP was the
+  killer: v11m `0.587` vs tier1 `0.746` on the hard test split.
+- Submitted as `cv-yolo11m-v3-pre` (15/05 11:34): **0.376 / 0.955**, 0/500
+  errors. **REGRESSED -0.180 vs tier1's 0.556**. Leaderboard keeps the
+  higher score, so tier1 stays as the active CV image.
+
+Post-mortem — why v11m lost:
+
+1. **Resolution mismatch.** v8s tier1 was trained at 768 and inferenced at
+   896 (UP from training); the upscaling helped small objects (+0.04 in the
+   v8s sweep). v11m was trained at 1024 and inferenced at 1024 (matched).
+   We never tested v11m at imgsz=1280, which would likely lift it.
+2. **Small-object hit comes from high-IoU bins.** v11m's mAP50 was 0.997
+   (essentially perfect detection), so the loss is in the high-IoU
+   precision bins (≥0.75) — exactly what higher inference resolution helps.
+3. **Bigger model + matched-imgsz < smaller model + upscaled-imgsz** on
+   this dataset's small-object distribution. Counter-intuitive but
+   reproducible: hidden eval correlated tightly with hard held-out
+   (0.8673 → 0.376), so the gap diagnosis is solid.
+4. **Local→official gap stayed at ~0.49** (worse than tier1's 0.349). The
+   hidden eval is even harsher on bbox precision than the hard held-out
+   suggests.
+
+Open lever NOT yet tested: imgsz=1280 inference on v11m. Speed cost
+~30-35ms/img × 500 = ~18s, still 0.99 speed. Worth a sweep before fully
+parking v11m.
+
+If revisiting CV, the actual ROI levers are now (in order):
+- Try the v11m@1280 sweep and re-submit if it clears 0.91 hard held-out.
+- Stop training and accept tier1's 0.556 as the CV high. CV is 20% of
+  qualifier; AE and NLP have higher ROI per per-team-member-hour.
 
 If the resume crashes, do NOT restart from epoch 0. Resume again from
 `last.pt`. Ultralytics handles the cosine schedule continuation correctly.
