@@ -1,6 +1,33 @@
 # AE — notes & history
 
-Last updated: 14 May 2026 19:30 SGT — **hybrid-v3 is the shipped tag at 0.555/0.849 (3rd consecutive new high; +0.048 vs ppo-v1).**
+Last updated: 15 May 2026 18:30 SGT — **AE parked at `hybrid-v3` (0.555/0.849) after 4 post-hybrid-v3 attempts all regressed.**
+
+## TL;DR for the next person reading this
+
+- **Shipped tag**: `hybrid-v3` at **0.555 / 0.849**. Team-best, top-quartile (leaderboard top is 0.711).
+- **Architecture**: PPO policy (`ppo-v1` weights) wrapped by `HybridAEManager` (heuristic safety-veto + top-K policy cascade) + heuristic dominant-action shortcut (opportunistic enemy-kill).
+- **Mode selection**: `AE_MODE` env var in `ae/Dockerfile` *or* `ae/src/.ae_mode` file fallback (`hybrid` | `policy` | `heuristic`). Currently `hybrid`.
+- **Weights on Workbench**: `ae/models/bc.pt` ← `~/ae-checkpoints-backup/deployed-bc-v1.pt` (the ppo-v1 actor).
+- **Local→cloud gap**: ~0.23, structural across 11 submissions. Never closed.
+- **Status**: parked. Four post-hybrid-v3 attempts all regressed (-0.051 to -0.268). AE-side return is now far below NLP-side return per remaining qualifier hour.
+
+### Full AE submission ledger (cloud scores)
+
+| Tag | Cloud score | Cloud speed | Note |
+|---|---:|---:|---|
+| baseline | 0.051 | 0.856 | Periodic FORWARD + bomb-every-20 |
+| planner-v1 | 0.445 | 0.788 | First stateful planner |
+| planner-v2 | 0.501 | 0.771 | Bomb timer 4→3 + bounded escape + soft threat |
+| planner-v3b | 0.499 | 0.853 | Multi-source BFS + blast cache + uvloop |
+| bc-v1 | 0.364 | 0.856 | BC of planner-v3b — regressed |
+| ppo-v1 | 0.507 | 0.861 | Mixed-opp PPO from BC warm start |
+| ppo-v2 | 0.489 | 0.854 | Frame-stacked + varied-maps — regressed |
+| hybrid-v2 | 0.545 | 0.863 | Hybrid wrapper (policy + safety veto) — new high |
+| hybrid-v3 | **0.555** | **0.849** | **+ top-K cascade + opportunistic kill — SHIPPED** |
+| bc-belief-hybrid | 0.287 | 0.846 | 16×16×11 belief-map architecture (704k params) — memory hypothesis REJECTED |
+| hybrid-conf50 | 0.504 | 0.857 | `AE_HYBRID_CONF=0.5` confidence gate — too aggressive |
+
+---
 
 ## Round-3 cloud result (hybrid-v3, 14 May 19:26)
 
@@ -455,13 +482,21 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`ppo-v1` — official 0.507 / 0.861 (14 May 04:36 SGT, 0/30 errors).** Team-best AE score. **ppo-v2 regressed and should be rolled back if a fresh AE submission is needed.**
+**`hybrid-v3` — official 0.555 / 0.849 (14 May 19:26 SGT, 0/30 errors).** Team-best AE score; top-quartile (leaderboard top is 0.711).
 
-`ppo-v1` is marginally above `planner-v3b` (+0.008 score, +0.008 speed) — within submission noise. The follow-up `ppo-v2` (frame stacking N=4, value-loss fix, varied-maps training) hit a **0.763 local mean** but only **0.489 official** — the local→official gap **widened** from 0.19 (v3b/ppo-v1) to 0.27 (ppo-v2). Varied-map training was the wrong bet; whatever the hidden eval uses, it's *neither* novice nor `novice=False` random seeds.
+Architecture: `PolicyAEManager` running ppo-v1 actor weights, wrapped by `HybridAEManager` (heuristic safety-veto + top-K policy cascade), with `AEManager`'s heuristic dominant-action shortcut now firing on adjacent enemy *agents* (not just bases). Mode selection is via `AE_MODE` env var in `ae/Dockerfile` (or fallback `ae/src/.ae_mode` file): `hybrid` | `policy` | `heuristic`. Currently `hybrid`.
 
-**Cumulative finding across v1 → v3b → bc-v1 → ppo-v1 → ppo-v2**: the local→official gap is ≥ 0.18 for every approach we've tried (heuristics, BC, mixed-opp PPO, frame-stacked PPO + varied maps). The gap is structural to the hidden eval distribution and **none of our training-side interventions have moved it**. Heuristic-tuning and RL both saturate at ~0.50 official.
+Cloud-deployed weights: `ae/models/bc.pt` ← `~/ae-checkpoints-backup/deployed-bc-v1.pt` (ppo-v1 actor). Restored after `bc-belief-hybrid` was tested.
 
-Previous shipped tag: `planner-v3b` — official 0.499 / 0.853 (13 May 23:42 SGT, 0/30 errors). v1 weights are backed up at `~/ae-checkpoints-backup/deployed-bc-v1.pt` on Workbench.
+**Three consecutive AE highs lifted the floor by +0.048 across submissions** (ppo-v1 0.507 → hybrid-v2 0.545 → hybrid-v3 0.555). After hybrid-v3, four follow-up attempts all regressed:
+- `bc-belief-hybrid` (15/05, 0.287): 16×16×11 belief-map architecture — bigger network amplified the local→cloud gap rather than reducing it. Memory hypothesis as implemented through BC is dead.
+- `bc-belief-policy` (local-only, 0.663): same checkpoint in pure-policy mode. NOT submitted after `bc-belief-hybrid` failed.
+- `hybrid-conf50` (15/05, 0.504): `AE_HYBRID_CONF=0.5` confidence gate. Too aggressive — kicked the policy out of cloud-correct 0.4-0.5 softmax decisions.
+- `ppo-v2` (14/05, 0.489): frame stacking + varied maps. Widened the gap.
+
+**Cumulative finding across v1 → v3b → bc-v1 → ppo-v1 → ppo-v2 → hybrid-v2 → hybrid-v3 → bc-belief-hybrid → hybrid-conf50**: the local→cloud gap is ~0.23 for every approach we've tried — heuristics, BC, mixed-opp PPO, frame-stacked PPO + varied maps, hybrid wrappers with various gates, state-augmented BC. **The gap is structural to the hidden eval distribution and none of our training-side or inference-side interventions have moved it.** The hybrid-style wrapper *moved the floor* by +0.048 but the gap stayed constant; the bc-belief attempt actually *widened* it.
+
+Previous shipped tags: `hybrid-v2` (0.545/0.863, 14/05 14:55) → `ppo-v1` (0.507/0.861, 14/05 04:36) → `planner-v3b` (0.499/0.853, 13/05 23:42).
 
 Score essentially flat vs `planner-v2` (-0.002, within noise), but **speed
 jumped +0.082** (`0.771 → 0.853`) from algorithmic wins kept from the
@@ -509,6 +544,13 @@ planner-v3b 13/05 23:42        0.499   0.853   0/30    v3 minus bomb-chains; pre
 bc-v1       14/05 01:22        0.364   0.856   0/30    BC of planner-v3b regressed badly; deployment path works but policy overfit random-opponent local rollouts.
 ppo-v1      14/05 04:36        0.507   0.861   0/30    NEW HIGH (+0.008/+0.008 vs v3b). Mixed-opp PPO from bc.pt warm start; local→official gap 0.19 unchanged from heuristic.
 ppo-v2      14/05 13:29        0.489   0.854   0/30    REGRESSED -0.018. Frame-stacked + value-loss-fixed + varied-maps PPO. Local 0.763 → official 0.489; gap widened 0.19 → 0.27.
+[bake bug]  14/05 14:30        —       —       —       AE_MODE=foo til build doesn't bake AE_MODE; the three v1 builds (policy-fast-v1, hybrid-v1, heuristic-restore) shipped identical images. Fixed via ENV AE_MODE in Dockerfile + .ae_mode file fallback.
+policy-fast-v2     14/05 14:42 0.425   0.859   0/30    ppo-v1 weights + speed fixes (single-thread torch, inference_mode, warmup, preallocated tensors). Regressed -0.082 from ppo-v1 (cloud variance on 30-game sample). Speed flat — confirmed evaluator-bound at ~0.86.
+hybrid-v2          14/05 14:55 0.545   0.863   0/30    NEW HIGH. First structurally new approach since ppo-v1. HybridAEManager wraps PolicyAEManager with safety vetoes (illegal / unsafe-bomb / step-into-blast / frozen-stay). +0.038 over ppo-v1.
+heuristic-restore-v2 14/05 15:02 0.502 0.854   0/30    Pure heuristic (planner-v3b + TILE_RESPAWN 40→20 + enemy_agent eviction). Noise vs planner-v3b; confirms heuristic-only ceiling.
+hybrid-v3          14/05 19:26 0.555   0.849   0/30    NEW HIGH (still shipped). + top-K policy cascade (try policy's #2/#3 if vetoed before falling back to heuristic) + opportunistic enemy-kill in heuristic dominant-action shortcut. +0.010 over hybrid-v2.
+bc-belief-hybrid   15/05 11:46 0.287   0.846   0/30    MEMORY HYPOTHESIS REJECTED. 16×16×11 belief-map architecture (704k params), bc-belief weights, hybrid wrapper. Regressed -0.268 vs hybrid-v3. Bigger network amplified local→cloud gap (0.36 vs 0.33) by overfitting random-opponent local belief distributions that don't transfer.
+hybrid-conf50      15/05 17:59 0.504   0.857   0/30    ppo-v1 weights + hybrid + AE_HYBRID_CONF=0.5 (only use policy when softmax top ≥ 0.5). Regressed -0.051 (just outside ±0.04 noise). Gate was too aggressive — kicked policy out of cloud-correct 0.4-0.5 softmax decisions.
 ```
 
 ## Local validation history
@@ -534,6 +576,13 @@ ppo-v2      14/05 eval_policy  0.7138/0.7752/0.7885 novice  Mean 0.759 (+0.058 v
 ppo-v2      14/05 eval_policy  0.6353/0.6910/0.6768 varied  Mean 0.668 — policy generalizes to non-novice maps.
 ppo-v2      14/05 til test     0.7282/0.8260/0.7352         Container mean 0.763 (faithful to direct). 0.826 single-run high.
 ppo-v2      14/05 13:29        0.489 official                REGRESSED -0.018 vs ppo-v1. Local→official gap widened 0.19 → 0.27. Varied-map training was the wrong bet.
+policy-fast-v2 14/05 til test  0.654 (1 run)                ppo-v1 weights + speed-fixed PolicyAEManager. Cloud 0.425 — variance.
+hybrid-v2   14/05 til test     0.774 (1 run)                Hybrid wrapper around ppo-v1 weights. Cloud 0.545 = +0.038 over ppo-v1.
+heuristic-restore-v2 14/05 til test 0.787 (1 run)          Pure heuristic + the v2 tweaks. Cloud 0.502.
+hybrid-v3   14/05 til test     —                            Same family as hybrid-v2 + top-K + opportunistic kill. Cloud 0.555 (current shipped tag).
+bc-belief   15/05 BC train     val_acc 0.897 (vs bc-v1 0.874, +0.023); local 0.656 / 0.663 (hybrid / policy). 704k params, 20 epochs, ~3 min CPU.
+bc-belief-hybrid 15/05 til test 0.646 (1 run)               Hybrid wrapper around bc-belief. Cloud 0.287 — memory hypothesis rejected.
+hybrid-conf50 15/05 til test   0.719 (1 run)                ppo-v1 + hybrid + AE_HYBRID_CONF=0.5. Local in upper half of hybrid-v3 distribution; cloud 0.504 (-0.051) — gate too aggressive.
 ```
 
 ## Detailed timeline
