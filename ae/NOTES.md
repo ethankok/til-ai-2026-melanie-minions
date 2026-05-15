@@ -143,6 +143,42 @@ Do not revisit:
 | MCTS-light at inference | 1-2 days | +0.05 to +0.15 | Non-learned; doesn't suffer from opponent distribution shift. Real engineering — needs partial env forward model. |
 | **Pivot to NLP v7-finetune** | 1 day | +0.03 to +0.06 *qualifier* (NLP is 20%) | Higher qualifier-impact-per-hour than any remaining AE move. Recommended. |
 
+### `hybrid-conf50` (15/05 17:59) — confidence-gate A/B, REGRESSED
+
+Same ppo-v1 weights as hybrid-v3, hybrid wrapper, plus
+`ENV AE_HYBRID_CONF=0.5` so the policy is only used when its softmax
+top-action probability ≥ 0.5; otherwise the heuristic action is taken.
+
+| Metric | hybrid-v3 | hybrid-conf50 | Δ |
+|---|---:|---:|---:|
+| Cloud score | 0.555 | **0.504** | **-0.051** |
+| Cloud speed | 0.849 | 0.857 | +0.008 |
+| Local (6-game) | 0.774 / 0.646 | 0.719 | within band |
+| Per-call latency (local) | ~3.1 s/round | 3.08 s/round | flat |
+
+Local 0.719 was solidly in hybrid-v3's local distribution upper half,
+which mis-suggested a positive direction. Cloud regression was -0.051
+(just outside ±0.04 noise) — small but real. Read: the confidence
+gate at 0.5 was too aggressive; it kicked the policy out of decisions
+where its top-2 actions were close (softmax 0.4-0.5 band) but the
+policy's choice was actually correct on the cloud distribution. The
+heuristic fallback in those moments dragged us down.
+
+**AE is parked at `hybrid-v3` (0.555 / 0.849).** Four
+post-hybrid-v3 attempts in total — bc-belief-hybrid (-0.268),
+bc-belief-policy (not shipped after the bc-belief diagnosis),
+hybrid-conf50 (-0.051), and ppo-v2 from earlier — all regressed.
+The 0.555 ceiling is firm for this approach. Top of leaderboard is
+0.711; the remaining 0.16 gap is unlikely to close without either
+the MCTS-light path (1-2 days new engineering, no guarantees) or a
+fundamentally different training pipeline (already tried league-style
+plumbing, the architecture-level fix was the failed one).
+
+For the qualifier-deadline timeline, AE-side returns are now
+diminishing far below NLP-side returns (v7-finetune lifting accuracy
+by +0.034 per submission). Recommend redirecting remaining effort to
+NLP / CV polish.
+
 ### State-augmented policy retrain — IMPLEMENTED, runs on Workbench
 
 Code shipped (15 May, commit follows): belief-map architecture is now
