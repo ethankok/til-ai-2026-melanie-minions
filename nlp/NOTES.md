@@ -95,7 +95,8 @@ v5-multi      (not shipped)      —       —       —         0.628        Pa
 v5b-no-fallback 14/05 19:10      0.456   0.916   0 / 700   0.674        Removed fallback; kept para chunking + batched SQuAD2 + BM25 backfill. Local OK (within 0.005 of v4), but cloud REGRESSED -0.027 vs v4 (speed +0.028 but blended worse -0.013). Para chunking is the suspect — local→cloud gap got bigger
 v5c-no-para   14/05 19:44        0.483   0.912   0 / 700   0.678        Reverted paragraph chunking; kept batched SQuAD2 + BM25 backfill. Score matches v4 exactly + speed +0.024 from batching → blended 0.590
 v7-finetuned-v1 15/05 11:39      0.517   0.880   0 / 700   0.709        SHIPPED, NEW HIGH (+0.034 cloud vs v5c). Fine-tuned roberta-large-squad2 on local nlp.jsonl (353/883 retained, epoch-1 best eval_loss 0.614). Local→cloud gap held at 0.19. Blended 0.608 (vs v5c 0.590)
-v7-finetuned-v2 (in test)        ?       ?       ?         ?            v2 data-prep with variants + flexible regex + rapidfuzz. Retained 431/883 (+78 vs v1) but eval_loss curve looked WORSE (epoch 3 1.238 vs v1's 0.872). Test before submit; gate ≥ 0.74 local
+v7-finetuned-v2 (not shipped)    —       —       —         0.698        Variants+regex+rapidfuzz, 431/883 retained. Local REGRESSED -0.011 vs v1; substr -38, diff +26 (fuzzy spans noisy). NOT submitted
+v8b-chunked-context (not shipped) —      —       —         0.708        --use-answer-chunk + rapidfuzz off, 353/883 retained (same as v1). Local FLAT vs v1 (-0.001). L1 exact 39.7% → 44.4%, diff bucket 396 → 394 unchanged. Chunked context didn't lift diff. NOT submitting; move to v8a-genqa
 ```
 
 Paragraph chunking is confirmed the v5b regressor; don't revisit on this corpus. v5c is a clean baseline for v6-roberta-large.
@@ -201,15 +202,22 @@ The `load_best_model_at_end=True` flag still picks the best epoch, but v2's high
 
 ## Path to higher scores — `v8` candidates
 
-After v7-v2 lands a verdict, the remaining ladders:
+Status update (15 May, after v7-v2 + v8b local tests):
 
-1. **`v8a-genqa` — generative seq2seq head.** Switch from extractive roberta-large-squad2 to Flan-T5-base or similar. Train on all 883 `(question, context, answer)` triples, no span-match requirement. This covers the 452 still-skipped paraphrased examples. Risk: generative paraphrases sometimes fail the AE 0.9 threshold; reward: full coverage of the diff bucket. Estimated effort: ~2 hr training, half-day to validate.
-2. **`v8b-chunked-context` — retrieval-augmented training.** Train QA on `(question, top-BGE-chunk, answer)` instead of full document. This matches inference better — the model learns to extract from the *same* chunks it sees at inference, not the whole doc. May lift the diff bucket significantly without changing the model.
-3. **`v8c-roberta-large-resume` — re-train v7 with v2's data but lower lr/epochs.** Mitigates the v2 overfit risk while keeping the +78 examples. Cheap: ~30 min on Workbench.
+- **v7-v2** (variants + regex + rapidfuzz, 431 examples) → local 0.698, NOT submitted. Fuzzy-matched spans introduced noise; substr -38 / diff +26.
+- **v8b-chunked-context** (rapidfuzz off, 353 examples, --use-answer-chunk; first run had a span-misalignment bug that was fixed in `627c9ce`, retrained) → local 0.708, NOT submitted. Effectively flat vs v7-v1 (-0.001); L1 exact 39.7%→44.4% but diff bucket (396→394) didn't move. Confirms chunked-context inductive bias doesn't lift this corpus's diff ceiling.
 
-Recommendation if v7-v2 lands ≥ 0.74 → ship v2, then v8c (refine on top). If v2 plateaus → v3 data-prep (drop rapidfuzz), then v8a/v8b parallel.
+**Diff bucket (~395 cases) is the persistent ceiling for extractive QA.** No extractive data-prep trick has moved it (full-doc, chunked, fuzzy, variant ladders all converge to the same diff size). Those answers are genuinely paraphrased relative to the source spans — span-prediction loss can't reward "semantically equivalent but worded differently."
 
-Confirmed NOT levers on this corpus: paragraph-aware chunking, low-confidence sentence fallback.
+Only remaining lever for cloud >0.55:
+
+1. **`v8a-genqa` — generative seq2seq head** (training script ready at `training/nlp/finetune_genqa.py`). Train Flan-T5 on all 883 `(question, context, answer)` triples — no span-match requirement, covers the diff bucket. Risk: AE 0.9 threshold punishes paraphrases; speed dip from autoregressive decoding. Reward: only known path to push past 0.55 cloud.
+
+Dropped candidates (confirmed not levers):
+- `v8b-chunked-context` — flat
+- `v8c-roberta-large-resume` — moot since v7-v2 was net-negative
+- v3 data-prep (drop rapidfuzz) — that's what v8b was; flat
+- paragraph-aware chunking, low-confidence sentence fallback (confirmed earlier)
 
 ## Submission cadence rule
 
