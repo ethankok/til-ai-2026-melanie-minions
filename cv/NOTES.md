@@ -1,6 +1,7 @@
 # CV — notes & history
 
-Last updated: 15 May 2026 12:00 SGT
+Last updated: 16 May 2026 02:30 SGT — Pass A failure analysis done, tiled
+inference A/B done (no qualifier-positive variant), v8s-1024 retrain running.
 
 Per-task working log for CV (object detection). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv).
@@ -13,9 +14,203 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 v11m@1024 (`cv-yolo11m-v3-pre`) regressed to 0.376/0.955 on 15 May. Tier1 stays
 as the active CV image via highest-score retention.
 
-**Next candidate: v11m@1280 inference** — hard held-out 0.9141 (vs tier1's 0.9049,
-+0.009). Speed with TTA is ~0.60 (too slow). Need `aug=0` sweep to check if
-accuracy holds without TTA before deciding to ship.
+## Active workstreams (16 May)
+
+1. **`v8s-1024` retrain** running on Workbench (`tmux: cv-train`,
+   `training/cv/train_v4.sh`). YOLOv8s @ imgsz=1024, 80 epochs, batch=10,
+   `copy_paste=0.40`, `mosaic=1.0`, `close_mosaic=10`. Wallclock ≈ 3 hr on T4.
+   Output: `/home/jupyter/cv_runs/til-yolo8s-1024-hard-v4/weights/best.pt`.
+2. **Tiled inference patch shipped to `cv/src/cv_manager.py`** (commit on
+   16/05). Off-mode is bit-identical to the prior tier1 build. New env vars
+   gate the new path; defaults preserve current behavior. See "Tiled
+   inference" section below for the A/B results that informed leaving it
+   off by default.
+
+## Pass A — hard held-out failure analysis (15-16 May)
+
+Ran the existing `eval_cv_http.py` on `cv-yolo-v2-tier1-best` (`CV_CONF=0.20`,
+`CV_IOU=0.60`, `CV_IMGSZ=896`, `CV_AUGMENT=1`, `CV_HALF=1`) against the hard
+held-out 500-image / 3334-box test split:
+
+```text
+mAP50-95: 0.8947
+mAP50:    0.9954
+mAP75:    0.9792
+small:    0.6434     ← THE bottleneck (-0.25 below total)
+medium:   0.8506
+large:    0.9128
+```
+
+Per-class loss table sorted by `(1-AP) * box_count` showed the top losers
+(cargo ship, fighter jet, helicopter, commercial aircraft, warship) are all
+medium-frequency classes whose AP sits at 0.86-0.88, not rare classes whose
+AP collapses. Confirmed: it is **not** a class-imbalance story.
+
+Confusion at IoU >= 0.5, conf >= 0.20:
+
+```text
+ground-truth boxes: 3334
+matched:            3333 (class-correct 3317, class-wrong 16, FN 1)
+false-positives:    176
+```
+
+**16 / 3334 = 0.48% class confusion.** Aircraft subclass confusion is dead as
+a hypothesis. The 176 FPs are almost all in conf < 0.80 (see below).
+
+FP/TP by score bucket (IoU >= 0.5):
+
+```text
+score        tp       fp    precision
+0.20-0.30     1       35     2.8%
+0.30-0.40     4       22    15.4%
+0.40-0.50     1       28     3.4%
+0.50-0.60     3       20    13.0%
+0.60-0.70     6       23    20.7%
+0.70-0.80    18       19    48.7%
+0.80-0.90   380       19    95.2%
+0.90-1.00  2917       13    99.6%
+```
+
+97% of TPs are conf >= 0.80. The low-conf buckets are mostly FPs.
+
+### CV_CONF sweep (cleaning up FPs by raising conf)
+
+Hypothesis: raising `CV_CONF` should drop most FPs at low cost in TPs and
+lift mAP. **Falsified** — mAP drops monotonically:
+
+```text
+CV_CONF=0.20  mAP50-95=0.8947   ← current shipped
+CV_CONF=0.40  mAP50-95=0.8929   -0.0018
+CV_CONF=0.60  mAP50-95=0.8909   -0.0038
+CV_CONF=0.70  mAP50-95=0.8886   -0.0061
+CV_CONF=0.80  mAP50-95=0.8854   -0.0093
+```
+
+Read: pycocotools mAP integrates the precision-recall curve at each IoU.
+Cutting low-conf detections doesn't just remove FPs, it amputates the
+high-recall tail of the PR curve. Even precision-2.8% predictions are
+contributing to the AP integral via the recall axis. This is the *opposite*
+of what `test/test_cv.py`'s `score=1.0` pinning would suggest, and means
+the hidden cloud evaluator probably consumes our `score` field and/or
+also runs an integrated PR curve.
+
+**Lever 1 (raise conf for free FP cleanup) is dead** locally. Could still
+flip on cloud if cloud uses score-pinned mAP, but EV is small and the local
+signal is clean enough that we shouldn't burn a submission slot on it.
+
+### Class-balanced sampling — also dead
+
+With 16/3334 class-wrong boxes, there is no class-imbalance story to fix.
+
+### What the 25 worst images showed
+
+Eyeballing 1992.jpg, 3919.jpg, 4853.jpg (worst 3 by per-image loss):
+photo-composited backgrounds (mountain valley, urban riverside, forest/lake)
+with cutout/3D objects pasted at wildly varying scales — some aircraft 25-50
+pixels wide on 1920×1080 native. **Backgrounds vary; the small-AP gap is
+genuinely about pixel-scale localization at high IoU**, not memorization.
+At inference imgsz=896, a 30px-native object becomes ~14px in the model's
+input, which is below the resolution at which YOLOv8s' anchors and stride
+can localize tightly enough to clear IoU >= 0.75.
+
+## Tiled inference A/B (16 May)
+
+Implemented in `cv/src/cv_manager.py` behind `CV_TILE_MODE` (default `off`).
+Modes added: `2x2`, `2x1`, `3x2`. Each mode crops the 1920×1080 image into
+overlapping tiles (default `CV_TILE_OVERLAP=0.20`), runs the detector at
+`CV_TILE_IMGSZ=768` per tile, optionally also runs the full image at
+`CV_IMGSZ=896` (`CV_TILE_FULL_PASS=1` default), drops boxes touching internal
+tile edges (`CV_TILE_EDGE_MARGIN=4` default), and merges with class-aware NMS
+at `CV_TILE_MERGE_IOU=0.50`.
+
+Off-mode hard held-out is bit-identical to the prior tier1 number (`0.8947`)
+— sanity confirmed before trusting tile variants.
+
+A/B against the same hard held-out split, tier1 weights:
+
+| mode | total mAP | small | medium | large | tile passes |
+|---|---:|---:|---:|---:|---:|
+| `off`  | 0.8947 | 0.6434 | 0.8506 | 0.9128 | 1 |
+| `2x2`  | 0.8993 | 0.6139 | 0.8475 | 0.9185 | 4 + 1 = 5 |
+| `2x1`  | 0.8771 | 0.5929 | 0.8329 | 0.8925 | 2 + 1 = 3 |
+| `3x2`  | 0.9009 | 0.6255 | **0.8728** | 0.9180 | 6 + 1 = 7 |
+| `3x2` em=0 ov=0.30 | similar pattern (no clear small-AP recovery) | — | — | — | 7 |
+
+Read:
+
+- **Small-AP regressed in every tiled mode**. The hypothesis (tiling rescues
+  small-object recall) was wrong on this dataset. Likely the edge-margin
+  filter at 4px drops legitimate small detections that happen to land on
+  internal tile cuts; lowering to 0 didn't recover small AP, suggesting it's
+  also a property of how the model handles partial objects within tile crops.
+- **The 3x2 lift is real but it's a medium-object lift.** medium AP +0.022
+  (0.8506 → 0.8728) explains nearly the entire +0.006 total. 3x2 tiles are
+  738×600, so a 60px native object becomes ~80px effective at imgsz=768 —
+  exactly the medium bucket.
+
+### Speed cost (back-of-envelope)
+
+Current shipped (1 forward pass with TTA ≈ 3 fwd passes) hits cloud
+speed `0.956`. 3x2 with full + TTA = 7 forward passes ≈ 3× compute.
+
+```text
+Current shipped : 0.75 * 0.556 + 0.25 * 0.956 = 0.656
+3x2 best case   : 0.75 * 0.580 + 0.25 * 0.870 = 0.653  (+0.024 cloud accuracy assumed)
+3x2 likely case : 0.75 * 0.560 + 0.25 * 0.870 = 0.638  (cloud accuracy flat)
+```
+
+Tied at best, regressed at worst. The local +0.006 mAP would need to translate
+to **+0.04 cloud accuracy** just to break even — implausible given our
+local→cloud history.
+
+### Decision
+
+**Don't ship tiled inference on tier1 weights.** Patch stays merged but
+disabled by default. We re-test all four tile modes against the v8s-1024
+weights when the retrain finishes — if the new weights are better at the
+tile resolutions, the math could flip; if not, ship vanilla 1024 with TTA.
+
+**Lever 2 (tiled inference) is also dead** for tier1 weights. The diagnostic
+value was real: it confirmed the small-object failure mode is at-IoU
+localization, not detection-recall, and ruled out a cheap inference fix.
+
+## What's left, in order
+
+1. **`v8s-1024` retrain** finishes (~3 hr from kickoff on 16/05). Diff from v2:
+   imgsz 768 → 1024, copy_paste 0.10 → 0.40, close_mosaic 10 → 10 (kept),
+   epochs 80 (kept), v8s backbone (kept). Hypothesis: training at 2× the
+   pixel area gives the model the resolution to localize medium/small targets
+   at high IoU, which is exactly the gap Pass A identified.
+2. **Eval the new weights four ways** on hard held-out: `imgsz=1024 aug=1`,
+   `imgsz=1280 aug=0`, `tile=3x2` against new weights, `tile=2x2` against
+   new weights. Pick the highest-blended (`0.75*mAP + 0.25*estimated_speed`)
+   for submission.
+3. **Submit `cv-yolo-v2-1024` (or `…-tiled` if it wins)**. Leaderboard keeps
+   the higher score, so a regression cannot demote tier1.
+4. **Stop**. CV is 20% of the qualifier; the realistic lift from here is
+   bounded at +0.013 qualifier (cloud +0.05). Past this point NLP `v11`
+   and ASR `parakeet-ft-v1` have higher EV per remaining hour.
+
+## Tooling added on 16 May
+
+- `training/cv/analyze_cv_failures.py` — bucket the local mAP gap by class,
+  area, image, score, and class confusion. Reads predictions JSON from
+  `eval_cv_http.py`. Output is the source of truth for the failure analysis
+  above. Patched 15/05 to handle numpy scalars in the summary JSON.
+- `training/cv/train_v4.sh` — v8s @ 1024 retrain config. Differs from v3
+  by reverting backbone to v8s and bumping `copy_paste` to 0.40.
+- `cv/src/cv_manager.py` — tiled-inference path. Env vars:
+  - `CV_TILE_MODE` (`off` default, `2x2` / `2x1` / `3x2` opt-in)
+  - `CV_TILE_IMGSZ` (default 768)
+  - `CV_TILE_OVERLAP` (default 0.20, capped at 0.60)
+  - `CV_TILE_EDGE_MARGIN` (default 4 pixels)
+  - `CV_TILE_MERGE_IOU` (default 0.50, class-aware NMS for merged boxes)
+  - `CV_TILE_FULL_PASS` (default 1; whether to also run a full-image pass)
+  - `CV_TILE_AUGMENT` (default 0; TTA inside each tile, expensive)
+
+**Previous candidate: v11m@1280 inference** — hard held-out 0.9141 (vs tier1's 0.9049,
++0.009). Speed with TTA is ~0.60 (too slow). Was queued behind the v8s-1024
+retrain. If v8s-1024 lands clean on cloud, v11m@1280 is irrelevant.
 
 ## What our model runs on
 

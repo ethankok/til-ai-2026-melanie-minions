@@ -1,7 +1,11 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 15 May 2026 21:20 SGT — NLP `v9-doc-ensemble` remains best submitted blend at 0.683/0.883; `v11-canonical-answer` is staged for Workbench test.
+Last updated: 16 May 2026 02:30 SGT — CV Pass A failure analysis + tiled
+inference A/B done (no qualifier-positive variant on tier1 weights);
+`v8s-1024` retrain running on Workbench. NLP `v9-doc-ensemble` remains best
+submitted blend at 0.683/0.883; `v11-canonical-answer` staged for Workbench
+test.
 
 ## Latest submitted scores
 
@@ -72,6 +76,37 @@ cv-yolo-v2-best        14/05 14:00        0.549   0.960   0 / 500   0.884 / 0.85
 cv-yolo-v2-tier1-best  14/05 17:10        0.556   0.956   0 / 500   0.851 / 0.905          NEW HIGH (still on leaderboard); v2-best weights + TTA + imgsz=896 + iou=0.60 + score field
 cv-yolo11m-v3-pre      15/05 11:34        0.376   0.955   0 / 500   0.937 / 0.867          REGRESSED -0.180; YOLOv11m@1024 fully trained 120ep. Local val 0.937, hard held-out 0.867 (-0.038 vs tier1) — bigger model + matched-imgsz lost to v8s + upscaled inference. Tier1 stays on leaderboard.
 ```
+
+## CV local A/Bs (16 May, no submissions)
+
+```text
+Variant                                    Hard held-out mAP / small AP   Notes
+tier1-debug off mode                       0.8947 / 0.6434                Bit-identical to shipped tier1 (sanity).
+tier1 + CV_CONF=0.40                       0.8929 / 0.6434                -0.0018 mAP. Raising conf does NOT clean up FPs profitably.
+tier1 + CV_CONF=0.60                       0.8909 / 0.6434                -0.0038.
+tier1 + CV_CONF=0.70                       0.8886 / 0.6434                -0.0061.
+tier1 + CV_CONF=0.80                       0.8854 / 0.6434                -0.0093. mAP drops monotonically with conf — PR-curve tail is doing real work even at 2.8% precision.
+tier1 + CV_TILE_MODE=2x2                   0.8993 / 0.6139                Total +0.0046; small AP REGRESSED -0.030 (tile-edge filter drops legit small detections). 5 forward passes per image.
+tier1 + CV_TILE_MODE=2x1                   0.8771 / 0.5929                Regressed everywhere. 3 forward passes.
+tier1 + CV_TILE_MODE=3x2                   0.9009 / 0.6255                Total +0.0062 driven by medium AP +0.022 (0.8506 → 0.8728). Small AP still down. 7 forward passes (≈3× compute) — speed math: blended ≈ 0.638-0.653 vs shipped 0.656. Not shipping.
+tier1 + 3x2 EM=0 OV=0.30                   ≈ 0.90 / 0.62                  Edge-margin off + 30% overlap; small AP did NOT recover, confirming the regression is model behavior on tile crops, not the edge filter.
+```
+
+Failure-analysis breakdown of the tier1 baseline (Pass A on hard held-out):
+- 3334 ground-truth boxes; class-correct matches `3317`, class-wrong `16`
+  (0.48%), unmatched `1`, false-positives `176`. Aircraft-subclass confusion
+  is dead as a hypothesis.
+- FP/TP by score bucket showed 97% of TPs are conf ≥ 0.80; conf 0.20-0.70
+  collectively contributed `15 TP / 128 FP` but their PR-curve contribution
+  is what makes the integrated mAP higher at low conf, hence the
+  `CV_CONF` sweep regressing.
+- Per-area AP `small=0.6434 / medium=0.8506 / large=0.9128` — small bucket
+  is the entire bottleneck. At inference imgsz=896 the dataset's p25 box
+  becomes ~29×29 pixels in the model's input.
+- Worst 25 images (`3919`, `4853`, `1992`, `249`, `4780`, `2260`, `3510`,
+  `1293`, `1851`, ...) all have 5-11 boxes per image with mixed scales on
+  photo-composited backgrounds; recall 0.66-0.86. No systematic class or
+  scene bias.
 
 Notes on local mAP columns:
 - `cv-yolo-v2-best`: full local `til test` `0.8839`; hard held-out HTTP eval
@@ -197,4 +232,14 @@ Estimated blended qualifier score = 0.7199  (+0.0007 from v9 resubmit speed nois
    - **`AE_HYBRID_VETO_BOMBS=0`** *or* **`AE_HYBRID_VETO_DANGER=0`**: turn one veto off at a time to find which one is actually doing work. If hybrid still scores >0.5 without bomb-vetoes, the heuristic's bomb-escape check was wrong and we can simplify.
    - **`AE_HYBRID_VETO_FROZEN_STAY=0`**: cheapest A/B; if STAY was the right call sometimes, we recover that.
    Submit at most 2-3 of these — cloud variance is ±0.04 per run so we want big effect sizes, not micro-tunes. Speed is already evaluator-bound at ~0.86, no point optimizing further. If none beat 0.555, retraining the policy *knowing it has a heuristic safety net* (e.g. PPO with veto-aware rollouts) is the longer path.
-4. **CV next A/B is optional** — `cv-yolo-v2-tier1-best` is clean and materially better (`0.556/0.956`, `0 / 500` errors). Remaining gap is hidden distribution/small-object/aircraft-subclass generalization, not schema. Next CV swings if time allows: `yolov8m` at `imgsz=768`, class-balanced or aircraft-heavy sampling, and stronger small-object augmentation.
+4. **CV `v8s-1024` retrain in progress (16/05)**. Pass A on hard held-out
+   ruled out class confusion (16/3334 wrong, 0.48%) and low-conf FP cleanup
+   (`CV_CONF` sweep regressed mAP monotonically). Tiled inference (`CV_TILE_MODE`
+   in `cv_manager.py`) lifts hard held-out by +0.006 only on medium AP at 3×
+   compute, not shipping. The remaining gap is small/medium-AP localization
+   at IoU ≥ 0.75 — direct attack via training at imgsz=1024 with
+   `copy_paste=0.40` (`training/cv/train_v4.sh`). When the run finishes, eval
+   the new weights four ways (`1024 aug=1`, `1280 aug=0`, `tile=3x2`,
+   `tile=2x2`) on hard held-out and submit the best blended candidate.
+   Tier1 stays on leaderboard via highest-score retention regardless of the
+   outcome.
