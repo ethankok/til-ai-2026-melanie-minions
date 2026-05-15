@@ -1,12 +1,14 @@
 # CV — notes & history
 
-Last updated: 16 May 2026 04:50 SGT — **CV UN-PARKED. Phase C (gap-shrink)
-in progress. Target: cloud 0.7+.** Inside-the-box recipe levers are
-exhausted; the only path forward is to **shrink the local→cloud gap**
-itself (currently 0.35 for v8s, 0.44 for v11m), not raise the local
-score. Diagnostic script `training/cv/gap_diagnose.py` written; will
-probe JPEG-quality and scale axes before any training is spent. Tier1
-stays on the leaderboard while we work.
+Last updated: 16 May 2026 06:00 SGT — **CV UN-PARKED. Phase C.1 ready to
+train.** Diagnostic ran on tier1 + hard held-out; verdict is that
+**both JPEG quality and resolution shifts hit small AP hard** (-0.13 to
+-0.19 small AP under various transforms) even though the total mAP
+drops are modest (-0.01 to -0.04). Since the cloud failure mode is
+small-AP per Pass A, train-time augmentation along these axes is
+hypothesis-aligned. `training/cv/build_aug_dataset.py` and
+`training/cv/train_v4.sh` written; estimated cloud lift +0.03 to +0.07
+(target cloud 0.58-0.63). 0.7 still requires more than Phase C.
 
 Per-task working log for CV (object detection). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv).
@@ -80,6 +82,120 @@ docker rm -f cv-tier1
 
 Runtime: ~35 min for all 7 transforms; `--transforms baseline,jpeg-q50,downsample-2x`
 for a ~15-min smoke.
+
+### Diagnostic results (16 May 05:30 SGT)
+
+Ran `gap_diagnose.py` on tier1 + the 500-image hard held-out. Baseline came
+out at **mAP 0.9049 / small AP 0.7463** — note this is +0.01 mAP and +0.10
+small AP higher than Pass A's earlier 0.8947/0.6434 baseline. Same image,
+same env vars in theory; possibly different `cv/models/best.pt` checksum
+or different `CV_TILE_MODE` default. Deltas below are valid (all measured
+against the same baseline in this run); the absolute drift is flagged for
+follow-up.
+
+| Transform | Total mAP | Small AP | Medium AP | Large AP | Δ total | Δ small |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline | 0.9049 | 0.7463 | 0.8245 | 0.9274 | — | — |
+| jpeg-q70 | 0.8934 | 0.6168 | 0.8148 | 0.9194 | −0.011 | **−0.130** |
+| jpeg-q50 | 0.8900 | 0.5972 | 0.8060 | 0.9156 | −0.015 | **−0.149** |
+| jpeg-q30 | 0.8786 | 0.6495 | 0.7840 | 0.9027 | −0.026 | −0.097 |
+| downsample-2x | 0.8928 | 0.6287 | 0.7783 | 0.9212 | −0.012 | **−0.118** |
+| downsample-3x | 0.8612 | 0.6428 | 0.7182 | 0.8987 | −0.044 | −0.104 |
+| jpeg50-down2 | 0.8776 | 0.5598 | 0.7418 | 0.9072 | −0.027 | **−0.187** |
+
+The script's auto-verdict ("JPEG aug dead, resolution dead") was misleading
+because it thresholded on total mAP at 0.05. The real signal is **small AP
+drops by 10-19 points under every shift**, and Pass A established that
+small AP is precisely where the cloud loses. So both axes are real
+contributors to the cloud gap, just not visible in the total-mAP rollup.
+
+**Honest interpretation:**
+- The total-mAP drops sum to at most -0.07 across all axes; cloud gap is 0.349.
+  So JPEG + resolution shifts account for **≤ 20%** of the cloud gap.
+- The remaining 80% is most likely **different scene content** (different
+  photos with a heavier small-object bias), not a transform of similar ones.
+- Train-time augmentation will help, but the realistic cloud ceiling for
+  Phase C alone is **0.58-0.63**, not 0.70. To hit 0.70 we also need a
+  backbone change (RT-DETR / YOLOv9) or a wholesale distribution-shift recipe.
+
+## Phase C.1 — augmented v8s @ 1024 retrain (16 May 06:00 SGT)
+
+Single integrated train, not a phased C.1 → C.2 dance. Justification:
+both diagnostic axes hit small AP at similar magnitudes; building one
+augmented dataset that covers both is cheaper than two sequential runs.
+
+**Pipeline:**
+
+1. **Offline dataset expansion** — `training/cv/build_aug_dataset.py`.
+   For each train image (~4000):
+   - Keep the original.
+   - Add a JPEG-recompressed copy at random quality in [40, 85].
+   - Add one native-resolution 1024×1024 crop (random position biased toward
+     a box center; ≥ 0.5 visible-area threshold; drop crops with no visible
+     boxes).
+   Val/test untouched. Output `/home/jupyter/cv_yolo_dataset_augc1/` (~3x train).
+2. **Retrain** — `training/cv/train_v4.sh`. Changes vs tier1:
+   - `imgsz=1024` (was 768) — high-res input
+   - `scale=0.80` (was 0.60) — more aggressive small-object generation
+   - Everything else matched to tier1: `yolov8s.pt`, 80 epochs, batch=8,
+     AdamW + cos_lr, `mosaic=1.0`, `mixup=0.10`, `copy_paste=0.10`
+     (the 16/05 v8s-1024 retrain confirmed cp=0.40 is toxic).
+
+**Run on Workbench:**
+
+```bash
+# 1. Build the augmented dataset (~5-10 min)
+python training/cv/build_aug_dataset.py \
+  --in-dir /home/jupyter/cv_yolo_dataset \
+  --out-dir /home/jupyter/cv_yolo_dataset_augc1 \
+  --crops-per-image 1 \
+  --jpeg-per-image 1
+
+# 2. Train (~6h on T4)
+bash training/cv/train_v4.sh
+
+# 3. Deploy
+cp /home/jupyter/cv_runs/til-yolov8s-1024-augc1-v4/weights/best.pt cv/models/best.pt
+til build cv cv-augc1-v4
+
+# 4. Sweep + submit best blended row
+python training/cv/sweep_cv_http.py \
+  --image melanie-minions-cv:cv-augc1-v4 \
+  --data-dir /home/jupyter/novice/cv \
+  --annotations /home/jupyter/cv_yolo_dataset/coco/annotations_test.json \
+  --out-dir /home/jupyter/cv_eval_sweeps/augc1-v4 \
+  --conf 0.001,0.05,0.20 \
+  --iou 0.50,0.60,0.70 \
+  --imgsz 1024,1280 \
+  --augment 0,1
+til submit cv cv-augc1-v4
+```
+
+**Decision rule after submit:**
+- Cloud > 0.556 → new tier1; iterate (try imgsz=1280 inference, more aug, etc.)
+- Cloud ≈ 0.556 (within ±0.01) → Phase C ceiling, pivot to RT-DETR / YOLOv9
+- Cloud < 0.546 → Phase C scope wrong; fall back, rethink.
+
+Submission slots are uncapped per the rules (leaderboard keeps the higher
+score), so submit and observe — don't pre-gate on local proxies that have
+already proven unreliable.
+
+### Baseline anomaly to verify (non-blocking)
+
+Pass A on 16 May 02:30 SGT recorded tier1 hard held-out at 0.8947/0.6434
+small. The 16 May 05:30 SGT diagnostic recorded 0.9049/0.7463 small under
+the same env vars and same image. That's +0.10 small AP "for free" with no
+model change. Possible explanations:
+
+- `cv/models/best.pt` was replaced between the two runs (v8s-1024 or v11m
+  weights briefly substituted in for tier1)
+- `CV_TILE_MODE` got a default change with the tiled-inference patch
+- pycocotools or PIL version diff changed evaluation/encoding behavior
+
+If the +0.10 small AP is a real model/code state, it'd compound any cloud
+lift from C.1. Worth confirming with `sha256sum cv/models/best.pt` against
+the original tier1 checksum and a quick `git log -p cv/src/cv_manager.py`
+since 14 May 17:10 SGT.
 
 ## Current shipped tag
 

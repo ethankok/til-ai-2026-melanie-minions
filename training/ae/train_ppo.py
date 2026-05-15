@@ -240,8 +240,68 @@ class PlannerOpponent:
         return int(self.manager.ae(obs_py))
 
 
+class SnapshotPool:
+    """Bounded ring buffer of historical actor snapshots for self-play.
+
+    The TIL workshop materials (notebook 05 — Multi-Agent Introduction)
+    explicitly call out the failure mode our prior PPO runs hit:
+
+        "It's easy to overfit to a weak fixed opponent and regress when
+         the opponent improves."
+
+    And prescribe the fix:
+
+        "Self-play trains an agent by having it compete against a copy
+         of itself. Periodically, the opponent is updated to a
+         checkpoint of the current policy."
+
+    Implementation notes:
+
+    - We keep snapshots on CPU (each PolicyNetwork is ~149k–704k params
+      with belief, so 5 snapshots fits in <5 MB regardless of training
+      device). :class:`FrozenPolicyOpponent` deepcopies + .to(device)
+      at opponent construction.
+    - ``add`` does a deepcopy so further training updates on the live
+      actor don't mutate the stored snapshot.
+    - ``sample`` returns ``None`` when the pool is empty; callers should
+      fall back to the live actor in that case (matches pre-self-play
+      behavior for the first few snapshot intervals).
+    """
+
+    def __init__(self, max_size: int = 5):
+        self.max_size = max(1, int(max_size))
+        self._snapshots: list[PolicyNetwork] = []
+
+    def add(self, actor: PolicyNetwork) -> None:
+        # Detach to CPU so we don't pin GPU memory; clone the state.
+        snap = copy.deepcopy(actor).cpu().eval()
+        self._snapshots.append(snap)
+        # Drop oldest when over cap. FIFO; this preserves the "old +
+        # recent" diversity the workshop and league-training papers
+        # recommend (the alternative — always drop random — degrades
+        # to "always recent" in expectation).
+        if len(self._snapshots) > self.max_size:
+            self._snapshots.pop(0)
+
+    def sample(self) -> PolicyNetwork | None:
+        if not self._snapshots:
+            return None
+        return random.choice(self._snapshots)
+
+    def __len__(self) -> int:
+        return len(self._snapshots)
+
+
 class FrozenPolicyOpponent:
-    """Frozen copy of the actor, with its own FrameStacker + belief AEManager."""
+    """Frozen copy of an actor, with its own FrameStacker + belief AEManager.
+
+    ``actor`` may be either the live trainee (legacy behavior — gives you
+    "play your immediate shadow", not real self-play) or a historical
+    snapshot drawn from a :class:`SnapshotPool` (proper self-play: the
+    opponent is frozen at an *older* policy state). Either way we
+    deepcopy at construction so the rollout sees a fixed opponent for
+    its duration.
+    """
 
     def __init__(self, actor: PolicyNetwork, device: torch.device, n_frames: int):
         self.actor = copy.deepcopy(actor).to(device).eval()
@@ -302,17 +362,36 @@ def _make_opponents(
     mode: str,
     opponent_agents: list[str],
     n_frames: int,
+    snapshot_pool: SnapshotPool | None = None,
 ) -> dict[str, Callable]:
     """Build opponent dict.
 
     Modes:
-    - random: uniform-random; fastest but unrealistic
-    - planner: frozen rule-based AEManager
-    - frozen:  frozen copy of the trainee
-    - aggressive: planner with combat bias (NEW — hunter archetype)
-    - mixed: random + planner + frozen
-    - league: random + planner + aggressive + frozen   ← strongest pool
+    - random:      uniform-random; fastest but unrealistic
+    - planner:     frozen rule-based AEManager
+    - frozen:      frozen copy of the trainee (live actor — your shadow)
+    - aggressive:  planner with combat bias (hunter archetype)
+    - mixed:       random + planner + frozen
+    - league:      random + planner + aggressive + frozen-from-pool
+                   ← strongest pool; recommended for the qualifier
+    - selfplay:    pool-only — face historical snapshots of yourself,
+                   no heuristic mix. Workshop's pure-self-play setup;
+                   may be unstable on its own but useful as an A/B.
+
+    Snapshot pool behavior:
+    - When ``snapshot_pool`` is provided AND non-empty, frozen opponents
+      are drawn from the pool (real self-play: face yourself-from-N-updates-ago).
+    - When the pool is empty (early training) or absent, frozen opponents
+      fall back to the live actor (legacy behavior — equivalent to
+      "play your shadow").
     """
+    def _frozen_opponent_actor() -> PolicyNetwork:
+        if snapshot_pool is not None:
+            snap = snapshot_pool.sample()
+            if snap is not None:
+                return snap
+        return actor
+
     choices: list[Callable] = []
     if mode in {"random", "mixed", "league"}:
         choices.extend([_random_opponent, _random_opponent])
@@ -320,8 +399,8 @@ def _make_opponents(
         choices.append(PlannerOpponent())
     if mode in {"aggressive", "league"}:
         choices.append(AggressivePlannerOpponent())
-    if mode in {"frozen", "mixed", "league"}:
-        choices.append(FrozenPolicyOpponent(actor, device, n_frames))
+    if mode in {"frozen", "mixed", "league", "selfplay"}:
+        choices.append(FrozenPolicyOpponent(_frozen_opponent_actor(), device, n_frames))
     if not choices:
         choices = [_random_opponent]
     return {agent: random.choice(choices) for agent in opponent_agents}
@@ -339,6 +418,7 @@ def collect_rollouts(
     args: argparse.Namespace,
     device: torch.device,
     seed_offset: int,
+    snapshot_pool: SnapshotPool | None = None,
 ) -> tuple[list[Transition], float]:
     env = _make_env(args)
     our_agent = env.possible_agents[0]
@@ -362,6 +442,7 @@ def collect_rollouts(
             actor, device, args.opponents,
             [a for a in env.possible_agents if a != our_agent],
             args.n_frames,
+            snapshot_pool=snapshot_pool,
         )
         for op in opponents.values():
             if hasattr(op, "reset"):
@@ -620,10 +701,29 @@ def train(args: argparse.Namespace) -> None:
     best_eval = -float("inf")
     start_time = time.time()
 
+    # Self-play snapshot pool. Workshop notebook 05 explicitly recommends this
+    # pattern over training-against-shadow: ``opponent.copy_weights(agent)`` at
+    # a fixed interval. We seed the pool with the actor's initial weights so
+    # the first few intervals don't fall back to live-actor frozen opponents.
+    snapshot_pool: SnapshotPool | None = None
+    snapshot_modes = {"frozen", "mixed", "league", "selfplay"}
+    if args.opponents in snapshot_modes and args.snapshot_interval > 0:
+        snapshot_pool = SnapshotPool(max_size=args.snapshot_pool_size)
+        snapshot_pool.add(actor)
+        print(
+            f"self-play snapshot pool: size_cap={args.snapshot_pool_size} "
+            f"interval={args.snapshot_interval} updates "
+            f"(seeded with initial actor)"
+        )
+
     for update in range(1, args.updates + 1):
         actor.train()
         critic.train()
-        transitions, rollout_score = collect_rollouts(actor, critic, args, device, seed_offset=update * args.games_per_update)
+        transitions, rollout_score = collect_rollouts(
+            actor, critic, args, device,
+            seed_offset=update * args.games_per_update,
+            snapshot_pool=snapshot_pool,
+        )
         if not transitions:
             raise SystemExit("No PPO transitions collected; environment likely terminated before our agent acted.")
         stats = ppo_update(actor, critic, transitions, optimizer, args, device)
@@ -648,14 +748,21 @@ def train(args: argparse.Namespace) -> None:
                 }, out_path)
                 print(f"  ✓ best PPO eval {best_eval:.4f} → saved {out_path}")
 
+        # Self-play: snapshot the actor at the configured cadence so future
+        # rollouts can face this state from the pool. Done AFTER the PPO
+        # update so the snapshot reflects the latest weights.
+        if snapshot_pool is not None and update % args.snapshot_interval == 0:
+            snapshot_pool.add(actor)
+
         elapsed = time.time() - start_time
         current_lr = optimizer.param_groups[0]["lr"]
+        pool_tag = f" pool={len(snapshot_pool)}" if snapshot_pool is not None else ""
         print(
             f"update {update:>4}/{args.updates}  "
             f"samples={len(transitions):>5}  rollout={rollout_score:.4f}  "
             f"eval={eval_score:.4f}  best={best_eval:.4f}  "
             f"pi_loss={stats['policy_loss']:.4f}  v_loss={stats['value_loss']:.4f}  "
-            f"entropy={stats['entropy']:.3f}  lr={current_lr:.2e}  elapsed={elapsed/60:.1f}m"
+            f"entropy={stats['entropy']:.3f}  lr={current_lr:.2e}{pool_tag}  elapsed={elapsed/60:.1f}m"
         )
 
     print(f"\nBest eval score: {best_eval:.4f}")
@@ -689,8 +796,13 @@ def main() -> None:
                         help="Train with novice=False and a random seed per game (diversify the training distribution).")
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--eval-games", type=int, default=12)
-    parser.add_argument("--opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league"], default="mixed")
-    parser.add_argument("--eval-opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league"], default="mixed")
+    parser.add_argument("--opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay"], default="mixed")
+    parser.add_argument("--eval-opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay"], default="mixed")
+    parser.add_argument("--snapshot-interval", type=int, default=10,
+                        help="Add a frozen actor snapshot to the self-play pool every N PPO updates "
+                             "(set to 0 to disable; falls back to live-actor frozen opponents).")
+    parser.add_argument("--snapshot-pool-size", type=int, default=5,
+                        help="Max historical snapshots kept in the self-play pool (FIFO).")
     parser.add_argument("--use-belief", action="store_true",
                         help="Train with the belief-map architecture (16x16xK extra CNN branch). "
                              "Overridden by the BC checkpoint's use_belief flag if loading one.")

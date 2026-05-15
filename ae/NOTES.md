@@ -1,6 +1,81 @@
 # AE — notes & history
 
-Last updated: 15 May 2026 18:30 SGT — **AE parked at `hybrid-v3` (0.555/0.849) after 4 post-hybrid-v3 attempts all regressed.**
+Last updated: 16 May 2026 — **NEXT ATTEMPT: self-play PPO retrain** based on TIL workshop materials (notebook 05 explicitly diagnoses our bc-belief failure mode and prescribes self-play as the fix). Previous: AE parked at `hybrid-v3` (0.555/0.849) after 4 post-hybrid-v3 attempts all regressed.
+
+## NEXT EXPERIMENT — self-play PPO retrain (workshop-recommended)
+
+The TIL workshop notebook 05 ("Multi-Agent Introduction") explicitly diagnoses our problem and prescribes the fix. Quoting directly:
+
+> "It's easy to overfit to a weak fixed opponent and regress when the opponent improves."
+
+This is exactly what `bc-belief-hybrid` (0.287 cloud, -0.268 vs hybrid-v3) did. Our prior PPO runs all trained against `random + planner-v3b`, and the bigger belief network amplified the overfit.
+
+The workshop's prescription:
+
+> "Self-play trains an agent by having it compete against a copy of itself. Periodically, the opponent is updated to a checkpoint of the current policy. This produces a curriculum: the opponent always provides a challenge at the current skill level."
+
+### What we changed in `training/ae/train_ppo.py`
+
+1. **`SnapshotPool` class** — bounded FIFO ring buffer of historical actor snapshots, kept on CPU (deepcopy at insert, deepcopy + `.to(device)` at opponent construction).
+2. **`_make_opponents`** now accepts an optional `snapshot_pool`; when non-empty, `FrozenPolicyOpponent` is built from a *sampled snapshot* instead of the live actor.
+3. **Training loop** seeds the pool with the initial actor and adds a fresh snapshot every `--snapshot-interval` updates (default 10), capped at `--snapshot-pool-size` (default 5).
+4. **New `selfplay` opponent mode** — pool-only (no heuristic mix). Available as an A/B against `league`.
+
+Critical: the prior `FrozenPolicyOpponent` deepcopied the *live* actor at rollout construction. In late training that meant "play yourself" — almost no gradient signal. The snapshot pool fixes this: late-training rollouts face opponents from updates 10, 30, 50, 80, 100 ago, preserving curriculum diversity.
+
+### Recommended run command (Workbench)
+
+```bash
+# 1. Make sure BC checkpoint is in place
+ls training/ae/checkpoints/bc.pt
+
+# 2. Launch self-play PPO with league opponents (random + planner +
+#    aggressive + snapshot pool). 200 updates × 12 games ≈ 4-6 h on T4.
+python training/ae/train_ppo.py \
+    --bc-checkpoint training/ae/checkpoints/bc.pt \
+    --out training/ae/checkpoints/ppo-selfplay-v1.pt \
+    --opponents league \
+    --eval-opponents league \
+    --snapshot-interval 10 \
+    --snapshot-pool-size 5 \
+    --updates 200 \
+    --games-per-update 12 \
+    --eval-games 12 \
+    --n-frames 1
+
+# 3. Deploy
+cp training/ae/checkpoints/ppo-selfplay-v1.pt ae/models/bc.pt
+echo hybrid > ae/src/.ae_mode      # keep the safety-veto wrapper
+til build ae ppo-selfplay-v1
+til test ae ppo-selfplay-v1
+til submit ae ppo-selfplay-v1
+```
+
+### Decision tree
+
+- **Cloud ≥ 0.58**: self-play hypothesis validated. Iterate: longer training, larger pool, or selfplay-only mode.
+- **Cloud 0.54-0.58**: marginal — within ±0.04 noise of hybrid-v3. Run a second seed before deciding.
+- **Cloud < 0.54**: self-play didn't help. Roll back to hybrid-v3 and pivot remaining hours to NLP/CV.
+
+### Realistic expected lift
+
+Honest range based on our 9-point local→cloud history (~0.23 structural gap): **0.58-0.65 cloud**. Probably not 0.7 (leader 0.711) — top teams may have access to demonstrations or hidden-eval replays we don't. Self-play is still our highest-EV remaining AE move because it's the only intervention that materially changes the training opponent distribution.
+
+### Why we did NOT do MCTS-light / inference-time search
+
+Considered. The workshop materials contain zero MCTS / model-based search content (only BFS/DFS/A* in notebook 03 for fully-observed grids). Combined with no Discord hints, the 0.7+ teams almost certainly aren't doing MCTS — they're doing what the workshop teaches. Self-play is also strictly cheaper (no inference-time speed budget risk; existing hybrid wrapper composes unchanged).
+
+Lookahead search remains a v2 idea if self-play hits a hard ceiling.
+
+### v2 ideas if v1 self-play lands well
+
+- **Parameter sharing**: train all 4 agents with one shared policy at training time. 4× the data per game, deployed inference unchanged. Requires refactoring `collect_rollouts` to collect transitions from all controlled agents, not just `our_agent`. Workshop notebook 05 MD 19 is the reference.
+- **Larger snapshot pool with weighted sampling** — bias toward older snapshots to prevent cycle-collapse.
+- **Belief-map architecture + self-play**: the bc-belief failure was diagnosed as "memory + weak opponents = overfit". Memory + self-play opponents is structurally different and untested.
+
+---
+
+
 
 ## TL;DR for the next person reading this
 
