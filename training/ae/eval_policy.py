@@ -23,6 +23,7 @@ from tqdm import trange
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parents[1]
 sys.path.insert(0, str(THIS_DIR))
+sys.path.insert(0, str(REPO_ROOT / "ae" / "src"))
 
 from encoder import FrameStacker, rasterize_belief  # noqa: E402
 from model import PolicyNetwork  # noqa: E402
