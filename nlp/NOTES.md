@@ -1,6 +1,6 @@
 # NLP — notes & history
 
-Last updated: 15 May 2026 20:29 SGT — v9-doc-ensemble still best blend 0.683/0.883; v10-template-lite neutral
+Last updated: 15 May 2026 21:20 SGT — v11-canonical-answer staged; v9-doc-ensemble still best submitted blend 0.683/0.883
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
@@ -31,6 +31,57 @@ Code candidate in [src/nlp_manager.py](src/nlp_manager.py): keep v9 retrieval an
 Default `NLP_RULE_MODE=conservative` only overrides the model when the extracted span is clearly diffuse or missing the computed value. `NLP_RULE_MODE=aggressive` is available for a bolder Workbench A/B, and `NLP_RULE_MODE=off` disables this layer. This is deliberately narrow; previous broad fallbacks were net-negative.
 
 Result (15 May 20:16 SGT): `v10-template-lite` scored `0.683 / 0.882` officially with `0 / 700` errors. Local stayed at `0.711`; buckets shifted only `substr 177→178`, `diff 396→395`, with retrieval unchanged at `95.8%`. Interpretation: the conservative template layer is safe but too narrow to matter. Do not treat this as a new direction by itself; the next move needs broader answer canonicalization or a different QA head, not more tiny regex patches.
+
+## Current candidate — `v11-canonical-answer`
+
+Built from the Workbench v9 failure pack (`nlp-v11-failure-pack.tgz`), which contained:
+
+- `nlp_results.json` from `til test nlp v9-doc-ensemble`
+- `nlp_failure_analysis.jsonl` with all retrieval misses and retrieval-hit-diff cases
+- `nlp_failure_summary.txt`
+- matching `nlp.jsonl`
+
+Baseline pack:
+
+```text
+retrieval_miss        37
+retrieval_hit_exact  273
+retrieval_hit_substr 178
+retrieval_hit_diff   395
+```
+
+`v11-canonical-answer` keeps all v9/v10 retrieval and RoBERTa behavior, then adds a conservative full-document canonicalizer over the top returned docs. This is different from v10: v10 only looked at top reranked chunks and a few arithmetic forms; v11 uses the full text of the top-3 returned docs to rescue recurring right-document / wrong-phrase cases.
+
+Implemented cases:
+
+- classified/internal codenames from nearby all-caps annex references (`SEASTITCH`)
+- penalty answers with financial penalty + mandatory equipment surrender
+- event-year differences where question asks "between X and Y"
+- singular `Phi Credit` → `Phi Credits`
+- `The Edge Research Project` → `Edge Research`
+- `four in favor to one against` → `4-1`
+- `(...bn)` parenthetical normalization to `N billion Phi Credits`
+- Sharpsea Bloc logistics industry phrasing
+- confidence level answers (`Medium only` → `medium confidence`)
+
+Replay guardrail:
+
+```bash
+python training/nlp/replay_canonicalizer.py \
+  --results data/nlp-v11-failure-pack/nlp_results.json \
+  --ground data/nlp-v11-failure-pack/nlp.jsonl \
+  --docs data/novice-nlp-light-20260515/novice/nlp/documents \
+  --changed-out data/nlp-v11-failure-pack/v11_canonicalizer_changed.jsonl
+```
+
+Replay result against v9 predictions:
+
+```text
+Before: exact 273, substr 178, diff 395, miss 37
+After : exact 280, substr 181, diff 385, miss 37
+```
+
+That is a +10 exact/substr proxy move with no proxy regressions. Expected cloud gain is modest but real if hidden eval shares these answer-syntax patterns; if cloud stays flat, the next lever is bigger than regex/canonicalization: generative QA or stronger supervised answer formatting.
 
 ## New eval (FINAL — pinned 14 May)
 
@@ -83,9 +134,9 @@ End-to-end pipeline in [src/nlp_manager.py](src/nlp_manager.py) and [src/nlp_ser
 5. **Cross-encoder rerank.** `BAAI/bge-reranker-base` scores `(question, chunk)` pairs. Top-10 → QA.
 6. **Top-3 doc IDs with BM25 backfill.** Walks reranked passages collecting unique parent doc IDs. If the reranker concentrated on <3 unique docs (common when one document has many highly-relevant chunks), backfills from the un-reranked hybrid list. Protects retrieval recall — the new eval gates every case on retrieval, so empty doc slots are pure waste.
 7. **Extractive QA (batched).** Fine-tuned `deepset/roberta-large-squad2` when `nlp/models/roberta-finetuned-squad2/` is baked into the image; otherwise falls back to stock `roberta-base-squad2`. All features are tokenized and forwarded in batches (`QA_BATCH=16`) with `overflow_to_sample_mapping` to recover which context each feature came from.
-8. **Narrow deterministic post-processing (neutral A/B).** `v10-template-lite` computes only high-confidence date/year/percentage-point answers after the learned QA span. Conservative default avoids touching normal span answers unless the span is long or missing the computed value. This was safe but too narrow to move cloud accuracy.
+8. **Deterministic answer canonicalization.** `v10-template-lite` added narrow chunk-level date/year/percentage rules and was neutral. `v11-canonical-answer` adds a broader but still conservative full-document canonicalizer over the top returned docs for repeated answer-syntax misses.
 9. **No broad low-confidence sentence fallback.** The old fallback was confirmed net-negative because it replaced many correct single-token spans with too-long sentences.
-10. **Speed.** GPU half-precision on all three models. Current best cloud speed is `0.883` for the resubmitted `v9-doc-ensemble`; `v10-template-lite` was near-neutral at `0.882`.
+10. **Speed.** GPU half-precision on all three models. Current best cloud speed is `0.883` for the resubmitted `v9-doc-ensemble`; v10 was near-neutral at `0.882`. v11 should be near-neutral too because it is regex/sentence scoring over only the top-3 docs.
 
 Weights baked into the image via [download_models.py](download_models.py). Container runs offline (`TRANSFORMERS_OFFLINE=1`). `NLP_MODEL_DIR=/workspace/models`.
 
@@ -123,6 +174,7 @@ v8b-chunked-context 15/05 18:35   0.679   0.872   0 / 700   0.708        Prior h
 v9-doc-ensemble 15/05 19:25       0.683   0.868   0 / 700   0.711        SHIPPED, NEW HIGH (+0.004 cloud vs v8b). Whole-document BM25+BGE retrieval prior/seeding rescued 3 local retrieval misses (40→37), exact unchanged, substr +1, diff +2. Small accuracy lift with small speed cost; blended 0.729
 v9-doc-ensemble 15/05 19:46       0.683   0.883   0 / 700   0.711        Same image resubmitted; accuracy unchanged, speed +0.015. Best NLP blend ~0.733. Treat speed deltas of this scale as evaluator noise.
 v10-template-lite 15/05 20:16      0.683   0.882   0 / 700   0.711        NEUTRAL. v9 + conservative regex arithmetic/date answer layer. Local substr +1 / diff -1, retrieval unchanged; cloud accuracy unchanged. Safe but too narrow.
+v11-canonical-answer (candidate)   —       —       —         replay +10  Staged. Full-document answer canonicalizer over top returned docs. Replay exact/substr 451→461, diff 395→385 on v9 predictions. Build/test before submit.
 ```
 
 Paragraph chunking is confirmed the v5b regressor; don't revisit on this corpus. v5c is a clean baseline for v6-roberta-large.
@@ -241,8 +293,8 @@ Next lever for cloud >0.70:
 1. **Protect `v9-doc-ensemble` as the shipped baseline.**
 2. **Retrieval is not the main blocker anymore.** Local upper bound is now 0.958 if every retrieved answer were accepted, but actual local is 0.711. That gap is the answer-equivalence / answer-syntax problem, especially `retrieval_hit_diff` staying ~396 cases.
 3. **`v10-template-lite` was safe but too small.** It proves narrow computed-answer overrides do not break the image, but a +1 substring shift is not enough to move cloud accuracy.
-4. **Next high-ROI direction: broader answer canonicalization / question-template extraction.** Learn from `nlp.jsonl` question patterns and expected answer forms (dates, money, names, orgs, IDs, measures). Add deterministic post-processing or template-specific extraction on top of the retrieved chunk before trying a slower generative model.
-5. **`v8a-genqa` — generative seq2seq head** remains a bigger swing. Train Flan-T5 on all 883 `(question, context, answer)` triples. Risk: AE 0.9 threshold punishes paraphrases and generation costs speed. Reward: possible path beyond 0.70 if outputs stay short and canonical.
+4. **Current A/B: `v11-canonical-answer`.** This is the broader deterministic pass we wanted: full-doc canonicalization for repeated syntax failures. Submit only after Workbench `til test`; local replay is positive but not a replacement for container eval.
+5. **`v8a-genqa` — generative seq2seq head** remains the next bigger swing. Train Flan-T5 on all 883 `(question, context, answer)` triples. Risk: AE 0.9 threshold punishes paraphrases and generation costs speed. Reward: possible path beyond 0.70 if outputs stay short and canonical.
 
 Dropped candidates (confirmed not levers):
 - `v8c-roberta-large-resume` — moot since v7-v2 was net-negative

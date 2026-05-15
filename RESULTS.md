@@ -1,7 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 15 May 2026 20:29 SGT — NLP `v9-doc-ensemble` remains best blend at 0.683/0.883 after same-image resubmit. `v10-template-lite` was neutral at 0.683/0.882.
+Last updated: 15 May 2026 21:20 SGT — NLP `v9-doc-ensemble` remains best submitted blend at 0.683/0.883; `v11-canonical-answer` is staged for Workbench test.
 
 ## Latest submitted scores
 
@@ -44,6 +44,7 @@ v8b-chunked-context 15/05 18:35  0.679   0.872   0 / 700   0.708        NEW HIGH
 v9-doc-ensemble 15/05 19:25      0.683   0.868   0 / 700   0.711        NEW HIGH (+0.004 cloud vs v8b). Whole-doc BM25+BGE prior/seeding reduced local retrieval misses 40→37 and nudged cloud accuracy. Small speed cost (-0.004); blended 0.729
 v9-doc-ensemble 15/05 19:46      0.683   0.883   0 / 700   0.711        Same image resubmitted. Accuracy unchanged, speed +0.015; best NLP blend ~0.733. Do not over-interpret speed deltas at this scale.
 v10-template-lite 15/05 20:16     0.683   0.882   0 / 700   0.711        NEUTRAL. Narrow deterministic answer layer for elapsed days/years and percentage-point deltas. Local substr +1 / diff -1, retrieval unchanged; cloud accuracy unchanged.
+v11-canonical-answer (candidate) —       —       —         replay +10    Staged. Full-document canonicalizer over top returned docs: codenames, penalties, event-year differences, unit/name aliases. Replay exact/substr 451→461, diff 395→385 on v9 predictions.
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.
@@ -190,7 +191,7 @@ Estimated blended qualifier score = 0.7199  (+0.0007 from v9 resubmit speed nois
 ## Next priority
 
 1. **ASR `parakeet-ft-v1` (Parakeet decoder-only fine-tune)** — `nemo-zs-v2` proved cloud speed is parked at 0.946 (HTTP / audio I/O / Python overhead, not the TDT decoder). The remaining ASR lever is accuracy. Pipeline is wired end-to-end: `prepare_data_nemo.py` → `train_parakeet.py` (encoder frozen, lr 5e-5, 5 epochs, ~3-4 hr T4) → `export_parakeet.py`. Decision gate before submission: local Eng-WER ≤ 0.035 (from zero-shot 0.0429). Expected official: 0.965-0.975. Leaderboard keeps the higher blended score so regression cannot demote `nemo-zs`.
-2. **NLP next: broaden answer syntax, not retrieval-only.** `v9` is best at `0.683/0.883` after same-image resubmit; retrieval hit is `95.8%` locally, but the bigger headroom is not retrieval. Local upper bound is `0.958` if every retrieved answer were accepted, while actual local is `0.711`. The downloaded local corpus confirms the problem: 481/883 gold answers are not literal source substrings, including 225 L1 answers. `v10-template-lite` was safe but neutral (`0.683/0.882`, substr +1 only), so the next deterministic move must be broader canonicalization across money, dates, names, orgs, IDs, and measure/value patterns. The bigger swing remains `v8a-genqa`, but only if outputs stay short/canonical enough for the AE 0.9 threshold and speed remains acceptable.
+2. **NLP next: Workbench-test `v11-canonical-answer`.** `v9` is best submitted at `0.683/0.883` after same-image resubmit; retrieval hit is `95.8%` locally, but the bigger headroom is not retrieval. Local upper bound is `0.958` if every retrieved answer were accepted, while actual local is `0.711`. The downloaded local corpus confirms the problem: 481/883 gold answers are not literal source substrings, including 225 L1 answers. `v10-template-lite` was safe but neutral (`0.683/0.882`, substr +1 only). `v11-canonical-answer` is the broader deterministic pass: replay exact/substr 451→461 and diff 395→385 on v9 predictions, no proxy regressions. The bigger swing remains `v8a-genqa`, but only if outputs stay short/canonical enough for the AE 0.9 threshold and speed remains acceptable.
 3. **AE hybrid is the new shipped tag at `0.555 / 0.849`.** The 0.49-0.51 cloud ceiling was real for individual approaches but broke under the policy + heuristic safety-veto combo (+0.048 over ppo-v1). To push toward 0.60 the cheap next moves all reuse the existing `HybridAEManager` plumbing — no retraining needed. Each is one env-var toggle + one rebuild:
    - **`AE_HYBRID_CONF=0.5`**: only use policy when its softmax top-action ≥ 0.5. Below that, fall back to heuristic. Tests whether the policy's *uncertain* outputs are the ones costing us score.
    - **`AE_HYBRID_VETO_BOMBS=0`** *or* **`AE_HYBRID_VETO_DANGER=0`**: turn one veto off at a time to find which one is actually doing work. If hybrid still scores >0.5 without bomb-vetoes, the heuristic's bomb-escape check was wrong and we can simplify.

@@ -21,6 +21,20 @@ python training/nlp/analyze_answer_templates.py \
 
 This is stdlib-only and does not train on the data. It summarizes question templates, answer types, and whether each gold answer appears literally in its source docs. The 15 May snapshot showed `481/883` answers are not literal source substrings, including `225/592` L1 cases, so the next lever after `v9-doc-ensemble` is answer syntax / canonicalization rather than another retrieval-only push.
 
+## Replay answer canonicalization
+
+After a Workbench `til test`, package or copy the saved predictions and replay the manager's post-processing without loading the Torch models:
+
+```bash
+python training/nlp/replay_canonicalizer.py \
+  --results data/nlp-v11-failure-pack/nlp_results.json \
+  --ground data/nlp-v11-failure-pack/nlp.jsonl \
+  --docs data/novice-nlp-light-20260515/novice/nlp/documents \
+  --changed-out data/nlp-v11-failure-pack/v11_canonicalizer_changed.jsonl
+```
+
+This script imports [nlp_manager.py](../../nlp/src/nlp_manager.py) with lightweight stubs for model-only dependencies, so it tests the actual `_canonicalize_answer` implementation. The first v11 replay against the v9 failure pack moved the exact/substr proxy `451 -> 461` and diff `395 -> 385`, with retrieval unchanged at `37` misses and no proxy regressions.
+
 ## v7 — extractive fine-tune (shipped at 0.517/0.880)
 
 `finetune_qa.py` takes the local `/home/jupyter/<track>/nlp/nlp.jsonl` ground-truth (883 question / answer / source_docs tuples for novice), pulls the corresponding documents from `/home/jupyter/<track>/nlp/documents/`, builds SQuAD-style training examples, and fine-tunes a SQuAD2-pretrained encoder on them.
