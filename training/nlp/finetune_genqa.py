@@ -169,8 +169,13 @@ def main() -> int:
                    help="must be >= the eval's 64-token answer cap")
     p.add_argument("--val-fraction", type=float, default=0.1)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--no-fp16", action="store_true",
-                   help="disable fp16 training (default: enabled on cuda)")
+    p.add_argument("--precision", default="bf16",
+                   choices=["fp32", "fp16", "bf16"],
+                   help="training precision. Default bf16 — T5 has known fp16 "
+                        "overflow in attention that produces NaN gradients from "
+                        "step 1 (seen 15/05 with flan-t5-base on T4). bf16 is "
+                        "stable on T5 and runs on any Ampere+ or T4 GPU. Use "
+                        "fp32 if bf16 is somehow unavailable.")
     p.add_argument("--use-chunk-context", action="store_true",
                    help="narrow context to the inference-style chunk containing "
                         "the answer (when findable). Mirrors inference; usually "
@@ -230,7 +235,18 @@ def main() -> int:
     run_dir = Path(f"training/nlp/runs/{timestamp}-genqa")
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    fp16 = (not args.no_fp16) and torch.cuda.is_available()
+    on_cuda = torch.cuda.is_available()
+    use_fp16 = args.precision == "fp16" and on_cuda
+    use_bf16 = args.precision == "bf16" and on_cuda
+    if use_bf16 and not torch.cuda.is_bf16_supported():
+        print("WARN: bf16 requested but GPU reports no bf16 support; "
+              "falling back to fp32 for T5 stability.", file=sys.stderr)
+        use_bf16 = False
+    print(
+        f"precision: {'fp16' if use_fp16 else 'bf16' if use_bf16 else 'fp32'} "
+        f"(on_cuda={on_cuda})",
+        file=sys.stderr,
+    )
     targs = Seq2SeqTrainingArguments(
         output_dir=str(run_dir),
         num_train_epochs=args.epochs,
@@ -239,7 +255,8 @@ def main() -> int:
         learning_rate=args.lr,
         weight_decay=0.01,
         warmup_ratio=0.1,
-        fp16=fp16,
+        fp16=use_fp16,
+        bf16=use_bf16,
         eval_strategy="epoch",
         save_strategy="epoch",
         save_total_limit=2,
@@ -262,6 +279,24 @@ def main() -> int:
         tokenizer=tokenizer,
     )
     trainer.train()
+
+    # NaN sanity check. T5 + fp16 silently produces NaN gradients (loss=0.0,
+    # grad_norm=nan from step 1) and HF will happily save the corrupted
+    # weights. Refuse to save in that state — better to fail loud than to
+    # ship a NaN'd model that scores 0.4 × retrieval_hit locally and tanks
+    # cloud submissions.
+    has_nan = any(
+        not torch.isfinite(p).all().item()
+        for p in model.parameters()
+    )
+    if has_nan:
+        print(
+            "ERROR: trained model contains NaN/Inf weights — refusing to save. "
+            "Likely cause: precision mismatch (was the run in fp16?). "
+            "Retry with --precision bf16 (default) or --precision fp32.",
+            file=sys.stderr,
+        )
+        return 2
 
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
