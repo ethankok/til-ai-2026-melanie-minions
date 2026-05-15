@@ -464,6 +464,16 @@ def main() -> None:
 
     if args.summary_json:
         args.summary_json.parent.mkdir(parents=True, exist_ok=True)
+
+        def _json_default(value: Any) -> Any:
+            # Pycocotools returns numpy scalars for category/image ids; json
+            # can't serialize those without a fallback.
+            if hasattr(value, "item"):
+                return value.item()
+            if isinstance(value, set):
+                return sorted(value)
+            return str(value)
+
         args.summary_json.write_text(
             json.dumps(
                 {
@@ -472,14 +482,14 @@ def main() -> None:
                     "worst_images": image_rows[: args.top_images],
                     "confusion_pairs": [
                         {
-                            "gold": cat_id_to_name.get(gold, str(gold)),
-                            "predicted": cat_id_to_name.get(pred, str(pred)),
-                            "count": count,
+                            "gold": cat_id_to_name.get(int(gold), str(gold)),
+                            "predicted": cat_id_to_name.get(int(pred), str(pred)),
+                            "count": int(count),
                         }
                         for (gold, pred), count in pair_counts.most_common(args.top_pairs)
                     ],
                     "unmatched_gt": [
-                        {"name": cat_id_to_name.get(cls, str(cls)), "count": count}
+                        {"name": cat_id_to_name.get(int(cls), str(cls)), "count": int(count)}
                         for cls, count in unmatched_gt.most_common()
                     ],
                     "score_buckets": bucket_rows,
@@ -487,6 +497,7 @@ def main() -> None:
                     "gt_total": gt_total,
                 },
                 indent=2,
+                default=_json_default,
             ),
             encoding="utf-8",
         )
