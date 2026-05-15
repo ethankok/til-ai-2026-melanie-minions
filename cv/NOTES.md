@@ -1,7 +1,9 @@
 # CV — notes & history
 
-Last updated: 16 May 2026 02:30 SGT — Pass A failure analysis done, tiled
-inference A/B done (no qualifier-positive variant), v8s-1024 retrain running.
+Last updated: 16 May 2026 04:30 SGT — **CV PARKED at `cv-yolo-v2-tier1-best`
+0.556/0.956.** Three more avenues tested today (v8s-1024 retrain, tiled
+inference, v11m@1280 aug=0 submission); all regressed cloud or were
+inferior on blended. Tier1 stays on leaderboard via highest-score retention.
 
 Per-task working log for CV (object detection). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv).
@@ -11,20 +13,135 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 **`cv-yolo-v2-tier1-best` — official 0.556 / 0.956 (14 May 17:10 SGT, 0 of 500 errors). STILL ON LEADERBOARD.**
 
-v11m@1024 (`cv-yolo11m-v3-pre`) regressed to 0.376/0.955 on 15 May. Tier1 stays
-as the active CV image via highest-score retention.
+Three tier1-killer attempts on 16 May all regressed cloud or were
+blended-flat:
 
-## Active workstreams (16 May)
+- `cv-yolo-v2-tier1-best` (live): cloud `0.556 / 0.956`, hard held-out `0.9049`
+- `cv-yolo11m-v3-pre` (15/05): cloud `0.376 / 0.955`, hard held-out `0.8673`
+- `v11m-1280-noaug-v1` (16/05): cloud `0.474 / 0.949`, hard held-out `0.9088`
+- v8s-1024 retrain (16/05, NOT submitted): hard held-out `0.8217-0.8370`,
+  was a clear local regression so tier1's leaderboard slot was protected.
 
-1. **`v8s-1024` retrain** running on Workbench (`tmux: cv-train`,
-   `training/cv/train_v4.sh`). YOLOv8s @ imgsz=1024, 80 epochs, batch=10,
-   `copy_paste=0.40`, `mosaic=1.0`, `close_mosaic=10`. Wallclock ≈ 3 hr on T4.
-   Output: `/home/jupyter/cv_runs/til-yolo8s-1024-hard-v4/weights/best.pt`.
-2. **Tiled inference patch shipped to `cv/src/cv_manager.py`** (commit on
-   16/05). Off-mode is bit-identical to the prior tier1 build. New env vars
-   gate the new path; defaults preserve current behavior. See "Tiled
-   inference" section below for the A/B results that informed leaving it
-   off by default.
+Final read: **CV is parked**. We've now characterised the local→cloud gap
+across model families and across resolution/TTA settings, and there is no
+inference-only or training-only lever left that we haven't already tried.
+Continuing CV would mean either a fundamentally different architecture
+(SAHI-style proper tiling at training time, or a different detection
+family) or class-balanced retraining with a cleaner augmentation recipe;
+neither has a high-confidence path past tier1's `0.556` on cloud.
+
+## Day-of summary (16 May)
+
+What we ran, in order, and what each thing told us:
+
+1. **Pass A failure analysis on tier1 weights** (hard held-out `0.9049`).
+   Result: small AP `0.6434` is the entire mAP gap; class confusion is
+   `16/3334 = 0.48%` — confirmed dead as hypothesis. Worst-image eyeballing
+   of `1992.jpg`, `3919.jpg`, `4853.jpg` showed the dataset is photo-
+   composited with cutout/3D objects pasted at wildly varying scales,
+   small targets land at 25-50 px on 1920×1080 native (`~14 px` in the
+   model's `896` input).
+2. **`CV_CONF` sweep** (`0.20 → 0.40 → 0.60 → 0.70 → 0.80`). Result: mAP
+   regressed monotonically (`0.8947 → 0.8854`). Cloud is consuming
+   detections through the integrated PR curve — low-conf predictions
+   contribute via the recall axis. **Lever 1 (free FP cleanup) is dead.**
+3. **Tiled-inference patch + A/B** (`CV_TILE_MODE` env in `cv_manager.py`,
+   modes `2x2 / 2x1 / 3x2`). Result: `3x2` lifts hard held-out by `+0.006`,
+   driven entirely by medium AP (`0.8506 → 0.8728`); small AP *regressed*
+   in every tiled mode. With 3× compute cost, blended tied or regressed.
+   **Lever 2 (tiled inference) is dead** for tier1 weights.
+4. **`v8s-1024` retrain** (3.8 hr on T4; `imgsz=1024`, `copy_paste=0.40`).
+   Final Ultralytics val `mAP50-95 = 0.879` (vs tier1's `0.920` on the
+   same 500-image val split). Hard held-out across 3 inference modes:
+   `0.8217 / 0.8370 / 0.8361` — all clearly worse than tier1's `0.9049`.
+   The aggressive `copy_paste=0.40` was likely the regressor (the dataset
+   is *already* a careful copy-paste; aggressive training-time copy-paste
+   slaps random instance crops onto random scenes, shifting the
+   distribution away from eval). **Not submitted.** Lesson: `copy_paste`
+   is destructively powerful on this dataset; v3's `0.30` may also have
+   been a contributor to v3's regression.
+5. **v11m@1280 aug=0 sweep + submission** (`v11m-1280-noaug-v1`).
+   Hard held-out `0.9088` (`+0.014` over tier1). Submitted because the
+   no-TTA speed math projected `~0.85-0.92` cloud speed and the local
+   accuracy lift was real. **Cloud landed `0.474 / 0.949`** (`-0.082`
+   accuracy vs tier1, `-0.007` speed). Tier1 stays on leaderboard via
+   highest-score retention.
+
+## v11m@1280 aug=0 submission analysis
+
+```text
+sweep results, conf x iou
+       conf=0.001  conf=0.05  conf=0.10  conf=0.20
+iou=0.50  0.9080     0.9075     0.9075     0.9075
+iou=0.70  0.9088     0.9083     0.9083     0.9083  ← best row
+```
+
+Per-area on the best row (`conf=0.001 iou=0.70 imgsz=1280 aug=0`):
+
+```text
+small:  0.7168
+medium: 0.8594
+large:  0.9273
+```
+
+Best-row local→cloud:
+
+| Metric | Local hard | Cloud |
+|---|---:|---:|
+| total mAP | 0.9088 | 0.474 |
+| speed | (proj 0.85-0.92) | 0.949 |
+
+Cloud-side observations:
+
+- **Speed beat my projection by a comfortable margin.** I projected
+  `0.85-0.92` based on T4 wall-clock; cloud delivered `0.949`. The cloud
+  GPU is meaningfully faster than the workbench T4, and no-TTA at 1280
+  doesn't bottleneck on it. **Cloud speed is no longer a CV constraint
+  for any reasonable inference resolution.**
+- **Accuracy gap was wider than v8s.** Local→cloud gap for v11m@1280
+  is `0.9088 - 0.474 = 0.435`. For v11m@1024 it was `0.491`. For v8s
+  tier1 it's `0.349`. **v11m's gap is structurally wider than v8s's**;
+  resolution helps it locally but doesn't close the cloud gap.
+- **The 0.349 v8s gap held only for v8s** — calibration insight.
+  Going forward, predict cloud accuracy from local hard held-out via
+  separate gap estimates per backbone family.
+
+`til test cv v11m-1280-noaug-v1` printed local full-set:
+
+```text
+mAP@.5:.05:.95: 0.812
+small AP: 0.144   ← collapsed on the easy-but-numerous full-set images
+medium AP: 0.701
+large AP: 0.878
+```
+
+This is a different signal from the hard held-out: the full local set
+is dominated by easy images that v11m@1280 over-fit on (small AP
+collapsed to `0.144`). The hard held-out happens to be small-object
+heavy, so v11m at 1280 looks great there; the full set looks much
+worse because the model is now mis-calibrated on common easy cases.
+The hard split was the better proxy for cloud direction; the full
+set was the better proxy for cloud absolute level.
+
+## Calibration learned (for any future CV submission)
+
+```text
+Backbone     Local→cloud gap on hard held-out
+v8s          ~0.35  (tier1: 0.9049 → 0.556)
+v11m         ~0.44  (v3-pre: 0.8673 → 0.376; v11m@1280: 0.9088 → 0.474)
+```
+
+The two v11m data points are within 0.06 of each other in absolute
+cloud terms (`0.376` vs `0.474`) and the gap is roughly stable
+(`0.491` vs `0.435`). The gap is a function of the architecture's
+generalization to the hidden distribution, not of resolution.
+
+**Implication**: to beat tier1 cloud `0.556`, a v11m-class submission
+would need hard held-out ≥ `0.99`, which is essentially out of reach.
+A v8s-class submission would need hard held-out ≥ `0.91` (current
+tier1 is `0.9049`). A different backbone family would have an unknown
+gap; the only way to discover it is to submit, and we've used up
+that exploratory budget.
 
 ## Pass A — hard held-out failure analysis (15-16 May)
 
@@ -148,10 +265,15 @@ Read:
   738×600, so a 60px native object becomes ~80px effective at imgsz=768 —
   exactly the medium bucket.
 
-### Speed cost (back-of-envelope)
+### Speed cost (back-of-envelope, T4)
+
+This estimate was wrong on the cloud side. The cloud GPU is faster than
+the T4 by enough that no-TTA inference at 1280 hits cloud speed `0.949`,
+not the `0.85-0.92` we projected. The blended math below was conservative
+in the wrong direction. (See "Calibration learned" above.)
 
 Current shipped (1 forward pass with TTA ≈ 3 fwd passes) hits cloud
-speed `0.956`. 3x2 with full + TTA = 7 forward passes ≈ 3× compute.
+speed `0.956`. 3x2 with full + TTA = 7 forward passes ≈ 3× compute on T4.
 
 ```text
 Current shipped : 0.75 * 0.556 + 0.25 * 0.956 = 0.656
@@ -159,58 +281,70 @@ Current shipped : 0.75 * 0.556 + 0.25 * 0.956 = 0.656
 3x2 likely case : 0.75 * 0.560 + 0.25 * 0.870 = 0.638  (cloud accuracy flat)
 ```
 
-Tied at best, regressed at worst. The local +0.006 mAP would need to translate
-to **+0.04 cloud accuracy** just to break even — implausible given our
-local→cloud history.
+Tied at best, regressed at worst on T4 numbers; in retrospect speed would
+have been higher on cloud, but `3x2` still wouldn't have shipped because
+the local +0.006 mAP would not have translated to a cloud accuracy lift.
 
-### Decision
+### Decision (was)
 
-**Don't ship tiled inference on tier1 weights.** Patch stays merged but
-disabled by default. We re-test all four tile modes against the v8s-1024
-weights when the retrain finishes — if the new weights are better at the
-tile resolutions, the math could flip; if not, ship vanilla 1024 with TTA.
+Don't ship tiled inference on tier1 weights. Patch stays merged but
+disabled by default. Re-tested all four tile modes against the v8s-1024
+weights when the retrain finished — no candidate improved on tier1.
 
-**Lever 2 (tiled inference) is also dead** for tier1 weights. The diagnostic
-value was real: it confirmed the small-object failure mode is at-IoU
-localization, not detection-recall, and ruled out a cheap inference fix.
+**Lever 2 (tiled inference) is dead.** The diagnostic value was real:
+it confirmed the small-object failure mode is at-IoU localization, not
+detection-recall, and ruled out a cheap inference fix.
 
-## What's left, in order
+## v8s-1024 retrain (16 May, NOT submitted)
 
-1. **`v8s-1024` retrain** finishes (~3 hr from kickoff on 16/05). Diff from v2:
-   imgsz 768 → 1024, copy_paste 0.10 → 0.40, close_mosaic 10 → 10 (kept),
-   epochs 80 (kept), v8s backbone (kept). Hypothesis: training at 2× the
-   pixel area gives the model the resolution to localize medium/small targets
-   at high IoU, which is exactly the gap Pass A identified.
-2. **Eval the new weights four ways** on hard held-out: `imgsz=1024 aug=1`,
-   `imgsz=1280 aug=0`, `tile=3x2` against new weights, `tile=2x2` against
-   new weights. Pick the highest-blended (`0.75*mAP + 0.25*estimated_speed`)
-   for submission.
-3. **Submit `cv-yolo-v2-1024` (or `…-tiled` if it wins)**. Leaderboard keeps
-   the higher score, so a regression cannot demote tier1.
-4. **Stop**. CV is 20% of the qualifier; the realistic lift from here is
-   bounded at +0.013 qualifier (cloud +0.05). Past this point NLP `v11`
-   and ASR `parakeet-ft-v1` have higher EV per remaining hour.
+3.8 hr on T4 (`training/cv/train_v4.sh`):
 
-## Tooling added on 16 May
+- `model=yolov8s.pt`
+- `imgsz=1024` (vs tier1's 768)
+- `epochs=80`
+- `batch=10`
+- `copy_paste=0.40` (vs tier1's 0.10)
+- everything else matched tier1
 
-- `training/cv/analyze_cv_failures.py` — bucket the local mAP gap by class,
-  area, image, score, and class confusion. Reads predictions JSON from
-  `eval_cv_http.py`. Output is the source of truth for the failure analysis
-  above. Patched 15/05 to handle numpy scalars in the summary JSON.
-- `training/cv/train_v4.sh` — v8s @ 1024 retrain config. Differs from v3
-  by reverting backbone to v8s and bumping `copy_paste` to 0.40.
-- `cv/src/cv_manager.py` — tiled-inference path. Env vars:
-  - `CV_TILE_MODE` (`off` default, `2x2` / `2x1` / `3x2` opt-in)
-  - `CV_TILE_IMGSZ` (default 768)
-  - `CV_TILE_OVERLAP` (default 0.20, capped at 0.60)
-  - `CV_TILE_EDGE_MARGIN` (default 4 pixels)
-  - `CV_TILE_MERGE_IOU` (default 0.50, class-aware NMS for merged boxes)
-  - `CV_TILE_FULL_PASS` (default 1; whether to also run a full-image pass)
-  - `CV_TILE_AUGMENT` (default 0; TTA inside each tile, expensive)
+Final Ultralytics val (500-image split):
 
-**Previous candidate: v11m@1280 inference** — hard held-out 0.9141 (vs tier1's 0.9049,
-+0.009). Speed with TTA is ~0.60 (too slow). Was queued behind the v8s-1024
-retrain. If v8s-1024 lands clean on cloud, v11m@1280 is irrelevant.
+```text
+all  Box(P 0.975  R 0.975  mAP50 0.989  mAP50-95 0.879)
+```
+
+Tier1 on the same val: `mAP50-95 0.920`. The retrain was already a real
+val regression of `-0.041`.
+
+Hard held-out across three inference modes (`/home/jupyter/cv_eval_sweeps/1024-debug/`):
+
+| Inference mode | total mAP | small | medium | large |
+|---|---:|---:|---:|---:|
+| `imgsz=1024 aug=1` | 0.8217 | 0.5327 | 0.7591 | 0.8425 |
+| `imgsz=1280 aug=0` | 0.8370 | 0.5168 | 0.7594 | 0.8550 |
+| `imgsz=1024 + tile=3x2` | 0.8361 | 0.5058 | 0.7953 | 0.8507 |
+
+vs **tier1 baseline** (`0.8947 / 0.6434 / 0.8506 / 0.9128`):
+
+- Total mAP regressed `-0.058` to `-0.073`.
+- Small AP regressed `-0.110` to `-0.138` — the *opposite* of the
+  hypothesis. The retrain was supposed to lift small AP via higher
+  resolution; it crashed it instead.
+
+Most likely cause: `copy_paste=0.40` was too aggressive. The dataset is
+*already* a carefully composed copy-paste. Aggressive training-time
+copy-paste slaps random instance crops onto random training images,
+shifting the training distribution away from the eval distribution.
+This is a key lesson if anyone retrains v8s in the future:
+
+```text
+copy_paste     dataset behavior
+0.0 - 0.10     safe; tier1's recipe
+0.20 - 0.30    untested; v3 used 0.30 (also regressed, but with v11m
+               + matched-imgsz, so confounded)
+0.40           toxic; this run
+```
+
+Not submitted. CV is parked.
 
 ## What our model runs on
 
