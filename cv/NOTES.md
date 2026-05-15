@@ -1,6 +1,6 @@
 # CV — notes & history
 
-Last updated: 14 May 2026 14:10 SGT
+Last updated: 15 May 2026 12:00 SGT
 
 Per-task working log for CV (object detection). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv).
@@ -8,18 +8,14 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`cv-yolo-v2-tier1-best` — official 0.556 / 0.956 (14 May 17:10 SGT, 0 of 500 errors).**
+**`cv-yolo-v2-tier1-best` — official 0.556 / 0.956 (14 May 17:10 SGT, 0 of 500 errors). STILL ON LEADERBOARD.**
 
-Same v2-best YOLOv8s weights, with inference path tuned: `CV_IMGSZ=896`,
-`CV_IOU=0.60`, `CV_AUGMENT=1` (Ultralytics flip+multi-scale TTA), `CV_HALF=1`
-(FP16), and a real `score` field per detection. Hard held-out HTTP eval lifted
-to `mAP50-95 = 0.9049` (+0.046 vs v2-best's `0.8589`); full local `til test`
-dipped slightly to `0.8505` (-0.034 vs v2-best's `0.8839`). Hidden eval
-correlated with the **hard held-out**, confirming the sweep selection metric.
+v11m@1024 (`cv-yolo11m-v3-pre`) regressed to 0.376/0.955 on 15 May. Tier1 stays
+as the active CV image via highest-score retention.
 
-This is +0.007 official accuracy and -0.004 speed vs `cv-yolo-v2-best`. Modest
-but free: same checkpoint, different env-driven inference path. Tier 2 (YOLOv11m
-@1024 retrain) is the next lever for hitting the 0.70 target.
+**Next candidate: v11m@1280 inference** — hard held-out 0.9141 (vs tier1's 0.9049,
++0.009). Speed with TTA is ~0.60 (too slow). Need `aug=0` sweep to check if
+accuracy holds without TTA before deciding to ship.
 
 ## What our model runs on
 
@@ -48,6 +44,7 @@ cv-yolo-ft-v1          14/05 03:53     0.402   0.963   0 / 500   YOLOv8s fine-tu
 cv-yolo-v2-best        14/05 14:00     0.549   0.960   0 / 500   YOLOv8s 768 hard-split retrain + tuned inference; local til test 0.8839, hard held-out 0.8589
 cv-yolo-v2-tier1-best  14/05 17:10     0.556   0.956   0 / 500   v2-best weights + TTA + imgsz=896 + iou=0.60 + score field; hard held-out 0.9049, local til test 0.8505. NEW HIGH (+0.007); STILL ON LEADERBOARD.
 cv-yolo11m-v3-pre      15/05 11:34     0.376   0.955   0 / 500   YOLOv11m@1024 fully trained 120ep; val 0.937, hard held-out 0.8673. REGRESSED -0.180; matched-imgsz lost to v8s+upscaled inference.
+cv-yolo11m-v3-1280     (not yet submitted)  —   —     —         Hard held-out 0.9141 (aug=1, imgsz=1280); small AP 0.742. +0.047 vs 1024. Speed with TTA ~0.60 (too slow). aug=0 sweep needed before deciding to ship.
 ```
 
 ## Detailed timeline
@@ -236,6 +233,40 @@ Post-mortem — why v11m lost:
 Open lever NOT yet tested: imgsz=1280 inference on v11m. Speed cost
 ~30-35ms/img × 500 = ~18s, still 0.99 speed. Worth a sweep before fully
 parking v11m.
+
+**imgsz=1280 sweep result (15 May, after v3-pre submission):**
+
+```text
+mAP=0.9141  conf=0.001 iou=0.70 imgsz=1280 aug=1   ← best
+mAP=0.9140  conf=0.05  iou=0.70 imgsz=1280 aug=1
+mAP=0.9140  conf=0.10  iou=0.70 imgsz=1280 aug=1
+mAP=0.9136  conf=0.001 iou=0.50 imgsz=1280 aug=1
+(all imgsz=1024 rows: 0.8673 max — confirmed dead)
+```
+
+Hard held-out 0.9141 at imgsz=1280 (+0.047 vs 1024, +0.009 vs tier1's 0.9049).
+Small AP recovered to 0.742 (vs tier1's 0.746 — essentially matched).
+
+**Speed problem:** aug=1 at imgsz=1280 runs at ~1.04s/img → 520s for 500 images
+→ speed score ~0.71. Blended: 0.75×0.60 + 0.25×0.71 = **0.628** vs tier1's
+0.75×0.556 + 0.25×0.956 = **0.656**. TTA is killing the blended score.
+
+**Next step: aug=0 sweep at imgsz=1280.** Without TTA, inference is ~0.35s/img
+→ 175s → speed ~0.90. If aug=0 holds mAP ≥ 0.88, blended would be
+0.75×0.58 + 0.25×0.90 = **0.660** — beats tier1. Run:
+
+```bash
+python training/cv/sweep_cv_http.py \
+  --image melanie-minions-cv:cv-yolo11m-v3-pre \
+  --data-dir /home/jupyter/novice/cv \
+  --annotations /home/jupyter/cv_yolo_dataset/coco/annotations_test.json \
+  --out-dir /home/jupyter/cv_eval_sweeps/v11m-1280-noaug \
+  --conf 0.001,0.05,0.10 \
+  --iou 0.50,0.70 \
+  --imgsz 1280 \
+  --augment 0
+# 6 runs * ~50s = ~5 min
+```
 
 If revisiting CV, the actual ROI levers are now (in order):
 - Try the v11m@1280 sweep and re-submit if it clears 0.91 hard held-out.

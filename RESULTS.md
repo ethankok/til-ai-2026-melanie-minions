@@ -1,7 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 15 May 2026 11:40 SGT — NLP `v7-finetuned-v1` NEW HIGH 0.517/0.880 (fine-tuned roberta-large-squad2 on local nlp.jsonl, +0.034 acc over v5c); CV `cv-yolo11m-v3-pre` REGRESSED to 0.376/0.955 (Tier 2 v11m@1024 retrain lost to Tier 1's 0.556)
+Last updated: 15 May 2026 12:00 SGT — CV v11m@1280 sweep: hard held-out 0.9141 (aug=1); aug=0 sweep pending before ship decision. NLP `v7-finetuned-v1` NEW HIGH 0.517/0.880.
 
 ## Latest submitted scores
 
