@@ -1,13 +1,85 @@
 # CV — notes & history
 
-Last updated: 16 May 2026 04:30 SGT — **CV PARKED at `cv-yolo-v2-tier1-best`
-0.556/0.956.** Three more avenues tested today (v8s-1024 retrain, tiled
-inference, v11m@1280 aug=0 submission); all regressed cloud or were
-inferior on blended. Tier1 stays on leaderboard via highest-score retention.
+Last updated: 16 May 2026 04:50 SGT — **CV UN-PARKED. Phase C (gap-shrink)
+in progress. Target: cloud 0.7+.** Inside-the-box recipe levers are
+exhausted; the only path forward is to **shrink the local→cloud gap**
+itself (currently 0.35 for v8s, 0.44 for v11m), not raise the local
+score. Diagnostic script `training/cv/gap_diagnose.py` written; will
+probe JPEG-quality and scale axes before any training is spent. Tier1
+stays on the leaderboard while we work.
 
 Per-task working log for CV (object detection). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv).
 For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
+
+## Phase C — gap-shrink plan (16 May 04:50 SGT)
+
+**Premise.** All five inside-the-box recipe levers are dead (Pass A confusion,
+`CV_CONF` sweep, tiled inference, v8s-1024 cp=0.40, v11m@1280). Calibration
+says v8s needs hard ≥ 1.05 and v11m needs ≥ 1.14 to reach cloud 0.70 at their
+current gaps — both impossible. So **the gap itself has to shrink**.
+
+The gap was *not* tested against:
+
+- **JPEG quality shift** — hidden eval images may be lower-quality JPEGs than
+  our near-lossless photo-composited training set.
+- **Scale / resolution shift** — hidden images may be at a different native
+  resolution, so the model's effective small-object pixel sizes differ.
+
+**Phase C.0 — diagnostic** (`training/cv/gap_diagnose.py`).
+Re-encode the hard held-out 500 images in-memory under each transform below
+and re-score tier1. Reuses `score_predictions` from `eval_cv_http.py` so
+numbers compare directly to the existing `0.8947` baseline.
+
+| Transform | Tests |
+|---|---|
+| `baseline` | sanity, must reproduce 0.8947 |
+| `jpeg-q70`, `jpeg-q50`, `jpeg-q30` | JPEG-quality shift |
+| `downsample-2x`, `downsample-3x` | effective-resolution shift |
+| `jpeg50-down2` | upper-bound on stacked effect |
+
+Verdict logic:
+- transform drops mAP ≥ 0.05 → matching train-time augmentation is high-EV
+- transform barely moves mAP → that hypothesis is dead before training
+
+**Phase C.1** — single augmentation justified by C.0. Retrain v8s @ imgsz=1024
+on tier1's recipe + one new aug. ~4h GPU, ~30 LOC. Submit, observe gap delta.
+
+**Phase C.2** — stack the second augmentation only if C.1 moved cloud.
+Otherwise we've saved ~6h and skip to alternative hypotheses (eg. annotation
+noise check, RT-DETR family transfer).
+
+**Phase C.3** — HSV strength bump folds into C.2's recipe as a 1-line train
+arg, not a separate phase.
+
+**Honest target.** Realistic ceiling if both axes are real and both augs
+stack favorably: cloud 0.60-0.65. Cloud 0.70 requires the gap to shrink from
+0.35 → 0.20 (a 43% reduction) AND hard held-out to stay at 0.91 — that's the
+upside path, not the median expectation.
+
+**Submission economy.** Submission slots are uncapped and only the best
+score counts on the leaderboard; ship and observe, don't pre-gate on local
+proxies that have already proven unreliable.
+
+How to run the diagnostic on Workbench:
+
+```bash
+docker run -d --rm --name cv-tier1 -p 5002:5002 \
+  -e CV_MODEL_PATH=/workspace/models/cv/best.pt \
+  -e CV_CONF=0.20 -e CV_IOU=0.60 -e CV_IMGSZ=896 \
+  -e CV_AUGMENT=1 -e CV_HALF=1 \
+  --gpus all melanie-minions-cv:cv-yolo-v2-tier1-best
+
+python training/cv/gap_diagnose.py \
+  --data-dir /home/jupyter/novice/cv \
+  --annotations /home/jupyter/cv_yolo_dataset/coco/annotations_test.json \
+  --out /home/jupyter/cv_eval_sweeps/gap-diagnose.json
+
+docker rm -f cv-tier1
+```
+
+Runtime: ~35 min for all 7 transforms; `--transforms baseline,jpeg-q50,downsample-2x`
+for a ~15-min smoke.
 
 ## Current shipped tag
 
