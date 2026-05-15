@@ -61,11 +61,27 @@ Expected local equiv_rate after fine-tune: **0.80–0.90** (up from v5c's 0.674)
 For each `(question, answer, source_docs)` row in `nlp.jsonl`:
 
 1. Iterates through `source_docs` in order and reads each from `documents/`.
-2. Searches for `answer` in the doc (case-sensitive first, then case-insensitive) using `str.find`.
-3. The first doc where the answer string is found verbatim becomes the training context.
-4. If no source_doc contains the answer string verbatim, the example is skipped.
+2. Calls `_find_span(answer, doc)`, which tries (in order):
+   1. **Exact + case-insensitive find** on each of: original answer, trailing-punctuation-stripped, leading-article-stripped, possessive-stripped variants.
+   2. **Flexible-whitespace regex** allowing `\s+` between answer tokens and optional trailing punctuation.
+   3. **(optional) rapidfuzz sliding-window** — if `rapidfuzz` is installed, scans windows of length `len(answer) × {0.9, 1.0, 1.1, 1.3}` and accepts the best match if `ratio >= 88`.
+3. The first source_doc that yields a span becomes the training context.
 
-Typical retention is `~70-80%` of the 883 pairs; the skipped ones are usually paraphrased answers (e.g. "the founder" when the doc says "founder and CEO"). Including those would require a fuzzy-match span finder, which is extra complexity for marginal coverage gain.
+Empirical retention:
+
+| Strategy ladder | Train pairs retained (out of 883) |
+|---|---:|
+| v1: exact + case-insensitive only | 353 (40%) |
+| v2: + variants + flexible-whitespace | ~500 (57%) expected |
+| v2 + rapidfuzz installed | ~600-650 (68-74%) expected |
+
+To enable the fuzzy fallback:
+
+```bash
+pip install --user rapidfuzz
+```
+
+The skipped examples are those where the reference answer doesn't appear in source_docs in any near-verbatim form (rare; truly paraphrased answers).
 
 ## What the script does not do
 

@@ -34,11 +34,110 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import string
 import sys
 from datetime import datetime
 from pathlib import Path
 
 # Lazy imports of heavy deps so --help still works without them installed.
+
+# rapidfuzz is optional; gives the strongest paraphrase recovery when available.
+try:
+    from rapidfuzz import fuzz as _rfuzz  # type: ignore
+    _RAPIDFUZZ = True
+except ImportError:
+    _rfuzz = None  # type: ignore
+    _RAPIDFUZZ = False
+
+
+_LEADING_ARTICLES = ("the ", "The ", "a ", "A ", "an ", "An ")
+_TRAILING_TRIM = string.punctuation + " \t\n"
+
+
+def _strip_articles(s: str) -> str:
+    for art in _LEADING_ARTICLES:
+        if s.startswith(art):
+            return s[len(art):]
+    return s
+
+
+def _answer_variants(answer: str) -> list[str]:
+    """Permutations of an answer that are still semantically the same.
+
+    Used in order; first match wins. Avoids false positives by only
+    trimming punctuation/articles, never reordering words or rewriting.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in (
+        answer,
+        answer.strip(_TRAILING_TRIM),
+        _strip_articles(answer),
+        _strip_articles(answer.strip(_TRAILING_TRIM)),
+        # Possessive 's stripped — "Velez's" -> "Velez"
+        re.sub(r"'s\b", "", answer).strip(_TRAILING_TRIM),
+    ):
+        v = v.strip()
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def _find_span(answer: str, context: str) -> tuple[int, str] | None:
+    """Locate `answer` (or a near variant) in `context`. Returns (start, exact_text).
+
+    Strategy ladder (first hit wins):
+      1. Exact + case-insensitive on each `_answer_variants(answer)`.
+      2. Flexible-whitespace / optional-trailing-punctuation regex.
+      3. (if rapidfuzz installed) sliding-window partial_ratio >= 88.
+    """
+    # 1. Variants × case-{sensitive,insensitive} find.
+    ctx_lower = context.lower()
+    for v in _answer_variants(answer):
+        if not v:
+            continue
+        pos = context.find(v)
+        if pos >= 0:
+            return pos, v
+        pos = ctx_lower.find(v.lower())
+        if pos >= 0:
+            return pos, context[pos : pos + len(v)]
+
+    # 2. Flexible whitespace + optional trailing punctuation regex.
+    a_norm = answer.strip(_TRAILING_TRIM)
+    if a_norm:
+        pattern = re.escape(a_norm)
+        pattern = re.sub(r"\\\s+", r"\\s+", pattern)
+        pattern = pattern + r"[.,;:!?'\")\]]*"
+        m = re.search(pattern, context, re.IGNORECASE)
+        if m:
+            return m.start(), m.group(0)
+
+    # 3. Optional fuzzy match via rapidfuzz.
+    if _RAPIDFUZZ and len(answer) >= 3:
+        base = answer.lower()
+        n = len(answer)
+        best_score = 0.0
+        best_pos = -1
+        best_len = 0
+        # Try a few window lengths; stride keeps it ~O(L) per length.
+        step = max(1, n // 4)
+        for span_len in (n, max(1, int(n * 0.9)), int(n * 1.1), int(n * 1.3)):
+            if span_len <= 0 or span_len > len(context):
+                continue
+            for i in range(0, len(context) - span_len + 1, step):
+                window = context[i : i + span_len]
+                score = _rfuzz.ratio(window.lower(), base)
+                if score > best_score:
+                    best_score = score
+                    best_pos = i
+                    best_len = span_len
+        if best_score >= 88.0 and best_pos >= 0:
+            return best_pos, context[best_pos : best_pos + best_len]
+
+    return None
 
 
 def _build_squad_examples(track: str) -> list[dict]:
@@ -72,26 +171,15 @@ def _build_squad_examples(track: str) -> list[dict]:
             if not srcs:
                 skipped["no_source_doc"] += 1
                 continue
-            # Try each source_doc until we find the answer in one.
+            # Try each source_doc; first hit wins.
             found_span = None
             chosen_doc = None
             for doc_id in srcs:
                 if doc_id not in docs:
                     continue
-                ctx = docs[doc_id]
-                # Case-sensitive first; many Clairos answers (names, IDs) are
-                # casing-specific.
-                pos = ctx.find(a)
-                if pos < 0:
-                    pos = ctx.lower().find(a.lower())
-                    if pos >= 0:
-                        a_exact = ctx[pos : pos + len(a)]
-                    else:
-                        a_exact = a
-                else:
-                    a_exact = a
-                if pos >= 0:
-                    found_span = (pos, a_exact)
+                hit = _find_span(a, docs[doc_id])
+                if hit is not None:
+                    found_span = hit
                     chosen_doc = doc_id
                     break
             if found_span is None:
@@ -108,7 +196,8 @@ def _build_squad_examples(track: str) -> list[dict]:
             })
 
     print(
-        f"built {len(examples)} examples; skipped {skipped}",
+        f"built {len(examples)} examples; skipped {skipped} "
+        f"(rapidfuzz={'on' if _RAPIDFUZZ else 'off'})",
         file=sys.stderr,
     )
     return examples
