@@ -246,25 +246,34 @@ def _build_squad_examples(track: str, use_answer_chunk: bool = False) -> list[di
                 continue
             pos, a_exact = found_span
             ctx_text = docs[chosen_doc]
-            ctx_offset = 0
             if use_answer_chunk:
                 # Replace whole-doc context with the inference-style chunk
-                # containing the answer span. The model trains on the same
-                # context distribution it sees at inference, which should help
-                # the diff bucket where the right doc is retrieved but the
-                # whole-doc training context made the model learn loose spans.
-                hit = _chunk_containing(ctx_text, pos, pos + len(a_exact))
-                if hit is None:
-                    # Should be rare; fall through to whole-doc context.
-                    pass
-                else:
-                    ctx_text, ctx_offset = hit
-                    pos = pos - ctx_offset
-                    # Defensive: ensure the span is still inside the chunk.
-                    if pos < 0 or pos + len(a_exact) > len(ctx_text):
-                        # Fall back to whole-doc on the rare misalignment.
-                        ctx_text = docs[chosen_doc]
-                        pos = found_span[0]
+                # containing the answer span. We can't compute the in-chunk
+                # offset by simple subtraction — `chunk_text` is " ".join(
+                # sentences), which compresses paragraph-break whitespace
+                # (`\n\n` → ` `), so positions drift. Instead, find the chunk
+                # that contains the answer verbatim (re-search in each chunk).
+                chunk_ctx = None
+                chunk_pos = -1
+                chunk_ans = a_exact
+                for chunk_text, _ in _doc_chunks_with_offsets(docs[chosen_doc]):
+                    cp = chunk_text.find(a_exact)
+                    if cp < 0:
+                        cp = chunk_text.lower().find(a_exact.lower())
+                        if cp >= 0:
+                            # Recover the chunk's actual casing.
+                            chunk_ans = chunk_text[cp : cp + len(a_exact)]
+                    if cp >= 0:
+                        chunk_ctx = chunk_text
+                        chunk_pos = cp
+                        break
+                if chunk_ctx is not None:
+                    ctx_text = chunk_ctx
+                    pos = chunk_pos
+                    a_exact = chunk_ans
+                # else: keep whole-doc context (answer wasn't verbatim in any
+                # chunk — rare; usually means the variant/regex/fuzzy match
+                # earlier returned a position via a flexible match).
             examples.append({
                 "question": q,
                 "context": ctx_text,
