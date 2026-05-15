@@ -81,25 +81,67 @@ Code fix shipped 4878cd2: `eval_policy.py` was missing
 `sys.path.insert(0, REPO_ROOT/"ae"/"src")` for the new ae_manager
 import — crashed on first eval after BC train succeeded.
 
-### Cloud probe — bc-belief in hybrid mode (in flight)
+### Cloud probe — bc-belief in hybrid mode (RESULT: 0.287, MEMORY HYPOTHESIS REJECTED)
 
-Deployed bc-belief.pt as `ae/models/bc.pt`, AE_MODE=hybrid, submitted
-as `bc-belief-hybrid`. Reasoning for hybrid (not pure policy) for the
-first probe:
-- Apples-to-apples comparison with `hybrid-v3` (same wrapper).
-- Hybrid catches BC's known failure mode (bombing without escape — BC
-  imitates planner-v3b's bomb actions but doesn't know about the
-  planner's escape-verification step that gates them).
-- If it lands ≥0.55 cloud the architecture is at minimum neutral and
-  PPO is justified. If it lands ≥0.58 the architecture is a real lift.
+Submitted as `bc-belief-hybrid` 15/05 11:46. Result: **0.287 / 0.846**
+— regressed -0.268 vs hybrid-v3 (far outside ±0.04 cloud noise; not
+explainable as variance).
 
-Decision tree from the cloud score:
+Gap analysis:
+| Model | Local | Cloud | Gap |
+|---|---:|---:|---:|
+| bc-v1 (no belief)     | 0.689 | 0.364 | 0.325 |
+| bc-belief             | 0.656 | 0.287 | 0.369 |
 
-| Cloud score | Interpretation | Next move |
-|---|---|---|
-| ≥ 0.58 | Architecture lift confirmed; new high. | PPO with `--use-belief --opponents league`. |
-| 0.50 – 0.57 | Within noise of hybrid-v3; architecture might compound with PPO. | PPO anyway (last big swing). |
-| < 0.50 | Memory hypothesis wrong, or BC alone insufficient. | Roll back to hybrid-v3 shipped; consider MCTS-light or call it. |
+Belief input WIDENED the local→cloud gap by +0.044, the opposite of
+what the hypothesis predicted. Cleanest explanation: the 704k-param
+network with belief input found *more* ways to overfit the
+random-opponent local distribution than the 149k-param bc-v1 did. The
+belief tensor encodes "where have I been, what's visible, where are
+enemies recently" — all features that depend heavily on opponent
+behavior. Locally we trained against random opponents whose movement
+patterns produced specific belief-tensor distributions; cloud
+opponents produce different ones, and the policy's belief-conditioned
+responses fire wrong.
+
+Local hybrid-bc-belief ≈ bc-belief solo (0.646 vs 0.656) had already
+shown the safety vetoes were firing very often — the policy was
+proposing actions the heuristic kept overriding. Cloud confirmed:
+the policy's contribution was net-negative when it *did* get through.
+
+Decision: **roll back to `hybrid-v3` shipped** (0.555/0.849, still
+the team-best). Don't run PPO with belief — the BC-stage data shows
+the architecture is making transfer worse, and PPO can't reverse
+that without retraining the BC backbone on a different opponent mix.
+
+The pre-set decision tree (<0.45 → roll back) made this call cleanly
+before any time was sunk on the 3-6h PPO run.
+
+### What we learned (and what to NOT revisit)
+
+- **Memory-augmented BC against random opponents amplifies the
+  local→cloud gap.** This is the opposite of the prediction. The
+  bigger model and richer state input give BC more ways to overfit.
+- **Belief-map architecture itself is not categorically broken.** It
+  fit val_acc 0.897 vs bc-v1's 0.874 — it learns *better* against the
+  local opponent distribution. The failure is the transfer.
+- **Local game score remains an unreliable cloud predictor.** Local
+  bc-belief-hybrid (0.646) and local hybrid-v3 (0.774) differ by
+  0.128; cloud-wise they differ by -0.268. ~2× amplified.
+
+Do not revisit:
+- Bigger BC networks with rich state inputs against random opponents.
+- Larger BC datasets *of the same opponent distribution* — won't help
+  the transfer problem.
+
+### Remaining options (post-rollback)
+
+| Option | Effort | Expected cloud lift | Notes |
+|---|---|---|---|
+| Veto-tuning A/B on hybrid-v3 (`AE_HYBRID_CONF=0.5`, etc.) | 30 min | ±0.02 | Cheap; bounded upside |
+| Bigger BC with **league** opponents only (not random) | 3-4 h | unknown, possibly +0.05 | The right fix per the diagnosis: if random opponents are the overfit source, train without them. Plumbing already in place (`AggressivePlannerOpponent`, `--opponents league`). |
+| MCTS-light at inference | 1-2 days | +0.05 to +0.15 | Non-learned; doesn't suffer from opponent distribution shift. Real engineering — needs partial env forward model. |
+| **Pivot to NLP v7-finetune** | 1 day | +0.03 to +0.06 *qualifier* (NLP is 20%) | Higher qualifier-impact-per-hour than any remaining AE move. Recommended. |
 
 ### State-augmented policy retrain — IMPLEMENTED, runs on Workbench
 

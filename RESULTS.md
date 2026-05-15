@@ -1,13 +1,14 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 15 May 2026 11:40 SGT — CV `cv-yolo11m-v3-pre` REGRESSED to 0.376/0.955 (Tier 2 v11m@1024 retrain lost to Tier 1's 0.556; tier1 stays on leaderboard via highest-score retention)
+Last updated: 15 May 2026 11:40 SGT — NLP `v7-finetuned-v1` NEW HIGH 0.517/0.880 (fine-tuned roberta-large-squad2 on local nlp.jsonl, +0.034 acc over v5c); CV `cv-yolo11m-v3-pre` REGRESSED to 0.376/0.955 (Tier 2 v11m@1024 retrain lost to Tier 1's 0.556)
 
 ## Latest submitted scores
 
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
-NLP    melanie-minions-nlp      v5c-no-para 14/05/2026 19:44:08   0 / 700       0.483   0.912
+NLP    melanie-minions-nlp      v7-finetuned-v1 15/05/2026 11:39:09 0 / 700     0.517   0.880  ← NEW HIGH; fine-tuned roberta-large-squad2 on local nlp.jsonl (+0.034 acc vs v5c)
+NLP (prior v5c) melanie-minions-nlp v5c-no-para 14/05/2026 19:44:08 0 / 700     0.483   0.912
 ASR    melanie-minions-asr      nemo-zs     14/05/2026 20:33:36   0 / 400       0.956   0.946  ← NEW BLENDED HIGH; Parakeet-TDT-0.6B-v2 zero-shot, +0.097 speed vs ft-lora32-v1
 CV     melanie-minions-cv       cv-yolo-v2-tier1-best 14/05/2026 17:10:09 0 / 500 0.556 0.956
 CV (v3-pre) melanie-minions-cv  cv-yolo11m-v3-pre 15/05/2026 11:34:42 0 / 500   0.376   0.955  ← REGRESSED -0.180; v11m fully trained but matched-imgsz lost to v8s+upscaled. Tier1 stays on leaderboard.
@@ -32,7 +33,9 @@ v3-id-parse   14/05 05:33        0.000   0.888   0 / 700   0.678 (1)    Same pip
 v4-dict-id    14/05 13:29        0.483   0.888   0 / 700   0.678        After Ryan FIXED the eval to send {"id":"DOC-XXXX","document":"..."}. Same image as v3-id-parse (just re-tagged); defensive parser's dict-shape branch caught the format immediately
 v5-multi      (not shipped)      —       —       —         0.628        Para-aware chunking + batched SQuAD2 + BM25 doc backfill + low-conf sentence fallback. Local REGRESSED -0.050 vs v4; error-bucket report showed fallback was firing on every single-word answer ("Velez", "1992", ...) and replacing correct-but-short SQuAD2 spans. NOT submitted
 v5b-no-fallback 14/05 19:10      0.456   0.916   0 / 700   0.674        Dropped fallback; kept the other three. Local OK (within 0.005 of v4) but cloud REGRESSED -0.027 vs v4. Local→cloud gap widened from 0.195 → 0.218 — clear signal that one of the remaining changes hurt on the held-out corpus
-v5c-no-para   14/05 19:44        0.483   0.912   0 / 700   0.678        Reverted paragraph chunking; kept batched SQuAD2 + BM25 backfill. Cloud RECOVERED to v4's 0.483 with v5b's speed gain (+0.024) retained → blended 0.590 (vs v4 0.584). NEW BLENDED HIGH. Confirms paragraph chunking was the v5b regressor
+v5c-no-para   14/05 19:44        0.483   0.912   0 / 700   0.678        Reverted paragraph chunking; kept batched SQuAD2 + BM25 backfill. Cloud RECOVERED to v4's 0.483 with v5b's speed gain (+0.024) retained → blended 0.590 (vs v4 0.584). Confirmed paragraph chunking was the v5b regressor
+v7-finetuned-v1 15/05 11:39      0.517   0.880   0 / 700   0.709        NEW HIGH (+0.034 cloud vs v5c). Fine-tuned roberta-large-squad2 on local nlp.jsonl (353/883 examples retained via exact + case-insensitive matching; trained 3 epochs, load_best_model_at_end picked epoch 1 with eval_loss 0.614). Local-cloud gap held at 0.19 — fine-tune transferred 1:1. Speed dipped -0.032 from roberta-large's 2.5x latency. Blended 0.608 (vs v5c 0.590). Error-bucket shift: L1 exact-match 29.7% → 39.7%, retrieval_hit_exact 183 → 242
+v7-finetuned-v2 (in test)        ?       ?       ?         ?            v2 data-prep: variants + flexible regex + rapidfuzz fuzzy fallback. Retained 431/883 (+78 vs v1) but eval_loss curve worse (epoch 3 1.238 vs v1's 0.872). Test before submitting; may overfit harder due to noisier fuzzy-matched spans
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.
@@ -110,7 +113,10 @@ ppo-v2      14/05 13:29        0.489/0.854 official 0 / 30 official errors   REG
 policy-fast-v2 14/05 14:42       0.425/0.859 official 0 / 30 official errors   ppo-v1 weights + speed fixes (single-thread torch, inference_mode, warmup, preallocated tensors). Local mean 0.654 (1 run). Score regressed -0.082 from ppo-v1 — almost certainly cloud variance on 30-game sample (we've seen ±0.04 between identical runs). Speed flat at 0.859.
 hybrid-v2    14/05 14:55         0.545/0.863 official 0 / 30 official errors   *** NEW HIGH ***. Hybrid manager: policy chooses, heuristic safety-veto on illegal / no-escape-bomb / step-into-blast / frozen-stay. First structurally new approach since ppo-v1. Local 0.774 (1 run, 6 rounds). Local→official gap 0.23 — same band as everything else, but the *floor* lifted by 0.038. Speed 0.863 (+0.002 vs ppo-v1).
 heuristic-restore-v2 14/05 15:02 0.502/0.854 official 0 / 30 official errors   Pure heuristic (planner-v3b + TILE_RESPAWN 40→20 + enemy_agent eviction). Local 0.787 (1 run). +0.003 vs planner-v3b 0.499 — confirms heuristic-only ceiling and that the 40→20 / eviction tweaks were noise on cloud. Speed flat at 0.854.
-hybrid-v3    14/05 19:26         0.555/0.849 official 0 / 30 official errors   *** NEW HIGH ***. Hybrid + top-K policy cascade (try policy's #2/#3 actions when #1 is vetoed before falling back to heuristic) + opportunistic enemy-kill in heuristic dominant-action shortcut. +0.010 score vs hybrid-v2 (within ±0.04 cloud noise but trending right); -0.014 speed (likely more bomb-escape work or noise). Now top-quartile on the leaderboard (top is 0.711).
+hybrid-v3    14/05 19:26         0.555/0.849 official 0 / 30 official errors   *** NEW HIGH (STILL SHIPPED) ***. Hybrid + top-K policy cascade (try policy's #2/#3 actions when #1 is vetoed before falling back to heuristic) + opportunistic enemy-kill in heuristic dominant-action shortcut. +0.010 score vs hybrid-v2 (within ±0.04 cloud noise but trending right); -0.014 speed (likely more bomb-escape work or noise). Now top-quartile on the leaderboard (top is 0.711).
+bc-belief        15/05 train         BC val_acc 0.897 (vs bc-v1's 0.874, +0.023); local 6-game 0.656 (vs bc-v1's 0.689). 704k params, 16x16x11 belief-map CNN branch. CPU torch (3 min / 20 epochs / 40k samples). Architecture's prerequisite signal positive (better fit to planner-v3b actions); cloud was the real test.
+bc-belief-hybrid 15/05 11:46         0.287/0.846 official 0 / 30 official errors   *** MEMORY HYPOTHESIS REJECTED ***. Regressed -0.268 vs hybrid-v3 (huge — far outside ±0.04 noise). Local 6-game 0.646 → cloud 0.287 = gap 0.36 (wider than bc-v1's 0.33). Best read: the 704k-param model with belief input has *more ways to overfit* to planner-v3b's random-opponent local behavior; belief tensor encodes spurious local-distribution correlations that don't transfer. Local hybrid ≈ bc-belief solo (0.646 vs 0.656) showed vetoes were firing so often that hybrid wrapper added nothing, so the cloud regression is the policy's own. PPO would lift this maybe +0.10-0.14 (bc→ppo scale from prior runs) but still below hybrid-v3 0.555. Memory-augmented BC is a dead end for this opponent distribution.
+bc-belief-policy 15/05 local-only    local 0.663 (1 run, 6 games). Tested in pure policy mode for comparison; ~0.02 above hybrid-wrapped locally. NOT submitted — bc-belief-hybrid's cloud regression made pure-policy unlikely to be better.
 bc-belief    15/05 train         BC val_acc 0.897 (vs bc-v1's 0.874, +0.023); local 6-game 0.656 (vs bc-v1's 0.689 4-run mean, within ±0.07 noise). 704k params, includes 16x16x11 belief-map CNN branch. CPU torch (3 min / 20 epochs / 40k samples). Architecture's prerequisite signal positive (better fit to planner-v3b actions); local game score uninformative because the whole hypothesis is "memory reduces local→cloud gap", not "memory raises local". Next: cloud probe in hybrid mode.
 bc-belief-hybrid 15/05 ~now      [in queue] Bc-belief weights + hybrid wrapper. Tests architecture lift inside our shipped configuration. Decision tree: ≥0.58 → run PPO; 0.50-0.57 → PPO anyway; <0.50 → roll back to hybrid-v3.
 ```
@@ -131,18 +137,20 @@ Each scored challenge blends `75%` accuracy/reward and `25%` speed. Qualifier sp
 
 Using raw task scores only (best-ever shipped per task on the CURRENT
 leaderboard — old NLP score of 0.301 was wiped when organisers rolled out
-the new eval; `v5c-no-para` 0.483 is our recovery):
+the new eval):
 
 ```text
 0.40 * AE 0.555  = 0.2220
-0.20 * NLP 0.483 = 0.0966
+0.20 * NLP 0.517 = 0.1034   ← NEW HIGH; v7-finetuned-v1
 0.20 * ASR 0.957 = 0.1914   ← raw accuracy held by leaderboard's max policy
 0.20 * CV 0.556  = 0.1112
 --------------------------------
-Estimated weighted qualifier score = 0.6212
+Estimated weighted qualifier score = 0.6280
 ```
 
 AE has now incrementally climbed in three consecutive submissions (ppo-v1 0.507 → hybrid-v2 0.545 → hybrid-v3 0.555), each one moving the floor up by the size of cloud noise but in the same direction. The structural local→cloud gap (~0.23) is intact, but the floor itself has moved +0.048. Top of leaderboard is 0.711; we're now top-quartile.
+
+The belief-map state-augmentation attempt (`bc-belief-hybrid`, 15/05) regressed to 0.287 — far outside cloud noise and a clean rejection of the memory hypothesis as implemented through BC. The bigger network (704k params) with belief input found *more* spurious correlations to the local random-opponent distribution rather than fewer. AE rolled back to `hybrid-v3`. Remaining AE moves (veto-tuning A/Bs, MCTS-light) have realistic ceiling ~0.58; the higher-EV remaining qualifier lever is NLP v7-finetune (+0.03-0.06 to total).
 
 ASR `nemo-zs` (Parakeet-TDT-0.6B-v2 zero-shot) just shipped at `0.956/0.946` — a -0.001 accuracy nudge but +0.097 speed. The leaderboard keeps the higher score for raw accuracy, but the BLENDED score per challenge is what feeds the qualifier total via the 75/25 weighting below.
 
@@ -150,11 +158,11 @@ Using the observed ~75% score / 25% speed blend:
 
 ```text
 AE   contribution = 0.2515   (0.40 * (0.75*0.555 + 0.25*0.849) = 0.40 * 0.6285 = 0.2514)
-NLP  contribution = 0.1180   (0.75*0.483 + 0.25*0.912 = 0.5903)
-ASR  contribution = 0.1909   (0.75*0.956 + 0.25*0.946 = 0.9535)  ← +0.005 over ft-lora32-v1's 0.9285
+NLP  contribution = 0.1216   (0.75*0.517 + 0.25*0.880 = 0.6078)  ← NEW HIGH; +0.0036 over v5c
+ASR  contribution = 0.1909   (0.75*0.956 + 0.25*0.946 = 0.9535)
 CV   contribution = 0.1307   (0.75*0.556 + 0.25*0.956 = 0.6560)
 --------------------------------
-Estimated blended qualifier score = 0.6911  (+0.005 vs ft-lora32-v1 baseline; +0.020 vs ppo-v1 baseline)
+Estimated blended qualifier score = 0.6947  (+0.0036 vs v5c baseline; +0.020 vs ppo-v1 baseline)
 ```
 
 ## Notes
