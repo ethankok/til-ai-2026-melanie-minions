@@ -28,7 +28,7 @@ from ae_manager import AEManager  # noqa: E402
 from til_environment import bomberman_env  # noqa: E402
 from til_environment.config import default_config  # noqa: E402
 
-from encoder import FrameStacker  # noqa: E402
+from encoder import FrameStacker, rasterize_belief  # noqa: E402
 
 
 def _obs_to_python(obs) -> dict:
@@ -47,17 +47,26 @@ def collect_dataset(
     novice: bool = True,
     seed: int | None = None,
     n_frames: int = 4,
+    with_belief: bool = True,
 ) -> None:
+    """Collect a BC dataset from planner-v3b rollouts.
+
+    When ``with_belief=True`` (default), each sample also includes the
+    rasterized belief tensor at the planner's step. Setting it False
+    keeps the file size down for legacy single-frame BC training.
+    """
     config = default_config()
     config.env.novice = novice
     env = bomberman_env.basic_env(env_wrappers=[], cfg=config)
     our_agent = env.possible_agents[0]
-    print(f"Controlling {our_agent} of {env.possible_agents}; n_frames={n_frames}")
+    print(f"Controlling {our_agent} of {env.possible_agents}; "
+          f"n_frames={n_frames}; with_belief={with_belief}")
 
     agent_views: list[np.ndarray] = []
     base_views: list[np.ndarray] = []
     scalars: list[np.ndarray] = []
     action_masks: list[np.ndarray] = []
+    beliefs: list[np.ndarray] = []
     actions: list[int] = []
 
     start = time.time()
@@ -79,12 +88,17 @@ def collect_dataset(
                 if obs_py.get("step") == 0:
                     planner = AEManager()
                     stacker.reset()
+                # Run the planner — this updates planner.* belief state
+                # AND picks the action we'll BC against.
                 action = planner.ae(obs_py)
-                stacked = stacker.observe(obs_py)
+                belief = rasterize_belief(planner, obs_py) if with_belief else None
+                stacked = stacker.observe(obs_py, belief_map=belief)
                 agent_views.append(stacked["agent_view"])
                 base_views.append(stacked["base_view"])
                 scalars.append(stacked["scalars"])
                 action_masks.append(stacked["action_mask"])
+                if with_belief:
+                    beliefs.append(belief)
                 actions.append(int(action))
             else:
                 action = env.action_space(agent).sample()
@@ -101,19 +115,24 @@ def collect_dataset(
         raise SystemExit("No samples collected — env probably terminated immediately?")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        out_path,
+    save_kwargs = dict(
         agent_views=np.stack(agent_views).astype(np.float32),
         base_views=np.stack(base_views).astype(np.float32),
         scalars=np.stack(scalars).astype(np.float32),
         action_masks=np.stack(action_masks).astype(np.float32),
         actions=np.asarray(actions, dtype=np.int64),
         n_frames=np.asarray(n_frames, dtype=np.int32),
+        with_belief=np.asarray(int(with_belief), dtype=np.int32),
     )
+    if with_belief:
+        save_kwargs["beliefs"] = np.stack(beliefs).astype(np.float32)
+    np.savez_compressed(out_path, **save_kwargs)
     counts = np.bincount(actions, minlength=6)
     labels = ["FORWARD", "BACKWARD", "LEFT", "RIGHT", "STAY", "PLACE_BOMB"]
     print(f"Saved → {out_path}  ({out_path.stat().st_size / 1e6:.1f} MB)")
-    print(f"Shapes: agent_views={agent_views[0].shape}, base_views={base_views[0].shape}, scalars={scalars[0].shape}")
+    print(f"Shapes: agent_views={agent_views[0].shape}, base_views={base_views[0].shape}, "
+          f"scalars={scalars[0].shape}"
+          + (f", beliefs={beliefs[0].shape}" if with_belief else ""))
     print("Action distribution:")
     for label, count in zip(labels, counts):
         print(f"  {label:11s} {count:>7d}  ({count / len(actions) * 100:5.1f}%)")
@@ -127,12 +146,16 @@ def main() -> None:
     parser.add_argument("--no-novice", dest="novice", action="store_false")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--n-frames", type=int, default=4)
+    parser.add_argument("--no-belief", dest="with_belief", action="store_false",
+                        help="Skip belief-map rasterization (legacy single-frame BC)")
+    parser.set_defaults(with_belief=True)
     args = parser.parse_args()
 
     out_path = Path(args.out)
     if not out_path.is_absolute():
         out_path = REPO_ROOT / out_path
-    collect_dataset(args.games, out_path, novice=args.novice, seed=args.seed, n_frames=args.n_frames)
+    collect_dataset(args.games, out_path, novice=args.novice, seed=args.seed,
+                    n_frames=args.n_frames, with_belief=args.with_belief)
 
 
 if __name__ == "__main__":

@@ -49,7 +49,85 @@ ENV AE_HYBRID_VETO_DANGER=0
 
 Expected lift per A/B: ±0.02. Worth one submission slot if `hybrid-v3` has spare queue capacity.
 
-### Bigger swing — state-augmented policy retrain (1–2 days, expected +0.05 to +0.15)
+### State-augmented policy retrain — IMPLEMENTED, runs on Workbench
+
+Code shipped (15 May, commit follows): belief-map architecture is now
+plumbed end-to-end. Build/run order on Workbench:
+
+```bash
+# 0. Pull and install
+git pull
+
+# 1. Collect a fresh BC dataset *with* belief snapshots (~6-10 min for 200 games)
+python training/ae/collect_bc.py --games 200 --n-frames 1 \
+    --out training/ae/data/bc-belief.npz
+
+# 2. BC train with belief input (~30-45 min on T4)
+python training/ae/train_bc.py \
+    --data training/ae/data/bc-belief.npz \
+    --out training/ae/checkpoints/bc-belief.pt \
+    --epochs 20
+
+# 3. Validate locally before spending cloud budget
+python training/ae/eval_policy.py \
+    --checkpoint training/ae/checkpoints/bc-belief.pt \
+    --games 6
+# Expect val_acc ≥ 0.87 in BC; eval ≥ 0.65 local.
+
+# 4. Submit BC-only as a low-cost cloud probe of the memory hypothesis
+cp training/ae/checkpoints/bc-belief.pt ae/models/bc.pt
+echo policy > ae/src/.ae_mode      # pure policy first — isolates the architecture lift
+til build ae bc-belief && til test ae bc-belief && til submit ae bc-belief
+
+# 5. If bc-belief lands ≥0.50 cloud, the memory hypothesis is real.
+#    Run PPO with belief + league opponents (3-6h on T4).
+python training/ae/train_ppo.py \
+    --bc-checkpoint training/ae/checkpoints/bc-belief.pt \
+    --out training/ae/checkpoints/ppo-belief.pt \
+    --use-belief \
+    --opponents league \
+    --eval-opponents league \
+    --updates 200 \
+    --games-per-update 8 \
+    --eval-games 12 \
+    --n-frames 1
+
+# 6. Deploy with hybrid wrapper for the safety-veto + top-K cascade
+cp training/ae/checkpoints/ppo-belief.pt ae/models/bc.pt
+echo hybrid > ae/src/.ae_mode
+til build ae hybrid-belief-v1 && til test ae hybrid-belief-v1 && til submit ae hybrid-belief-v1
+```
+
+What's new in the source tree:
+
+- `ae/src/encoder.py`: `rasterize_belief(ae_manager, obs)` returns
+  `(11, 16, 16)` float32 with channels for visited / wall / destructible /
+  mission-fresh / recon-fresh / resource-fresh / enemy-agent-fresh /
+  enemy-base / bomb-blast-imminent / own-position / base-position. Item
+  freshness decays linearly over 20 ticks; enemy freshness over 5.
+- `ae/src/model.py`: `PolicyNetwork(use_belief=True)` adds a small CNN
+  branch (Conv→AvgPool→Conv → 512 features). Old checkpoints
+  (`use_belief=False`) load unchanged.
+- `ae/src/policy_manager.py`: owns a private `AEManager` for belief
+  tracking. Calls cheap `_update_memory` + `_age_bombs` per inference
+  (no BFS). When the loaded checkpoint has `use_belief=True`, rasterizes
+  the belief tensor and passes it to the network.
+- `training/ae/{collect_bc,train_bc,train_ppo,eval_policy}.py`: all
+  thread belief through the data pipeline + actor + critic.
+- `training/ae/train_ppo.py`: NEW `AggressivePlannerOpponent` (planner
+  with combat-biased threat penalties and lower retreat threshold) +
+  NEW `--opponents league` mode that mixes random + planner +
+  aggressive + frozen-self.
+
+Risk assessment:
+- **Memory hypothesis wrong** → bc-belief regresses to <0.40. Roll back
+  to hybrid-v3, take the L on architecture, fall back to MCTS-light.
+- **Memory helps but PPO destabilizes** → ppo-belief lower than bc-belief
+  cloud. Reduce `--updates` to 80, `--lr` to 1e-4, retry.
+- **All works** → expected 0.60–0.70 cloud range. The hybrid wrapper
+  composes naturally; no code change there.
+
+#### Bigger swing — alternative paths if belief-map saturates
 
 **This is the only move with a realistic path to 0.65–0.70.** Three pieces of evidence point at it:
 

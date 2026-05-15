@@ -24,8 +24,9 @@ THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parents[1]
 sys.path.insert(0, str(THIS_DIR))
 
-from encoder import FrameStacker  # noqa: E402
+from encoder import FrameStacker, rasterize_belief  # noqa: E402
 from model import PolicyNetwork  # noqa: E402
+from ae_manager import AEManager  # noqa: E402
 
 from til_environment import bomberman_env  # noqa: E402
 from til_environment.config import default_config  # noqa: E402
@@ -45,14 +46,33 @@ def _obs_to_python(obs) -> dict:
     return out
 
 
-def _action_from_policy(model: PolicyNetwork, stacker: FrameStacker, obs: dict,
-                        device: torch.device, greedy: bool = True) -> int:
-    stacked = stacker.observe(obs)
+def _belief_for_eval(planner: AEManager, obs_py: dict, use_belief: bool):
+    if not use_belief:
+        return None
+    step = planner._as_int(obs_py.get("step"), default=(planner.last_step or 0) + 1)
+    if planner.last_step is None or step == 0 or step < planner.last_step:
+        planner._reset_memory()
+    planner._age_bombs(step)
+    planner._blast_cache = {}
+    planner.last_step = step
+    location = planner._location(obs_py.get("location"))
+    direction = planner._as_int(obs_py.get("direction"), default=0) % 4
+    planner._update_memory(obs_py, step, location, direction)
+    return rasterize_belief(planner, obs_py)
+
+
+def _action_from_policy(model: PolicyNetwork, stacker: FrameStacker, planner: AEManager,
+                        obs: dict, device: torch.device, use_belief: bool, greedy: bool = True) -> int:
+    belief = _belief_for_eval(planner, obs, use_belief)
+    stacked = stacker.observe(obs, belief_map=belief)
     agent_v = torch.from_numpy(stacked["agent_view"]).to(device)
     base_v = torch.from_numpy(stacked["base_view"]).to(device)
     scalars = torch.from_numpy(stacked["scalars"]).to(device)
     mask = torch.from_numpy(stacked["action_mask"]).to(device)
-    return model.select_action(agent_v, base_v, scalars, action_mask=mask, greedy=greedy)
+    belief_t = torch.from_numpy(belief).to(device) if belief is not None else None
+    return model.select_action(
+        agent_v, base_v, scalars, action_mask=mask, greedy=greedy, belief_map=belief_t,
+    )
 
 
 def evaluate(args: argparse.Namespace) -> None:
@@ -64,12 +84,13 @@ def evaluate(args: argparse.Namespace) -> None:
         raise SystemExit(f"checkpoint not found: {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
     n_frames = int(checkpoint.get("n_frames", 1))
+    use_belief = bool(checkpoint.get("use_belief", False))
     print(
         f"checkpoint: epoch={checkpoint.get('epoch')}, "
-        f"val_acc={checkpoint.get('val_acc')}, n_frames={n_frames}"
+        f"val_acc={checkpoint.get('val_acc')}, n_frames={n_frames}, use_belief={use_belief}"
     )
 
-    model = PolicyNetwork(n_frames=n_frames).to(device)
+    model = PolicyNetwork(n_frames=n_frames, use_belief=use_belief).to(device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
@@ -83,6 +104,7 @@ def evaluate(args: argparse.Namespace) -> None:
     for game in trange(args.games, desc="games"):
         env.reset()
         stacker = FrameStacker(n_frames)
+        planner = AEManager()
         for agent in env.agent_iter():
             obs, _reward, termination, truncation, _info = env.last()
             for a in env.agents:
@@ -91,7 +113,10 @@ def evaluate(args: argparse.Namespace) -> None:
                 env.step(None)
                 continue
             if agent == our_agent:
-                action = _action_from_policy(model, stacker, _obs_to_python(obs), device, greedy=args.greedy)
+                action = _action_from_policy(
+                    model, stacker, planner, _obs_to_python(obs),
+                    device, use_belief, greedy=args.greedy,
+                )
             else:
                 action = env.action_space(agent).sample()
             env.step(action)

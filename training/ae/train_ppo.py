@@ -45,8 +45,21 @@ REPO_ROOT = THIS_DIR.parents[1]
 sys.path.insert(0, str(THIS_DIR))
 sys.path.insert(0, str(REPO_ROOT / "ae" / "src"))
 
-from encoder import encode_observation, FrameStacker, SCALAR_DIM  # noqa: E402
-from model import PolicyNetwork, num_parameters, VIEW_CHANNELS  # noqa: E402
+from encoder import (  # noqa: E402
+    BELIEF_CHANNELS,
+    FrameStacker,
+    SCALAR_DIM,
+    encode_observation,
+    rasterize_belief,
+)
+from model import (  # noqa: E402
+    AGENT_VIEW_HW,
+    BASE_VIEW_HW,
+    BELIEF_HW,
+    PolicyNetwork,
+    VIEW_CHANNELS,
+    num_parameters,
+)
 from ae_manager import AEManager  # noqa: E402
 from til_environment import bomberman_env  # noqa: E402
 from til_environment.config import default_config  # noqa: E402
@@ -65,6 +78,7 @@ class Transition:
     action: int
     logprob: float
     value: float
+    belief_map: np.ndarray | None = None  # (BELIEF_CHANNELS, 16, 16) or None
     reward: float = 0.0
     done: bool = False
 
@@ -72,10 +86,11 @@ class Transition:
 class ValueNetwork(nn.Module):
     """Critic — same input layout as PolicyNetwork, scalar output."""
 
-    def __init__(self, n_frames: int = 4):
+    def __init__(self, n_frames: int = 4, use_belief: bool = False):
         super().__init__()
         in_ch = VIEW_CHANNELS * n_frames
         scalar_dim = SCALAR_DIM * n_frames
+        self.use_belief = bool(use_belief)
         self.agent_conv = nn.Sequential(
             nn.Conv2d(in_ch, 32, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -88,18 +103,51 @@ class ValueNetwork(nn.Module):
             nn.Conv2d(16, 8, kernel_size=3, padding=1),
             nn.ReLU(),
         )
+        head_in = 16 * 7 * 5 + 8 * 7 * 7 + scalar_dim
+        if self.use_belief:
+            self.belief_conv = nn.Sequential(
+                nn.Conv2d(BELIEF_CHANNELS, 16, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.AvgPool2d(2),
+                nn.Conv2d(16, 8, kernel_size=3, padding=1),
+                nn.ReLU(),
+            )
+            head_in += 8 * (BELIEF_HW[0] // 2) * (BELIEF_HW[1] // 2)
         self.head = nn.Sequential(
-            nn.Linear(16 * 7 * 5 + 8 * 7 * 7 + scalar_dim, 128),
+            nn.Linear(head_in, 128),
             nn.ReLU(),
             nn.Linear(128, 64),
             nn.ReLU(),
             nn.Linear(64, 1),
         )
 
-    def forward(self, agent_view: torch.Tensor, base_view: torch.Tensor, scalars: torch.Tensor) -> torch.Tensor:
+    def forward(self, agent_view: torch.Tensor, base_view: torch.Tensor,
+                scalars: torch.Tensor, belief_map: torch.Tensor | None = None) -> torch.Tensor:
         a = self.agent_conv(agent_view).flatten(start_dim=1)
         b = self.base_conv(base_view).flatten(start_dim=1)
-        return self.head(torch.cat([a, b, scalars], dim=-1)).squeeze(-1)
+        parts = [a, b, scalars]
+        if self.use_belief:
+            if belief_map is None:
+                raise ValueError("ValueNetwork(use_belief=True) requires belief_map")
+            parts.append(self.belief_conv(belief_map).flatten(start_dim=1))
+        return self.head(torch.cat(parts, dim=-1)).squeeze(-1)
+
+
+def _belief_for(planner: AEManager, obs_py: dict, use_belief: bool) -> np.ndarray | None:
+    """Drive the planner's memory update and rasterize belief (or skip)."""
+    if not use_belief:
+        return None
+    # Run the planner in 'memory only' mode by mimicking ae() prologue.
+    step = planner._as_int(obs_py.get("step"), default=(planner.last_step or 0) + 1)
+    if planner.last_step is None or step == 0 or step < planner.last_step:
+        planner._reset_memory()
+    planner._age_bombs(step)
+    planner._blast_cache = {}
+    planner.last_step = step
+    location = planner._location(obs_py.get("location"))
+    direction = planner._as_int(obs_py.get("direction"), default=0) % 4
+    planner._update_memory(obs_py, step, location, direction)
+    return rasterize_belief(planner, obs_py)
 
 
 def _obs_to_python(obs) -> dict:
@@ -116,7 +164,7 @@ def _masked_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return logits + torch.log(mask.clamp(min=1e-9))
 
 
-def _encode_batch(transitions: list[Transition], device: torch.device):
+def _encode_batch(transitions: list[Transition], device: torch.device, use_belief: bool):
     agent_views = torch.from_numpy(np.stack([t.agent_view for t in transitions])).float().to(device)
     base_views = torch.from_numpy(np.stack([t.base_view for t in transitions])).float().to(device)
     scalars = torch.from_numpy(np.stack([t.scalars for t in transitions])).float().to(device)
@@ -126,30 +174,47 @@ def _encode_batch(transitions: list[Transition], device: torch.device):
     values = torch.tensor([t.value for t in transitions], dtype=torch.float32, device=device)
     rewards = torch.tensor([t.reward for t in transitions], dtype=torch.float32, device=device)
     dones = torch.tensor([t.done for t in transitions], dtype=torch.float32, device=device)
-    return agent_views, base_views, scalars, masks, actions, old_logprobs, values, rewards, dones
+    if use_belief:
+        beliefs = torch.from_numpy(np.stack([t.belief_map for t in transitions])).float().to(device)
+    else:
+        beliefs = None
+    return agent_views, base_views, scalars, masks, actions, old_logprobs, values, rewards, dones, beliefs
 
 
-def _stacked_tensors(stacker: FrameStacker, obs_py: dict, device: torch.device):
-    stacked = stacker.observe(obs_py)
+def _stacked_tensors(stacker: FrameStacker, obs_py: dict, belief: np.ndarray | None,
+                     device: torch.device):
+    stacked = stacker.observe(obs_py, belief_map=belief)
     agent_v = torch.from_numpy(stacked["agent_view"]).float().to(device)
     base_v = torch.from_numpy(stacked["base_view"]).float().to(device)
     scalars = torch.from_numpy(stacked["scalars"]).float().to(device)
     mask = torch.from_numpy(stacked["action_mask"]).float().to(device)
-    return stacked, agent_v, base_v, scalars, mask
+    belief_t = torch.from_numpy(belief).float().to(device) if belief is not None else None
+    return stacked, agent_v, base_v, scalars, mask, belief_t
 
 
 def _select_action(
     actor: PolicyNetwork,
     critic: ValueNetwork,
     stacker: FrameStacker,
+    planner: AEManager,
     obs_py: dict,
     device: torch.device,
+    use_belief: bool,
     greedy: bool = False,
-) -> tuple[int, float, float, dict]:
-    stacked, agent_v, base_v, scalars, mask = _stacked_tensors(stacker, obs_py, device)
+) -> tuple[int, float, float, dict, np.ndarray | None]:
+    belief = _belief_for(planner, obs_py, use_belief)
+    stacked, agent_v, base_v, scalars, mask, belief_t = _stacked_tensors(
+        stacker, obs_py, belief, device,
+    )
+    belief_b = belief_t.unsqueeze(0) if belief_t is not None else None
     with torch.no_grad():
-        logits = _masked_logits(actor(agent_v.unsqueeze(0), base_v.unsqueeze(0), scalars.unsqueeze(0)).squeeze(0), mask)
-        value = critic(agent_v.unsqueeze(0), base_v.unsqueeze(0), scalars.unsqueeze(0)).squeeze(0)
+        logits = _masked_logits(
+            actor(agent_v.unsqueeze(0), base_v.unsqueeze(0), scalars.unsqueeze(0),
+                  belief_map=belief_b).squeeze(0),
+            mask,
+        )
+        value = critic(agent_v.unsqueeze(0), base_v.unsqueeze(0), scalars.unsqueeze(0),
+                       belief_map=belief_b).squeeze(0)
         if greedy:
             action = int(logits.argmax().item())
             logprob = torch.log_softmax(logits, dim=-1)[action]
@@ -158,7 +223,7 @@ def _select_action(
             sampled = dist.sample()
             action = int(sampled.item())
             logprob = dist.log_prob(sampled)
-    return action, float(logprob.item()), float(value.item()), stacked
+    return action, float(logprob.item()), float(value.item()), stacked, belief
 
 
 def _random_opponent(env, agent: str, _obs_py: dict) -> int:
@@ -176,23 +241,59 @@ class PlannerOpponent:
 
 
 class FrozenPolicyOpponent:
-    """Frozen copy of the actor, with its own FrameStacker."""
+    """Frozen copy of the actor, with its own FrameStacker + belief AEManager."""
 
     def __init__(self, actor: PolicyNetwork, device: torch.device, n_frames: int):
         self.actor = copy.deepcopy(actor).to(device).eval()
         self.device = device
+        self.use_belief = bool(getattr(self.actor, "use_belief", False))
         self.stacker = FrameStacker(n_frames)
+        self.planner = AEManager()  # for belief tracking only
 
     def reset(self):
         self.stacker.reset()
+        self.planner = AEManager()
 
     def __call__(self, _env, _agent: str, obs_py: dict) -> int:
-        stacked = self.stacker.observe(obs_py)
+        belief = _belief_for(self.planner, obs_py, self.use_belief)
+        stacked = self.stacker.observe(obs_py, belief_map=belief)
         agent_v = torch.from_numpy(stacked["agent_view"]).float().to(self.device)
         base_v = torch.from_numpy(stacked["base_view"]).float().to(self.device)
         scalars = torch.from_numpy(stacked["scalars"]).float().to(self.device)
         mask = torch.from_numpy(stacked["action_mask"]).float().to(self.device)
-        return self.actor.select_action(agent_v, base_v, scalars, action_mask=mask, greedy=True)
+        belief_t = torch.from_numpy(belief).float().to(self.device) if belief is not None else None
+        return self.actor.select_action(
+            agent_v, base_v, scalars, action_mask=mask, greedy=True, belief_map=belief_t,
+        )
+
+
+class AggressivePlannerOpponent:
+    """Bias the rule-based planner toward hunting our agent.
+
+    Wraps the standard `AEManager` but inflates the value of being near
+    the controlled-agent's last-known position via a closure on shared
+    state. Cheaper than a learned aggressor and gives PPO an opponent
+    that actively *seeks* the trainee, which random/frozen-self don't.
+    The hidden eval almost certainly uses something with this archetype.
+    """
+
+    def __init__(self):
+        self.manager = AEManager()
+        # Override item-value table for this manager only — boost enemy bombs.
+        self.manager.PATH_THREAT_PENALTY = 0.5  # walk toward enemies, not away
+        self.manager.CELL_THREAT_PENALTY = 1.0
+        self.manager.LOW_HEALTH_THRESHOLD = 10  # less retreat
+
+    def reset(self):
+        self.manager = AEManager()
+        self.manager.PATH_THREAT_PENALTY = 0.5
+        self.manager.CELL_THREAT_PENALTY = 1.0
+        self.manager.LOW_HEALTH_THRESHOLD = 10
+
+    def __call__(self, _env, _agent: str, obs_py: dict) -> int:
+        if obs_py.get("step") == 0:
+            self.reset()
+        return int(self.manager.ae(obs_py))
 
 
 def _make_opponents(
@@ -202,12 +303,24 @@ def _make_opponents(
     opponent_agents: list[str],
     n_frames: int,
 ) -> dict[str, Callable]:
+    """Build opponent dict.
+
+    Modes:
+    - random: uniform-random; fastest but unrealistic
+    - planner: frozen rule-based AEManager
+    - frozen:  frozen copy of the trainee
+    - aggressive: planner with combat bias (NEW — hunter archetype)
+    - mixed: random + planner + frozen
+    - league: random + planner + aggressive + frozen   ← strongest pool
+    """
     choices: list[Callable] = []
-    if mode in {"random", "mixed"}:
+    if mode in {"random", "mixed", "league"}:
         choices.extend([_random_opponent, _random_opponent])
-    if mode in {"planner", "mixed"}:
+    if mode in {"planner", "mixed", "league"}:
         choices.append(PlannerOpponent())
-    if mode in {"frozen", "mixed"}:
+    if mode in {"aggressive", "league"}:
+        choices.append(AggressivePlannerOpponent())
+    if mode in {"frozen", "mixed", "league"}:
         choices.append(FrozenPolicyOpponent(actor, device, n_frames))
     if not choices:
         choices = [_random_opponent]
@@ -233,9 +346,9 @@ def collect_rollouts(
     transitions: list[Transition] = []
     total_reward = 0.0
 
+    use_belief = bool(getattr(actor, "use_belief", False))
+
     for game in range(args.games_per_update):
-        # Vary seed per game when --vary-maps; otherwise stick to the
-        # deterministic seed offset used previously.
         if args.vary_maps:
             env.reset(seed=random.randint(0, 2**31 - 1))
         elif args.seed is not None:
@@ -243,12 +356,13 @@ def collect_rollouts(
         else:
             env.reset()
         stacker = FrameStacker(args.n_frames)
+        # Per-game belief-tracking planner for OUR agent. Cheap when use_belief=False.
+        planner = AEManager()
         opponents = _make_opponents(
             actor, device, args.opponents,
             [a for a in env.possible_agents if a != our_agent],
             args.n_frames,
         )
-        # FrozenPolicyOpponent instances need their own per-game reset too.
         for op in opponents.values():
             if hasattr(op, "reset"):
                 op.reset()
@@ -269,8 +383,8 @@ def collect_rollouts(
 
             obs_py = _obs_to_python(obs)
             if agent == our_agent:
-                action, logprob, value, stacked = _select_action(
-                    actor, critic, stacker, obs_py, device, greedy=False,
+                action, logprob, value, stacked, belief = _select_action(
+                    actor, critic, stacker, planner, obs_py, device, use_belief, greedy=False,
                 )
                 transitions.append(Transition(
                     agent_view=stacked["agent_view"],
@@ -280,6 +394,7 @@ def collect_rollouts(
                     action=action,
                     logprob=logprob,
                     value=value,
+                    belief_map=belief,
                 ))
                 pending_idx = len(transitions) - 1
             else:
@@ -329,13 +444,12 @@ def ppo_update(
     args: argparse.Namespace,
     device: torch.device,
 ) -> dict[str, float]:
-    agent_v, base_v, scalars, masks, actions, old_logprobs, values, rewards, dones = _encode_batch(transitions, device)
+    use_belief = bool(getattr(actor, "use_belief", False))
+    (agent_v, base_v, scalars, masks, actions, old_logprobs,
+     values, rewards, dones, beliefs) = _encode_batch(transitions, device, use_belief)
 
-    # Reward scaling: divide raw rewards by reward_scale so per-step rewards
-    # land in roughly the [-1, 1] range and GAE returns stay O(1).
     scaled_rewards = rewards / args.reward_scale
     returns, advantages = compute_returns_advantages(scaled_rewards, dones, values, args.gamma, args.gae_lambda)
-    # Defensive clip — even with scaling the long horizon can blow returns out.
     returns = returns.clamp(-args.return_clip, args.return_clip)
 
     n = actions.numel()
@@ -346,7 +460,11 @@ def ppo_update(
         perm = idx[torch.randperm(n, device=device)]
         for start in range(0, n, args.batch_size):
             batch = perm[start:start + args.batch_size]
-            logits = _masked_logits(actor(agent_v[batch], base_v[batch], scalars[batch]), masks[batch])
+            b_belief = beliefs[batch] if beliefs is not None else None
+            logits = _masked_logits(
+                actor(agent_v[batch], base_v[batch], scalars[batch], belief_map=b_belief),
+                masks[batch],
+            )
             dist = Categorical(logits=logits)
             new_logprobs = dist.log_prob(actions[batch])
             entropy = dist.entropy().mean()
@@ -356,9 +474,7 @@ def ppo_update(
             clipped = ratio.clamp(1.0 - args.clip_coef, 1.0 + args.clip_coef) * advantages[batch]
             policy_loss = -torch.min(unclipped, clipped).mean()
 
-            new_values = critic(agent_v[batch], base_v[batch], scalars[batch])
-            # PPO-paper clipped value loss: never let the value update step
-            # too far from the rollout-time prediction.
+            new_values = critic(agent_v[batch], base_v[batch], scalars[batch], belief_map=b_belief)
             old_v = values[batch]
             v_clipped = old_v + (new_values - old_v).clamp(-args.clip_coef, args.clip_coef)
             v_loss_unclipped = (new_values - returns[batch]) ** 2
@@ -388,6 +504,7 @@ def evaluate(actor: PolicyNetwork, args: argparse.Namespace, device: torch.devic
     env = _make_env(args)
     our_agent = env.possible_agents[0]
     total_reward = 0.0
+    use_belief = bool(getattr(actor, "use_belief", False))
 
     for game in range(games):
         if args.vary_maps:
@@ -397,6 +514,7 @@ def evaluate(actor: PolicyNetwork, args: argparse.Namespace, device: torch.devic
         else:
             env.reset()
         stacker = FrameStacker(args.n_frames)
+        planner = AEManager()
         opponents = _make_opponents(
             actor, device, args.eval_opponents,
             [a for a in env.possible_agents if a != our_agent],
@@ -414,12 +532,16 @@ def evaluate(actor: PolicyNetwork, args: argparse.Namespace, device: torch.devic
                 continue
             obs_py = _obs_to_python(obs)
             if agent == our_agent:
-                stacked = stacker.observe(obs_py)
+                belief = _belief_for(planner, obs_py, use_belief)
+                stacked = stacker.observe(obs_py, belief_map=belief)
                 agent_v = torch.from_numpy(stacked["agent_view"]).float().to(device)
                 base_v = torch.from_numpy(stacked["base_view"]).float().to(device)
                 scalars = torch.from_numpy(stacked["scalars"]).float().to(device)
                 mask = torch.from_numpy(stacked["action_mask"]).float().to(device)
-                action = actor.select_action(agent_v, base_v, scalars, action_mask=mask, greedy=True)
+                belief_t = torch.from_numpy(belief).float().to(device) if belief is not None else None
+                action = actor.select_action(
+                    agent_v, base_v, scalars, action_mask=mask, greedy=True, belief_map=belief_t,
+                )
             else:
                 action = int(opponents.get(agent, _random_opponent)(env, agent, obs_py))
                 mask = np.asarray(obs_py.get("action_mask", [1, 1, 1, 1, 1, 1]), dtype=np.float32).reshape(-1)
@@ -431,23 +553,38 @@ def evaluate(actor: PolicyNetwork, args: argparse.Namespace, device: torch.devic
     return total_reward / max(games, 1) / MAX_SCORE
 
 
-def load_actor(args: argparse.Namespace, device: torch.device) -> PolicyNetwork:
-    actor = PolicyNetwork(n_frames=args.n_frames).to(device)
+def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNetwork, bool]:
+    """Construct the actor and warm-start from BC if available.
+
+    Returns (actor, use_belief). `use_belief` is taken from the BC
+    checkpoint if present; if no checkpoint is found, falls back to
+    args.use_belief.
+    """
+    use_belief = bool(args.use_belief)
     ckpt_path = Path(args.bc_checkpoint) if args.bc_checkpoint else None
+    ckpt = None
     if ckpt_path and ckpt_path.exists():
         ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        ckpt_use_belief = bool(ckpt.get("use_belief", False))
         ckpt_n_frames = ckpt.get("n_frames", 1)
+        if ckpt_use_belief != use_belief:
+            print(
+                f"INFO: --use-belief={use_belief} overridden by checkpoint use_belief={ckpt_use_belief}"
+            )
+            use_belief = ckpt_use_belief
         if ckpt_n_frames != args.n_frames:
             print(
                 f"WARN: checkpoint n_frames={ckpt_n_frames} != requested n_frames={args.n_frames}; "
                 "training from scratch instead of warm-starting."
             )
-        else:
-            actor.load_state_dict(ckpt["model_state_dict"])
-            print(f"warm-started actor from {ckpt_path} (n_frames={ckpt_n_frames})")
-    else:
-        print(f"BC checkpoint not found at {ckpt_path}; training PPO from scratch")
-    return actor
+            ckpt = None  # will skip load_state_dict below
+    actor = PolicyNetwork(n_frames=args.n_frames, use_belief=use_belief).to(device)
+    if ckpt is not None:
+        actor.load_state_dict(ckpt["model_state_dict"])
+        print(f"warm-started actor from {ckpt_path} (n_frames={args.n_frames}, use_belief={use_belief})")
+    elif ckpt_path and not ckpt_path.exists():
+        print(f"BC checkpoint not found at {ckpt_path}; training PPO from scratch (use_belief={use_belief})")
+    return actor, use_belief
 
 
 def train(args: argparse.Namespace) -> None:
@@ -464,9 +601,10 @@ def train(args: argparse.Namespace) -> None:
           f"return_clip={args.return_clip} vary_maps={args.vary_maps} "
           f"opponents={args.opponents} eval_opponents={args.eval_opponents}")
 
-    actor = load_actor(args, device)
-    critic = ValueNetwork(n_frames=args.n_frames).to(device)
-    print(f"actor params: {num_parameters(actor):,}; critic params: {num_parameters(critic):,}")
+    actor, use_belief = load_actor(args, device)
+    critic = ValueNetwork(n_frames=args.n_frames, use_belief=use_belief).to(device)
+    print(f"actor params: {num_parameters(actor):,}; critic params: {num_parameters(critic):,} "
+          f"(use_belief={use_belief})")
 
     optimizer = optim.AdamW(
         list(actor.parameters()) + list(critic.parameters()),
@@ -503,6 +641,7 @@ def train(args: argparse.Namespace) -> None:
                     "critic_state_dict": critic.state_dict(),
                     "epoch": update,
                     "n_frames": args.n_frames,
+                    "use_belief": bool(getattr(actor, "use_belief", False)),
                     "ppo_eval_score": eval_score,
                     "rollout_score": rollout_score,
                     "args": vars(args),
@@ -550,8 +689,11 @@ def main() -> None:
                         help="Train with novice=False and a random seed per game (diversify the training distribution).")
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--eval-games", type=int, default=12)
-    parser.add_argument("--opponents", choices=["random", "planner", "frozen", "mixed"], default="mixed")
-    parser.add_argument("--eval-opponents", choices=["random", "planner", "frozen", "mixed"], default="mixed")
+    parser.add_argument("--opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league"], default="mixed")
+    parser.add_argument("--eval-opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league"], default="mixed")
+    parser.add_argument("--use-belief", action="store_true",
+                        help="Train with the belief-map architecture (16x16xK extra CNN branch). "
+                             "Overridden by the BC checkpoint's use_belief flag if loading one.")
     parser.add_argument("--novice", action="store_true", default=True)
     parser.add_argument("--no-novice", dest="novice", action="store_false")
     parser.add_argument("--seed", type=int, default=0)

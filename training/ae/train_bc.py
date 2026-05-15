@@ -33,19 +33,32 @@ class BCDataset(Dataset):
         self.scalars = torch.from_numpy(data["scalars"]).float()
         self.action_masks = torch.from_numpy(data["action_masks"]).float()
         self.actions = torch.from_numpy(data["actions"]).long()
-        # New: frame-stacked datasets save n_frames so the trainer can
-        # instantiate a matching network.
         if "n_frames" in data.files:
             self.n_frames = int(data["n_frames"])
         else:
-            # Backwards-compat for the single-frame bc.npz collected before
-            # frame stacking. agent_views.shape[1] == 25*n_frames.
             self.n_frames = max(1, int(self.agent_views.shape[1] // 25))
+        # Belief tensors (NEW): present when collect_bc was run with
+        # --no-belief NOT set. Falls back to "no belief" for old datasets.
+        if "beliefs" in data.files:
+            self.beliefs = torch.from_numpy(data["beliefs"]).float()
+            self.has_belief = True
+        else:
+            self.beliefs = None
+            self.has_belief = False
 
     def __len__(self) -> int:
         return self.actions.shape[0]
 
     def __getitem__(self, idx: int):
+        if self.has_belief:
+            return (
+                self.agent_views[idx],
+                self.base_views[idx],
+                self.scalars[idx],
+                self.action_masks[idx],
+                self.beliefs[idx],
+                self.actions[idx],
+            )
         return (
             self.agent_views[idx],
             self.base_views[idx],
@@ -60,19 +73,34 @@ def _masked_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return logits + torch.log(mask.clamp(min=1e-9))
 
 
-def evaluate(model: PolicyNetwork, loader: DataLoader, device: torch.device) -> tuple[float, float]:
+def _unpack_batch(batch, has_belief: bool, device):
+    """Move a (with-or-without-belief) batch tuple to ``device``."""
+    if has_belief:
+        agent_v, base_v, scalars, mask, belief, actions = batch
+        belief = belief.to(device, non_blocking=True)
+    else:
+        agent_v, base_v, scalars, mask, actions = batch
+        belief = None
+    return (
+        agent_v.to(device, non_blocking=True),
+        base_v.to(device, non_blocking=True),
+        scalars.to(device, non_blocking=True),
+        mask.to(device, non_blocking=True),
+        belief,
+        actions.to(device, non_blocking=True),
+    )
+
+
+def evaluate(model: PolicyNetwork, loader: DataLoader, has_belief: bool,
+             device: torch.device) -> tuple[float, float]:
     model.eval()
     total_loss = 0.0
     total_correct = 0
     total = 0
     with torch.no_grad():
-        for agent_v, base_v, scalars, mask, actions in loader:
-            agent_v = agent_v.to(device, non_blocking=True)
-            base_v = base_v.to(device, non_blocking=True)
-            scalars = scalars.to(device, non_blocking=True)
-            mask = mask.to(device, non_blocking=True)
-            actions = actions.to(device, non_blocking=True)
-            logits = _masked_logits(model(agent_v, base_v, scalars), mask)
+        for batch in loader:
+            agent_v, base_v, scalars, mask, belief, actions = _unpack_batch(batch, has_belief, device)
+            logits = _masked_logits(model(agent_v, base_v, scalars, belief_map=belief), mask)
             loss = nn.functional.cross_entropy(logits, actions, reduction="sum")
             total_loss += loss.item()
             total_correct += (logits.argmax(-1) == actions).sum().item()
@@ -115,8 +143,10 @@ def train(args: argparse.Namespace) -> None:
         pin_memory=(device.type == "cuda"),
     )
 
-    model = PolicyNetwork(n_frames=dataset.n_frames).to(device)
-    print(f"n_frames: {dataset.n_frames}; params: {num_parameters(model):,}")
+    use_belief = dataset.has_belief and not args.no_belief
+    model = PolicyNetwork(n_frames=dataset.n_frames, use_belief=use_belief).to(device)
+    print(f"n_frames: {dataset.n_frames}; use_belief: {use_belief}; "
+          f"params: {num_parameters(model):,}")
 
     optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
@@ -131,14 +161,9 @@ def train(args: argparse.Namespace) -> None:
         train_correct = 0
         train_n = 0
         epoch_start = time.time()
-        for agent_v, base_v, scalars, mask, actions in train_loader:
-            agent_v = agent_v.to(device, non_blocking=True)
-            base_v = base_v.to(device, non_blocking=True)
-            scalars = scalars.to(device, non_blocking=True)
-            mask = mask.to(device, non_blocking=True)
-            actions = actions.to(device, non_blocking=True)
-
-            logits = _masked_logits(model(agent_v, base_v, scalars), mask)
+        for batch in train_loader:
+            agent_v, base_v, scalars, mask, belief, actions = _unpack_batch(batch, use_belief, device)
+            logits = _masked_logits(model(agent_v, base_v, scalars, belief_map=belief), mask)
             loss = nn.functional.cross_entropy(logits, actions)
 
             optimizer.zero_grad()
@@ -152,7 +177,7 @@ def train(args: argparse.Namespace) -> None:
 
         train_loss /= max(train_n, 1)
         train_acc = train_correct / max(train_n, 1)
-        val_loss, val_acc = evaluate(model, val_loader, device)
+        val_loss, val_acc = evaluate(model, val_loader, use_belief, device)
         elapsed = time.time() - epoch_start
         print(
             f"epoch {epoch:>2}/{args.epochs}  "
@@ -169,6 +194,7 @@ def train(args: argparse.Namespace) -> None:
                 "val_acc": val_acc,
                 "val_loss": val_loss,
                 "n_frames": dataset.n_frames,
+                "use_belief": use_belief,
             }, out_path)
             print(f"  ✓ best so far → saved to {out_path}")
 
@@ -184,6 +210,8 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--no-belief", action="store_true",
+                        help="Force-disable belief input even if the dataset has it.")
     train(parser.parse_args())
 
 
