@@ -54,6 +54,62 @@ except ImportError:
 _LEADING_ARTICLES = ("the ", "The ", "a ", "A ", "an ", "An ")
 _TRAILING_TRIM = string.punctuation + " \t\n"
 
+# Inference chunking (mirrors nlp/src/nlp_manager.py).
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+CHUNK_SENTENCES = 3
+CHUNK_OVERLAP = 1
+
+
+def _split_sentences(text: str) -> list[str]:
+    sents = [s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()]
+    return sents if sents else ([text.strip()] if text.strip() else [])
+
+
+def _doc_chunks_with_offsets(doc: str) -> list[tuple[str, int]]:
+    """Return [(chunk_text, char_offset_in_doc), ...] matching inference chunking.
+
+    3-sentence sliding window with 1-sentence overlap, across the whole document.
+    """
+    sents = _split_sentences(doc)
+    if not sents:
+        return []
+    if len(sents) <= CHUNK_SENTENCES:
+        return [(" ".join(sents), doc.find(sents[0]))]
+    step = max(1, CHUNK_SENTENCES - CHUNK_OVERLAP)
+    out: list[tuple[str, int]] = []
+    for i in range(0, len(sents), step):
+        window = sents[i : i + CHUNK_SENTENCES]
+        if not window:
+            break
+        chunk_text = " ".join(window)
+        # Locate this chunk's first sentence in the original doc; reasonable proxy
+        # for the chunk's char offset (sentences are space-joined; original may
+        # have different separators, but we only need the relative offset for
+        # answer-position recompute).
+        offset = doc.find(window[0])
+        out.append((chunk_text, max(0, offset)))
+        if i + CHUNK_SENTENCES >= len(sents):
+            break
+    return out
+
+
+def _chunk_containing(doc: str, abs_pos: int, abs_end: int) -> tuple[str, int] | None:
+    """Find the chunk whose char range contains [abs_pos, abs_end). Return
+    (chunk_text, abs_start_of_chunk_in_doc) or None if not found."""
+    chunks = _doc_chunks_with_offsets(doc)
+    if not chunks:
+        return None
+    # First pass: chunk that fully contains the answer.
+    for ctext, coff in chunks:
+        if coff <= abs_pos and abs_end <= coff + len(ctext):
+            return ctext, coff
+    # Fallback: chunk whose start is closest to (and not past) the answer start.
+    best = None
+    for ctext, coff in chunks:
+        if coff <= abs_pos and (best is None or coff > best[1]):
+            best = (ctext, coff)
+    return best
+
 
 def _strip_articles(s: str) -> str:
     for art in _LEADING_ARTICLES:
@@ -140,7 +196,7 @@ def _find_span(answer: str, context: str) -> tuple[int, str] | None:
     return None
 
 
-def _build_squad_examples(track: str) -> list[dict]:
+def _build_squad_examples(track: str, use_answer_chunk: bool = False) -> list[dict]:
     data_dir = Path(f"/home/jupyter/{track}/nlp")
     jsonl_path = data_dir / "nlp.jsonl"
     docs_dir = data_dir / "documents"
@@ -189,15 +245,36 @@ def _build_squad_examples(track: str) -> list[dict]:
                     skipped["answer_not_in_doc"] += 1
                 continue
             pos, a_exact = found_span
+            ctx_text = docs[chosen_doc]
+            ctx_offset = 0
+            if use_answer_chunk:
+                # Replace whole-doc context with the inference-style chunk
+                # containing the answer span. The model trains on the same
+                # context distribution it sees at inference, which should help
+                # the diff bucket where the right doc is retrieved but the
+                # whole-doc training context made the model learn loose spans.
+                hit = _chunk_containing(ctx_text, pos, pos + len(a_exact))
+                if hit is None:
+                    # Should be rare; fall through to whole-doc context.
+                    pass
+                else:
+                    ctx_text, ctx_offset = hit
+                    pos = pos - ctx_offset
+                    # Defensive: ensure the span is still inside the chunk.
+                    if pos < 0 or pos + len(a_exact) > len(ctx_text):
+                        # Fall back to whole-doc on the rare misalignment.
+                        ctx_text = docs[chosen_doc]
+                        pos = found_span[0]
             examples.append({
                 "question": q,
-                "context": docs[chosen_doc],
+                "context": ctx_text,
                 "answers": {"text": [a_exact], "answer_start": [pos]},
             })
 
     print(
         f"built {len(examples)} examples; skipped {skipped} "
-        f"(rapidfuzz={'on' if _RAPIDFUZZ else 'off'})",
+        f"(rapidfuzz={'on' if _RAPIDFUZZ else 'off'}, "
+        f"chunk_context={'on' if use_answer_chunk else 'off'})",
         file=sys.stderr,
     )
     return examples
@@ -284,6 +361,10 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no-fp16", action="store_true",
                    help="disable fp16 training (default: enabled on cuda)")
+    p.add_argument("--use-answer-chunk", action="store_true",
+                   help="train QA on the 3-sentence chunk containing the answer "
+                        "(mirrors inference) instead of the whole source_doc. "
+                        "This is the v8b-chunked-context variant.")
     args = p.parse_args()
 
     import random
@@ -303,7 +384,7 @@ def main() -> int:
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    examples = _build_squad_examples(args.track)
+    examples = _build_squad_examples(args.track, use_answer_chunk=args.use_answer_chunk)
     if not examples:
         print("no training examples built — aborting", file=sys.stderr)
         return 1

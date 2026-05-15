@@ -40,7 +40,9 @@ import torch
 import torch.nn.functional as F
 from rank_bm25 import BM25Okapi
 from transformers import (
+    AutoConfig,
     AutoModelForQuestionAnswering,
+    AutoModelForSeq2SeqLM,
     AutoModelForSequenceClassification,
     AutoTokenizer,
 )
@@ -52,9 +54,13 @@ from transformers import (
 MODEL_DIR = Path(os.getenv("NLP_MODEL_DIR", "/workspace/models"))
 DENSE_DIR = MODEL_DIR / "bge-small-en-v1.5"
 RERANKER_DIR = MODEL_DIR / "bge-reranker-base"
-# Prefer the fine-tuned QA model when present (see training/nlp/finetune_qa.py);
-# fall back to the stock SQuAD2 weights otherwise.
-QA_FINETUNED_DIR = MODEL_DIR / "roberta-finetuned-squad2"
+# QA model preference, in priority order:
+#   1. Fine-tuned generative (seq2seq Flan-T5) — see training/nlp/finetune_genqa.py
+#   2. Fine-tuned extractive (RoBERTa-SQuAD2) — see training/nlp/finetune_qa.py
+#   3. Stock SQuAD2 weights downloaded by download_models.py
+#   4. HF hub fallback (only if container is online)
+QA_GEN_FINETUNED_DIR = MODEL_DIR / "flan-t5-finetuned"
+QA_EXT_FINETUNED_DIR = MODEL_DIR / "roberta-finetuned-squad2"
 QA_BASE_DIR = MODEL_DIR / "roberta-base-squad2"
 
 CHUNK_SENTENCES = 3
@@ -184,6 +190,7 @@ class NLPManager:
         self._rerank_model = None
         self._qa_tok = None
         self._qa_model = None
+        self._qa_is_generative = False
 
         # Corpus state.
         self.documents: list[str] = []
@@ -203,17 +210,28 @@ class NLPManager:
         rerank_path = (
             str(RERANKER_DIR) if RERANKER_DIR.exists() else "BAAI/bge-reranker-base"
         )
-        if QA_FINETUNED_DIR.exists():
-            qa_path = str(QA_FINETUNED_DIR)
-            qa_source = "finetuned"
+        # QA model selection ladder. We detect seq2seq (generative) vs encoder
+        # (extractive) from the saved config's is_encoder_decoder flag.
+        if QA_GEN_FINETUNED_DIR.exists():
+            qa_path = str(QA_GEN_FINETUNED_DIR)
+            qa_source = "gen-finetuned"
+        elif QA_EXT_FINETUNED_DIR.exists():
+            qa_path = str(QA_EXT_FINETUNED_DIR)
+            qa_source = "ext-finetuned"
         elif QA_BASE_DIR.exists():
             qa_path = str(QA_BASE_DIR)
-            qa_source = "base"
+            qa_source = "ext-base"
         else:
             qa_path = "deepset/roberta-base-squad2"
-            qa_source = "hub"
-        # Visible in container logs so we can confirm which weights are loaded.
-        print(f"[nlp_manager] QA model: {qa_source} ({qa_path})", flush=True)
+            qa_source = "ext-hub"
+        qa_cfg = AutoConfig.from_pretrained(qa_path)
+        self._qa_is_generative = bool(getattr(qa_cfg, "is_encoder_decoder", False))
+        print(
+            f"[nlp_manager] QA model: {qa_source} "
+            f"({'generative' if self._qa_is_generative else 'extractive'}) "
+            f"({qa_path})",
+            flush=True,
+        )
 
         from transformers import AutoModel
 
@@ -229,11 +247,18 @@ class NLPManager:
         )
 
         self._qa_tok = AutoTokenizer.from_pretrained(qa_path)
-        self._qa_model = (
-            AutoModelForQuestionAnswering.from_pretrained(qa_path)
-            .to(self.device)
-            .eval()
-        )
+        if self._qa_is_generative:
+            self._qa_model = (
+                AutoModelForSeq2SeqLM.from_pretrained(qa_path)
+                .to(self.device)
+                .eval()
+            )
+        else:
+            self._qa_model = (
+                AutoModelForQuestionAnswering.from_pretrained(qa_path)
+                .to(self.device)
+                .eval()
+            )
 
         if self.device.type == "cuda":
             # Half precision is a ~2x speedup on these small models with no
@@ -417,6 +442,37 @@ class NLPManager:
 
     @torch.no_grad()
     def _extract_answer(self, question: str, passage_idxs: list[int]) -> str:
+        if self._qa_is_generative:
+            return self._generate_answer(question, passage_idxs)
+        return self._extract_answer_span(question, passage_idxs)
+
+    @torch.no_grad()
+    def _generate_answer(self, question: str, passage_idxs: list[int]) -> str:
+        if not passage_idxs:
+            return ""
+        # For generative QA, condition on the top reranked chunk only — adding
+        # multiple chunks risks the model paraphrasing across irrelevant context
+        # and failing the AE 0.9 threshold. Keep it tight and verbatim-ish.
+        top_chunk = self.passages[passage_idxs[0]]
+        prompt = f"question: {question.strip()} context: {top_chunk.strip()}"
+        enc = self._qa_tok(
+            prompt,
+            max_length=512,
+            truncation=True,
+            return_tensors="pt",
+        ).to(self.device)
+        out = self._qa_model.generate(
+            **enc,
+            max_new_tokens=QA_MAX_ANSWER_TOKENS,
+            num_beams=4,
+            early_stopping=True,
+            no_repeat_ngram_size=3,
+        )
+        text = self._qa_tok.decode(out[0], skip_special_tokens=True).strip()
+        return _clean_answer(text)
+
+    @torch.no_grad()
+    def _extract_answer_span(self, question: str, passage_idxs: list[int]) -> str:
         if not passage_idxs:
             return ""
         contexts = [self.passages[i] for i in passage_idxs[:TOP_K_RERANK]]

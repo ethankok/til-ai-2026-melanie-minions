@@ -27,15 +27,21 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY download_models.py .
 RUN TRANSFORMERS_OFFLINE=0 python download_models.py
 
-# Bundle the fine-tuned QA model if it's been built locally (see
-# training/nlp/finetune_qa.py). The .gitkeep keeps the directory tracked
-# in git; COPY accepts an empty/contents-only dir fine.
+# Bundle the fine-tuned QA model(s) if they've been built locally (see
+# training/nlp/finetune_qa.py and training/nlp/finetune_genqa.py).
+# Manager prefers: gen-finetuned > ext-finetuned > stock SQuAD2 base.
 COPY models /workspace/models-local
-RUN if [ -d /workspace/models-local/roberta-finetuned-squad2 ]; then \
+RUN if [ -d /workspace/models-local/flan-t5-finetuned ]; then \
+        cp -r /workspace/models-local/flan-t5-finetuned /workspace/models/; \
+        echo "[nlp build] bundled fine-tuned generative QA (Flan-T5) weights"; \
+    fi && \
+    if [ -d /workspace/models-local/roberta-finetuned-squad2 ]; then \
         cp -r /workspace/models-local/roberta-finetuned-squad2 /workspace/models/; \
-        echo "[nlp build] bundled fine-tuned QA weights"; \
-    else \
-        echo "[nlp build] no fine-tuned QA weights found; falling back to base"; \
+        echo "[nlp build] bundled fine-tuned extractive QA (RoBERTa-SQuAD2) weights"; \
+    fi && \
+    if [ ! -d /workspace/models-local/flan-t5-finetuned ] && \
+       [ ! -d /workspace/models-local/roberta-finetuned-squad2 ]; then \
+        echo "[nlp build] no fine-tuned QA weights found; falling back to stock base"; \
     fi && rm -rf /workspace/models-local
 
 # Copies your source files.

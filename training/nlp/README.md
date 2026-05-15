@@ -1,4 +1,15 @@
-# NLP — training a fine-tuned QA model
+# NLP — training fine-tuned QA models
+
+Two training paths, picked by which one we want to ship:
+
+| Script | Model class | Output dir | Manager priority |
+|---|---|---|---|
+| [`finetune_qa.py`](finetune_qa.py) | extractive (RoBERTa-SQuAD2) | `nlp/models/roberta-finetuned-squad2/` | 2 (after generative) |
+| [`finetune_genqa.py`](finetune_genqa.py) | generative (Flan-T5) | `nlp/models/flan-t5-finetuned/` | 1 (preferred when present) |
+
+The container's [nlp_manager.py](../../nlp/src/nlp_manager.py) auto-detects which is bundled (via `config.is_encoder_decoder`) and routes inference to either span extraction or `.generate()` accordingly. Container log prints `QA model: gen-finetuned (generative) ...` or `ext-finetuned (extractive) ...` on first request.
+
+## v7 — extractive fine-tune (shipped at 0.517/0.880)
 
 `finetune_qa.py` takes the local `/home/jupyter/<track>/nlp/nlp.jsonl` ground-truth (883 question / answer / source_docs tuples for novice), pulls the corresponding documents from `/home/jupyter/<track>/nlp/documents/`, builds SQuAD-style training examples, and fine-tunes a SQuAD2-pretrained encoder on them.
 
@@ -89,10 +100,52 @@ The skipped examples are those where the reference answer doesn't appear in sour
 - It does **not** try to handle L4/L5 unanswerable cases. Novice track only has L1/L2 (every question has source_docs and a real answer).
 - It does **not** modify retrieval. Retrieval is at 95.5% hit rate already; this script only improves the QA step.
 
+## v8b — chunked-context extractive training
+
+Mirrors inference exactly: trains on the 3-sentence chunk that contains the answer (instead of the whole source doc). The model sees the same context distribution at train and inference time, which should compress the `retrieval_hit_diff` bucket.
+
+```bash
+python training/nlp/finetune_qa.py --use-answer-chunk
+# Same output dir; overwrites nlp/models/roberta-finetuned-squad2/
+```
+
+Trade-offs vs whole-doc training (v7-v1):
+- (+) Better calibration between train and inference contexts.
+- (+) Shorter training contexts → faster training, larger effective batch.
+- (−) Possibly less context for L2 multi-fact questions if the answer span crosses chunk boundaries (only ~1% of cases, given 1-sentence overlap).
+
+Gate to submit: local equiv_rate ≥ 0.74 (clear beat over v7-v1's 0.709).
+
+## v8a — generative QA fine-tune
+
+Different script, different model class. Trains [`google/flan-t5-base`](https://huggingface.co/google/flan-t5-base) (or `-large`) to generate the answer text given the prompt `question: ... context: ...`. Includes **all 883 examples** — no span-match requirement, so the 452 paraphrased answers that extractive can't see are now in the training set.
+
+```bash
+# Default: flan-t5-base (250M), 3 epochs, batch 8
+python training/nlp/finetune_genqa.py
+
+# Chunked context (recommended — matches inference)
+python training/nlp/finetune_genqa.py --use-chunk-context
+
+# Bigger model if memory allows
+python training/nlp/finetune_genqa.py --base-model google/flan-t5-large --batch-size 4
+```
+
+Outputs to `nlp/models/flan-t5-finetuned/`. The manager will detect it via `config.is_encoder_decoder` and route inference through `.generate()` with `num_beams=4`.
+
+Trade-offs vs extractive:
+- (+) Full coverage of paraphrased answers; covers the `retrieval_hit_diff` bucket extractive can't reach.
+- (+) Can compose multi-fact L2 answers from chunked context.
+- (−) AE 0.9 ModernBERT threshold rewards near-verbatim source spans; paraphrases sometimes fail equivalence even when semantically correct.
+- (−) Per-question latency higher (autoregressive decoding with `num_beams=4`); may dip the 25% speed score.
+
+Risk: if the speed dip is severe (cloud speed drops from 0.880 toward 0.70), blended score might *not* improve even with better accuracy. Worth testing locally before submitting.
+
 ## What lives where
 
-- This README: how to run the script.
-- [`finetune_qa.py`](finetune_qa.py): the script itself.
-- [`../../nlp/src/nlp_manager.py`](../../nlp/src/nlp_manager.py): the manager prefers `QA_FINETUNED_DIR` over `QA_BASE_DIR`. No changes needed to swap weights — just put a fine-tuned model in `nlp/models/roberta-finetuned-squad2/` and rebuild.
-- [`../../nlp/Dockerfile`](../../nlp/Dockerfile): the COPY block that bundles the fine-tuned model if present.
-- [`../../nlp/NOTES.md`](../../nlp/NOTES.md): strategic context for the v7 submission.
+- This README: how to run the scripts.
+- [`finetune_qa.py`](finetune_qa.py): extractive (v7, v8b).
+- [`finetune_genqa.py`](finetune_genqa.py): generative (v8a).
+- [`../../nlp/src/nlp_manager.py`](../../nlp/src/nlp_manager.py): preference ladder is `QA_GEN_FINETUNED_DIR > QA_EXT_FINETUNED_DIR > QA_BASE_DIR > hub`. Inference path (`_extract_answer_span` vs `_generate_answer`) is chosen at load time from `config.is_encoder_decoder`.
+- [`../../nlp/Dockerfile`](../../nlp/Dockerfile): COPY block bundles whichever fine-tuned dir is present in `nlp/models/`. Both can coexist; manager picks the generative one if both exist.
+- [`../../nlp/NOTES.md`](../../nlp/NOTES.md): strategic context for v7/v8 submissions and confirmed regressors.
