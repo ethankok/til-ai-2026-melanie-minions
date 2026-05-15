@@ -1,6 +1,6 @@
 # NLP — notes & history
 
-Last updated: 15 May 2026 19:25 SGT — v9-doc-ensemble NEW HIGH 0.683/0.868
+Last updated: 15 May 2026 20:29 SGT — v9-doc-ensemble still best blend 0.683/0.883; v10-template-lite neutral
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
@@ -8,9 +8,9 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`v9-doc-ensemble` — official 0.683 / 0.868 (15 May 19:25 SGT, 0 of 700 errors).** NEW HIGH (+0.004 cloud accuracy vs v8b). Keeps the v8b chunked-context RoBERTa answerer, then adds whole-document BM25 + BGE retrieval as a light prior and reranker seeder. Local moved `0.708` → `0.711`; retrieval misses dropped `40` → `37` and retrieval hit rate improved `95.5%` → `95.8%`. Cloud moved similarly modestly (`0.679` → `0.683`) with a small speed dip (`0.872` → `0.868`), so blended NLP nudged `0.727` → `0.729`.
+**`v9-doc-ensemble` — official 0.683 / 0.883 on resubmit (15 May 19:46 SGT, 0 of 700 errors).** Best current NLP blend. The first v9 submit was `0.683 / 0.868`; resubmitting the exact same image later returned `0.683 / 0.883`, confirming that the speed metric has measurable run-to-run noise. v9 keeps the v8b chunked-context RoBERTa answerer, then adds whole-document BM25 + BGE retrieval as a light prior and reranker seeder. Local moved `0.708` → `0.711`; retrieval misses dropped `40` → `37` and retrieval hit rate improved `95.5%` → `95.8%`.
 
-## Current candidate — `v10-template-lite`
+## `v10-template-lite` — neutral A/B
 
 Using the downloaded novice corpus snapshot (`novice-nlp-light-20260515.tgz`, extracted under local gitignored `data/`), added a stdlib analysis helper:
 
@@ -29,6 +29,8 @@ Code candidate in [src/nlp_manager.py](src/nlp_manager.py): keep v9 retrieval an
 - percentage-point differences from exactly two percentages (`"12 percentage points"`)
 
 Default `NLP_RULE_MODE=conservative` only overrides the model when the extracted span is clearly diffuse or missing the computed value. `NLP_RULE_MODE=aggressive` is available for a bolder Workbench A/B, and `NLP_RULE_MODE=off` disables this layer. This is deliberately narrow; previous broad fallbacks were net-negative.
+
+Result (15 May 20:16 SGT): `v10-template-lite` scored `0.683 / 0.882` officially with `0 / 700` errors. Local stayed at `0.711`; buckets shifted only `substr 177→178`, `diff 396→395`, with retrieval unchanged at `95.8%`. Interpretation: the conservative template layer is safe but too narrow to matter. Do not treat this as a new direction by itself; the next move needs broader answer canonicalization or a different QA head, not more tiny regex patches.
 
 ## New eval (FINAL — pinned 14 May)
 
@@ -81,9 +83,9 @@ End-to-end pipeline in [src/nlp_manager.py](src/nlp_manager.py) and [src/nlp_ser
 5. **Cross-encoder rerank.** `BAAI/bge-reranker-base` scores `(question, chunk)` pairs. Top-10 → QA.
 6. **Top-3 doc IDs with BM25 backfill.** Walks reranked passages collecting unique parent doc IDs. If the reranker concentrated on <3 unique docs (common when one document has many highly-relevant chunks), backfills from the un-reranked hybrid list. Protects retrieval recall — the new eval gates every case on retrieval, so empty doc slots are pure waste.
 7. **Extractive QA (batched).** Fine-tuned `deepset/roberta-large-squad2` when `nlp/models/roberta-finetuned-squad2/` is baked into the image; otherwise falls back to stock `roberta-base-squad2`. All features are tokenized and forwarded in batches (`QA_BATCH=16`) with `overflow_to_sample_mapping` to recover which context each feature came from.
-8. **Narrow deterministic post-processing (candidate).** `v10-template-lite` computes only high-confidence date/year/percentage-point answers after the learned QA span. Conservative default avoids touching normal span answers unless the span is long or missing the computed value.
+8. **Narrow deterministic post-processing (neutral A/B).** `v10-template-lite` computes only high-confidence date/year/percentage-point answers after the learned QA span. Conservative default avoids touching normal span answers unless the span is long or missing the computed value. This was safe but too narrow to move cloud accuracy.
 9. **No broad low-confidence sentence fallback.** The old fallback was confirmed net-negative because it replaced many correct single-token spans with too-long sentences.
-10. **Speed.** GPU half-precision on all three models. Current cloud speed is `0.868` for `v9-doc-ensemble`; `v10-template-lite` should be near-neutral because rules are regex-only.
+10. **Speed.** GPU half-precision on all three models. Current best cloud speed is `0.883` for the resubmitted `v9-doc-ensemble`; `v10-template-lite` was near-neutral at `0.882`.
 
 Weights baked into the image via [download_models.py](download_models.py). Container runs offline (`TRANSFORMERS_OFFLINE=1`). `NLP_MODEL_DIR=/workspace/models`.
 
@@ -119,7 +121,8 @@ v7-finetuned-v1 15/05 11:39      0.517   0.880   0 / 700   0.709        Prior hi
 v7-finetuned-v2 (not shipped)    —       —       —         0.698        Variants+regex+rapidfuzz, 431/883 retained. Local REGRESSED -0.011 vs v1; substr -38, diff +26 (fuzzy spans noisy). NOT submitted
 v8b-chunked-context 15/05 18:35   0.679   0.872   0 / 700   0.708        Prior high (+0.162 cloud vs v7-v1). --use-answer-chunk + rapidfuzz off, 353/883 retained; first run had span-misalignment bug fixed in `627c9ce`, retrained. Local looked flat, but cloud strongly rewarded the chunked-context inductive bias. Blended 0.727
 v9-doc-ensemble 15/05 19:25       0.683   0.868   0 / 700   0.711        SHIPPED, NEW HIGH (+0.004 cloud vs v8b). Whole-document BM25+BGE retrieval prior/seeding rescued 3 local retrieval misses (40→37), exact unchanged, substr +1, diff +2. Small accuracy lift with small speed cost; blended 0.729
-v10-template-lite (candidate)      —       —       —         TBD          v9 + conservative regex arithmetic/date answer layer for elapsed days/years and percentage-point deltas. Build/test before submit; if local exact/substr rises without diff blow-up, ship.
+v9-doc-ensemble 15/05 19:46       0.683   0.883   0 / 700   0.711        Same image resubmitted; accuracy unchanged, speed +0.015. Best NLP blend ~0.733. Treat speed deltas of this scale as evaluator noise.
+v10-template-lite 15/05 20:16      0.683   0.882   0 / 700   0.711        NEUTRAL. v9 + conservative regex arithmetic/date answer layer. Local substr +1 / diff -1, retrieval unchanged; cloud accuracy unchanged. Safe but too narrow.
 ```
 
 Paragraph chunking is confirmed the v5b regressor; don't revisit on this corpus. v5c is a clean baseline for v6-roberta-large.
@@ -229,7 +232,7 @@ Status update (15 May, after v7-v2 + v8b/v9 local/cloud tests):
 
 - **v7-v2** (variants + regex + rapidfuzz, 431 examples) → local 0.698, NOT submitted. Fuzzy-matched spans introduced noise; substr -38 / diff +26.
 - **v8b-chunked-context** (rapidfuzz off, 353 examples, --use-answer-chunk; first run had a span-misalignment bug that was fixed in `627c9ce`, retrained) → local 0.708, cloud 0.679/0.872. This was the major breakthrough over v7-v1. Local aggregate was flat vs v7-v1 (-0.001), but cloud jumped +0.162, so the hidden corpus must reward the answer-containing chunk distribution much more than the local novice aggregate reveals.
-- **v9-doc-ensemble** (whole-document BM25+BGE prior/seeding on top of v8b) → local 0.711, cloud 0.683/0.868. It did exactly what it was designed to do, but only at small scale: local retrieval misses fell 40→37, retrieval hit rose 95.5%→95.8%, and cloud accuracy rose +0.004. Speed fell -0.004, so blended lift is only about +0.002.
+- **v9-doc-ensemble** (whole-document BM25+BGE prior/seeding on top of v8b) → local 0.711, cloud 0.683/0.868 on first submit and 0.683/0.883 on same-image resubmit. It did exactly what it was designed to do, but only at small scale: local retrieval misses fell 40→37, retrieval hit rose 95.5%→95.8%, and cloud accuracy rose +0.004. The speed improvement on resubmit is evaluator variance, not a code change.
 
 **New lesson: local aggregate `equiv_rate` is not enough as a ship gate.** For v8b, local exact/substr/diff buckets looked mostly flat, but hidden cloud accuracy moved massively. Treat local buckets as diagnostics, not as a scalar forecast. Chunked-context training is now proven positive on hidden eval even though the local set did not show it.
 
@@ -237,8 +240,8 @@ Next lever for cloud >0.70:
 
 1. **Protect `v9-doc-ensemble` as the shipped baseline.**
 2. **Retrieval is not the main blocker anymore.** Local upper bound is now 0.958 if every retrieved answer were accepted, but actual local is 0.711. That gap is the answer-equivalence / answer-syntax problem, especially `retrieval_hit_diff` staying ~396 cases.
-3. **Current A/B: `v10-template-lite`.** Test whether narrow computed-answer rules can rescue a few high-confidence non-literal cases without reintroducing the broad-fallback regression.
-4. **Next high-ROI direction after v10: broader answer canonicalization / question-template extraction.** Learn from `nlp.jsonl` question patterns and expected answer forms (dates, money, names, orgs, IDs, measures). Add deterministic post-processing or template-specific extraction on top of the retrieved chunk before trying a slower generative model.
+3. **`v10-template-lite` was safe but too small.** It proves narrow computed-answer overrides do not break the image, but a +1 substring shift is not enough to move cloud accuracy.
+4. **Next high-ROI direction: broader answer canonicalization / question-template extraction.** Learn from `nlp.jsonl` question patterns and expected answer forms (dates, money, names, orgs, IDs, measures). Add deterministic post-processing or template-specific extraction on top of the retrieved chunk before trying a slower generative model.
 5. **`v8a-genqa` — generative seq2seq head** remains a bigger swing. Train Flan-T5 on all 883 `(question, context, answer)` triples. Risk: AE 0.9 threshold punishes paraphrases and generation costs speed. Reward: possible path beyond 0.70 if outputs stay short and canonical.
 
 Dropped candidates (confirmed not levers):
