@@ -1,6 +1,9 @@
 # Noise — notes & history
 
-Last updated: 13 May 2026
+Last updated: 13 May 2026 — **PARKED.** Shipped `latest` at 1.000 / 0.970; no
+direct Qualifier reward per the official spec, so no active iteration. Revisit
+only if preparing for Finals (CV disruption) or if rules change to weight Noise
+in Qualifiers.
 
 Per-task working log for Noise (adversarial image noising). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#noise).

@@ -927,4 +927,3 @@ Five AE approaches submitted (v1, v2, v3b heuristics + bc-v1 + ppo-v1 + ppo-v2 R
 - Local Mac test: spin up `til_environment.bomberman_env` directly (no Docker needed for Mac iteration)
 - Workbench Docker flow: `til build ae <tag> && til test ae <tag>`
 - Official AE env (read-only submodule): [../til-26-ae/](../til-26-ae/)
-- Implementation plan / decisions: [../AE_IMPLEMENTATION_PLAN.md](../AE_IMPLEMENTATION_PLAN.md) (if present)
