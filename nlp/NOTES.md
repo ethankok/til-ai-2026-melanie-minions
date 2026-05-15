@@ -1,6 +1,6 @@
 # NLP — notes & history
 
-Last updated: 15 May 2026 — v7 fine-tune plan staged
+Last updated: 15 May 2026 11:40 SGT — v7-finetuned-v1 NEW HIGH 0.517/0.880
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
@@ -8,7 +8,7 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`v5c-no-para` — official 0.483 / 0.912 (14 May 19:44 SGT, 0 of 700 errors).** New blended high (0.590 vs v4-dict-id's 0.584, +0.006). Same retrieval accuracy as v4 but with batched SQuAD2 + BM25 doc-diversity backfill — the additive parts of the v5 stack after paragraph chunking was identified and reverted as a regressor.
+**`v7-finetuned-v1` — official 0.517 / 0.880 (15 May 11:39 SGT, 0 of 700 errors).** NEW HIGH (+0.034 cloud accuracy vs v5c). Fine-tuned `deepset/roberta-large-squad2` on local `nlp.jsonl` (353/883 examples retained via exact + case-insensitive matching; trained 3 epochs, `load_best_model_at_end=True` picked epoch 1 with `eval_loss=0.614`). Local 0.674 → 0.709, cloud 0.483 → 0.517 — local-cloud gap held at 0.19, fine-tune transferred near-1:1. Speed dipped 0.912 → 0.880 from roberta-large's per-token cost but blended improved 0.590 → 0.608.
 
 ## New eval (FINAL — pinned 14 May)
 
@@ -93,8 +93,9 @@ v3-id-parse   14/05 05:33        0.000   0.888   0 / 700   0.678        Same hyb
 v4-dict-id    14/05 13:29        0.483   0.888   0 / 700   0.678        After Ryan fixed eval to send dicts. SAME IMAGE as v3-id-parse (just re-tagged); recovery to NEW HIGH on post-wipe leaderboard
 v5-multi      (not shipped)      —       —       —         0.628        Para-aware chunking + batched SQuAD2 + BM25 backfill + low-conf fallback. Local REGRESSED -0.050 vs v4; fallback was firing on every single-word answer. NOT submitted
 v5b-no-fallback 14/05 19:10      0.456   0.916   0 / 700   0.674        Removed fallback; kept para chunking + batched SQuAD2 + BM25 backfill. Local OK (within 0.005 of v4), but cloud REGRESSED -0.027 vs v4 (speed +0.028 but blended worse -0.013). Para chunking is the suspect — local→cloud gap got bigger
-v5c-no-para   14/05 19:44        0.483   0.912   0 / 700   0.678        SHIPPED. Reverted paragraph chunking; kept batched SQuAD2 + BM25 backfill. Score matches v4 exactly + speed kept the +0.024 gain from batching → blended high 0.590 (vs v4 0.584). Confirmed paragraph chunking was the cloud regressor
-v7-finetuned  (pending)          ?       ?       ?         ?            Fine-tune roberta-large-squad2 on local nlp.jsonl (883 Q/A/doc tuples). Strategic swing for the ~0.467 gap to leaderboard 0.950. Run training/nlp/finetune_qa.py on Workbench, then til build/test/submit
+v5c-no-para   14/05 19:44        0.483   0.912   0 / 700   0.678        Reverted paragraph chunking; kept batched SQuAD2 + BM25 backfill. Score matches v4 exactly + speed +0.024 from batching → blended 0.590
+v7-finetuned-v1 15/05 11:39      0.517   0.880   0 / 700   0.709        SHIPPED, NEW HIGH (+0.034 cloud vs v5c). Fine-tuned roberta-large-squad2 on local nlp.jsonl (353/883 retained, epoch-1 best eval_loss 0.614). Local→cloud gap held at 0.19. Blended 0.608 (vs v5c 0.590)
+v7-finetuned-v2 (in test)        ?       ?       ?         ?            v2 data-prep with variants + flexible regex + rapidfuzz. Retained 431/883 (+78 vs v1) but eval_loss curve looked WORSE (epoch 3 1.238 vs v1's 0.872). Test before submit; gate ≥ 0.74 local
 ```
 
 Paragraph chunking is confirmed the v5b regressor; don't revisit on this corpus. v5c is a clean baseline for v6-roberta-large.
@@ -163,29 +164,56 @@ Use the script to decide which lever to pull for `v6`:
 
 The script prints estimated cloud-score lower/upper bounds; compare to `til test`'s actual `equiv_rate` to triangulate where the AE model is finding extra credit beyond exact/substr.
 
-## Next priority — `v7-finetuned`
+## `v7-finetuned-v1` analysis — what worked
 
-A novice team has been observed scoring `0.950 / 0.995` on NLP. To even get close, span quality has to jump dramatically — retrieval is already at 95.5%, so the answer-equivalence side is where the gap lives. Stock `roberta-base-squad2` doesn't know Clairos proper nouns, IDs, dates, or the canonical answer wording style; **fine-tuning a SQuAD-pretrained encoder on local `nlp.jsonl` is the lever**.
+Cloud +0.034 (0.483 → 0.517) matches local +0.035 (0.674 → 0.709). The fine-tune transferred near-1:1, a clean signal that:
 
-Approach (see [training/nlp/finetune_qa.py](../training/nlp/finetune_qa.py) and [training/nlp/README.md](../training/nlp/README.md)):
+1. The held-out cloud questions follow the same authoring style as local `nlp.jsonl` (same paraphrase frequency, same answer formats). This makes local equiv_rate a reliable proxy for cloud — at least in the +/− 0.005 band.
+2. The bottleneck WAS QA span quality, as the error-bucket diagnostic predicted. With retrieval at 95.5%, moving cases from `retrieval_hit_diff` to `exact/substr` directly lifts the cloud score.
+3. roberta-large-squad2 + 318 train examples was enough for a meaningful lift even with aggressive overfitting in epochs 2-3 (`load_best_model_at_end=True` rescued us).
 
-1. Build SQuAD-format training data from `/home/jupyter/<track>/nlp/`: for each row in `nlp.jsonl`, take its `question` + `answer` + first `source_docs` entry whose document contains the answer string verbatim. Typical retention ~70-80% of 883 pairs.
-2. Fine-tune `deepset/roberta-large-squad2` for 3 epochs (`lr=3e-5`, `bs=8`, fp16 on GPU). HF `Trainer` with `load_best_model_at_end=True`. ~30–60 min on Workbench.
-3. Save to `nlp/models/roberta-finetuned-squad2/`. Manager prefers fine-tuned weights over the stock SQuAD2 weights (which we still bundle as a fallback via `download_models.py`); Dockerfile bundles the fine-tuned dir when present.
-4. Container log on first request should print `[nlp_manager] QA model: finetuned (...)` confirming the swap.
+Error-bucket shift (local, v5c → v7-v1):
 
-Expected impact: cloud `+0.15–0.30` (moves cases from `retrieval_hit_diff` to `exact/substr`). Realistic ceiling for this single change: cloud `0.65–0.80`. Hitting `0.95` likely needs the fine-tune plus retrieval-saturation work.
+| Bucket | v5c | v7-v1 | Δ |
+|---|---:|---:|---:|
+| retrieval_miss | 40 (4.5%) | 40 (4.5%) | 0 |
+| retrieval_hit_exact | 183 (20.7%) | **242 (27.4%)** | **+59** |
+| retrieval_hit_substr | 256 (29.0%) | 205 (23.2%) | −51 |
+| retrieval_hit_diff | 404 (45.8%) | 396 (44.8%) | −8 |
+| L1 exact-match | 29.7% | **39.7%** | **+10pp** |
+| L2 exact-match | 2.4% | 2.4% | 0 |
 
-What's deliberately deferred:
-- `v6-roberta-large` (stock weights, no fine-tune) — superseded by v7. If v7 training fails, fall back to v6 as plan B.
-- Larger embedder / reranker — retrieval is at 95.5%, so a +0.018 cloud ceiling at best. Don't spend latency budget there until v7 lands.
-- Generative LLM (Qwen / Phi) — risk that AE 0.9 threshold punishes paraphrases. Try only if extractive plateaus.
+The −51 substr / +59 exact shift means the model is producing more strictly-verbatim spans now. L1 single-fact questions are the main beneficiary; L2 multi-fact questions are unchanged (those need composition, not extraction).
 
-Avoid revisiting on this corpus (confirmed regressors): paragraph-aware chunking, low-confidence sentence fallback.
+## `v7-finetuned-v2` (built; awaiting local eval)
+
+Same training script + v2 data-prep (variants + flexible regex + rapidfuzz). Retention 353 → 431 (+78). But training eval_loss curve was concerning:
+
+```
+epoch 1: eval_loss ?  (not pasted)
+epoch 2: eval_loss ?  (not pasted)
+epoch 3: eval_loss 1.238   ← v1 had 0.872 at epoch 3
+```
+
+The `load_best_model_at_end=True` flag still picks the best epoch, but v2's higher epoch-3 loss suggests it overfit harder. Hypothesis: the rapidfuzz fallback returns window-length spans (not the actual answer text), so some examples now train on slightly-misaligned char ranges. Those noisy examples confuse the model on questions where the correct span is shorter than the fuzzy-matched window.
+
+**Action**: `til build nlp v7-finetuned-v2 && til test nlp v7-finetuned-v2`. Gate to submit: local equiv_rate ≥ 0.74 (clear beat over v1's 0.709). If v2 plateaus around 0.70-0.72, the fuzzy fallback is net-negative and we ship v3 of data-prep that drops rapidfuzz and keeps only the variant/regex strategies (recovered ~388 examples in synthetic eval, cleaner than 431 with noise).
+
+## Path to higher scores — `v8` candidates
+
+After v7-v2 lands a verdict, the remaining ladders:
+
+1. **`v8a-genqa` — generative seq2seq head.** Switch from extractive roberta-large-squad2 to Flan-T5-base or similar. Train on all 883 `(question, context, answer)` triples, no span-match requirement. This covers the 452 still-skipped paraphrased examples. Risk: generative paraphrases sometimes fail the AE 0.9 threshold; reward: full coverage of the diff bucket. Estimated effort: ~2 hr training, half-day to validate.
+2. **`v8b-chunked-context` — retrieval-augmented training.** Train QA on `(question, top-BGE-chunk, answer)` instead of full document. This matches inference better — the model learns to extract from the *same* chunks it sees at inference, not the whole doc. May lift the diff bucket significantly without changing the model.
+3. **`v8c-roberta-large-resume` — re-train v7 with v2's data but lower lr/epochs.** Mitigates the v2 overfit risk while keeping the +78 examples. Cheap: ~30 min on Workbench.
+
+Recommendation if v7-v2 lands ≥ 0.74 → ship v2, then v8c (refine on top). If v2 plateaus → v3 data-prep (drop rapidfuzz), then v8a/v8b parallel.
+
+Confirmed NOT levers on this corpus: paragraph-aware chunking, low-confidence sentence fallback.
 
 ## Submission cadence rule
 
-v5-multi → v5b → v5c bisect cost three submissions; sequential A/B would have been one. **Ship one knob at a time from here on.**
+v5-multi → v5b → v5c bisect cost three submissions; sequential A/B would have been one. **Ship one knob at a time from here on.** v7-v1 already broke this rule by combining "fine-tune" + "roberta-large" in one image, but they're tightly coupled (the fine-tune needed roberta-large's capacity). Going forward: v7-v2 vs v7-v1 should isolate the data-prep delta cleanly.
 
 ## What to edit, what not to
 
