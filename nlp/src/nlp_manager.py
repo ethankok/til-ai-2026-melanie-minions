@@ -6,9 +6,15 @@ Pipeline at corpus load:
     DOC-XXXX IDs). Tried paragraph-aware chunking in `v5b-no-fallback` and
     it regressed cloud score by 0.027 — reverted in `v5c-no-para`.
   - Index every chunk in (a) BM25Okapi and (b) a dense BGE encoder.
+  - Index whole documents with the same BM25 + dense stack. This document-level
+    second opinion is used as a light prior and candidate seeder so source docs
+    can still reach the reranker when their best individual chunks rank just
+    outside the passage top-K.
 
 Pipeline at query:
   - Hybrid score = z(BM25) + z(dense_cos). Take top-K passages.
+    Whole-document scores lightly boost all chunks from strong candidate docs,
+    and the best chunk from each top document is seeded into the reranker pool.
   - Cross-encoder rerank the top-K to refine ordering.
   - documents: top-3 *unique* parent doc IDs in reranked order, then
     backfilled from the un-reranked hybrid list if the reranker concentrated
@@ -66,8 +72,11 @@ QA_BASE_DIR = MODEL_DIR / "roberta-base-squad2"
 CHUNK_SENTENCES = 3
 CHUNK_OVERLAP = 1
 TOP_K_RETRIEVE = 30          # passages handed to reranker
+TOP_K_DOC_RETRIEVE = 8       # whole-doc candidates used to seed reranker
+TOP_K_DOC_SEED = 4           # max extra passages added from doc candidates
 TOP_K_RERANK = 10            # passages handed to QA
 TOP_DOCS_RETURNED = 3        # eval considers first 3
+DOC_PRIOR_WEIGHT = 0.35      # light doc-level prior on passage retrieval
 QA_MAX_ANSWER_TOKENS = 64    # eval truncates beyond this
 EMBED_BATCH = 64
 RERANK_BATCH = 32
@@ -197,8 +206,11 @@ class NLPManager:
         self.doc_ids: list[str] = []  # i-th entry = ID for the i-th doc
         self.passages: list[str] = []
         self.passage_doc_idx: list[int] = []
+        self.doc_passage_idxs: list[list[int]] = []
         self.bm25: BM25Okapi | None = None
+        self.doc_bm25: BM25Okapi | None = None
         self.passage_embeds: torch.Tensor | None = None
+        self.doc_embeds: torch.Tensor | None = None
 
     # ------------------------------------------------------------------ models
 
@@ -351,40 +363,91 @@ class NLPManager:
 
         self.passages = []
         self.passage_doc_idx = []
+        self.doc_passage_idxs = [[] for _ in self.documents]
         for doc_idx, doc in enumerate(self.documents):
             for chunk in self._chunk_document(doc):
+                pidx = len(self.passages)
                 self.passages.append(chunk)
                 self.passage_doc_idx.append(doc_idx)
+                self.doc_passage_idxs[doc_idx].append(pidx)
 
         if not self.passages:
             self.passages = [""]
             self.passage_doc_idx = [0] if self.documents else [0]
+            self.doc_passage_idxs = [[0]] if self.documents else []
 
         tokenized = [_bm25_tokenize(p) for p in self.passages]
         # rank_bm25 expects non-empty token lists; guard against pathological docs.
         tokenized = [toks if toks else ["_empty_"] for toks in tokenized]
         self.bm25 = BM25Okapi(tokenized)
 
+        doc_tokenized = [_bm25_tokenize(d) for d in self.documents]
+        doc_tokenized = [toks if toks else ["_empty_"] for toks in doc_tokenized]
+        self.doc_bm25 = BM25Okapi(doc_tokenized) if doc_tokenized else None
+
         self.passage_embeds = self._embed_passages(self.passages)
+        self.doc_embeds = (
+            self._embed_passages(self.documents)
+            if self.documents else torch.empty(0, self.passage_embeds.shape[1])
+        )
         self.loaded = True
 
     # ------------------------------------------------------------- retrieval
 
-    def _retrieve(self, question: str, k: int) -> list[int]:
+    @staticmethod
+    def _top_indices(scores: np.ndarray, k: int) -> list[int]:
+        k = min(k, scores.shape[0])
+        if k <= 0:
+            return []
+        idx = np.argpartition(-scores, k - 1)[:k]
+        idx = idx[np.argsort(-scores[idx])]
+        return idx.tolist()
+
+    def _retrieve(self, question: str, k: int) -> tuple[list[int], list[int]]:
         q_tokens = _bm25_tokenize(question) or [question.lower()]
         bm25_scores = np.asarray(self.bm25.get_scores(q_tokens), dtype=np.float32)
 
         q_embed = self._embed_query(question)
         dense_scores = (self.passage_embeds @ q_embed).numpy().astype(np.float32)
 
-        hybrid = _zscore(bm25_scores) + _zscore(dense_scores)
-        # Top-k indices (argpartition then sort for stable ordering).
-        k = min(k, hybrid.shape[0])
-        if k <= 0:
-            return []
-        idx = np.argpartition(-hybrid, k - 1)[:k]
-        idx = idx[np.argsort(-hybrid[idx])]
-        return idx.tolist()
+        passage_hybrid = _zscore(bm25_scores) + _zscore(dense_scores)
+
+        doc_idxs: list[int] = []
+        doc_hybrid = np.empty(0, dtype=np.float32)
+        if self.doc_bm25 is not None and self.doc_embeds is not None and self.documents:
+            doc_bm25_scores = np.asarray(
+                self.doc_bm25.get_scores(q_tokens), dtype=np.float32
+            )
+            doc_dense_scores = (self.doc_embeds @ q_embed).numpy().astype(np.float32)
+            doc_hybrid = _zscore(doc_bm25_scores) + _zscore(doc_dense_scores)
+            doc_idxs = self._top_indices(doc_hybrid, TOP_K_DOC_RETRIEVE)
+
+        hybrid = passage_hybrid
+        if doc_hybrid.size:
+            doc_prior = np.asarray(
+                [doc_hybrid[d] for d in self.passage_doc_idx], dtype=np.float32
+            )
+            hybrid = hybrid + DOC_PRIOR_WEIGHT * _zscore(doc_prior)
+
+        passage_idxs = self._top_indices(hybrid, k)
+
+        # Seed the reranker with each top document's best passage. This is cheap
+        # and protects the retrieval gate when the correct document is obvious at
+        # whole-doc level but its individual chunks split the signal.
+        seen = set(passage_idxs)
+        for didx in doc_idxs[:TOP_K_DOC_SEED]:
+            candidates = (
+                self.doc_passage_idxs[didx]
+                if didx < len(self.doc_passage_idxs) else []
+            )
+            if not candidates:
+                continue
+            best_pidx = max(candidates, key=lambda pidx: hybrid[pidx])
+            if best_pidx not in seen:
+                passage_idxs.append(best_pidx)
+                seen.add(best_pidx)
+
+        return passage_idxs, doc_idxs
 
     @torch.no_grad()
     def _rerank(self, question: str, passage_idxs: list[int]) -> list[int]:
@@ -413,6 +476,7 @@ class NLPManager:
         self,
         ranked_passage_idxs: Iterable[int],
         fallback: Iterable[int] | None = None,
+        doc_fallback: Iterable[int] | None = None,
     ) -> list[str]:
         """Collect up to TOP_DOCS_RETURNED unique parent doc IDs.
 
@@ -433,6 +497,12 @@ class NLPManager:
             for pidx in fallback:
                 d = self.passage_doc_idx[pidx]
                 if d not in seen:
+                    seen.append(d)
+                    if len(seen) >= TOP_DOCS_RETURNED:
+                        break
+        if len(seen) < TOP_DOCS_RETURNED and doc_fallback is not None:
+            for d in doc_fallback:
+                if d not in seen and 0 <= d < len(self.doc_ids):
                     seen.append(d)
                     if len(seen) >= TOP_DOCS_RETURNED:
                         break
@@ -560,9 +630,11 @@ class NLPManager:
         if not self.loaded or not self.passages:
             return {"documents": [], "answer": ""}
 
-        retrieved = self._retrieve(question, TOP_K_RETRIEVE)
+        retrieved, doc_candidates = self._retrieve(question, TOP_K_RETRIEVE)
         reranked = self._rerank(question, retrieved)
-        documents = self._top_doc_ids(reranked, fallback=retrieved)
+        documents = self._top_doc_ids(
+            reranked, fallback=retrieved, doc_fallback=doc_candidates
+        )
         answer = self._extract_answer(question, reranked)
         return {"documents": documents, "answer": answer}
 

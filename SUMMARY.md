@@ -134,7 +134,7 @@ Important terms:
 
 ---
 
-## Where each task stands (14 May 2026)
+## Where each task stands (15 May 2026)
 
 For task-specific history, decisions, gotchas, and next-step plans, open the task's NOTES.md.
 
@@ -142,7 +142,7 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 |---|---|---:|---:|---|---|
 | ASR | `nemo-zs` | 0.956 | 0.946 | **NEW BLENDED HIGH.** Backbone switch from distil-whisper LoRA to NVIDIA Parakeet-TDT-0.6B-v2 zero-shot. Same accuracy, +0.097 speed → blended +0.025. CUDA-graph fast path (`cuda-python>=12.3`) staged in for `nemo-zs-v2`. | [asr/NOTES.md](asr/NOTES.md) |
 | AE | `hybrid-v3` | 0.555 | 0.849 | Team best (top-quartile; top is 0.711). Belief-map BC retrain (`bc-belief-hybrid`, 15/05) regressed to 0.287 — memory hypothesis rejected, rolled back. Realistic remaining AE ceiling ~0.58. | [ae/NOTES.md](ae/NOTES.md) |
-| NLP | `v7-finetuned-v1` | 0.517 | 0.880 | **NEW HIGH (+0.034 vs v5c).** Fine-tuned roberta-large-squad2 on local nlp.jsonl (353/883 examples). Local 0.709 → cloud 0.517 transferred ~1:1. Blended 0.608. v2 data-prep (variants + rapidfuzz, 431/883 retained) testing locally; v8-genqa / chunked-context if v2 plateaus. | [nlp/NOTES.md](nlp/NOTES.md) |
+| NLP | `v8b-chunked-context` | 0.679 | 0.872 | **NEW HIGH (+0.162 vs v7-v1).** RoBERTa-large extractive fine-tune on answer-containing inference chunks. Local 0.708 looked flat vs v7-v1's 0.709, but hidden cloud rewarded chunked-context training. Blended 0.727. | [nlp/NOTES.md](nlp/NOTES.md) |
 | CV | `cv-yolo-v2-tier1-best` | 0.556 | 0.956 | Tier1 STILL ON LEADERBOARD. v11m@1024 regressed to 0.376. imgsz=1280 sweep: hard held-out 0.9141 (+0.009 vs tier1) but TTA too slow. aug=0 at 1280 is the next test. | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `latest` | 1.000 | 0.970 | Qualifier-safe. Official spec says no direct Qualifier reward. | [noise/NOTES.md](noise/NOTES.md) |
 
@@ -159,14 +159,14 @@ For task-specific history, decisions, gotchas, and next-step plans, open the tas
 **Week 1 — first real models (in progress)**
 
 4. **AE** (40%) — `hybrid-v3` is now team best at **0.555/0.849** (third consecutive AE high; +0.048 over ppo-v1). Builds on hybrid-v2's policy + heuristic safety-veto with two more lifts: a top-K policy cascade (try policy's #2/#3 actions when #1 is vetoed before falling back to heuristic) and an opportunistic-kill shortcut in the heuristic's dominant-action path (bomb adjacent enemy *agents* sighted this step, not just adjacent enemy *bases*). Top of leaderboard is 0.711; the heuristic-side ceiling is probably near. Next big swing if needed: state-augmented policy retrain (pass full 16×16 belief map as additional CNN input).
-5. **NLP** (20%) — `v7-finetuned-v1` is now shipped at 0.517/0.880 (+0.034 vs v5c, NEW HIGH). Fine-tuned `roberta-large-squad2` on local `nlp.jsonl`; pipeline-side bisect from v4 → v5c established the floor before the model swap. v2 data-prep + retrain in flight.
+5. **NLP** (20%) — `v8b-chunked-context` is now shipped at 0.679/0.872 (+0.162 vs v7-v1, NEW HIGH). It fine-tuned `roberta-large-squad2` on inference-style answer chunks after the span realignment fix. Local aggregate was flat (0.708 vs 0.709), but hidden cloud transferred strongly; local bucket reports are diagnostics, not a full cloud-score predictor.
 6. **CV** (20%) — `cv-yolo-v2-tier1-best` (0.556/0.956) STILL ON LEADERBOARD. Tier 2 `cv-yolo11m-v3-pre` (YOLOv11m@1024 fully trained 120ep) submitted 15/05 → 0.376/0.955 REGRESSED. Local val 0.937 looked great but hard held-out only 0.8673 (-0.038 vs tier1's 0.9049); small-AP collapsed (0.587 vs 0.746). Lesson: bigger model + matched-imgsz lost to smaller model + upscaled-imgsz inference on this dataset. Untested lever: v11m@1280 inference sweep.
 7. **ASR** (20%) — `nemo-zs` shipped at 0.956/0.946 (Parakeet-TDT-0.6B-v2 zero-shot, +0.097 speed over `ft-lora32-v1`). cuda-python pinned for `nemo-zs-v2`.
 
 **Week 2 — push scores**
 
-8. **AE**: hybrid-v3 shipped at 0.555/0.849. Belief-map state augmentation (16×16×11 CNN branch) was tested — BC val_acc 0.897 (+0.023 vs bc-v1), but `bc-belief-hybrid` cloud crashed to 0.287 (-0.268 vs hybrid-v3). Memory hypothesis rejected: bigger model + richer state input found *more* spurious correlations to the random-opponent local distribution, widening the gap. Rolled back to hybrid-v3. Remaining AE moves all have realistic ceiling ~0.58; the higher-EV qualifier lever is NLP v7-finetune (already shipped at 0.517/0.880).
-9. **NLP**: `v7-finetuned-v1` shipped at 0.517/0.880, fine-tuned `roberta-large-squad2` on local `nlp.jsonl`. v2 data-prep (variants + flexible regex + rapidfuzz) retrained, 431/883 retained vs v1's 353 — testing locally before submit. If v2 plateaus, next paths are `v8-genqa` (Flan-T5 generative for full-coverage of paraphrased answers) or `v8-chunked-context` (train QA on top-BGE-chunk instead of full doc). Confirmed regressors: paragraph chunking, low-confidence sentence fallback.
+8. **AE**: hybrid-v3 shipped at 0.555/0.849. Belief-map state augmentation (16×16×11 CNN branch) was tested — BC val_acc 0.897 (+0.023 vs bc-v1), but `bc-belief-hybrid` cloud crashed to 0.287 (-0.268 vs hybrid-v3). Memory hypothesis rejected: bigger model + richer state input found *more* spurious correlations to the random-opponent local distribution, widening the gap. Rolled back to hybrid-v3. Remaining AE moves all have realistic ceiling ~0.58; the higher-EV qualifier lift has now come from NLP `v8b-chunked-context`.
+9. **NLP**: `v8b-chunked-context` shipped at 0.679/0.872. Protect this as the baseline. `v9-doc-ensemble` is staged in code to attack retrieval misses with whole-document BM25 + BGE retrieval while keeping the v8b answerer. If pushing further after that, test `v8a-genqa` (Flan-T5 generative on all 883 triples) against v8b, with speed and answer-format risk front and center. Confirmed regressors: paragraph chunking, low-confidence sentence fallback, noisy rapidfuzz span training.
 10. **CV**: Tier 1 `cv-yolo-v2-tier1-best` STILL on leaderboard at 0.556/0.956. Tier 2 `cv-yolo11m-v3-pre` (YOLOv11m@1024, 120 epochs) regressed to 0.376/0.955 — matched-imgsz inference lost to v8s+upscaled. imgsz=1280 sweep showed hard held-out 0.9141 (+0.009 vs tier1) but TTA at 1280 is too slow (speed ~0.71). **Next: aug=0 sweep at 1280** — if mAP holds ≥0.88 without TTA, blended beats tier1 and we ship.
 11. **Noise**: bounded FGSM perturbation if time and the score actually matters.
 

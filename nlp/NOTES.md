@@ -1,6 +1,6 @@
 # NLP — notes & history
 
-Last updated: 15 May 2026 11:40 SGT — v7-finetuned-v1 NEW HIGH 0.517/0.880
+Last updated: 15 May 2026 18:35 SGT — v8b-chunked-context NEW HIGH 0.679/0.872
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
@@ -8,7 +8,7 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`v7-finetuned-v1` — official 0.517 / 0.880 (15 May 11:39 SGT, 0 of 700 errors).** NEW HIGH (+0.034 cloud accuracy vs v5c). Fine-tuned `deepset/roberta-large-squad2` on local `nlp.jsonl` (353/883 examples retained via exact + case-insensitive matching; trained 3 epochs, `load_best_model_at_end=True` picked epoch 1 with `eval_loss=0.614`). Local 0.674 → 0.709, cloud 0.483 → 0.517 — local-cloud gap held at 0.19, fine-tune transferred near-1:1. Speed dipped 0.912 → 0.880 from roberta-large's per-token cost but blended improved 0.590 → 0.608.
+**`v8b-chunked-context` — official 0.679 / 0.872 (15 May 18:35 SGT, 0 of 700 errors).** NEW HIGH (+0.162 cloud accuracy vs v7-v1). Same fine-tuned `roberta-large-squad2` path, but trained on the inference-style 3-sentence chunk containing the answer (`--use-answer-chunk`) after fixing the span realignment bug in `627c9ce`. Local looked flat (`0.709` → `0.708`), but hidden cloud jumped (`0.517` → `0.679`), so the lesson is that local aggregate `equiv_rate` is not a reliable scalar gate for this variant; bucket movement and hidden corpus transfer matter more. Speed dipped only slightly (`0.880` → `0.872`), so blended NLP jumped from `0.608` to `0.727`.
 
 ## New eval (FINAL — pinned 14 May)
 
@@ -56,13 +56,13 @@ End-to-end pipeline in [src/nlp_manager.py](src/nlp_manager.py) and [src/nlp_ser
 
 1. **Server.** Matches Ryan's pre-written async + poll pattern verbatim — `{"status":"loading"}` then `{"status":"loaded"}` on the poll endpoint; per-question response is `{"documents":[...], "answer":"..."}`.
 2. **Doc-ID parser.** `_parse_doc_payload` handles four encodings: (1) dict shape with `id` key (cloud uses this), (2) first-line `DOC-XXXX` stripped from body, (3) `DOC-XXXX` within the first 80 chars, (4) positional fallback `DOC-{i+1:04d}`. Defensive; cost is ~10 lines.
-3. **Paragraph-aware chunking.** Each document is split on blank lines into paragraphs first. Short paragraphs (≤3 sentences) become a single chunk; longer ones get a 3-sentence sliding window with 1-sentence overlap *within the paragraph*. Falls back to whole-document sliding-window when there are no blank lines. Each chunk records its parent doc index for ID emission.
+3. **Sentence-window chunking.** Each document is split into 3-sentence windows with 1-sentence overlap across the whole document. Paragraph-aware chunking was tested earlier and regressed on cloud; the current winning path instead changes the fine-tune context to the answer-containing inference chunk.
 4. **Hybrid retrieval.** BM25Okapi over tokenized chunks ⊕ dense cosine over `BAAI/bge-small-en-v1.5` embeddings (CLS-pooled, L2-normalized; query gets BGE's English search prefix). Per-query z-score normalise then sum. Top-30 chunks → reranker.
 5. **Cross-encoder rerank.** `BAAI/bge-reranker-base` scores `(question, chunk)` pairs. Top-10 → QA.
 6. **Top-3 doc IDs with BM25 backfill.** Walks reranked passages collecting unique parent doc IDs. If the reranker concentrated on <3 unique docs (common when one document has many highly-relevant chunks), backfills from the un-reranked hybrid list. Protects retrieval recall — the new eval gates every case on retrieval, so empty doc slots are pure waste.
-7. **Extractive QA (batched).** `deepset/roberta-base-squad2` over the top reranked chunks, **all features tokenized + forwarded in a single batched call** (subject to `QA_BATCH=16`). The previous per-context loop has been replaced by `[question]*N` + `[ctx1,...,ctxN]` tokenization with `overflow_to_sample_mapping` to recover which feature came from which context. Span selection logic is unchanged.
-8. **Low-confidence fallback.** If SQuAD2's best span is <3 chars or <2 words, return the highest token-overlap sentence from the top 3 contexts instead. The AE 0.9 threshold rarely passes single-token guesses; a concise source sentence has a real shot.
-9. **Speed.** GPU half-precision on all three models. Cloud speed `0.888` on `v4-dict-id`; batching should improve this further on the next submission.
+7. **Extractive QA (batched).** Fine-tuned `deepset/roberta-large-squad2` when `nlp/models/roberta-finetuned-squad2/` is baked into the image; otherwise falls back to stock `roberta-base-squad2`. All features are tokenized and forwarded in batches (`QA_BATCH=16`) with `overflow_to_sample_mapping` to recover which context each feature came from.
+8. **No low-confidence sentence fallback.** The fallback was confirmed net-negative because it replaced many correct single-token spans with too-long sentences.
+9. **Speed.** GPU half-precision on all three models. Current cloud speed is `0.872` for `v8b-chunked-context`.
 
 Weights baked into the image via [download_models.py](download_models.py). Container runs offline (`TRANSFORMERS_OFFLINE=1`). `NLP_MODEL_DIR=/workspace/models`.
 
@@ -94,9 +94,9 @@ v4-dict-id    14/05 13:29        0.483   0.888   0 / 700   0.678        After Ry
 v5-multi      (not shipped)      —       —       —         0.628        Para-aware chunking + batched SQuAD2 + BM25 backfill + low-conf fallback. Local REGRESSED -0.050 vs v4; fallback was firing on every single-word answer. NOT submitted
 v5b-no-fallback 14/05 19:10      0.456   0.916   0 / 700   0.674        Removed fallback; kept para chunking + batched SQuAD2 + BM25 backfill. Local OK (within 0.005 of v4), but cloud REGRESSED -0.027 vs v4 (speed +0.028 but blended worse -0.013). Para chunking is the suspect — local→cloud gap got bigger
 v5c-no-para   14/05 19:44        0.483   0.912   0 / 700   0.678        Reverted paragraph chunking; kept batched SQuAD2 + BM25 backfill. Score matches v4 exactly + speed +0.024 from batching → blended 0.590
-v7-finetuned-v1 15/05 11:39      0.517   0.880   0 / 700   0.709        SHIPPED, NEW HIGH (+0.034 cloud vs v5c). Fine-tuned roberta-large-squad2 on local nlp.jsonl (353/883 retained, epoch-1 best eval_loss 0.614). Local→cloud gap held at 0.19. Blended 0.608 (vs v5c 0.590)
+v7-finetuned-v1 15/05 11:39      0.517   0.880   0 / 700   0.709        Prior high (+0.034 cloud vs v5c). Fine-tuned roberta-large-squad2 on local nlp.jsonl (353/883 retained, epoch-1 best eval_loss 0.614). Blended 0.608
 v7-finetuned-v2 (not shipped)    —       —       —         0.698        Variants+regex+rapidfuzz, 431/883 retained. Local REGRESSED -0.011 vs v1; substr -38, diff +26 (fuzzy spans noisy). NOT submitted
-v8b-chunked-context (not shipped) —      —       —         0.708        --use-answer-chunk + rapidfuzz off, 353/883 retained (same as v1). Local FLAT vs v1 (-0.001). L1 exact 39.7% → 44.4%, diff bucket 396 → 394 unchanged. Chunked context didn't lift diff. NOT submitting; move to v8a-genqa
+v8b-chunked-context 15/05 18:35   0.679   0.872   0 / 700   0.708        SHIPPED, NEW HIGH (+0.162 cloud vs v7-v1). --use-answer-chunk + rapidfuzz off, 353/883 retained; first run had span-misalignment bug fixed in `627c9ce`, retrained. Local looked flat, but cloud strongly rewarded the chunked-context inductive bias. Blended 0.727
 ```
 
 Paragraph chunking is confirmed the v5b regressor; don't revisit on this corpus. v5c is a clean baseline for v6-roberta-large.
@@ -186,7 +186,7 @@ Error-bucket shift (local, v5c → v7-v1):
 
 The −51 substr / +59 exact shift means the model is producing more strictly-verbatim spans now. L1 single-fact questions are the main beneficiary; L2 multi-fact questions are unchanged (those need composition, not extraction).
 
-## `v7-finetuned-v2` (built; awaiting local eval)
+## `v7-finetuned-v2` (built; local regression, not shipped)
 
 Same training script + v2 data-prep (variants + flexible regex + rapidfuzz). Retention 353 → 431 (+78). But training eval_loss curve was concerning:
 
@@ -198,25 +198,26 @@ epoch 3: eval_loss 1.238   ← v1 had 0.872 at epoch 3
 
 The `load_best_model_at_end=True` flag still picks the best epoch, but v2's higher epoch-3 loss suggests it overfit harder. Hypothesis: the rapidfuzz fallback returns window-length spans (not the actual answer text), so some examples now train on slightly-misaligned char ranges. Those noisy examples confuse the model on questions where the correct span is shorter than the fuzzy-matched window.
 
-**Action**: `til build nlp v7-finetuned-v2 && til test nlp v7-finetuned-v2`. Gate to submit: local equiv_rate ≥ 0.74 (clear beat over v1's 0.709). If v2 plateaus around 0.70-0.72, the fuzzy fallback is net-negative and we ship v3 of data-prep that drops rapidfuzz and keeps only the variant/regex strategies (recovered ~388 examples in synthetic eval, cleaner than 431 with noise).
+Outcome: local `0.698`, below v7-v1's `0.709`. The fuzzy fallback was net-negative; do not ship this branch.
 
 ## Path to higher scores — `v8` candidates
 
-Status update (15 May, after v7-v2 + v8b local tests):
+Status update (15 May, after v7-v2 + v8b local/cloud tests):
 
 - **v7-v2** (variants + regex + rapidfuzz, 431 examples) → local 0.698, NOT submitted. Fuzzy-matched spans introduced noise; substr -38 / diff +26.
-- **v8b-chunked-context** (rapidfuzz off, 353 examples, --use-answer-chunk; first run had a span-misalignment bug that was fixed in `627c9ce`, retrained) → local 0.708, NOT submitted. Effectively flat vs v7-v1 (-0.001); L1 exact 39.7%→44.4% but diff bucket (396→394) didn't move. Confirms chunked-context inductive bias doesn't lift this corpus's diff ceiling.
+- **v8b-chunked-context** (rapidfuzz off, 353 examples, --use-answer-chunk; first run had a span-misalignment bug that was fixed in `627c9ce`, retrained) → local 0.708, cloud 0.679/0.872. This is the current shipped high. Local aggregate was flat vs v7-v1 (-0.001), but cloud jumped +0.162, so the hidden corpus must reward the answer-containing chunk distribution much more than the local novice aggregate reveals.
 
-**Diff bucket (~395 cases) is the persistent ceiling for extractive QA.** No extractive data-prep trick has moved it (full-doc, chunked, fuzzy, variant ladders all converge to the same diff size). Those answers are genuinely paraphrased relative to the source spans — span-prediction loss can't reward "semantically equivalent but worded differently."
+**New lesson: local aggregate `equiv_rate` is not enough as a ship gate.** For v8b, local exact/substr/diff buckets looked mostly flat, but hidden cloud accuracy moved massively. Treat local buckets as diagnostics, not as a scalar forecast. Chunked-context training is now proven positive on hidden eval even though the local set did not show it.
 
-Only remaining lever for cloud >0.55:
+Next lever for cloud >0.70:
 
-1. **`v8a-genqa` — generative seq2seq head** (training script ready at `training/nlp/finetune_genqa.py`). Train Flan-T5 on all 883 `(question, context, answer)` triples — no span-match requirement, covers the diff bucket. Risk: AE 0.9 threshold punishes paraphrases; speed dip from autoregressive decoding. Reward: only known path to push past 0.55 cloud.
+1. **Protect `v8b-chunked-context` as the shipped baseline.**
+2. **`v9-doc-ensemble` — document-level retrieval safety net** (code staged in `src/nlp_manager.py`). Adds whole-document BM25 + BGE retrieval alongside chunk retrieval, lightly boosts chunks from high-scoring documents, and seeds the reranker with the best chunk from the top few document candidates. This targets the 4.5% retrieval-miss bucket without replacing the v8b answerer. Build/test as `til build nlp v9-doc-ensemble && til test nlp v9-doc-ensemble`; submit only if local retrieval misses drop without a meaningful equiv-rate/speed regression.
+3. **`v8a-genqa` — generative seq2seq head** (training script ready at `training/nlp/finetune_genqa.py`). Train Flan-T5 on all 883 `(question, context, answer)` triples — no span-match requirement, covers the cases extractive QA cannot span-copy. Risk: AE 0.9 threshold punishes paraphrases and generation costs speed. Reward: possible next path beyond 0.70 if answers stay short and canonical.
 
 Dropped candidates (confirmed not levers):
-- `v8b-chunked-context` — flat
 - `v8c-roberta-large-resume` — moot since v7-v2 was net-negative
-- v3 data-prep (drop rapidfuzz) — that's what v8b was; flat
+- v3 data-prep (drop rapidfuzz without chunked-context) — v7-v2 showed fuzzy noise; v8b's win came from chunked-context, not fuzzy matching
 - paragraph-aware chunking, low-confidence sentence fallback (confirmed earlier)
 
 ## Submission cadence rule
