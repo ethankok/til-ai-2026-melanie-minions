@@ -1,21 +1,29 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 16 May 2026 ~18:35 SGT — **AE is UN-PARKED for
-`mcts-light-v1` code-only inference A/B.** `ppo-selfplay-v2` shipped 18:09 at
-0.436/0.857 and REGRESSED -0.119 vs hybrid-v3 (0.555). It still beat v1
-(0.305) by +0.131, confirming BC warm-start + self-play > self-play from
-scratch, but the v1 gap-tightening (local-cloud 0.10) was an artifact: v2's
-gap is 0.271 (til test 0.7068 → cloud 0.436), bigger than hybrid-v3's 0.219.
-Training-side AE hypotheses are now falsified: league/self-play helped over
-from-scratch, but does not clear the hybrid-v3 ceiling; memory via bc-belief
-also regressed hard. The current AE push is therefore inference-side:
-`mcts-light-v1` adds bounded tactical lookahead in `AEManager` and lets
-`HybridAEManager` trust high-value bomb/base/enemy lines before the neural
-policy. **No MCTS-light official score yet; hybrid-v3 remains shipped via
-highest-score retention at 0.555/0.849.**
-**NLP HARD-PARKED at v9-doc-ensemble 0.683/0.886** (architecture exhausted).
-**CV PARKED** at tier1 0.556/0.956 (Phase C gap-diagnose still TBD).
+Last updated: 16 May 2026 ~19:00 SGT — **CV RE-PARKED at tier1 0.556/0.956
+after Phase C.1 didn't transfer.** `cv-augc1-v4` shipped 15:28 at 0.553/0.962
+(mismatched Dockerfile config) and `cv-augc1-v4-1280` shipped 18:28 at
+0.553/0.959 (matched: imgsz=1280 conf=0.001 iou=0.7 aug=0). The augmented
+training (JPEG aug q=40-85 + 1024×1024 native-res tile crops + scale=0.80)
+lifted hard held-out **+0.04 mAP / +0.03 small AP** (0.948 vs 0.905) — training
+worked on its target. But cloud was flat and the local→cloud gap **widened
+from 0.349 to 0.395**: the augmentation specialized the model further from
+cloud's mixed distribution. v8s/v11m family confirmed at-ceiling near cloud
+0.556. Tier1 stays via highest-score retention.
+**AE is UN-PARKED for `mcts-light-v1` code-only inference A/B.**
+`ppo-selfplay-v2` shipped 18:09 at 0.436/0.857 and REGRESSED -0.119 vs
+hybrid-v3 (0.555). It still beat v1 (0.305) by +0.131, confirming BC
+warm-start + self-play > self-play from scratch, but the v1 gap-tightening
+(local-cloud 0.10) was an artifact: v2's gap is 0.271 (til test 0.7068 →
+cloud 0.436), bigger than hybrid-v3's 0.219. Training-side AE hypotheses
+are now falsified: league/self-play helped over from-scratch, but does not
+clear the hybrid-v3 ceiling; memory via bc-belief also regressed hard.
+The current AE push is therefore inference-side: `mcts-light-v1` adds
+bounded tactical lookahead in `AEManager` and lets `HybridAEManager` trust
+high-value bomb/base/enemy lines before the neural policy. **No MCTS-light
+official score yet; hybrid-v3 remains shipped via highest-score retention
+at 0.555/0.849.**
 **NLP HARD-PARKED at v9-doc-ensemble 0.683/0.886.** v12-candidate-ranker
 submitted 16/05 13:48 and REGRESSED to 0.642/0.829 — worst NLP submission
 since v5b. Local was already -0.048 vs v9 (equiv_rate 0.663 vs 0.711); the
@@ -23,8 +31,7 @@ substr-up / exact-down bucket shift confirmed the predicted failure: doc-mined
 short candidates passed the exact/substr proxy but failed the 0.9 ModernBERT
 threshold. Combined with v8a-genqa (0.652/0.836), v11-canonical-answer
 (0.680/0.881), every post-v9 swing has regressed monotonically. NLP
-architecture has been fully exhausted. **CV PARKED** at tier1 0.556/0.956
-(Phase C gap-diagnose still TBD).
+architecture has been fully exhausted.
 
 ## Latest submitted scores
 
@@ -45,6 +52,8 @@ ASR    melanie-minions-asr      nemo-zs     14/05/2026 20:33:36   0 / 400       
 CV     melanie-minions-cv       cv-yolo-v2-tier1-best 14/05/2026 17:10:09 0 / 500 0.556 0.956
 CV (v3-pre) melanie-minions-cv  cv-yolo11m-v3-pre 15/05/2026 11:34:42 0 / 500   0.376   0.955  ← REGRESSED -0.180; v11m fully trained but matched-imgsz lost to v8s+upscaled. Tier1 stays on leaderboard.
 CV (v11m-1280-noaug-v1) melanie-minions-cv  v11m-1280-noaug-v1 16/05/2026 04:04:59 0 / 500 0.474 0.949  ← REGRESSED -0.082; v11m at 1280 aug=0 looked great locally (hard held-out 0.9088, +0.014 vs tier1) but v11m's local→cloud gap is structurally ~0.44 vs v8s's ~0.35. Tier1 stays on leaderboard.
+CV (cv-augc1-v4) melanie-minions-cv  cv-augc1-v4  16/05/2026 15:28:35 0 / 500 0.553 0.962  ← Phase C.1 augmented training (JPEG aug + 1024×1024 native-res tile crops, v8s @ imgsz=1024 scale=0.80), shipped with mismatched Dockerfile config (CV_IMGSZ=768 default). Essentially tied with tier1; informative only as a config-mismatch demonstration.
+CV (cv-augc1-v4-1280) melanie-minions-cv  cv-augc1-v4-1280 16/05/2026 18:28:27 0 / 500 0.553 0.959  ← Same model rebuilt with matched Dockerfile config (CV_IMGSZ=1280 CV_CONF=0.001 CV_IOU=0.7 CV_AUGMENT=0). Hard held-out lifted +0.04 to 0.948 / small AP 0.779. Cloud flat at 0.553 — gap WIDENED 0.349 → 0.395. Phase C confirmed dead as a path to 0.7; v8s/v11m family at-ceiling. Tier1 stays on leaderboard.
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
 AE     melanie-minions-ae       hybrid-v3   14/05/2026 19:26:06   0 / 30        0.555   0.849  ← STILL SHIPPED via highest-score retention
 AE (ppo-selfplay-v2)  melanie-minions-ae  ppo-selfplay-v2  16/05/2026 18:09:15  0 / 30  0.436  0.857  ← REGRESSED -0.119 vs hybrid-v3 (but +0.131 over v1, confirming BC warm-start + self-play beats from-scratch). til test (hybrid wrapper) 0.7068 → cloud 0.436 = gap 0.271 (BIGGER than hybrid-v3's 0.219); v1's apparent "gap tightening" to 0.10 was an artifact of v1 being weak in pure-policy mode → hybrid wrapper added more relatively. Confirmed: self-play helped some, but doesn't clear hybrid-v3 ceiling; current follow-up is code-only mcts-light-v1.

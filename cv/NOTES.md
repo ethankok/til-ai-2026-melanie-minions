@@ -1,14 +1,68 @@
 # CV — notes & history
 
-Last updated: 16 May 2026 06:00 SGT — **CV UN-PARKED. Phase C.1 ready to
-train.** Diagnostic ran on tier1 + hard held-out; verdict is that
-**both JPEG quality and resolution shifts hit small AP hard** (-0.13 to
--0.19 small AP under various transforms) even though the total mAP
-drops are modest (-0.01 to -0.04). Since the cloud failure mode is
-small-AP per Pass A, train-time augmentation along these axes is
-hypothesis-aligned. `training/cv/build_aug_dataset.py` and
-`training/cv/train_v4.sh` written; estimated cloud lift +0.03 to +0.07
-(target cloud 0.58-0.63). 0.7 still requires more than Phase C.
+Last updated: 16 May 2026 19:00 SGT — **CV RE-PARKED at `cv-yolo-v2-tier1-best`
+0.556/0.956 after Phase C.1 didn't transfer.** `cv-augc1-v4` shipped 18:28 at
+**0.553/0.959** (matched-config rebuild, same as cv-augc1-v4 at 15:28). Augmented
+training (JPEG + native tile crops) lifted **hard held-out by +0.04** (0.948 vs
+tier1's 0.905) but the local→cloud gap WIDENED from 0.349 → 0.395 — the
+augmentation overfit to the small-object-dense distribution, didn't generalize.
+v8s/v11m family is now confirmed at-ceiling around cloud 0.55-0.56. Hitting 0.7
+would require either a different architecture family (RT-DETR / YOLOv9) or
+accepting CV at this number and reallocating to AE/NLP. Tier1 stays shipped.
+
+## Phase C.1 result — augmented training didn't transfer to cloud (16 May 19:00 SGT)
+
+Pipeline executed exactly as planned:
+
+1. `training/cv/build_aug_dataset.py` produced ~3× train set (originals +
+   JPEG-recompressed copies q=40-85 + 1024×1024 native-resolution tile crops
+   with ≥0.5 visible-area filter).
+2. `training/cv/train_v4.sh` trained v8s at imgsz=1024, scale=0.80,
+   copy_paste=0.10, 80 epochs. Final val mAP50-95 ≈ 0.95 on the augmented val
+   split.
+3. Submitted twice — first at Dockerfile-default config (config mismatch,
+   model trained at 1024 but served at 768), then at matched config
+   (imgsz=1280, conf=0.001, iou=0.7, aug=0) baked into Dockerfile ENV.
+
+### Numbers across distributions
+
+| Image set | augc1-v4 (this train) | tier1 | Δ |
+|---|---:|---:|---:|
+| Hard held-out 500 (sweep, small-object dense) | **0.948 / 0.779 small** | 0.905 / 0.746 small | **+0.043** |
+| Full local 1250 (`til test`, easier, sparser) | 0.739 / 0.192 small | ~0.85 / high small | **-0.11** |
+| **Cloud 500 (hidden)** | **0.553 / 0.959** | 0.556 / 0.956 | **-0.003** |
+
+### What this means
+
+- **Training worked on its target.** +0.04 hard held-out is a real model improvement, exactly what JPEG + tile-crop augmentation was supposed to deliver.
+- **Cloud distribution is closer to full-local than to hard.** The augmentation taught the model to crush dense-small-object scenes at the cost of sparse easy scenes; cloud has more of the latter so wins/losses cancel.
+- **Gap WIDENED**: tier1 gap was 0.349 (0.905 → 0.556). augc1 gap is **0.395** (0.948 → 0.553). Augmenting on hard distribution *specialized* the model further from cloud, not closer.
+- **`til test` 0.739 with small AP 0.192 is partly a measurement artifact**: at `CV_CONF=0.001`, test_cv.py pins all scores to 1.0 before pycocotools, flooding low-confidence detections that drown the PR curve on sparse easy images. The sweep's pycocotools at the same env reports 0.948 because it uses real conf scores. But cloud uses something closer to the sweep's behavior (cloud is 0.553, not crashed), so the +0.04 hard-set gain just didn't show up.
+
+### Phase C is confirmed dead as a path to 0.7
+
+Three submissions on this train (Pass A diagnostic + cv-augc1-v4 mismatched
++ cv-augc1-v4-1280 matched) all converge on cloud ≈ 0.553-0.556. Within v8s/v11m
+recipe space, this is the ceiling. **The remaining levers all require a backbone
+change or a fundamentally different training distribution**, neither of which has
+high-EV in the ~7 days remaining.
+
+### Submissions added this session
+
+| Tag | Submitted | Score | Speed | Notes |
+|---|---|---:|---:|---|
+| cv-augc1-v4 | 16/05 15:28 | 0.553 | 0.962 | Mismatched config (Dockerfile imgsz=768 default; model trained at 1024). Inadvertent demonstration that the augmented model under wrong inference settings still ties tier1. |
+| cv-augc1-v4-1280 | 16/05 18:28 | 0.553 | 0.959 | Matched config (imgsz=1280, conf=0.001, iou=0.7, aug=0). The proper test of the trained model — confirms hard-set gain doesn't transfer to cloud. |
+
+### What CV needs to hit 0.7 (left for later if revisited)
+
+Either of the following — none have high confidence under our timeline:
+
+1. **RT-DETR-L or YOLOv9c transfer.** Different backbone family with unknown local→cloud gap. ~6h GPU per train. Could land 0.45 or 0.65 — high variance, info-positive.
+2. **Conservative re-augmentation.** Drop tile crops, keep only JPEG. Recovers full-local performance. Realistic cloud 0.55-0.58. Doesn't hit 0.7 either.
+3. **A wholesale distribution-shift recipe** (synthetic photo-composition, harder mosaic, train at native-resolution multi-scale). Half a day of dataloader work plus 6-8h training. Plausible but not credible at deadline.
+
+Default decision: **stay parked at tier1.** Cloud submission slots are uncapped so any of the above can be tried in parallel without risk to the leaderboard — but should be re-evaluated against AE/NLP marginal-hour ROI before kicking off.
 
 Per-task working log for CV (object detection). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv).
