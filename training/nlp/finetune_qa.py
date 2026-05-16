@@ -370,6 +370,14 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no-fp16", action="store_true",
                    help="disable fp16 training (default: enabled on cuda)")
+    p.add_argument("--gradient-accumulation-steps", type=int, default=1,
+                   help="Accumulate gradients across N micro-batches. "
+                        "Use to keep effective batch size when per-device "
+                        "batch is reduced for memory (e.g. DeBERTa-v3-large "
+                        "on 14 GB T4: --batch-size 2 --gradient-accumulation-steps 4).")
+    p.add_argument("--gradient-checkpointing", action="store_true",
+                   help="Trade ~30%% slower training for ~50%% activation memory "
+                        "savings. Required to fit DeBERTa-v3-large on a 14 GB T4.")
     p.add_argument("--use-answer-chunk", action="store_true",
                    help="train QA on the 3-sentence chunk containing the answer "
                         "(mirrors inference) instead of the whole source_doc. "
@@ -431,11 +439,21 @@ def main() -> int:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     fp16 = (not args.no_fp16) and torch.cuda.is_available()
+    if args.gradient_checkpointing:
+        # Reentrant=False is required for use_cache=False to be respected
+        # under newer transformers; cheaper and more correct.
+        model.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
+        if hasattr(model, "config"):
+            model.config.use_cache = False
+        print("[finetune_qa] gradient checkpointing enabled", file=sys.stderr)
     targs = TrainingArguments(
         output_dir=str(run_dir),
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=args.batch_size * 2,
+        per_device_eval_batch_size=max(1, args.batch_size),
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         learning_rate=args.lr,
         weight_decay=0.01,
         warmup_ratio=0.1,
