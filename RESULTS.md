@@ -24,14 +24,16 @@ bounded tactical lookahead in `AEManager` and lets `HybridAEManager` trust
 high-value bomb/base/enemy lines before the neural policy. **No MCTS-light
 official score yet; hybrid-v3 remains shipped via highest-score retention
 at 0.555/0.849.**
-**NLP HARD-PARKED at v9-doc-ensemble 0.683/0.886.** v12-candidate-ranker
-submitted 16/05 13:48 and REGRESSED to 0.642/0.829 — worst NLP submission
-since v5b. Local was already -0.048 vs v9 (equiv_rate 0.663 vs 0.711); the
-substr-up / exact-down bucket shift confirmed the predicted failure: doc-mined
-short candidates passed the exact/substr proxy but failed the 0.9 ModernBERT
-threshold. Combined with v8a-genqa (0.652/0.836), v11-canonical-answer
-(0.680/0.881), every post-v9 swing has regressed monotonically. NLP
-architecture has been fully exhausted.
+**NLP UN-PARKED for `v13b-deberta` QA-head retune (16/05 ~19:30).** v9-doc-ensemble
+(0.683/0.886) stays shipped. Candidate-ranker arch eliminated: v13a-ae-ranker val
+top-1 0.384 (not built), v13a-heuristic local 0.663 = v12 (not submitted).
+But v13a's oracle was 0.814 — the QA HEAD is the lever, not post-processing.
+v13b swaps base to `deepset/deberta-v3-large-squad2` (structurally +1-2% on
+extractive QA) with v8b's chunked-context recipe; manager + Dockerfile patched
+to prefer DeBERTa weights when present, fall back to v9's RoBERTa-large
+otherwise. Every prior post-v9 swing regressed monotonically (v10 -0.001,
+v11 -0.004, v8a -0.040, v12 -0.045); the extractor retrain is the unbroken
+path (v7-v1 +0.034, v8b +0.162).
 
 ## Latest submitted scores
 

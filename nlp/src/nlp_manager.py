@@ -70,6 +70,10 @@ DENSE_DIR = MODEL_DIR / "bge-small-en-v1.5"
 RERANKER_DIR = MODEL_DIR / "bge-reranker-base"
 # QA model locations. Default selection is extractive first; Flan-T5 is now
 # opt-in via NLP_QA_MODE=generative because v8a regressed on cloud.
+# v13b: prefer DeBERTa-v3-large fine-tuned weights if present; falls through
+# to the v8b/v9 RoBERTa-large fine-tune otherwise. Image stays buildable in
+# either configuration.
+QA_DEBERTA_FINETUNED_DIR = MODEL_DIR / "deberta-finetuned-squad2"
 QA_GEN_FINETUNED_DIR = MODEL_DIR / "flan-t5-finetuned"
 QA_EXT_FINETUNED_DIR = MODEL_DIR / "roberta-finetuned-squad2"
 QA_BASE_DIR = MODEL_DIR / "roberta-base-squad2"
@@ -360,14 +364,18 @@ class NLPManager:
         rerank_path = (
             str(RERANKER_DIR) if RERANKER_DIR.exists() else "BAAI/bge-reranker-base"
         )
-        # QA model selection ladder. Default to extractive even if an old
-        # Flan-T5 directory is present; v8a proved full generative primary QA
-        # regresses under the 0.9 answer-equivalence threshold. Set
-        # NLP_QA_MODE=generative explicitly to reproduce that path.
+        # QA model selection ladder. v13b: DeBERTa-v3-large fine-tune is
+        # preferred extractive backbone when present (structurally +1-2% over
+        # roberta-large on extractive QA). Falls back to v8b/v9 RoBERTa-large
+        # fine-tune, then stock base, then hub. Flan-T5 generative remains
+        # opt-in via NLP_QA_MODE=generative.
         want_generative = QA_MODE in {"gen", "generative", "t5"}
         if want_generative and QA_GEN_FINETUNED_DIR.exists():
             qa_path = str(QA_GEN_FINETUNED_DIR)
             qa_source = "gen-finetuned"
+        elif QA_DEBERTA_FINETUNED_DIR.exists():
+            qa_path = str(QA_DEBERTA_FINETUNED_DIR)
+            qa_source = "ext-deberta-finetuned"
         elif QA_EXT_FINETUNED_DIR.exists():
             qa_path = str(QA_EXT_FINETUNED_DIR)
             qa_source = "ext-finetuned"

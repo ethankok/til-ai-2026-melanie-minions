@@ -30,18 +30,26 @@ RUN TRANSFORMERS_OFFLINE=0 python download_models.py
 # Bundle the fine-tuned QA model(s) and optional v12 answer-ranker JSON if
 # they've been built locally (see training/nlp/finetune_qa.py,
 # training/nlp/finetune_genqa.py, and training/nlp/train_answer_ranker.py).
-# Manager defaults to extractive QA even if old Flan-T5 weights are present;
-# set NLP_QA_MODE=generative only when intentionally reproducing v8a.
+# Manager prefers extractive in this order (v13b):
+#   deberta-finetuned-squad2 (DeBERTa-v3-large fine-tune, v13b)
+#   > roberta-finetuned-squad2 (RoBERTa-large fine-tune, v8b/v9)
+#   > stock SQuAD2 base
+# Flan-T5 generative is opt-in via NLP_QA_MODE=generative.
 COPY models /workspace/models-local
 RUN if [ -d /workspace/models-local/flan-t5-finetuned ]; then \
         cp -r /workspace/models-local/flan-t5-finetuned /workspace/models/; \
         echo "[nlp build] bundled fine-tuned generative QA (Flan-T5) weights"; \
+    fi && \
+    if [ -d /workspace/models-local/deberta-finetuned-squad2 ]; then \
+        cp -r /workspace/models-local/deberta-finetuned-squad2 /workspace/models/; \
+        echo "[nlp build] bundled fine-tuned extractive QA (DeBERTa-v3-large) weights"; \
     fi && \
     if [ -d /workspace/models-local/roberta-finetuned-squad2 ]; then \
         cp -r /workspace/models-local/roberta-finetuned-squad2 /workspace/models/; \
         echo "[nlp build] bundled fine-tuned extractive QA (RoBERTa-SQuAD2) weights"; \
     fi && \
     if [ ! -d /workspace/models-local/flan-t5-finetuned ] && \
+       [ ! -d /workspace/models-local/deberta-finetuned-squad2 ] && \
        [ ! -d /workspace/models-local/roberta-finetuned-squad2 ]; then \
         echo "[nlp build] no fine-tuned QA weights found; falling back to stock base"; \
     fi && \

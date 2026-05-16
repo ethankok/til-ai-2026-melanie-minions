@@ -1,17 +1,29 @@
 # NLP — notes & history
 
-Last updated: 16 May 2026 14:10 SGT — **NLP HARD-PARKED at v9-doc-ensemble
-0.683/0.886.** v12-candidate-ranker (submitted 16/05 13:48) REGRESSED to
-0.642/0.829 — worst NLP submission since v5b, blended 0.689 vs v9's 0.734.
-Local bucket shift exact 273→204 (-69), substr 178→232 (+54), diff 395→410
-(+15) confirmed the predicted failure mode: the ranker promoted doc-mined
-short tokens (e.g. "37" over "37 days") that passed the exact/substr training
-proxy but failed the 0.9 ModernBERT AE threshold on cloud. Speed also dropped
--0.057 from candidate-mining overhead (18 sentences × 6 regex types per
-question, local 4:23 → 10:40). Every post-v9 swing has now regressed
-monotonically (v10 0.683, v11 0.680, v8a 0.652, v12 0.642). The NLP
-architecture is exhausted; v9 stays on the leaderboard for the rest of the
-qualifier. Remaining ~7 days reallocate to AE (40% weight).
+Last updated: 16 May 2026 ~19:30 SGT — **NLP UN-PARKED for `v13b-deberta`
+(QA-retune path)** after `v13a` confirmed candidate-ranker architecture cannot
+beat v9 on this corpus. v9-doc-ensemble (0.683/0.886) stays the shipped
+baseline. v13a was tested two ways locally and both lost:
+
+```text
+v9-doc-ensemble local         0.711  (baseline)
+v13a-ae-ranker  val top-1     0.384  (logistic ranker on AE-labels; NOT BUILT)
+v13a-heuristic  local         0.663  (heuristic-only, structural fixes;
+                                      identical to v12, NOT SUBMITTED)
+```
+
+Key data point: in v13a training, **ORACLE top-1 = 0.814** on the held-out 177
+questions, i.e. for 81% of questions there exists a candidate in our pool that
+passes ModernBERT AE @ 0.9. But our logistic + 20-feature scoring can only pick
+the right one 38% of the time. The candidate pool has +0.10 of headroom; we
+just can't rank it. Combined with v13a-heuristic = v12 = 0.663 locally,
+candidate-ranker architecture is now ELIMINATED.
+
+The remaining honest swing is QA retune. Biggest historical lifts: v7-v1 +0.034,
+v8b +0.162. Both came from training the extractor. Everything since has been
+post-processing, all regressive. **v13b-deberta**: re-fine-tune with
+`deepset/deberta-v3-large-squad2` using v8b's chunked-context recipe; DeBERTa-v3
+is structurally +1-2% better than RoBERTa-large on extractive QA.
 
 ## v12 — candidate-answer reranker (16 May)
 
@@ -89,22 +101,87 @@ Three contributing factors, in order of impact:
    of 32 keeps too many, and `echoes_question = -2.0` penalty demotes correct QA
    spans whose text overlaps with the question subject.
 
-### Final NLP verdict
+### Final NLP verdict on post-processing layers
 
-Every post-v9 swing regressed monotonically:
+Every post-v9 post-processing swing regressed monotonically:
 
 ```text
 v10-template-lite      0.683 / 0.882   neutral (-0.001 blended)
 v11-canonical-answer   0.680 / 0.881   -0.004 blended
 v8a-genqa              0.652 / 0.836   -0.040 blended
 v12-candidate-ranker   0.642 / 0.829   -0.045 blended
+v13a-heuristic         (0.663 local, NOT SUBMITTED — same as v12)
 ```
 
-The architecture is at its ceiling on this corpus. Confirmed dead levers now total
-seven: paragraph chunking, low-conf fallback, rapidfuzz spans, narrow rule
+The POST-PROCESSING architecture is at its ceiling on this corpus. Confirmed
+dead levers: paragraph chunking, low-conf fallback, rapidfuzz spans, narrow rule
 templates, full-doc canonicalization, generative answers, candidate reranking.
-**NLP is frozen at v9-doc-ensemble** for the rest of the qualifier. Remaining time
-to AE.
+
+But the **EXTRACTOR retrain** path is not yet exhausted. v7-v1 (+0.034) and v8b
+(+0.162) both came from training the QA head. We haven't touched the extractor
+since v8b. `v13b-deberta` re-fine-tunes with DeBERTa-v3-large-squad2 — see
+section below.
+
+## v13a — AE-trained candidate ranker (16/05 — NOT SUBMITTED)
+
+Local result: val top-1 0.384, val oracle 0.814 (177 held-out questions).
+
+Diagnosis: the ranker has access to candidates that would pass AE for 81% of
+val questions (oracle), but the logistic scoring only picks the right one 38% of
+the time. The 20-feature set can't discriminate among same-type candidates
+("2178" vs "2178 CE" vs "around 2178" for a year question — all match
+`wants_years` + `has_year_unit`).
+
+Heuristic-only test (no learned JSON, with structural fixes — `source_qa=5.0`,
+`source_rule=4.0`, dropped `_RELATION_PHRASE_RE`, `n_sentences=8`, `echoes_question=-1.0`):
+local 0.663 — identical to v12. The candidate POOL itself dilutes v9
+regardless of how it's scored. Candidate-ranker architecture confirmed dead.
+
+Three artefacts kept for future ranker work if we ever revisit:
+- [training/nlp/train_answer_ranker.py](../training/nlp/train_answer_ranker.py) — now does ModernBERT-AE labeling + 80/20 split + oracle/top-1 reporting.
+- `nlp/models/answer_ranker.json` — fitted weights from the AE-labeled training run.
+- `_answer_candidates()` machinery in `nlp_manager.py` stays in tree; disable with `NLP_ANSWER_RANK_MODE=off` (default heuristic-only path still routes through it).
+
+## v13b — DeBERTa-v3-large QA retune (16/05, in progress)
+
+Hypothesis: the answer-form gap (`retrieval_hit_diff` ~395 cases) is a QA-head
+problem, not a post-processing problem. Every post-processing swing has
+regressed; every QA retrain has hit (+0.034 v7-v1, +0.162 v8b). DeBERTa-v3 is
+documented +1-2% over RoBERTa-large on extractive QA benchmarks. With the v8b
+chunked-context training recipe held fixed and just the base model swapped,
+the only hypothesis at risk is "does DeBERTa-v3 transfer here as well as it
+does on SQuAD-style benchmarks".
+
+Manager + Dockerfile changes (16/05):
+- Manager: `QA_DEBERTA_FINETUNED_DIR = MODEL_DIR / "deberta-finetuned-squad2"`
+  added as the highest-priority QA dir; fallback ladder is now
+  `deberta > flan-t5-finetuned (gen) > roberta-finetuned-squad2 > stock`.
+- Dockerfile: bundles `nlp/models/deberta-finetuned-squad2/` when present.
+- Both safe: if the dir doesn't exist locally, image falls through to v9's
+  RoBERTa-large weights.
+
+Workbench runbook:
+
+```bash
+# Tokenizer needs sentencepiece (already installed). Train on Workbench GPU:
+python training/nlp/finetune_qa.py \
+  --base-model deepset/deberta-v3-large-squad2 \
+  --use-answer-chunk \
+  --epochs 5 \
+  --output nlp/models/deberta-finetuned-squad2
+
+# Build & local A/B
+til build nlp v13b-deberta
+til test  nlp v9-doc-ensemble                  # baseline 0.711
+til test  nlp v13b-deberta                     # must beat 0.711
+
+# Ship only if local >= v9's 0.711 (the rule v12 violated)
+til submit nlp v13b-deberta
+```
+
+Decision rule: same as before — local `equiv_rate` must clear v9's 0.711 under
+the synced upstream `test_nlp.py`. If `v13b-deberta` local < 0.711, drop and
+freeze on v9. If it clears, submit.
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
