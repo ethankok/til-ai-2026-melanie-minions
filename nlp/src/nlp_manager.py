@@ -1205,8 +1205,13 @@ class NLPManager:
             return []
         profile = self._question_profile(question)
         candidates: list[AnswerCandidate] = []
+        # v13a: shrink scope. v12 mined 18 sentences × 6 regex types per
+        # question → ~300 raw candidates, most of which were noise that
+        # outranked clean QA spans. Drop relation_phrases entirely (6-token
+        # greedy match was the biggest noise source) and reduce sentence
+        # window 18 → 8.
         for rank, sentence in enumerate(
-            self._canon_top_sentences(question, document_ids, n=18)
+            self._canon_top_sentences(question, document_ids, n=8)
         ):
             sent_score = max(0.0, 1.5 - 0.05 * rank)
 
@@ -1236,13 +1241,9 @@ class NLPManager:
                     candidates.append(
                         AnswerCandidate(phrase, "doc:entity", score=sent_score)
                     )
-            if profile["wants_entity"] or profile["wants_money"]:
-                for match in _RELATION_PHRASE_RE.findall(sentence):
-                    phrase = self._trim_phrase(match)
-                    if 1 <= _answer_token_len(phrase) <= 12:
-                        candidates.append(
-                            AnswerCandidate(phrase, "doc:relation", score=sent_score)
-                        )
+            # _RELATION_PHRASE_RE dropped in v13a — was the dominant noise
+            # source on v12. The proper_noun branch above still catches
+            # short entity answers without the greedy verb-clause matching.
         return candidates
 
     def _canonical_candidates(
@@ -1367,15 +1368,19 @@ class NLPManager:
     ) -> float:
         features = self._candidate_features(question, cand, document_ids)
         score = 0.0
-        score += 4.0 * features["source_qa"]
-        score += 4.5 * features["source_rule"]
+        # v13a heuristic fixes (v12 lost because rules outranked QA on cloud):
+        #   QA spans are now the strongest source; rules are <= QA.
+        #   Reduce echoes_question penalty so correct spans aren't demoted
+        #   when they contain the question subject.
+        score += 5.0 * features["source_qa"]
+        score += 4.0 * features["source_rule"]
         score += 3.0 * features["source_canon"]
-        score += 1.3 * features["source_doc"]
+        score += 1.0 * features["source_doc"]
         score += 1.0 * features["len_1_4"]
         score += 0.4 * features["len_5_10"]
         score -= 2.2 * features["too_long"]
         score += 0.8 * features["verbatim_in_docs"]
-        score -= 2.0 * features["echoes_question"]
+        score -= 1.0 * features["echoes_question"]
         score += 2.8 * features["match_days"]
         score += 2.8 * features["match_years"]
         score += 2.0 * features["match_percent"]
