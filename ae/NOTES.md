@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 16 May 2026 — **NEXT ATTEMPT: self-play PPO retrain** based on TIL workshop materials (notebook 05 explicitly diagnoses our bc-belief failure mode and prescribes self-play as the fix). Previous: AE parked at `hybrid-v3` (0.555/0.849) after 4 post-hybrid-v3 attempts all regressed.
+Last updated: 16 May 2026 14:30 SGT — **`ppo-selfplay-v2` IN PROGRESS** (~7.5h total, ~13:00 launch; update 5/200 with first eval 0.4908 already above v1's all-time peak). `ppo-selfplay-v1` shipped 13:18 at **0.305/0.851** — regressed -0.250 vs hybrid-v3 because the `--n-frames 1` flag silently skipped BC warm-start (train_ppo.py:656-661), so PPO trained 200 updates from random init. **But**: v1's local-cloud gap was 0.10 vs the structural ~0.23 across our 9 prior submissions — first evidence that league/self-play training tightens the gap. v2 retry with `--n-frames 4` properly warm-starts from BC (0.4866 local-mixed); if the tightened gap holds, projected cloud 0.45-0.55. Hybrid-v3 (0.555/0.849) stays on the leaderboard until v2 lands.
 
 ## NEXT EXPERIMENT — self-play PPO retrain (workshop-recommended)
 
@@ -62,11 +62,12 @@ til submit ae ppo-selfplay-v2
 
 ### ppo-selfplay-v1 result (16 May, 4h GPU) — BC WARM-START WAS SKIPPED
 
-| Eval (12 games, mixed opponents, GPU) | Score | Notes |
+| Eval | Score | Notes |
 |---|---:|---|
-| BC checkpoint (training/ae/checkpoints/bc.pt, n_frames=4) | **0.4866** | Starting point we should have warm-started from |
-| ppo-selfplay-v1 (epoch=150, n_frames=1) | **0.4040** | -0.083 vs BC — REGRESSED |
-| ppo-selfplay-v1 vs league (training-time peak) | 0.4362 | Misleading because measured against harder distribution |
+| BC checkpoint (training/ae/checkpoints/bc.pt, n_frames=4) | **0.4866** | Starting point we should have warm-started from (local, mixed, 12 games) |
+| ppo-selfplay-v1 (epoch=150, n_frames=1) — local mixed | **0.4040** | -0.083 vs BC. Local. |
+| ppo-selfplay-v1 vs league (training-time peak) | 0.4362 | Misleading: harder opponent distribution |
+| **ppo-selfplay-v1 — CLOUD (16/05 13:18)** | **0.305 / 0.851** | -0.250 vs hybrid-v3, 0/30 errors |
 
 Training command had `--n-frames 1` (my recommendation in NOTES.md, copied
 incorrectly from the bc-belief example), but BC checkpoint is `n_frames=4`.
@@ -76,14 +77,50 @@ PPO trained from random init for 200 updates against league opponents.
 That ppo-selfplay-v1 reached 0.4040 against mixed from random init is
 actually a positive signal for the self-play *training loop itself* — it
 produced a policy that holds its own against league. But it's below the BC
-starting point, so NOT SHIPPED. Hybrid-v3 (0.555 cloud) stays on the
-leaderboard.
+starting point, so we expected cloud to regress vs hybrid-v3 (which it did,
+0.305).
 
-**Next attempt**: rerun with `--n-frames 4` (the v2 command above) so the
-BC warm-start actually applies. Expected behavior:
-- Training starts from a policy that scores 0.4866 against mixed.
-- Self-play layers on top.
-- Realistic final: 0.55-0.70 against mixed, → cloud 0.50-0.65.
+**CRITICAL POSITIVE FINDING — gap tightening**: local-cloud gap on v1 was
+**0.099** (0.404 local → 0.305 cloud), vs **the structural ~0.23 gap across
+all 9 prior AE submissions**. This is the first intervention that has
+materially moved the gap. The training distribution (league self-play
+opponents instead of random+planner) appears to be the lever. This makes the
+v2 retry — same setup with proper BC warm-start — meaningfully more
+interesting:
+
+- v2 starts from BC's 0.4866 local-mixed baseline (not random init).
+- Self-play training adds whatever lift it added in v1 (~0.40 over random init).
+- If the gap stays at ~0.10, projected v2 cloud is **0.45-0.55** — first
+  AE submission to plausibly beat hybrid-v3 (0.555) since 14 May.
+
+### ppo-selfplay-v2 in progress (16 May 13:00 launch, ~7.5h)
+
+Same training command as the v2 example above (with `--n-frames 4`).
+Confirmed at update 1:
+- `warm-started actor from training/ae/checkpoints/bc.pt (n_frames=4, use_belief=False)` ✓
+- 648,342 actor params (n_frames=4 arch).
+- First eval against league: **0.4908** — already above v1's all-time best
+  (0.4362) at update 1 of 200.
+- Entropy 0.105 (much lower than v1's ~0.5) — policy has real opinions from BC.
+- ~2.2 min per update on T4; 200 updates ≈ 7.5h total.
+
+Decision tree when v2 finishes:
+- **Local mixed-eval ≥ 0.55**: ship. v2 against BC's 0.4866 baseline is a
+  clear improvement; with tightened gap, cloud likely ≥ 0.50.
+- **Local mixed-eval 0.45-0.55**: ship one cloud probe. Even cloud 0.55 (= hybrid-v3)
+  would be a tie; the leaderboard keeps higher score so no risk.
+- **Local mixed-eval < 0.45**: don't ship. Hybrid-v3 stays.
+
+### Workflow improvement — SSH access from Mac
+
+`ssh workbench` is now configured on the Mac dev box (16 May 14:25 SGT). Lets
+Claude run read-only checks (`tail` the training log, `nvidia-smi`, file
+listings) on Workbench without copy-paste round-trips. Writes still go
+through the user. IP is `34.124.176.110` (changes on instance restart;
+`@Tech` can grant static IP if SSH proves persistent value).
+
+Public key in `~/.ssh/authorized_keys` on Workbench. Setup matches the doc
+in the upstream wiki ("Power users" → SSH).
 
 ### Decision tree
 

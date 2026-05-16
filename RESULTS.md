@@ -1,15 +1,24 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 16 May 2026 14:10 SGT — **NLP HARD-PARKED at v9-doc-ensemble
-0.683/0.886.** v12-candidate-ranker submitted 16/05 13:48 and REGRESSED to
-0.642/0.829 — worst NLP submission since v5b. Local was already -0.048 vs v9
-(equiv_rate 0.663 vs 0.711); the substr-up / exact-down bucket shift confirmed
-the predicted failure: doc-mined short candidates passed the exact/substr
-proxy but failed the 0.9 ModernBERT threshold. Combined with v8a-genqa
-(0.652/0.836), v11-canonical-answer (0.680/0.881), every post-v9 swing has
-regressed monotonically. NLP architecture has been fully exhausted.
-**CV PARKED** at tier1 0.556/0.956 (Phase C gap-diagnose still TBD).
+Last updated: 16 May 2026 14:30 SGT — **AE UN-PARKED; `ppo-selfplay-v2` PPO
+training in progress** (warm-start from BC applied; update 5/200 with eval
+0.4908 already above v1's all-time peak 0.4362). **`ppo-selfplay-v1` shipped
+13:18 at 0.305/0.851** — REGRESSED -0.250 vs hybrid-v3 (BC warm-start was
+silently skipped due to --n-frames mismatch; PPO trained 200 updates from
+random init). **But**: v1's local-cloud gap was 0.10 (vs the structural 0.23
+across our 9 prior submissions) — first evidence that league/self-play
+training tightens the gap. v2 retry with proper warm-start tests if BC's
+0.4866-local baseline + tightened gap clears hybrid-v3 (0.555) on cloud.
+**NLP HARD-PARKED at v9-doc-ensemble 0.683/0.886.** v12-candidate-ranker
+submitted 16/05 13:48 and REGRESSED to 0.642/0.829 — worst NLP submission
+since v5b. Local was already -0.048 vs v9 (equiv_rate 0.663 vs 0.711); the
+substr-up / exact-down bucket shift confirmed the predicted failure: doc-mined
+short candidates passed the exact/substr proxy but failed the 0.9 ModernBERT
+threshold. Combined with v8a-genqa (0.652/0.836), v11-canonical-answer
+(0.680/0.881), every post-v9 swing has regressed monotonically. NLP
+architecture has been fully exhausted. **CV PARKED** at tier1 0.556/0.956
+(Phase C gap-diagnose still TBD).
 
 ## Latest submitted scores
 
@@ -31,7 +40,8 @@ CV     melanie-minions-cv       cv-yolo-v2-tier1-best 14/05/2026 17:10:09 0 / 50
 CV (v3-pre) melanie-minions-cv  cv-yolo11m-v3-pre 15/05/2026 11:34:42 0 / 500   0.376   0.955  ← REGRESSED -0.180; v11m fully trained but matched-imgsz lost to v8s+upscaled. Tier1 stays on leaderboard.
 CV (v11m-1280-noaug-v1) melanie-minions-cv  v11m-1280-noaug-v1 16/05/2026 04:04:59 0 / 500 0.474 0.949  ← REGRESSED -0.082; v11m at 1280 aug=0 looked great locally (hard held-out 0.9088, +0.014 vs tier1) but v11m's local→cloud gap is structurally ~0.44 vs v8s's ~0.35. Tier1 stays on leaderboard.
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
-AE     melanie-minions-ae       hybrid-v3   14/05/2026 19:26:06   0 / 30        0.555   0.849
+AE     melanie-minions-ae       hybrid-v3   14/05/2026 19:26:06   0 / 30        0.555   0.849  ← STILL SHIPPED via highest-score retention
+AE (ppo-selfplay-v1)  melanie-minions-ae  ppo-selfplay-v1  16/05/2026 13:18:52  0 / 30  0.305  0.851  ← REGRESSED -0.250; BC warm-start was silently skipped (--n-frames 1 vs ckpt's 4), PPO trained from random init for 200 updates. But local-cloud gap 0.10 (vs structural 0.23) → first signal that league self-play tightens the gap. v2 retry in progress with --n-frames 4.
 ASR (ft-lora32-v1) melanie-minions-asr ft-lora32-v1 13/05/2026 11:22:30 0 / 400  0.957   0.849  ← prior ASR high (still on leaderboard via highest-score retention)
 AE (hybrid-v2) melanie-minions-ae hybrid-v2 14/05/2026 14:55:23   0 / 30        0.545   0.863
 AE (heur-restore-v2) melanie-minions-ae heuristic-restore-v2 14/05/2026 15:02:13 0 / 30   0.502   0.854
@@ -182,6 +192,9 @@ bc-belief        15/05 train         BC val_acc 0.897 (vs bc-v1's 0.874, +0.023)
 bc-belief-hybrid 15/05 11:46         0.287/0.846 official 0 / 30 official errors   *** MEMORY HYPOTHESIS REJECTED ***. Regressed -0.268 vs hybrid-v3 (huge — far outside ±0.04 noise). Local 6-game 0.646 → cloud 0.287 = gap 0.36 (wider than bc-v1's 0.33). Best read: the 704k-param model with belief input has *more ways to overfit* to planner-v3b's random-opponent local behavior; belief tensor encodes spurious local-distribution correlations that don't transfer. Local hybrid ≈ bc-belief solo (0.646 vs 0.656) showed vetoes were firing so often that hybrid wrapper added nothing, so the cloud regression is the policy's own. PPO would lift this maybe +0.10-0.14 (bc→ppo scale from prior runs) but still below hybrid-v3 0.555. Memory-augmented BC is a dead end for this opponent distribution.
 bc-belief-policy 15/05 local-only    local 0.663 (1 run, 6 games). Tested in pure policy mode for comparison; ~0.02 above hybrid-wrapped locally. NOT submitted — bc-belief-hybrid's cloud regression made pure-policy unlikely to be better.
 hybrid-conf50    15/05 17:59         0.504/0.857 official 0 / 30 official errors   Regressed -0.051 vs hybrid-v3 (just outside ±0.04 noise; small but real). ppo-v1 weights + hybrid + `AE_HYBRID_CONF=0.5` (only use policy when softmax top ≥ 0.5; otherwise heuristic). Local 0.719 → cloud 0.504 = gap 0.22 (same as hybrid-v3) — confidence gate did real local work but threw out cloud-correct policy actions in the 0.4-0.5 softmax band. AE PARKED at hybrid-v3 (0.555/0.849). Four post-hybrid-v3 attempts (bc-belief-hybrid -0.268, bc-belief-policy not-shipped, hybrid-conf50 -0.051) → heuristic-side ceiling confirmed at ~0.555.
+[AE UN-PARKED 16/05] After reviewing the TIL workshop materials (notebook 05 explicitly diagnoses bc-belief's failure as "overfit to a weak fixed opponent" and prescribes self-play as the fix), added a `SnapshotPool` to `training/ae/train_ppo.py` that holds historical actor snapshots and feeds them into `_make_opponents`. Previous `FrozenPolicyOpponent` deepcopied the live actor → effectively "play your shadow", not true self-play. New `--opponents league` + `--snapshot-interval 10` + `--snapshot-pool-size 5` gives a proper opponent curriculum: random + planner + aggressive + frozen-self-from-K-updates-ago.
+ppo-selfplay-v1  16/05 13:18         0.305/0.851 official 0 / 30 official errors   FIRST SHIP OF NEW ARCH (n_frames=4 model.py + new weights). REGRESSED -0.250 vs hybrid-v3. Root cause: `--n-frames 1` (recommended by claude in NOTES, copied from old bc-belief example) didn't match the BC checkpoint's `n_frames=4` and `load_actor` silently skipped the warm-start (train_ppo.py:656-661). PPO trained 200 updates from random init against league opponents. Best PPO eval climbed monotonically -0.088 → +0.436 across 7 saves. Local eval against `mixed`: 0.4040 (-0.083 vs BC ckpt's 0.4866 baseline). Cloud 0.305. **Critical positive finding**: local-cloud gap was 0.099 (0.404→0.305) vs the structural ~0.23 across all 9 prior AE submissions. First evidence that league/self-play training distribution materially tightens the gap. Speed 0.851 ≈ hybrid-v3 0.849 (new arch + hybrid wrapper is fine speed-wise).
+ppo-selfplay-v2  16/05 06:00+        IN PROGRESS      ~7.5h total (200 updates × 2.2 min/update on T4). Same league/self-play setup as v1 + `--n-frames 4` matching BC ckpt → warm-start applied (logged: `warm-started actor from training/ae/checkpoints/bc.pt`). Update 1 eval immediately 0.4908 (already above v1's all-time peak 0.4362). If trajectory holds and gap stays ~0.10, projected cloud 0.45-0.55. Local mixed-opponent eval + ship decision when training finishes.
 ```
 
 ## Qualifier weighted score estimate
