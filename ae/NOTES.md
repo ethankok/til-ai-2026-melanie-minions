@@ -1,6 +1,47 @@
 # AE — notes & history
 
-Last updated: 17 May 2026 ~00:30 SGT — **`mcts-light-v2` SHIPPED 23:52 at 0.487/0.595 — REGRESSED.** Blended 0.514 vs hybrid-v3's 0.628 (−0.114). The speed cap + pre-flight gate prevented the v1 timeout, but MCTS still cost +9 minutes of cloud wall-clock (4.5 → 12.2 min); speed score dropped 0.849 → 0.595. Accuracy ALSO regressed (−0.068 vs hybrid-v3), suggesting MCTS is *replacing* hybrid-v3 actions with cloud-worse choices, not just being slower. Best read: MCTS commits to simulated combat lines based on a stationary-opponent assumption that cloud opponents don't honor — same local-cloud distribution-shift failure mode that killed bc-belief and ppo-selfplay, this time at inference instead of training. Hybrid-v3 (0.555/0.849) stays leaderboard-shipped via highest-score retention. **Both training-side (bc-belief, ppo-selfplay) and inference-side (mcts-light at two configs) hypotheses are now falsified.** Remaining cheap iterations: (A) conservative-MCTS variant (raised `AE_MCTS_MIN_SCORE` + smaller `DEPTH/WIDTH`) so MCTS is a high-confidence override layer only; (B) heuristic-only MCTS A/B to isolate the MCTS contribution from the hybrid wrapper. After that, AE is genuinely exhausted at hybrid-v3.
+Last updated: 17 May 2026 ~03:30 SGT — **Tier 1 + Tier 2 LOCAL FALSIFIED, NOT SUBMITTING.** 200-round A/Bs against three opponent distributions show no meaningful lift over hybrid-v3 baseline:
+
+| Opponent | OFF baseline | Tier 1 shipping (#3+#6+#7) | Δ |
+|---|---:|---:|---:|
+| random (n=200) | 0.6523 | 0.6369 | −0.015 |
+| library (n=200) | 0.5251 | 0.5265 | +0.001 |
+| mixed (n=200) | 0.3747 | 0.3728 | −0.002 |
+
+1000-round baseline (heuristic only, all Tier 1 OFF):
+- vs 5× random: 0.6625 ± 0.137
+- vs library (random/greedy/bomber/defender/hunter): 0.5292 ± 0.124
+- vs 5× mixed: 0.3747 ± 0.165
+
+**Tier 1 #1 (offline playbook) hypothesis falsified locally.** 600K trajectory steps yielded a 15K-entry playbook covering 19% of visited states. Standalone (all Tier 1 OFF, only playbook ON) regressed −0.097 vs OFF baseline on random (0.6523 → 0.5556). Tightening to 1186 entries: −0.040. Tightening to 58 entries: −0.018. Bomb-only filter (only override when playbook says BOMB): −0.033. Even the narrowest, highest-confidence filter is net negative on local. On harder distributions (mixed): bomb-only +0.002 (within noise).
+
+Diagnosis. The (x, y, dir, step) state key is too coarse — it ignores the belief state (visible enemies, base health, items collected so far). Different belief states share the same playbook bucket but want different actions. A single chosen action averaged across all belief states picks one that matches no specific situation well.
+
+**Decision. NOT shipping the Tier 1 / Tier 2 bundle to cloud — local lift is within noise (avg −0.005). Cloud variance ±0.04 means submitting is a coin flip and we'd consume submission slots without learning anything. Hybrid-v3 (0.555/0.849) stays the live entry.**
+
+Bisect data (single-toggle vs OFF baseline, 100-round random opponents):
+- **#6 no-STAY-penalty**: +0.034 — safe, 1-line change. KEPT in defaults.
+- **#3 repeat-kill**: +0.029 — bombs cells where we just killed. KEPT.
+- **#7 predictive-walk bombing**: +0.013 — random-walk-aware bomb EV. KEPT.
+- **#2 defense priority**: +0.004 — neutral on random. DEFAULT OFF; opt-in for cloud A/B.
+- **#4 shared-credit weights**: −0.044 — clear regressor; lookahead values dropped too aggressively. DEFAULT OFF, do not re-enable without redesign.
+
+Tier-1 in `ae_manager.py` (defaults: #3, #6, #7 ON; #2, #4 OFF; playbook OFF; opponent model OFF):
+- **#1** offline playbook *(default OFF, falsified)*: kept as opt-in via `AE_USE_PLAYBOOK=1` for future cloud-only A/Bs. Tighten with `AE_PLAYBOOK_FILTER=bomb_only`.
+- **#2** defense priority *(default OFF, neutral)*.
+- **#3** repeat-kill camping *(default ON, +0.029)*.
+- **#4** shared-credit-aware lookahead values *(default OFF, regressor)*.
+- **#6** drop the STAY penalty *(default ON, +0.034)*.
+- **#7** predictive random-walk bombing *(default ON, +0.013)*.
+
+What stays valuable from this work:
+- `training/ae/simulate.py` runs N rounds against any opponent mix at ~1 round/sec on Mac. Use for any future code A/B before paying for a cloud submission slot.
+- `training/ae/opponents.py` 6 scripted opponent types (`random`, `greedy`, `bomber`, `defender`, `hunter`, `mixed`).
+- `training/ae/build_playbook.py`, `fit_opponent_model.py`, `oracle_bc.py` are reusable if we want to retry the offline-aggregation approach with belief-state-aware keys.
+- `train_ppo.py` now has `--opponents scripted` for training against the library on Workbench (Tier 2 #9, **READY for Workbench, NOT yet run**). The scripted opponents force playbook + opponent-model + Tier-1 toggles OFF on themselves via `_strip_aimanager_smarts` so PPO trains against pure rule-based archetypes instead of policies amplified by our own artifacts. Full recipe in [training/ae/RUNBOOK.md §8](../training/ae/RUNBOOK.md). Local smoke test passed (2 updates, eval climbed 0.000 → 0.139 with no warm-start).
+- `training/ae/RUNBOOK.md` is the end-to-end procedure if anyone wants to re-run the full pipeline.
+
+Earlier today: **`mcts-light-v2` SHIPPED 23:52 at 0.487/0.595 — REGRESSED.** Blended 0.514 vs hybrid-v3's 0.628 (−0.114). The speed cap + pre-flight gate prevented the v1 timeout, but MCTS still cost +9 minutes of cloud wall-clock (4.5 → 12.2 min); speed score dropped 0.849 → 0.595. Accuracy ALSO regressed (−0.068 vs hybrid-v3), suggesting MCTS is *replacing* hybrid-v3 actions with cloud-worse choices, not just being slower. Best read: MCTS commits to simulated combat lines based on a stationary-opponent assumption that cloud opponents don't honor — same local-cloud distribution-shift failure mode that killed bc-belief and ppo-selfplay, this time at inference instead of training. Hybrid-v3 (0.555/0.849) stays leaderboard-shipped via highest-score retention. **Both training-side (bc-belief, ppo-selfplay) and inference-side (mcts-light at two configs) hypotheses are now falsified.** Remaining cheap iterations: (A) conservative-MCTS variant (raised `AE_MCTS_MIN_SCORE` + smaller `DEPTH/WIDTH`) so MCTS is a high-confidence override layer only; (B) heuristic-only MCTS A/B to isolate the MCTS contribution from the hybrid wrapper. After that, AE is genuinely exhausted at hybrid-v3.
 
 Earlier today: `mcts-light-v1` TIMED OUT on cloud ("Your model took too long to evaluate"; no score, no leaderboard impact). MCTS budget arithmetic was wrong: `AE_MCTS_DEPTH=5 × AE_MCTS_WIDTH=96` ran on **every** tick with no latency cap → ~2400 state expansions/tick × ~0.5-1 ms each = **1.2-2.4 s/tick** vs cloud's ~600 ms/tick budget. v2 fixed the timeout (latency cap + gate + smaller defaults) but introduced the speed/accuracy regression above.
 

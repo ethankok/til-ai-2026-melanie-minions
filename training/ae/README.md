@@ -87,6 +87,53 @@ What this does:
 
 Do not trust random-opponent local score alone. `bc-v1` looked fine locally and still regressed officially. Only treat PPO as ready if it beats `planner-v3b` under mixed-opponent eval and keeps `0` invalid actions.
 
+### Step 4b — PPO with scripted opponents (Tier 2 #9, recommended)
+
+`--opponents scripted` is a new mode (May 2026) that trains PPO against a
+fixed library of 5 distinct hand-written opponent types — random, greedy
+collector, periodic bomber, defender, and hunter — implemented in
+[opponents.py](opponents.py) and shared with [simulate.py](simulate.py).
+
+Why this exists. The previous PPO modes (`mixed`, `league`, `selfplay`)
+all leaned on either the planner or self-play snapshots. Self-play
+overfit to our policy's idiosyncrasies; planner-only gives a
+narrow-distribution opponent. The scripted library presents 5 distinct
+strategy archetypes simultaneously (one per enemy slot), forcing the
+policy to be robust to each — closer to what cloud's hidden NPC mix
+likely looks like.
+
+The scripted opponents are kept "pure" (their internal AEManager has
+playbook + opponent-model + tier-1 toggles all disabled in
+[opponents.py `_strip_aimanager_smarts`](opponents.py)) so PPO learns to
+beat raw heuristic policies, not policies amplified by our own learned
+artifacts.
+
+Full Workbench recipe in [RUNBOOK.md](RUNBOOK.md#8-tier-2-9-ppo-retrain-optional-4-6-hr-gpu).
+
+```bash
+# Smoke first — should finish in <1 minute.
+python training/ae/train_ppo.py \
+    --bc-checkpoint training/ae/checkpoints/bc.pt \
+    --out /tmp/ppo_smoke.pt \
+    --updates 2 --games-per-update 2 \
+    --eval-every 1 --eval-games 2 \
+    --opponents scripted --eval-opponents scripted \
+    --n-frames 4 --batch-size 64
+
+# Full run — ~4-6 hr T4.
+python training/ae/train_ppo.py \
+    --bc-checkpoint training/ae/checkpoints/bc.pt \
+    --out training/ae/checkpoints/ppo-scripted-v1.pt \
+    --updates 200 --games-per-update 12 \
+    --eval-every 5 --eval-games 12 \
+    --opponents scripted --eval-opponents scripted \
+    --n-frames 4
+```
+
+Submission gate: PPO ≥ heuristic + 0.05 on local `til test`, 0/30
+errors. If it doesn't clear that bar, do not submit; document and
+pivot.
+
 ## Step 5 — deploy
 
 The inference path in [../../ae/src/ae_server.py](../../ae/src/ae_server.py) now supports three modes selected by `AE_MODE` (env var) or `ae/src/.ae_mode` (file fallback):

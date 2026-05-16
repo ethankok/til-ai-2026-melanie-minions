@@ -377,6 +377,9 @@ def _make_opponents(
     - selfplay:    pool-only — face historical snapshots of yourself,
                    no heuristic mix. Workshop's pure-self-play setup;
                    may be unstable on its own but useful as an A/B.
+    - scripted:    Tier 2 #9 — random + greedy + bomber + defender + hunter
+                   from training/ae/opponents.py. No self-play. Trains a
+                   policy robust to any of the cloud-likely behavior types.
 
     Snapshot pool behavior:
     - When ``snapshot_pool`` is provided AND non-empty, frozen opponents
@@ -401,6 +404,71 @@ def _make_opponents(
         choices.append(AggressivePlannerOpponent())
     if mode in {"frozen", "mixed", "league", "selfplay"}:
         choices.append(FrozenPolicyOpponent(_frozen_opponent_actor(), device, n_frames))
+    if mode == "scripted":
+        # Tier 2 #9: train against the same scripted library we use in
+        # training/ae/simulate.py so the policy learns to be robust across
+        # the strategy space cloud opponents likely occupy. Five distinct
+        # opponent types: random, greedy, bomber, defender, hunter.
+        #
+        # Each enemy slot gets its OWN factory rather than sharing one
+        # instance — AEManager-derived opponents track per-agent belief
+        # state (visible enemies, walls, bombs); sharing the same instance
+        # across multiple agents in the same game would interleave belief
+        # updates between agents and corrupt their decisions.
+        try:
+            from opponents import make_opponent  # noqa: WPS433
+        except Exception as exc:
+            print(f"[train_ppo] scripted opponents unavailable ({exc}); using random", flush=True)
+            choices = [_random_opponent]
+        else:
+            scripted_names = ["random", "greedy", "bomber", "defender", "hunter"]
+
+            class _ScriptedAdapter:
+                """Wrap one scripted opponent for the (env, agent, obs_py)
+                interface. Holds a private AEManager-or-RandomOpponent and
+                resets it whenever a new game starts (step == 0)."""
+
+                def __init__(self, name: str, seed: int):
+                    self._name = name
+                    self._seed = seed
+                    self._op = make_opponent(name, seed=seed)
+
+                def reset(self):
+                    # Re-instantiate the inner opponent so belief state is
+                    # zeroed at game boundaries. Cheap; AEManager init is
+                    # ~ms.
+                    self._op = make_opponent(self._name, seed=self._seed)
+
+                def __call__(self, _env, _agent: str, obs_py: dict) -> int:
+                    if obs_py.get("step") == 0:
+                        self.reset()
+                    try:
+                        return int(self._op(obs_py))
+                    except Exception:
+                        # Defensive fallback: if a scripted opponent crashes
+                        # (e.g. the env handed it a malformed observation)
+                        # we don't want to take down PPO training.
+                        mask = obs_py.get("action_mask")
+                        if mask is not None:
+                            for i, m in enumerate(mask):
+                                try:
+                                    if int(m):
+                                        return i
+                                except Exception:
+                                    pass
+                        return 4  # STAY
+
+            # Assign each opponent_agent its own dedicated adapter so they
+            # all run in parallel without sharing state.
+            seed_base = int(time.time()) & 0xFFFF
+            scripted_assignment: dict[str, Callable] = {}
+            for i, agent in enumerate(opponent_agents):
+                # Cycle through the 5 scripted types so a 5-enemy game has
+                # one of each type. This matches how `simulate.py --opponents
+                # library` already works.
+                op_name = scripted_names[i % len(scripted_names)]
+                scripted_assignment[agent] = _ScriptedAdapter(op_name, seed=seed_base + i)
+            return scripted_assignment
     if not choices:
         choices = [_random_opponent]
     return {agent: random.choice(choices) for agent in opponent_agents}
@@ -796,8 +864,8 @@ def main() -> None:
                         help="Train with novice=False and a random seed per game (diversify the training distribution).")
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--eval-games", type=int, default=12)
-    parser.add_argument("--opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay"], default="mixed")
-    parser.add_argument("--eval-opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay"], default="mixed")
+    parser.add_argument("--opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay", "scripted"], default="mixed")
+    parser.add_argument("--eval-opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay", "scripted"], default="mixed")
     parser.add_argument("--snapshot-interval", type=int, default=10,
                         help="Add a frozen actor snapshot to the self-play pool every N PPO updates "
                              "(set to 0 to disable; falls back to live-actor frozen opponents).")
