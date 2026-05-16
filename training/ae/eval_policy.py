@@ -1,12 +1,19 @@
 """Evaluate a trained AE policy locally against the bomberman env.
 
-Runs N games with the policy controlling agent 0 and random opponents.
-Reads `n_frames` from the checkpoint and configures the FrameStacker
+Runs N games with the policy controlling agent 0. Opponent pool is
+selectable via ``--opponents`` (same options as train_ppo.py) so we can
+A/B different checkpoints against the same opponent distribution.
+
+Reads ``n_frames`` from the checkpoint and configures the FrameStacker
 accordingly, so the same script works for both single-frame and
 frame-stacked policies.
 
 Usage:
+    # legacy random-opponent eval (default)
     python training/ae/eval_policy.py --checkpoint training/ae/checkpoints/bc.pt --games 6
+
+    # apples-to-apples against the ppo-v1-era 'mixed' baseline
+    python training/ae/eval_policy.py --checkpoint training/ae/checkpoints/ppo-selfplay-v1.pt --opponents mixed --games 12
 """
 
 from __future__ import annotations
@@ -31,6 +38,11 @@ from ae_manager import AEManager  # noqa: E402
 
 from til_environment import bomberman_env  # noqa: E402
 from til_environment.config import default_config  # noqa: E402
+
+# Reuse train_ppo's opponent factories so the eval-time opponent
+# distribution matches the train-time one exactly (no opponent-impl
+# drift between scripts).
+from train_ppo import _make_opponents, _random_opponent  # noqa: E402
 
 
 NUM_ROUNDS_DEFAULT = 6
@@ -100,12 +112,25 @@ def evaluate(args: argparse.Namespace) -> None:
     env = bomberman_env.basic_env(env_wrappers=[], cfg=config)
     our_agent = env.possible_agents[0]
     rewards = {a: 0.0 for a in env.possible_agents}
+    print(f"opponents: {args.opponents}")
 
     start = time.time()
     for game in trange(args.games, desc="games"):
         env.reset()
         stacker = FrameStacker(n_frames)
         planner = AEManager()
+        # Per-game opponent dict. For eval we never pass a snapshot pool
+        # — frozen opponents (when in the mix) deepcopy the model under
+        # eval, giving a stable "play against your shadow" baseline.
+        opponents = _make_opponents(
+            model, device, args.opponents,
+            [a for a in env.possible_agents if a != our_agent],
+            n_frames,
+            snapshot_pool=None,
+        )
+        for op in opponents.values():
+            if hasattr(op, "reset"):
+                op.reset()
         for agent in env.agent_iter():
             obs, _reward, termination, truncation, _info = env.last()
             for a in env.agents:
@@ -113,13 +138,20 @@ def evaluate(args: argparse.Namespace) -> None:
             if termination or truncation:
                 env.step(None)
                 continue
+            obs_py = _obs_to_python(obs)
             if agent == our_agent:
                 action = _action_from_policy(
-                    model, stacker, planner, _obs_to_python(obs),
+                    model, stacker, planner, obs_py,
                     device, use_belief, greedy=args.greedy,
                 )
             else:
-                action = env.action_space(agent).sample()
+                action = int(opponents.get(agent, _random_opponent)(env, agent, obs_py))
+                # Defend against an opponent returning an illegal action;
+                # the env will refuse it and we want a clean fallback.
+                mask = np.asarray(obs_py.get("action_mask", [1, 1, 1, 1, 1, 1]), dtype=np.float32).reshape(-1)
+                if action < 0 or action >= mask.size or not bool(mask[action]):
+                    legal = np.flatnonzero(mask > 0)
+                    action = int(legal[0]) if legal.size else int(env.action_space(agent).sample())
             env.step(action)
     env.close()
     elapsed = time.time() - start
@@ -138,6 +170,14 @@ def main() -> None:
     parser.add_argument("--no-novice", dest="novice", action="store_false")
     parser.add_argument("--stochastic", dest="greedy", action="store_false")
     parser.add_argument("--greedy", action="store_true", default=True)
+    parser.add_argument(
+        "--opponents",
+        choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay"],
+        default="random",
+        help="Opponent distribution. 'random' (default) preserves legacy "
+             "single-game-eval behavior; 'mixed' matches the ppo-v1-era "
+             "training distribution; 'league' is the hardest pool.",
+    )
     evaluate(parser.parse_args())
 
 
