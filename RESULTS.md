@@ -1,7 +1,15 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 17 May 2026 ~00:30 SGT — **`mcts-light-v2` SHIPPED 23:52 at
+Last updated: 17 May 2026 ~00:20 SGT — **NLP is now FROZEN at
+`v9-doc-ensemble` (0.683/0.886 official, 0.711 local).** `v13b-deberta`
+finished the DeBERTa-v3-large QA-retune test and failed the local gate:
+0.667 vs v9's 0.711, with inference 9:06 vs v9's 3:48. Do not submit v13b.
+Do not train more NLP. Also avoid careless NLP rebuilds: the current manager
+will prefer `deberta-finetuned-squad2` if present and still has candidate
+ranking code paths, so a "v9" rebuild must explicitly preserve v9 behavior.
+
+Earlier 17 May state: **`mcts-light-v2` SHIPPED 23:52 at
 0.487/0.595 — REGRESSED.** Blended 0.514 vs hybrid-v3's 0.628 (−0.114).
 Speed cap + pre-flight gate prevented the v1 timeout but MCTS still cost
 +7.7 min of cloud wall-clock (4.5 → 12.2 min); speed score dropped
@@ -43,16 +51,13 @@ bounded tactical lookahead in `AEManager` and lets `HybridAEManager` trust
 high-value bomb/base/enemy lines before the neural policy. **No MCTS-light
 official score yet; hybrid-v3 remains shipped via highest-score retention
 at 0.555/0.849.**
-**NLP UN-PARKED for `v13b-deberta` QA-head retune (16/05 ~19:30).** v9-doc-ensemble
-(0.683/0.886) stays shipped. Candidate-ranker arch eliminated: v13a-ae-ranker val
-top-1 0.384 (not built), v13a-heuristic local 0.663 = v12 (not submitted).
-But v13a's oracle was 0.814 — the QA HEAD is the lever, not post-processing.
-v13b swaps base to `deepset/deberta-v3-large-squad2` (structurally +1-2% on
-extractive QA) with v8b's chunked-context recipe; manager + Dockerfile patched
-to prefer DeBERTa weights when present, fall back to v9's RoBERTa-large
-otherwise. Every prior post-v9 swing regressed monotonically (v10 -0.001,
-v11 -0.004, v8a -0.040, v12 -0.045); the extractor retrain is the unbroken
-path (v7-v1 +0.034, v8b +0.162).
+**NLP FROZEN at `v9-doc-ensemble`.** Candidate-ranker arch was eliminated by
+v13a: AE-trained logistic ranker val top-1 0.384 (not built), heuristic-only
+local 0.663 = v12 (not submitted). The remaining QA-head retune (`v13b-deberta`)
+also failed: DeBERTa-v3-large trained successfully, but local `til test` landed
+0.667 vs v9's 0.711 and slowed to 9:06 vs 3:48. Every post-v9 swing has now
+regressed or failed gate (v10 neutral/slightly worse, v11 -0.003, v8a -0.031,
+v12 -0.041, v13a local 0.663, v13b local 0.667). No more NLP training.
 
 ## Latest submitted scores
 
@@ -112,6 +117,7 @@ v11-canonical-answer 15/05 21:39  0.680   0.873   0 / 700   0.711(old)   Same im
 v8a-genqa            16/05 05:10  0.652   0.836   0 / 700   0.682        REGRESSED -0.031 acc, -0.047 speed vs v9. Flan-T5-base fine-tuned on all 883 (q,ctx,ans) triples with --use-chunk-context, fp32 inference (T5 fp16 NaN trap), beam=4 generation on top reranked chunk. Local→cloud gap (0.030) was consistent with v9 (0.028) → transferred predictably. Generative answers either failed 0.9 AE threshold or paraphrased away. Blended 0.694 vs v9 0.733. **Generative QA confirmed dead lever on this corpus.**
 v9-doc-ensemble      16/05 05:21  0.683   0.886   0 / 700   0.711        Third v9 resubmit. Accuracy unchanged; speed bumped to new high 0.883→0.886 (+0.003). Best NLP blend now 0.734. Marginal speed variance.
 v12-candidate-ranker 16/05 13:48  0.642   0.829   0 / 700   0.663        REGRESSED -0.041 acc, -0.057 speed vs v9. Candidate-answer reranker (RoBERTa top-12 spans + rule/canon/doc-mined literals, heuristic + optional logistic ranker). Local buckets shifted exact 273→204 (-69), substr 178→232 (+54), diff 395→410 (+15) — confirms the predicted failure: ranker promoted doc-mined short tokens (e.g. "37" over "37 days") that passed the exact/substr training proxy but failed the 0.9 ModernBERT AE threshold. Speed -0.057 from candidate mining over 18 sentences × 6 regex types per question. Blended 0.689 vs v9 0.734. **Candidate-ranker confirmed dead lever; NLP architecture exhausted.**
+v13b-deberta         16/05 local  —       —       —         0.667        NOT SUBMITTED. DeBERTa-v3-large QA retune built and tested locally after OOM fix (`--batch-size 2 --gradient-accumulation-steps 4 --gradient-checkpointing`). Baseline v9 local 0.711 in 3:48; v13b local 0.667 in 9:06. Failed gate by -0.044 and 2.4x slower. NLP frozen at v9-doc-ensemble.
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.

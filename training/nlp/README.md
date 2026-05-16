@@ -1,10 +1,16 @@
 # NLP — training fine-tuned QA models
 
-Two training paths, picked by which one we want to ship:
+Current status: **do not train more NLP for the qualifier.** The shipped model
+is `v9-doc-ensemble` (official 0.683/0.886, local 0.711). The final QA-retune
+attempt, `v13b-deberta`, trained and built successfully but failed local gate:
+0.667 vs v9's 0.711, and 9:06 vs v9's 3:48. This README is now historical
+context plus reproduction notes.
+
+Historical training paths:
 
 | Script | Model class | Output dir | Manager priority |
 |---|---|---|---|
-| [`finetune_qa.py`](finetune_qa.py) | extractive (RoBERTa-SQuAD2) | `nlp/models/roberta-finetuned-squad2/` | default QA path |
+| [`finetune_qa.py`](finetune_qa.py) | extractive (RoBERTa/DeBERTa SQuAD2) | `nlp/models/roberta-finetuned-squad2/` or `nlp/models/deberta-finetuned-squad2/` | DeBERTa is preferred if present, otherwise RoBERTa |
 | [`finetune_genqa.py`](finetune_genqa.py) | generative (Flan-T5) | `nlp/models/flan-t5-finetuned/` | explicit `NLP_QA_MODE=generative` only |
 | [`train_answer_ranker.py`](train_answer_ranker.py) | lightweight candidate ranker | `nlp/models/answer_ranker.json` | optional v12 reranker |
 
@@ -13,6 +19,10 @@ extractive QA even if an old Flan-T5 directory is present, because `v8a-genqa`
 regressed on cloud. Set `NLP_QA_MODE=generative` only when deliberately
 reproducing that experiment. Container log prints `QA model: ...` on first
 request.
+
+Build warning: the manager will prefer `deberta-finetuned-squad2` if that
+directory is bundled. Since v13b failed, a safety rebuild intended to preserve
+v9 must avoid bundling DeBERTa weights and must avoid candidate-ranker defaults.
 
 ## Local corpus inspection
 
@@ -24,7 +34,7 @@ python training/nlp/analyze_answer_templates.py \
   --docs data/novice-nlp-light-20260515/novice/nlp/documents
 ```
 
-This is stdlib-only and does not train on the data. It summarizes question templates, answer types, and whether each gold answer appears literally in its source docs. The 15 May snapshot showed `481/883` answers are not literal source substrings, including `225/592` L1 cases, so the next lever after `v9-doc-ensemble` is answer syntax / canonicalization rather than another retrieval-only push.
+This is stdlib-only and does not train on the data. It summarizes question templates, answer types, and whether each gold answer appears literally in its source docs. The 15 May snapshot showed `481/883` answers are not literal source substrings, including `225/592` L1 cases. Later canonicalization and candidate-ranker attempts did not transfer through the 0.9 AE threshold, so this remains diagnostic only.
 
 ## Replay answer canonicalization
 
@@ -73,10 +83,9 @@ python nlp/error_report.py /home/jupyter/melanie-minions/nlp_results.json \
 til submit nlp v12-candidate-ranker
 ```
 
-Decision rule: submit if local equiv_rate beats `v9` under the same
-`test_nlp.py`, or if exact/substr proxy improves without increasing retrieval
-misses. If the learned ranker hurts, rebuild with `NLP_ANSWER_RANK_MODE=off`
-to keep only the heuristic candidate path.
+Final outcome: v12 scored 0.663 locally and 0.642/0.829 officially, then v13a
+confirmed both learned and heuristic candidate selection were below v9. Do not
+submit or retrain this path.
 
 ## v7 — extractive fine-tune (shipped at 0.517/0.880)
 
@@ -134,7 +143,7 @@ python nlp/error_report.py /home/jupyter/melanie-minions/nlp_results.json \
 til submit nlp v7-finetuned
 ```
 
-Expected local equiv_rate after fine-tune: **0.80–0.90** (up from v5c's 0.674). Expected cloud: **0.60–0.80** (cloud distribution shift typically eats some of the local gain; we've seen ~0.20 gap on this competition).
+Historical expectation before v7/v8b: local equiv_rate **0.80–0.90** and cloud **0.60–0.80**. Actual best path was v8b/v9 RoBERTa chunked-context plus document ensemble; the later DeBERTa retune failed local gate.
 
 ## How `_build_squad_examples` chooses contexts
 

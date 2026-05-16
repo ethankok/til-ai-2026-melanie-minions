@@ -1,9 +1,10 @@
 # NLP — notes & history
 
-Last updated: 16 May 2026 ~19:30 SGT — **NLP UN-PARKED for `v13b-deberta`
-(QA-retune path)** after `v13a` confirmed candidate-ranker architecture cannot
-beat v9 on this corpus. v9-doc-ensemble (0.683/0.886) stays the shipped
-baseline. v13a was tested two ways locally and both lost:
+Last updated: 17 May 2026 ~00:20 SGT — **NLP FROZEN at `v9-doc-ensemble`
+(0.683/0.886 official, 0.711 local).** `v13b-deberta` failed the local gate
+at 0.667 and was 2.4x slower than v9, so it should not be submitted. `v13a`
+also confirmed candidate-ranker architecture cannot beat v9 on this corpus.
+v13a was tested two ways locally and both lost:
 
 ```text
 v9-doc-ensemble local         0.711  (baseline)
@@ -19,11 +20,13 @@ the right one 38% of the time. The candidate pool has +0.10 of headroom; we
 just can't rank it. Combined with v13a-heuristic = v12 = 0.663 locally,
 candidate-ranker architecture is now ELIMINATED.
 
-The remaining honest swing is QA retune. Biggest historical lifts: v7-v1 +0.034,
-v8b +0.162. Both came from training the extractor. Everything since has been
-post-processing, all regressive. **v13b-deberta**: re-fine-tune with
-`deepset/deberta-v3-large-squad2` using v8b's chunked-context recipe; DeBERTa-v3
-is structurally +1-2% better than RoBERTa-large on extractive QA.
+The final honest QA-retune swing also lost. Biggest historical lifts were
+v7-v1 +0.034 and v8b +0.162, both from training the extractor, but
+`v13b-deberta` did not transfer: local 0.667 vs v9's 0.711 and 9:06 vs 3:48
+runtime. All post-v9 levers are now dead or below gate: deterministic
+post-processing, generative QA, candidate reranking, and DeBERTa-v3-large
+extractive retune. Protect v9 and do not rebuild NLP unless the build is forced
+back to v9 behavior.
 
 ## v12 — candidate-answer reranker (16 May)
 
@@ -117,10 +120,9 @@ The POST-PROCESSING architecture is at its ceiling on this corpus. Confirmed
 dead levers: paragraph chunking, low-conf fallback, rapidfuzz spans, narrow rule
 templates, full-doc canonicalization, generative answers, candidate reranking.
 
-But the **EXTRACTOR retrain** path is not yet exhausted. v7-v1 (+0.034) and v8b
-(+0.162) both came from training the QA head. We haven't touched the extractor
-since v8b. `v13b-deberta` re-fine-tunes with DeBERTa-v3-large-squad2 — see
-section below.
+The final **EXTRACTOR retrain** path is also now exhausted. v7-v1 (+0.034) and
+v8b (+0.162) both came from training the QA head, but `v13b-deberta` did not
+transfer: local 0.667 vs v9's 0.711, 9:06 vs 3:48. See section below.
 
 ## v13a — AE-trained candidate ranker (16/05 — NOT SUBMITTED)
 
@@ -142,7 +144,7 @@ Three artefacts kept for future ranker work if we ever revisit:
 - `nlp/models/answer_ranker.json` — fitted weights from the AE-labeled training run.
 - `_answer_candidates()` machinery in `nlp_manager.py` stays in tree; disable with `NLP_ANSWER_RANK_MODE=off` (default heuristic-only path still routes through it).
 
-## v13b — DeBERTa-v3-large QA retune (16/05, in progress)
+## v13b — DeBERTa-v3-large QA retune (16/05, failed local gate)
 
 Hypothesis: the answer-form gap (`retrieval_hit_diff` ~395 cases) is a QA-head
 problem, not a post-processing problem. Every post-processing swing has
@@ -173,15 +175,14 @@ python training/nlp/finetune_qa.py \
 # Build & local A/B
 til build nlp v13b-deberta
 til test  nlp v9-doc-ensemble                  # baseline 0.711
-til test  nlp v13b-deberta                     # must beat 0.711
+til test  nlp v13b-deberta                     # final result: 0.667, failed
 
-# Ship only if local >= v9's 0.711 (the rule v12 violated)
-til submit nlp v13b-deberta
+# Do not submit: final local result was 0.667 vs v9's 0.711.
 ```
 
 Decision rule: same as before — local `equiv_rate` must clear v9's 0.711 under
 the synced upstream `test_nlp.py`. If `v13b-deberta` local < 0.711, drop and
-freeze on v9. If it clears, submit.
+freeze on v9. It landed at 0.667, so v13b is dropped and NLP is frozen.
 
 ### Training run (16/05 ~23:30 SGT) — completed in ~6 min on T4
 
@@ -221,8 +222,22 @@ RoBERTa-large did. Train loss collapse 1.51→0.01 across 5 epochs is classic
 overfit on 338 examples. eval_loss is span-token CE though, not equiv_rate, so
 the only honest test is `til test nlp v13b-deberta` against v9's 0.711.
 
-If local equiv_rate doesn't clear v9, retry with `--lr 1e-5 --epochs 2` (less
-aggressive, stops before the overfit cascade starts).
+### Local test result — NOT SUBMITTED
+
+```text
+v9-doc-ensemble    0.711  3:48  (baseline)
+v13b-deberta       0.667  9:06  ← FAILED GATE; -0.044 accuracy, 2.4× slower
+```
+
+Below the 0.711 gate. DeBERTa-v3-large fine-tuned on 338 examples and
+load_best picked epoch 1 (eval_loss 1.58), but the model still underperforms
+RoBERTa-large on this corpus. Speed also regressed significantly (9:06 vs 3:48)
+from DeBERTa's disentangled attention overhead at inference.
+
+**NLP is frozen at v9-doc-ensemble (0.683/0.886) for the rest of the qualifier.**
+Confirmed dead levers now total eight: paragraph chunking, low-conf fallback,
+rapidfuzz spans, narrow rule templates, full-doc canonicalization, generative
+answers (Flan-T5), candidate reranking (v12/v13a), DeBERTa-v3-large QA retune.
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
