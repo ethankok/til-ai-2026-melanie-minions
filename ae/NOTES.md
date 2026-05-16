@@ -1,8 +1,8 @@
 # AE — notes & history
 
-Last updated: 16 May 2026 ~18:30 SGT — **MCTS-light inference candidate implemented.** `ppo-selfplay-v2` shipped 18:09 at 0.436/0.857 — REGRESSED -0.119 vs hybrid-v3. Training-side hypotheses are now both falsified (memory via bc-belief; opponent diversity via league/self-play), so the new `mcts-light-v1` candidate is deliberately inference-side: a bounded tactical beam search inside `AEManager`, enabled by `AE_MCTS=1`, with `HybridAEManager` trusting it before the neural policy when it finds a high-value bomb/base line. Hybrid-v3 stays leaderboard-shipped via highest-score retention.
+Last updated: 16 May 2026 ~23:15 SGT — **`mcts-light-v1` TIMED OUT on cloud** ("Your model took too long to evaluate"; no score returned, no leaderboard impact). MCTS budget arithmetic was wrong: `AE_MCTS_DEPTH=5 × AE_MCTS_WIDTH=96` ran on **every** tick with no latency cap → ~2400 state expansions/tick × ~0.5-1 ms each = **1.2-2.4 s/tick** vs cloud's ~600 ms/tick budget (30 min / 30 games / ~100 ticks/game). Local `til test` has no wall-clock cap so it succeeded slowly and masked the bug. **`mcts-light-v2`** addresses this with three changes: (1) hard per-call latency budget via `time.monotonic()` with best-so-far fallback, (2) cheap pre-flight gate so MCTS only fires when something tactical is in reach, (3) shrunk defaults `DEPTH=3 WIDTH=24`. Hybrid-v3 (0.555/0.849) stays shipped via highest-score retention throughout.
 
-## CURRENT CANDIDATE — `mcts-light-v1` (inference-side, no retraining)
+## CURRENT CANDIDATE — `mcts-light-v2` (timeout fix on v1)
 
 Why this exists: reaching 0.7 needs roughly +145 reward/round over
 `hybrid-v3`'s 0.555. Mission/resource/recon routing is too small for that;
@@ -10,6 +10,89 @@ the only credible source is more combat/base reward without increasing
 self/base damage. Training has repeatedly moved local scores without moving
 cloud, so this candidate stops trying to learn hidden opponents and instead
 searches tactical futures from the live belief map.
+
+### What killed v1 (16/05 ~23:00 cloud timeout)
+
+Submission returned: *"An error occurred while evaluating your AE model … Your
+model took too long to evaluate."* No score, no leaderboard delta (hybrid-v3
+still on board at 0.555/0.849).
+
+Speed budget math we should have done before shipping v1:
+
+| Quantity | Value |
+|---|---:|
+| Cloud wall-clock for whole AE eval | ~30 min |
+| Games per eval | 30 |
+| Ticks per game (typical) | ~100 |
+| → Budget per `/ae` call | **~600 ms** |
+| v1 `AE_MCTS_DEPTH × WIDTH` | 5 × 96 |
+| Per-tick state expansions | ~2,400 |
+| Realistic per-expansion cost in Python | 0.5-1 ms |
+| → v1 per-tick MCTS cost | **1.2-2.4 s** |
+| Over budget by | **2-4×** |
+
+Why local `til test` didn't catch it: no wall-clock cap, just runs to
+completion (6 games × ~3-5 min = 15-30 min was probably fine in absolute
+terms even at 1-2 s/tick; cloud has a hard 30-min cap across 30 games and
+killed the container when crossed).
+
+### v2 fixes (must all land before next submission)
+
+1. **Hard latency budget per `/ae` call** (the non-negotiable one)
+
+   ```python
+   import time
+   deadline = time.monotonic() + 0.080   # 80 ms hard cap
+   for _depth in range(self.mcts_depth):
+       if time.monotonic() > deadline:
+           break  # return best-so-far instead of timing out
+       # ... existing expansion loop ...
+   ```
+
+   Even if depth/width targets aren't reached, the function must return.
+
+2. **Cheap pre-flight gate** — only run MCTS when something tactical is
+   plausibly within reach:
+
+   ```python
+   def _should_run_mcts(self, location):
+       if not self.known_bombs and not self.last_seen_enemies and not self.enemy_bases:
+           return False
+       targets = list(self.known_bombs) + list(self.enemy_bases) + list(self.last_seen_enemies)
+       if not targets:
+           return False
+       return min(self._manhattan(location, t) for t in targets) <= self.mcts_depth + 1
+   ```
+
+   Expected gate-fire rate: ~20-25% of ticks (the rest are pure exploration
+   where the existing frontier planner already does the right thing). That
+   alone is a 4-5× drop in average cost.
+
+3. **Shrunk Dockerfile defaults**
+
+   ```dockerfile
+   ENV AE_MCTS_DEPTH=3      # was 5
+   ENV AE_MCTS_WIDTH=24     # was 96
+   ```
+
+   24 × 5 actions × 3 plies = ~360 expansions worst case = ~180-360 ms when
+   the gate fires. Combined with the gate, average per-tick MCTS cost ~50-90
+   ms. Comfortably in budget with headroom for the rest of inference.
+
+Local validation before submitting v2 — must measure, not just trust:
+
+```bash
+# Add a temporary timing print inside the lookahead:
+#   t0 = time.monotonic()
+#   ... search ...
+#   print(f"mcts {(time.monotonic()-t0)*1000:.1f}ms", flush=True)
+# Then:
+til test ae mcts-light-v2 2>&1 | tee /tmp/mcts-v2-times.log
+grep mcts /tmp/mcts-v2-times.log | awk '{print $2}' | sort -n | tail -20
+# Worst-case tick should be ≤ 100 ms. If it's 200+, lower DEPTH or WIDTH.
+```
+
+Only submit once `til test`'s worst tick is comfortably below 100 ms.
 
 Code changes:
 
@@ -57,7 +140,7 @@ til test ae mcts-light-heuristic-v1
 til submit ae mcts-light-heuristic-v1
 ```
 
-Decision rule:
+Decision rule (applied to v2 once it returns a score, since v1 timed out):
 
 - Cloud `> 0.555`: keep iterating MCTS thresholds/depth; this is the first
   inference-side evidence that combat lookahead transfers.
@@ -65,6 +148,9 @@ Decision rule:
   lower/higher `AE_MCTS_MIN_SCORE` once.
 - Cloud `< 0.52`: MCTS-light as implemented is too speculative; roll back to
   hybrid-v3 and stop AE unless hidden-eval traces become available.
+- Cloud `TIMEOUT`: speed budget blown — shrink depth/width further, tighten
+  the latency cap, and re-test locally with timing instrumentation before
+  re-submitting. (This is what happened to v1.)
 
 ## NEXT EXPERIMENT — self-play PPO retrain (workshop-recommended)
 
