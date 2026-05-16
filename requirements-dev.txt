@@ -14,6 +14,8 @@ transformers
 torch
 numpy
 scikit-image
+rank_bm25
+sentencepiece
 
 # ASR training / inference stack.
 accelerate
