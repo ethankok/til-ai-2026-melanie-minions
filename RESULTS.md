@@ -1,24 +1,22 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 16 May 2026 — **NLP UN-PARKED locally for v12 candidate-answer
-reranking; no new v12 cloud score yet.** Shipped NLP baseline remains
-v9-doc-ensemble 0.683/0.886 (new speed-bump high after 16/05 05:21 resubmit;
-blended ~0.734).
-v8a-genqa (Flan-T5-base generative, submitted 16/05 05:10) REGRESSED to
-0.652/0.836 — generative QA confirmed dead lever on this corpus. NLP has
-now exhausted: paragraph chunking, low-conf fallback, rapidfuzz spans,
-canonicalization, full-doc rewrites, AND generative answers. **CV PARKED**
-at tier1 0.556/0.956 after three more 16/05 attempts (tiled inference
-patch local-only; v8s-1024 retrain regressed locally NOT submitted;
-v11m-1280-noaug-v1 submitted cloud 0.474/0.949 -0.082). v11m's local→cloud
-gap is structurally ~0.44 vs v8s's ~0.35.
+Last updated: 16 May 2026 14:10 SGT — **NLP HARD-PARKED at v9-doc-ensemble
+0.683/0.886.** v12-candidate-ranker submitted 16/05 13:48 and REGRESSED to
+0.642/0.829 — worst NLP submission since v5b. Local was already -0.048 vs v9
+(equiv_rate 0.663 vs 0.711); the substr-up / exact-down bucket shift confirmed
+the predicted failure: doc-mined short candidates passed the exact/substr
+proxy but failed the 0.9 ModernBERT threshold. Combined with v8a-genqa
+(0.652/0.836), v11-canonical-answer (0.680/0.881), every post-v9 swing has
+regressed monotonically. NLP architecture has been fully exhausted.
+**CV PARKED** at tier1 0.556/0.956 (Phase C gap-diagnose still TBD).
 
 ## Latest submitted scores
 
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
 NLP    melanie-minions-nlp      v9-doc-ensemble 16/05/2026 05:21:57 0 / 700 0.683   0.886  ← BEST BLEND; 3rd v9 resubmit, new speed high 0.883→0.886. Blended ~0.734.
+NLP (v12 regressed) melanie-minions-nlp v12-candidate-ranker 16/05/2026 13:48:51 0 / 700 0.642 0.829  ← REGRESSED -0.041 acc, -0.057 speed vs v9. Candidate-ranker promoted doc-mined short tokens that passed exact/substr proxy but failed 0.9 AE threshold; -69 exact +54 substr +15 diff in local buckets. Worst since v5b.
 NLP (v8a regressed) melanie-minions-nlp v8a-genqa 16/05/2026 05:10:19 0 / 700 0.652 0.836  ← REGRESSED -0.031 acc, -0.047 speed vs v9. Flan-T5-base generative; landed at low end of predicted band. Generative confirmed dead lever.
 NLP (v9 prior) melanie-minions-nlp v9-doc-ensemble 15/05/2026 19:46:01 0 / 700 0.683 0.883
 NLP (v11 regressed) melanie-minions-nlp v11-canonical-answer 15/05/2026 21:26:38 0 / 700 0.680 0.881  ← REGRESSED -0.003 vs v9; canonicalizer rewrites didn't pass 0.9 AE threshold
@@ -64,6 +62,7 @@ v11-canonical-answer 15/05 21:26  0.680   0.881   0 / 700   0.711(old)   REGRESS
 v11-canonical-answer 15/05 21:39  0.680   0.873   0 / 700   0.711(old)   Same image resubmit. Accuracy stable at 0.680 (confirms the -0.003 is real, not variance); speed dropped slightly. v9-doc-ensemble retains the leaderboard slot.
 v8a-genqa            16/05 05:10  0.652   0.836   0 / 700   0.682        REGRESSED -0.031 acc, -0.047 speed vs v9. Flan-T5-base fine-tuned on all 883 (q,ctx,ans) triples with --use-chunk-context, fp32 inference (T5 fp16 NaN trap), beam=4 generation on top reranked chunk. Local→cloud gap (0.030) was consistent with v9 (0.028) → transferred predictably. Generative answers either failed 0.9 AE threshold or paraphrased away. Blended 0.694 vs v9 0.733. **Generative QA confirmed dead lever on this corpus.**
 v9-doc-ensemble      16/05 05:21  0.683   0.886   0 / 700   0.711        Third v9 resubmit. Accuracy unchanged; speed bumped to new high 0.883→0.886 (+0.003). Best NLP blend now 0.734. Marginal speed variance.
+v12-candidate-ranker 16/05 13:48  0.642   0.829   0 / 700   0.663        REGRESSED -0.041 acc, -0.057 speed vs v9. Candidate-answer reranker (RoBERTa top-12 spans + rule/canon/doc-mined literals, heuristic + optional logistic ranker). Local buckets shifted exact 273→204 (-69), substr 178→232 (+54), diff 395→410 (+15) — confirms the predicted failure: ranker promoted doc-mined short tokens (e.g. "37" over "37 days") that passed the exact/substr training proxy but failed the 0.9 ModernBERT AE threshold. Speed -0.057 from candidate mining over 18 sentences × 6 regex types per question. Blended 0.689 vs v9 0.734. **Candidate-ranker confirmed dead lever; NLP architecture exhausted.**
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.

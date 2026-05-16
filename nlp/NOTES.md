@@ -1,14 +1,17 @@
 # NLP — notes & history
 
-Last updated: 16 May 2026 — **NLP UN-PARKED for v12 candidate-answer
-reranking.** v9-doc-ensemble stays the shipped baseline at 0.683/0.886, but
-the loss analysis says retrieval misses are only ~4-5% while the large
-remaining loss is right-doc / wrong-answer-form (`retrieval_hit_diff`). v12
-keeps v9 retrieval + extractive RoBERTa, generates multiple answer candidates,
-and ranks them with a heuristic or optional learned `answer_ranker.json`.
-Full generative QA is still a confirmed dead primary path (`v8a-genqa`
-regressed to 0.652/0.836); v12 uses candidate ranking instead of replacing the
-extractor.
+Last updated: 16 May 2026 14:10 SGT — **NLP HARD-PARKED at v9-doc-ensemble
+0.683/0.886.** v12-candidate-ranker (submitted 16/05 13:48) REGRESSED to
+0.642/0.829 — worst NLP submission since v5b, blended 0.689 vs v9's 0.734.
+Local bucket shift exact 273→204 (-69), substr 178→232 (+54), diff 395→410
+(+15) confirmed the predicted failure mode: the ranker promoted doc-mined
+short tokens (e.g. "37" over "37 days") that passed the exact/substr training
+proxy but failed the 0.9 ModernBERT AE threshold on cloud. Speed also dropped
+-0.057 from candidate-mining overhead (18 sentences × 6 regex types per
+question, local 4:23 → 10:40). Every post-v9 swing has now regressed
+monotonically (v10 0.683, v11 0.680, v8a 0.652, v12 0.642). The NLP
+architecture is exhausted; v9 stays on the leaderboard for the rest of the
+qualifier. Remaining ~7 days reallocate to AE (40% weight).
 
 ## v12 — candidate-answer reranker (16 May)
 
@@ -47,6 +50,61 @@ Decision rule: submit if local equiv_rate beats v9 under the same evaluator or
 if exact/substr proxy improves with retrieval misses flat. If the learned JSON
 ranker overfits, rebuild with `NLP_ANSWER_RANK_MODE=off` to test the heuristic
 candidate path alone.
+
+### Cloud result (16/05 13:48) — REGRESSED -0.041
+
+```text
+v12-candidate-ranker  16/05 13:48:51   0.642 / 0.829   0 / 700   local 0.663
+```
+
+Local was already a -0.048 regression vs v9 (0.711 → 0.663) — the decision rule above
+said "submit if local beats v9", and local did NOT beat v9. The submission proceeded
+anyway. Cloud confirmed the local signal:
+
+| Bucket | v9 local | v12 local | Δ |
+|---|---:|---:|---:|
+| retrieval_hit_exact | 273 | **204** | **−69** |
+| retrieval_hit_substr | 178 | 232 | +54 |
+| retrieval_hit_diff | 395 | 410 | +15 |
+| retrieval_miss | 37 | 37 | 0 |
+
+**Smoking gun**: -69 exact and +54 substr means the ranker replaced clean QA-span
+answers with shorter doc-mined alternatives. Those passed the exact-or-substr
+training proxy ("37" is a substring of "37 days") but failed the 0.9 ModernBERT
+AE threshold on cloud (ModernBERT does not rate "37" ≡ "37 days" at 0.9).
+
+This is exactly the v11 failure mode at larger scale — training on a proxy that
+doesn't match the cloud scorer. The candidate space was 10× bigger so the regression
+was 10× deeper (v11: -0.003, v12: -0.041).
+
+Three contributing factors, in order of impact:
+
+1. **Training proxy mismatch.** `_is_positive` in train_answer_ranker.py used
+   exact-or-substr; cloud uses ModernBERT 0.9. Same mistake as v11's replay script.
+2. **Heuristic prior put rules above QA.** `source_rule = 4.5 > source_qa = 4.0`
+   in `_heuristic_candidate_score`. v10 already showed those rules don't move cloud
+   on this corpus; they shouldn't outrank model spans.
+3. **Document-mining surface area.** `_document_answer_candidates` generates up to
+   ~300 raw candidates per question from 18 sentences × 6 regex types. The dedupe cap
+   of 32 keeps too many, and `echoes_question = -2.0` penalty demotes correct QA
+   spans whose text overlaps with the question subject.
+
+### Final NLP verdict
+
+Every post-v9 swing regressed monotonically:
+
+```text
+v10-template-lite      0.683 / 0.882   neutral (-0.001 blended)
+v11-canonical-answer   0.680 / 0.881   -0.004 blended
+v8a-genqa              0.652 / 0.836   -0.040 blended
+v12-candidate-ranker   0.642 / 0.829   -0.045 blended
+```
+
+The architecture is at its ceiling on this corpus. Confirmed dead levers now total
+seven: paragraph chunking, low-conf fallback, rapidfuzz spans, narrow rule
+templates, full-doc canonicalization, generative answers, candidate reranking.
+**NLP is frozen at v9-doc-ensemble** for the rest of the qualifier. Remaining time
+to AE.
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
