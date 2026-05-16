@@ -183,6 +183,47 @@ Decision rule: same as before — local `equiv_rate` must clear v9's 0.711 under
 the synced upstream `test_nlp.py`. If `v13b-deberta` local < 0.711, drop and
 freeze on v9. If it clears, submit.
 
+### Training run (16/05 ~23:30 SGT) — completed in ~6 min on T4
+
+OOM at default batch=8 on the 14.5 GB T4 (DeBERTa-v3-large disentangled
+attention uses ~3× the activation memory of RoBERTa-large). Patched
+`training/nlp/finetune_qa.py` with `--gradient-accumulation-steps` and
+`--gradient-checkpointing` flags (commit `8296c29`). Ran:
+
+```bash
+python training/nlp/finetune_qa.py \
+  --base-model deepset/deberta-v3-large-squad2 \
+  --use-answer-chunk \
+  --epochs 5 \
+  --batch-size 2 \
+  --gradient-accumulation-steps 4 \
+  --gradient-checkpointing \
+  --output nlp/models/deberta-finetuned-squad2
+```
+
+Result: 338 train / 37 val (same examples as v8b: 375 retained after
+`answer_not_in_doc=508` filter). 220 optimizer steps × 1.76 s/step = 6:26.
+
+```text
+epoch 1   train 0.96-1.51   eval_loss 1.58   ← BEST, saved
+epoch 2   train 0.53-0.64   eval_loss 1.62
+epoch 3   train 0.24-0.27   eval_loss 1.76
+epoch 4   train 0.09-0.29   eval_loss 2.83
+epoch 5   train 0.01-0.09   eval_loss 2.34
+```
+
+`load_best_model_at_end=True` → epoch 1 weights are what got saved to
+`nlp/models/deberta-finetuned-squad2/`.
+
+**Yellow flag**: eval_loss 1.58 is ~2.5× v7-v1's epoch-1 0.614 on the same
+data. DeBERTa-v3-large didn't calibrate to our QA distribution as cleanly as
+RoBERTa-large did. Train loss collapse 1.51→0.01 across 5 epochs is classic
+overfit on 338 examples. eval_loss is span-token CE though, not equiv_rate, so
+the only honest test is `til test nlp v13b-deberta` against v9's 0.711.
+
+If local equiv_rate doesn't clear v9, retry with `--lr 1e-5 --epochs 2` (less
+aggressive, stops before the overfit cascade starts).
+
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
 For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
