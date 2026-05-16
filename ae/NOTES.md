@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 16 May 2026 14:30 SGT — **`ppo-selfplay-v2` IN PROGRESS** (~7.5h total, ~13:00 launch; update 5/200 with first eval 0.4908 already above v1's all-time peak). `ppo-selfplay-v1` shipped 13:18 at **0.305/0.851** — regressed -0.250 vs hybrid-v3 because the `--n-frames 1` flag silently skipped BC warm-start (train_ppo.py:656-661), so PPO trained 200 updates from random init. **But**: v1's local-cloud gap was 0.10 vs the structural ~0.23 across our 9 prior submissions — first evidence that league/self-play training tightens the gap. v2 retry with `--n-frames 4` properly warm-starts from BC (0.4866 local-mixed); if the tightened gap holds, projected cloud 0.45-0.55. Hybrid-v3 (0.555/0.849) stays on the leaderboard until v2 lands.
+Last updated: 16 May 2026 ~17:00 SGT — **`ppo-selfplay-v2` SUBMITTED, cloud pending.** Training peaked at update 120/200 with best PPO eval 0.6601 against league (7 monotonic saves: 0.4908 → 0.5038 → 0.5327 → 0.5333 → 0.5982 → 0.6428 → 0.6601). Workbench auto-restart killed tmux at update 162 but best checkpoint preserved. Local eval against mixed (pure policy): **0.5747** (+0.088 over BC, +0.171 over v1). Local docker `til test` (6 games, hybrid wrapper ON): **0.7068** — wrapper adds ~0.13 on top. v1 reference: til test 0.264 → cloud 0.305 (cloud +0.04 vs til test). If v2 follows same pattern, projected cloud **0.55-0.75**, conservative 0.48. First plausible candidate to beat hybrid-v3 (0.555) since 14 May. No leaderboard risk via highest-score retention.
 
 ## NEXT EXPERIMENT — self-play PPO retrain (workshop-recommended)
 
@@ -93,23 +93,50 @@ interesting:
 - If the gap stays at ~0.10, projected v2 cloud is **0.45-0.55** — first
   AE submission to plausibly beat hybrid-v3 (0.555) since 14 May.
 
-### ppo-selfplay-v2 in progress (16 May 13:00 launch, ~7.5h)
+### ppo-selfplay-v2 — SUBMITTED 16 May ~16:55 SGT (cloud pending)
 
-Same training command as the v2 example above (with `--n-frames 4`).
-Confirmed at update 1:
+Training summary:
 - `warm-started actor from training/ae/checkpoints/bc.pt (n_frames=4, use_belief=False)` ✓
 - 648,342 actor params (n_frames=4 arch).
-- First eval against league: **0.4908** — already above v1's all-time best
-  (0.4362) at update 1 of 200.
-- Entropy 0.105 (much lower than v1's ~0.5) — policy has real opinions from BC.
-- ~2.2 min per update on T4; 200 updates ≈ 7.5h total.
+- Best PPO eval against league saved 7 times, monotonically:
+  `0.4908 → 0.5038 → 0.5327 → 0.5333 → 0.5982 → 0.6428 → **0.6601**` at epoch 120.
+- Workbench auto-restart killed tmux at update 162/200 (no fault of training).
+  Best weights at epoch 120 preserved on disk.
+- Healthy signals throughout: `pi_loss` consistently negative, `v_loss`
+  dropping (0.37 → 0.13-0.20), `entropy` 0.10 → 0.25 (gentle exploration
+  pickup), `pool=5` reached at update 50 and stayed full.
 
-Decision tree when v2 finishes:
-- **Local mixed-eval ≥ 0.55**: ship. v2 against BC's 0.4866 baseline is a
-  clear improvement; with tightened gap, cloud likely ≥ 0.50.
-- **Local mixed-eval 0.45-0.55**: ship one cloud probe. Even cloud 0.55 (= hybrid-v3)
-  would be a tie; the leaderboard keeps higher score so no risk.
-- **Local mixed-eval < 0.45**: don't ship. Hybrid-v3 stays.
+Local evals (apples-to-apples comparisons):
+
+| Eval setup | Score | Notes |
+|---|---:|---|
+| BC checkpoint vs mixed (pure policy) | 0.4866 | Starting point |
+| ppo-selfplay-v1 vs mixed (pure policy) | 0.4040 | From-scratch (no warm-start) |
+| **ppo-selfplay-v2 vs mixed (pure policy)** | **0.5747** | +0.088 over BC, +0.171 over v1 |
+| ppo-selfplay-v2 `til test` (hybrid wrapper) | **0.7068** | Wrapper adds ~0.13 |
+
+Cloud projection:
+- v1 reference: `til test` 0.264 → cloud 0.305 (cloud *higher* by 0.04).
+- If v2 follows same pattern: `til test` 0.7068 → cloud **0.65-0.75**.
+- If gap reverts to structural ~0.23: cloud ~0.48.
+- Conservative band: **0.50-0.65**.
+
+Submitted at ~16:55 SGT after `til test` showed 0.7068 with 0/6 errors and
+the container loaded the new-arch weights cleanly. After submission,
+restored `ae/models/bc.pt` from
+`~/ae-checkpoints-backup/deployed-bc-v1.pt.local-snapshot` so future builds
+default to hybrid-v3 weights, not v2.
+
+### Decision when cloud lands
+
+- **Cloud ≥ 0.58**: new high. Iterate further (longer training, larger pool,
+  maybe re-introduce belief-map architecture now that we know self-play
+  doesn't overfit the way bc-belief did).
+- **Cloud 0.50-0.58**: competitive with hybrid-v3. Within ±0.04 noise of
+  hybrid-v3 (0.555). Both stay on leaderboard via highest-score retention.
+  Probably done with AE for this qualifier; pivot to NLP/CV polish if any.
+- **Cloud < 0.50**: regressed. Hybrid-v3 stays as our deployed weights;
+  document the negative result and pivot.
 
 ### Workflow improvement — SSH access from Mac
 
