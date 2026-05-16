@@ -73,6 +73,9 @@ class HybridAEManager:
       into known bomb-blast cells.
     - ``AE_HYBRID_VETO_FROZEN_STAY`` (default true): override policy
       STAYs when frozen_ticks==0 and a non-STAY legal action exists.
+    - ``AE_HYBRID_TRUST_MCTS`` (default true): when the heuristic's
+      tactical lookahead finds a high-value combat/base line, take it
+      before consulting the neural policy.
     """
 
     FORWARD = 0
@@ -95,6 +98,8 @@ class HybridAEManager:
         self.veto_bombs = _env_flag("AE_HYBRID_VETO_BOMBS", True)
         self.veto_danger = _env_flag("AE_HYBRID_VETO_DANGER", True)
         self.veto_frozen_stay = _env_flag("AE_HYBRID_VETO_FROZEN_STAY", True)
+        self.trust_mcts = _env_flag("AE_HYBRID_TRUST_MCTS", True)
+        self.trust_mcts_min_score = _env_float("AE_HYBRID_MCTS_MIN_SCORE", 12.0)
         # Optional confidence gate: if set, only use the policy when its
         # top-action probability exceeds this. Default 0 = always use
         # policy (subject to vetoes). Useful for A/B experiments.
@@ -107,6 +112,11 @@ class HybridAEManager:
         heuristic_action = self.heuristic.ae(observation)
         if self.heuristic.escape_target is not None:
             return heuristic_action
+        if self.trust_mcts:
+            lookahead_score = getattr(self.heuristic, "last_lookahead_score", 0.0)
+            lookahead_path = getattr(self.heuristic, "last_lookahead_path", ())
+            if lookahead_path and lookahead_score >= self.trust_mcts_min_score:
+                return heuristic_action
 
         # Pull policy logits (one forward pass) and gate.
         try:

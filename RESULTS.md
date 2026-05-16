@@ -1,21 +1,19 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 16 May 2026 ~18:25 SGT — **`ppo-selfplay-v2` SHIPPED 18:09 at
-0.436/0.857** — REGRESSED -0.119 vs hybrid-v3 (0.555). Beats v1 (0.305) by
-+0.131, confirming BC warm-start + self-play > self-play from scratch. But
-the v1 gap-tightening (local-cloud 0.10) was an ARTIFACT — v2's gap is 0.271
-(til test 0.7068 → cloud 0.436), bigger than hybrid-v3's 0.219. **AE
-re-parked at hybrid-v3 (0.555/0.849).** Self-play with warm-start was a real
-improvement *over previous PPO approaches* but does not clear the
-hybrid-v3 ceiling. Lessons: (1) league/self-play DID help vs random+planner
-training, (2) BC warm-start adds +0.131 cloud over from-scratch, (3) the
-local-cloud gap remains structural across all training-side interventions —
-*the cloud opponents are not just "league but harder", they're something we
-can't simulate*. Next-best AE move would be inference-time search
-(MCTS-light), but realistic ceiling there is also probably 0.58-0.62 and
-costs 1-2 days. **Recommend pivot remaining qualifier hours to CV Phase C**
-(active workstream, gap-diagnose ran, targeted training recipe TBD).
+Last updated: 16 May 2026 ~18:35 SGT — **AE is UN-PARKED for
+`mcts-light-v1` code-only inference A/B.** `ppo-selfplay-v2` shipped 18:09 at
+0.436/0.857 and REGRESSED -0.119 vs hybrid-v3 (0.555). It still beat v1
+(0.305) by +0.131, confirming BC warm-start + self-play > self-play from
+scratch, but the v1 gap-tightening (local-cloud 0.10) was an artifact: v2's
+gap is 0.271 (til test 0.7068 → cloud 0.436), bigger than hybrid-v3's 0.219.
+Training-side AE hypotheses are now falsified: league/self-play helped over
+from-scratch, but does not clear the hybrid-v3 ceiling; memory via bc-belief
+also regressed hard. The current AE push is therefore inference-side:
+`mcts-light-v1` adds bounded tactical lookahead in `AEManager` and lets
+`HybridAEManager` trust high-value bomb/base/enemy lines before the neural
+policy. **No MCTS-light official score yet; hybrid-v3 remains shipped via
+highest-score retention at 0.555/0.849.**
 **NLP HARD-PARKED at v9-doc-ensemble 0.683/0.886** (architecture exhausted).
 **CV PARKED** at tier1 0.556/0.956 (Phase C gap-diagnose still TBD).
 **NLP HARD-PARKED at v9-doc-ensemble 0.683/0.886.** v12-candidate-ranker
@@ -49,7 +47,7 @@ CV (v3-pre) melanie-minions-cv  cv-yolo11m-v3-pre 15/05/2026 11:34:42 0 / 500   
 CV (v11m-1280-noaug-v1) melanie-minions-cv  v11m-1280-noaug-v1 16/05/2026 04:04:59 0 / 500 0.474 0.949  ← REGRESSED -0.082; v11m at 1280 aug=0 looked great locally (hard held-out 0.9088, +0.014 vs tier1) but v11m's local→cloud gap is structurally ~0.44 vs v8s's ~0.35. Tier1 stays on leaderboard.
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
 AE     melanie-minions-ae       hybrid-v3   14/05/2026 19:26:06   0 / 30        0.555   0.849  ← STILL SHIPPED via highest-score retention
-AE (ppo-selfplay-v2)  melanie-minions-ae  ppo-selfplay-v2  16/05/2026 18:09:15  0 / 30  0.436  0.857  ← REGRESSED -0.119 vs hybrid-v3 (but +0.131 over v1, confirming BC warm-start + self-play beats from-scratch). til test (hybrid wrapper) 0.7068 → cloud 0.436 = gap 0.271 (BIGGER than hybrid-v3's 0.219); v1's apparent "gap tightening" to 0.10 was an artifact of v1 being weak in pure-policy mode → hybrid wrapper added more relatively. Confirmed: self-play helped some, but doesn't clear hybrid-v3 ceiling. AE re-parked.
+AE (ppo-selfplay-v2)  melanie-minions-ae  ppo-selfplay-v2  16/05/2026 18:09:15  0 / 30  0.436  0.857  ← REGRESSED -0.119 vs hybrid-v3 (but +0.131 over v1, confirming BC warm-start + self-play beats from-scratch). til test (hybrid wrapper) 0.7068 → cloud 0.436 = gap 0.271 (BIGGER than hybrid-v3's 0.219); v1's apparent "gap tightening" to 0.10 was an artifact of v1 being weak in pure-policy mode → hybrid wrapper added more relatively. Confirmed: self-play helped some, but doesn't clear hybrid-v3 ceiling; current follow-up is code-only mcts-light-v1.
 AE (ppo-selfplay-v1)  melanie-minions-ae  ppo-selfplay-v1  16/05/2026 13:18:52  0 / 30  0.305  0.851  ← REGRESSED -0.250; BC warm-start was silently skipped (--n-frames 1 vs ckpt's 4), PPO trained from random init for 200 updates. But local-cloud gap 0.10 (vs structural 0.23) → first signal that league self-play tightens the gap. v2 retry capitalized on this.
 ASR (ft-lora32-v1) melanie-minions-asr ft-lora32-v1 13/05/2026 11:22:30 0 / 400  0.957   0.849  ← prior ASR high (still on leaderboard via highest-score retention)
 AE (hybrid-v2) melanie-minions-ae hybrid-v2 14/05/2026 14:55:23   0 / 30        0.545   0.863
@@ -203,8 +201,19 @@ bc-belief-policy 15/05 local-only    local 0.663 (1 run, 6 games). Tested in pur
 hybrid-conf50    15/05 17:59         0.504/0.857 official 0 / 30 official errors   Regressed -0.051 vs hybrid-v3 (just outside ±0.04 noise; small but real). ppo-v1 weights + hybrid + `AE_HYBRID_CONF=0.5` (only use policy when softmax top ≥ 0.5; otherwise heuristic). Local 0.719 → cloud 0.504 = gap 0.22 (same as hybrid-v3) — confidence gate did real local work but threw out cloud-correct policy actions in the 0.4-0.5 softmax band. AE PARKED at hybrid-v3 (0.555/0.849). Four post-hybrid-v3 attempts (bc-belief-hybrid -0.268, bc-belief-policy not-shipped, hybrid-conf50 -0.051) → heuristic-side ceiling confirmed at ~0.555.
 [AE UN-PARKED 16/05] After reviewing the TIL workshop materials (notebook 05 explicitly diagnoses bc-belief's failure as "overfit to a weak fixed opponent" and prescribes self-play as the fix), added a `SnapshotPool` to `training/ae/train_ppo.py` that holds historical actor snapshots and feeds them into `_make_opponents`. Previous `FrozenPolicyOpponent` deepcopied the live actor → effectively "play your shadow", not true self-play. New `--opponents league` + `--snapshot-interval 10` + `--snapshot-pool-size 5` gives a proper opponent curriculum: random + planner + aggressive + frozen-self-from-K-updates-ago.
 ppo-selfplay-v1  16/05 13:18         0.305/0.851 official 0 / 30 official errors   FIRST SHIP OF NEW ARCH (n_frames=4 model.py + new weights). REGRESSED -0.250 vs hybrid-v3. Root cause: `--n-frames 1` (recommended by claude in NOTES, copied from old bc-belief example) didn't match the BC checkpoint's `n_frames=4` and `load_actor` silently skipped the warm-start (train_ppo.py:656-661). PPO trained 200 updates from random init against league opponents. Best PPO eval climbed monotonically -0.088 → +0.436 across 7 saves. Local eval against `mixed`: 0.4040 (-0.083 vs BC ckpt's 0.4866 baseline). Cloud 0.305. **Critical positive finding**: local-cloud gap was 0.099 (0.404→0.305) vs the structural ~0.23 across all 9 prior AE submissions. First evidence that league/self-play training distribution materially tightens the gap. Speed 0.851 ≈ hybrid-v3 0.849 (new arch + hybrid wrapper is fine speed-wise).
-ppo-selfplay-v2  16/05 18:09         0.436/0.857 official 0 / 30 official errors   REGRESSED -0.119 vs hybrid-v3 (0.555), but +0.131 over v1 (0.305) — confirms BC warm-start + self-play > self-play from random init. Training peaked at update 120/200; 7 monotonic best-saves: 0.4908 → 0.5038 → 0.5327 → 0.5333 → 0.5982 → 0.6428 → 0.6601 against league. Local evals: pure-policy vs mixed 0.5747 (+0.088 over BC, +0.171 over v1); til test (hybrid wrapper) 0.7068. Local-cloud gap **0.271** (0.7068 - 0.436), BIGGER than hybrid-v3's 0.219 — the v1 gap-tightening to 0.10 was an artifact (v1 was weak in pure-policy so the hybrid wrapper added more in relative terms; v2's stronger raw policy makes the wrapper contribute less relatively, exposing the structural gap). **Self-play opponent curriculum + warm-start was a real win over from-scratch training, but the local-cloud gap is structural to the hidden eval distribution, not to our training distribution.** This is the cleanest negative result on the league/self-play hypothesis we could get. AE re-parked at hybrid-v3 (0.555/0.849). Remaining AE moves (longer training, bigger snapshot pool, MCTS-light at inference) all have realistic ceiling 0.58-0.62 at best with high effort. **Recommend redirecting remaining qualifier hours to CV Phase C** (the next-best per-hour swing).
+ppo-selfplay-v2  16/05 18:09         0.436/0.857 official 0 / 30 official errors   REGRESSED -0.119 vs hybrid-v3 (0.555), but +0.131 over v1 (0.305) — confirms BC warm-start + self-play > self-play from random init. Training peaked at update 120/200; 7 monotonic best-saves: 0.4908 → 0.5038 → 0.5327 → 0.5333 → 0.5982 → 0.6428 → 0.6601 against league. Local evals: pure-policy vs mixed 0.5747 (+0.088 over BC, +0.171 over v1); til test (hybrid wrapper) 0.7068. Local-cloud gap **0.271** (0.7068 - 0.436), BIGGER than hybrid-v3's 0.219 — the v1 gap-tightening to 0.10 was an artifact (v1 was weak in pure-policy so the hybrid wrapper added more in relative terms; v2's stronger raw policy makes the wrapper contribute less relatively, exposing the structural gap). **Self-play opponent curriculum + warm-start was a real win over from-scratch training, but the local-cloud gap is structural to the hidden eval distribution, not to our training distribution.** This is the cleanest negative result on the league/self-play hypothesis we could get. Superseded as current workstream by code-only `mcts-light-v1`; hybrid-v3 remains the shipped best until MCTS-light has an official score.
 ```
+
+## AE current code candidate
+
+`mcts-light-v1` is a code-only inference A/B after the training-side AE
+failures. It adds bounded tactical lookahead in `AEManager`, scoring safe
+short-horizon bomb/base/enemy lines from the live belief map. Hybrid mode
+trusts the heuristic action before policy only when the projected tactical
+value clears threshold. Built knobs: `AE_MCTS=1`, `AE_MCTS_DEPTH=5`,
+`AE_MCTS_WIDTH=96`, `AE_MCTS_MIN_SCORE=12`, and
+`AE_HYBRID_TRUST_MCTS=1`. Workbench target: restore ppo-v1 weights, then
+build/test/submit tag `mcts-light-v1`. No official score yet.
 
 ## Qualifier weighted score estimate
 

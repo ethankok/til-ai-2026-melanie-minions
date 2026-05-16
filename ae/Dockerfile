@@ -17,6 +17,12 @@ WORKDIR /workspace
 # modes, OR write the mode into `ae/src/.ae_mode` (the server reads that
 # file at startup if AE_MODE is unset in the container env).
 ENV AE_MODE=hybrid
+ENV AE_MCTS=1
+ENV AE_MCTS_DEPTH=5
+ENV AE_MCTS_WIDTH=96
+ENV AE_MCTS_MIN_SCORE=12
+ENV AE_HYBRID_TRUST_MCTS=1
+ENV AE_HYBRID_MCTS_MIN_SCORE=12
 
 # Installs your dependencies.
 RUN pip install -U pip

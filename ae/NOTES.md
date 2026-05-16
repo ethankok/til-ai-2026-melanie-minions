@@ -1,6 +1,70 @@
 # AE — notes & history
 
-Last updated: 16 May 2026 ~18:30 SGT — **`ppo-selfplay-v2` SHIPPED 18:09 at 0.436/0.857 — REGRESSED -0.119 vs hybrid-v3.** Beats v1 (0.305) by +0.131 (BC warm-start + self-play > from-scratch self-play), but doesn't clear hybrid-v3's 0.555. The v1 local-cloud gap of 0.10 was an ARTIFACT — v2's gap is 0.271 (til test 0.7068 → cloud 0.436), BIGGER than hybrid-v3's structural 0.219. **Training-side hypotheses now both falsified** (memory via bc-belief; opponent diversity via league/self-play). **AE STAYS UN-PARKED** per user direction — remaining moves are inference-side: (A) probe v2 with `AE_MODE=policy` to test "wrapper hurts strong policy" hypothesis (30 min, free signal), (B) MCTS-light at inference (1-2 days, only approach that doesn't depend on opponent simulation, realistic ceiling 0.55-0.65), (C) cheap compositions like `AE_HYBRID_CONF` retuning + top-K=5 + policy ensemble. Hybrid-v3 stays leaderboard-shipped via highest-score retention.
+Last updated: 16 May 2026 ~18:30 SGT — **MCTS-light inference candidate implemented.** `ppo-selfplay-v2` shipped 18:09 at 0.436/0.857 — REGRESSED -0.119 vs hybrid-v3. Training-side hypotheses are now both falsified (memory via bc-belief; opponent diversity via league/self-play), so the new `mcts-light-v1` candidate is deliberately inference-side: a bounded tactical beam search inside `AEManager`, enabled by `AE_MCTS=1`, with `HybridAEManager` trusting it before the neural policy when it finds a high-value bomb/base line. Hybrid-v3 stays leaderboard-shipped via highest-score retention.
+
+## CURRENT CANDIDATE — `mcts-light-v1` (inference-side, no retraining)
+
+Why this exists: reaching 0.7 needs roughly +145 reward/round over
+`hybrid-v3`'s 0.555. Mission/resource/recon routing is too small for that;
+the only credible source is more combat/base reward without increasing
+self/base damage. Training has repeatedly moved local scores without moving
+cloud, so this candidate stops trying to learn hidden opponents and instead
+searches tactical futures from the live belief map.
+
+Code changes:
+
+- `ae/src/ae_manager.py`
+  - Adds `AE_MCTS` gated tactical lookahead.
+  - Searches our own action sequences for `AE_MCTS_DEPTH` steps (default 5)
+    with beam width `AE_MCTS_WIDTH` (default 96).
+  - Preserves a tactical side-beam so low-immediate-score bomb lines are not
+    pruned before their detonation payoff lands.
+  - Scores robust events only: known enemy bases in blast, recently seen
+    enemies in/near blast, own-base/self blast penalties, and nearby item
+    pickup as small tie-breakers.
+  - Returns the lookahead action only when a tactical sequence clears
+    `AE_MCTS_MIN_SCORE` (default 12), so ordinary movement still falls back to
+    the existing frontier/objective planner.
+- `ae/src/hybrid_manager.py`
+  - Adds `AE_HYBRID_TRUST_MCTS=1` behavior: if the heuristic's lookahead finds
+    a tactical line above `AE_HYBRID_MCTS_MIN_SCORE`, take it before asking the
+    neural policy. This prevents the ppo-v1 policy from overriding the only
+    remaining 0.7-upside path.
+- `ae/Dockerfile`
+  - Bakes the MCTS-light candidate knobs:
+    `AE_MCTS=1`, `AE_MCTS_DEPTH=5`, `AE_MCTS_WIDTH=96`,
+    `AE_MCTS_MIN_SCORE=12`, `AE_HYBRID_TRUST_MCTS=1`,
+    `AE_HYBRID_MCTS_MIN_SCORE=12`.
+
+Workbench runbook:
+
+```bash
+# Use the current ppo-v1 checkpoint slot if testing hybrid+mcts.
+cp ~/ae-checkpoints-backup/deployed-bc-v1.pt ae/models/bc.pt
+echo hybrid > ae/src/.ae_mode
+
+til build ae mcts-light-v1
+til test ae mcts-light-v1
+til submit ae mcts-light-v1
+```
+
+Optional pure-heuristic A/B if hybrid+mcts regresses and we need attribution:
+
+```bash
+echo heuristic > ae/src/.ae_mode
+til build ae mcts-light-heuristic-v1
+til test ae mcts-light-heuristic-v1
+til submit ae mcts-light-heuristic-v1
+```
+
+Decision rule:
+
+- Cloud `> 0.555`: keep iterating MCTS thresholds/depth; this is the first
+  inference-side evidence that combat lookahead transfers.
+- Cloud `0.52-0.555`: inspect local diagnostics; try pure heuristic or
+  lower/higher `AE_MCTS_MIN_SCORE` once.
+- Cloud `< 0.52`: MCTS-light as implemented is too speculative; roll back to
+  hybrid-v3 and stop AE unless hidden-eval traces become available.
 
 ## NEXT EXPERIMENT — self-play PPO retrain (workshop-recommended)
 

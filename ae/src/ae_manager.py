@@ -10,8 +10,51 @@ baseline.
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import dataclass
 from math import inf
+import os
 from typing import Iterable
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+@dataclass(frozen=True)
+class _LookaheadState:
+    pos: tuple[int, int]
+    direction: int
+    bombs: tuple[tuple[int, int, int], ...]
+    bombs_left: int
+    health: int
+    collected: frozenset[tuple[int, int]]
+    score: float
+    first_action: int | None
+    tactical: bool
+    path: tuple[int, ...]
 
 
 class AEManager:
@@ -120,6 +163,12 @@ class AEManager:
         self.grid_size = self.GRID_SIZE
         self.last_step: int | None = None
         self.turn_counter = 0
+        self.mcts_enabled = _env_flag("AE_MCTS", False)
+        self.mcts_depth = max(1, min(8, _env_int("AE_MCTS_DEPTH", 5)))
+        self.mcts_width = max(12, min(512, _env_int("AE_MCTS_WIDTH", 96)))
+        self.mcts_min_score = _env_float("AE_MCTS_MIN_SCORE", 12.0)
+        self.last_lookahead_score = -inf
+        self.last_lookahead_path: tuple[int, ...] = ()
         self._reset_memory()
 
     # ------------------------------------------------------------------
@@ -168,6 +217,9 @@ class AEManager:
             dominant = self._try_dominant_action(observation, location, direction, danger, low_health)
             if dominant is not None:
                 return dominant
+            lookahead = self._tactical_lookahead_action(observation, location, direction)
+            if lookahead is not None:
+                return lookahead
             target, path = self._choose_target(location, danger, low_health)
 
         if escape_path is None and self._should_place_bomb(observation, location, target, danger):
@@ -200,6 +252,8 @@ class AEManager:
         self.base_location: tuple[int, int] | None = None
         self.health: int = 60
         self.base_health: int = 100
+        self.last_lookahead_score = -inf
+        self.last_lookahead_path = ()
         # Per-turn blast cell cache; cleared at the start of every ae() call.
         self._blast_cache: dict[tuple[int, int], frozenset[tuple[int, int]]] = {}
         self.last_step = None
@@ -687,6 +741,328 @@ class AEManager:
             return self.LEFT
         if desired_dir == (direction + 1) % 4:
             return self.RIGHT
+        return None
+
+    # ------------------------------------------------------------------
+    # Tactical lookahead
+    # ------------------------------------------------------------------
+    def _tactical_lookahead_action(
+        self,
+        observation: dict,
+        location: tuple[int, int],
+        direction: int,
+    ) -> int | None:
+        """Beam-search a few tactical futures and return the best first move.
+
+        This is deliberately "MCTS-light": the hidden evaluator's opponents are
+        not reproducible locally, so we do not pretend to roll them out. Instead
+        we search our own legal action sequences against the current belief map,
+        score only robust events (safe bombs, known bases/enemies, own-base/self
+        danger, and nearby item pickups), and let the normal planner handle
+        everything else.
+        """
+
+        self.last_lookahead_score = -inf
+        self.last_lookahead_path = ()
+        if not self.mcts_enabled or self.health < self.LOW_HEALTH_THRESHOLD:
+            return None
+
+        root_actions = self._lookahead_legal_actions(
+            location, direction, self._as_int(observation.get("team_bombs"), default=0),
+            root_observation=observation,
+        )
+        if not root_actions:
+            return None
+
+        bombs = tuple(
+            (pos[0], pos[1], int(data.get("timer", self.BOMB_TIMER)))
+            for pos, data in self.known_bombs.items()
+        )
+        states = [
+            _LookaheadState(
+                pos=location,
+                direction=direction,
+                bombs=bombs,
+                bombs_left=self._as_int(observation.get("team_bombs"), default=0),
+                health=self.health,
+                collected=frozenset(),
+                score=0.0,
+                first_action=None,
+                tactical=False,
+                path=(),
+            )
+        ]
+
+        best: _LookaheadState | None = None
+        best_tactical: _LookaheadState | None = None
+        for _depth in range(self.mcts_depth):
+            expanded: list[_LookaheadState] = []
+            for state in states:
+                actions = root_actions if state.first_action is None else self._lookahead_legal_actions(
+                    state.pos, state.direction, state.bombs_left
+                )
+                for action in actions:
+                    nxt = self._lookahead_step(state, action)
+                    if nxt is not None:
+                        expanded.append(nxt)
+            if not expanded:
+                break
+            expanded.sort(key=self._lookahead_rank, reverse=True)
+            # Bomb lines often look bad before detonation because the agent is
+            # still paying movement/danger costs. Preserve a tactical side-beam
+            # so promising PLACE_BOMB futures are not pruned one ply before the
+            # payoff lands.
+            tactical_quota = max(8, self.mcts_width // 4)
+            tactical = [state for state in expanded if state.tactical]
+            tactical.sort(key=self._lookahead_tactical_rank, reverse=True)
+            states = []
+            seen_paths: set[tuple[int, ...]] = set()
+            for candidate in expanded[: self.mcts_width]:
+                states.append(candidate)
+                seen_paths.add(candidate.path)
+            for candidate in tactical[:tactical_quota]:
+                if candidate.path in seen_paths:
+                    continue
+                states.append(candidate)
+                seen_paths.add(candidate.path)
+            candidate = states[0]
+            if best is None or self._lookahead_rank(candidate) > self._lookahead_rank(best):
+                best = candidate
+            for candidate in states:
+                if not candidate.tactical:
+                    continue
+                if best_tactical is None or self._lookahead_rank(candidate) > self._lookahead_rank(best_tactical):
+                    best_tactical = candidate
+
+        if best_tactical is None or best_tactical.first_action is None:
+            return None
+
+        final_score = self._lookahead_rank(best_tactical)
+        self.last_lookahead_score = final_score
+        self.last_lookahead_path = best_tactical.path
+        if final_score >= self.mcts_min_score:
+            return best_tactical.first_action
+        return None
+
+    def _lookahead_rank(self, state: _LookaheadState) -> float:
+        return state.score + self._lookahead_terminal_value(state)
+
+    def _lookahead_tactical_rank(self, state: _LookaheadState) -> float:
+        """Rank tactical states for beam retention, not final action choice."""
+
+        value = self._lookahead_rank(state)
+        step = self.last_step if self.last_step is not None else 0
+        for bx, by, timer in state.bombs:
+            blast = self._blast_cells((bx, by))
+            pending = 0.0
+            if any(base in blast for base in self.enemy_bases):
+                pending += 55.0
+            for enemy, last_seen in self.enemy_agents.items():
+                if step - int(last_seen) <= self.ENEMY_STALENESS and enemy in blast:
+                    pending += 24.0
+            if pending > 0:
+                value += (pending / max(1, timer)) + 4.0 * (self.BOMB_TIMER - timer)
+        return value
+
+    def _lookahead_terminal_value(self, state: _LookaheadState) -> float:
+        value = 0.0
+        if state.bombs_left > 0:
+            for base in self.enemy_bases:
+                dist = self._lookahead_distance(state.pos, base, limit=8)
+                if dist is not None:
+                    value += max(0.0, 18.0 - 2.2 * dist)
+            step = self.last_step if self.last_step is not None else 0
+            for enemy, last_seen in self.enemy_agents.items():
+                if step - int(last_seen) > self.ENEMY_STALENESS:
+                    continue
+                dist = self._lookahead_distance(state.pos, enemy, limit=5)
+                if dist is not None:
+                    value += max(0.0, 8.0 - 1.5 * dist)
+        for pos, (kind, _seen_step) in self.last_seen_items.items():
+            if pos in state.collected:
+                continue
+            dist = self._lookahead_distance(state.pos, pos, limit=4)
+            if dist is not None:
+                reward = {"mission": 5.0, "resource": 2.0, "recon": 1.0}.get(kind, 0.0)
+                value += max(0.0, reward - 0.35 * dist)
+        return value
+
+    def _lookahead_legal_actions(
+        self,
+        pos: tuple[int, int],
+        direction: int,
+        bombs_left: int,
+        root_observation: dict | None = None,
+    ) -> list[int]:
+        actions = [self.FORWARD, self.BACKWARD, self.LEFT, self.RIGHT, self.STAY]
+        if bombs_left > 0:
+            actions.append(self.PLACE_BOMB)
+
+        legal: list[int] = []
+        for action in actions:
+            if root_observation is not None and not self._legal(root_observation, action):
+                continue
+            if action in {self.FORWARD, self.BACKWARD}:
+                nxt, _ = self._simulate_action(pos, direction, action)
+                move_dir = direction if action == self.FORWARD else self.OPPOSITE[direction]
+                if nxt not in self.seen or not self._in_bounds(nxt):
+                    continue
+                if self._edge_blocked(pos, move_dir):
+                    continue
+            if action == self.PLACE_BOMB:
+                blast = self._blast_cells(pos)
+                if self.base_location is not None and self.base_location in blast:
+                    continue
+                if self._lookahead_escape(pos, blast, self.BOMB_TIMER) is None:
+                    continue
+            legal.append(action)
+        return legal
+
+    def _lookahead_step(self, state: _LookaheadState, action: int) -> _LookaheadState | None:
+        pos, direction = self._simulate_action(state.pos, state.direction, action)
+        bombs_left = state.bombs_left
+        bombs = list(state.bombs)
+        newly_placed: tuple[int, int] | None = None
+        score = state.score - 0.12
+        tactical = state.tactical
+        collected = set(state.collected)
+        health = state.health
+
+        if action in {self.LEFT, self.RIGHT}:
+            score -= 0.08
+        elif action == self.STAY:
+            score -= 0.45
+        elif action == self.PLACE_BOMB:
+            if bombs_left <= 0:
+                return None
+            if any((bx, by) == state.pos for bx, by, _timer in bombs):
+                return None
+            blast = self._blast_cells(state.pos)
+            if self.base_location is not None and self.base_location in blast:
+                return None
+            if self._lookahead_escape(state.pos, blast, self.BOMB_TIMER) is None:
+                return None
+            bombs.append((state.pos[0], state.pos[1], self.BOMB_TIMER))
+            newly_placed = state.pos
+            bombs_left -= 1
+            tactical = True
+            score -= 0.25
+
+        item = self.last_seen_items.get(pos)
+        if item is not None and pos not in collected:
+            score += {"mission": 5.0, "resource": 2.0, "recon": 1.0}.get(item[0], 0.0)
+            collected.add(pos)
+
+        active_danger = set()
+        for bx, by, timer in bombs:
+            if timer <= 2:
+                active_danger.update(self._blast_cells((bx, by)))
+        if pos in active_danger:
+            score -= 9.0
+
+        aged_bombs: list[tuple[int, int, int]] = []
+        for bx, by, timer in bombs:
+            if newly_placed == (bx, by):
+                aged_bombs.append((bx, by, timer))
+                continue
+            timer -= 1
+            blast_pos = (bx, by)
+            if timer <= 0:
+                delta, hit_tactical, health = self._lookahead_detonation_score(
+                    blast_pos, pos, health
+                )
+                score += delta
+                tactical = tactical or hit_tactical
+            else:
+                aged_bombs.append((bx, by, timer))
+
+        return _LookaheadState(
+            pos=pos,
+            direction=direction,
+            bombs=tuple(sorted(aged_bombs)),
+            bombs_left=bombs_left,
+            health=health,
+            collected=frozenset(collected),
+            score=score,
+            first_action=action if state.first_action is None else state.first_action,
+            tactical=tactical,
+            path=state.path + (action,),
+        )
+
+    def _lookahead_detonation_score(
+        self,
+        bomb_pos: tuple[int, int],
+        our_pos: tuple[int, int],
+        health: int,
+    ) -> tuple[float, bool, int]:
+        blast = self._blast_cells(bomb_pos)
+        score = 0.0
+        tactical = False
+
+        for base in self.enemy_bases:
+            if base in blast:
+                score += 55.0
+                tactical = True
+        step = self.last_step if self.last_step is not None else 0
+        for enemy, last_seen in self.enemy_agents.items():
+            if step - int(last_seen) > self.ENEMY_STALENESS:
+                continue
+            if enemy in blast:
+                score += 24.0
+                tactical = True
+            elif enemy in self._extended_blast(blast, 1):
+                score += 6.0
+                tactical = True
+
+        if self.base_location is not None and self.base_location in blast:
+            score -= 65.0
+        if our_pos in blast:
+            health -= 20
+            score -= 30.0 if health > 0 else 70.0
+        return score, tactical, health
+
+    def _lookahead_escape(
+        self,
+        location: tuple[int, int],
+        blast: set[tuple[int, int]],
+        max_moves: int,
+    ) -> tuple[int, int] | None:
+        queue = deque([(location, 0)])
+        seen = {location}
+        while queue:
+            pos, dist = queue.popleft()
+            if dist > 0 and pos not in blast and pos in self.seen:
+                return pos
+            if dist >= max_moves:
+                continue
+            for nxt in self._neighbors(pos):
+                if nxt in seen or nxt not in self.seen:
+                    continue
+                seen.add(nxt)
+                queue.append((nxt, dist + 1))
+        return None
+
+    def _lookahead_distance(
+        self,
+        start: tuple[int, int],
+        goal: tuple[int, int],
+        limit: int,
+    ) -> int | None:
+        if start == goal:
+            return 0
+        queue = deque([(start, 0)])
+        seen = {start}
+        while queue:
+            pos, dist = queue.popleft()
+            if dist >= limit:
+                continue
+            for nxt in self._neighbors(pos):
+                if nxt in seen or nxt not in self.seen:
+                    continue
+                if nxt == goal:
+                    return dist + 1
+                seen.add(nxt)
+                queue.append((nxt, dist + 1))
         return None
 
     # ------------------------------------------------------------------
