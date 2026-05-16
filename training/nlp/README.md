@@ -4,10 +4,15 @@ Two training paths, picked by which one we want to ship:
 
 | Script | Model class | Output dir | Manager priority |
 |---|---|---|---|
-| [`finetune_qa.py`](finetune_qa.py) | extractive (RoBERTa-SQuAD2) | `nlp/models/roberta-finetuned-squad2/` | 2 (after generative) |
-| [`finetune_genqa.py`](finetune_genqa.py) | generative (Flan-T5) | `nlp/models/flan-t5-finetuned/` | 1 (preferred when present) |
+| [`finetune_qa.py`](finetune_qa.py) | extractive (RoBERTa-SQuAD2) | `nlp/models/roberta-finetuned-squad2/` | default QA path |
+| [`finetune_genqa.py`](finetune_genqa.py) | generative (Flan-T5) | `nlp/models/flan-t5-finetuned/` | explicit `NLP_QA_MODE=generative` only |
+| [`train_answer_ranker.py`](train_answer_ranker.py) | lightweight candidate ranker | `nlp/models/answer_ranker.json` | optional v12 reranker |
 
-The container's [nlp_manager.py](../../nlp/src/nlp_manager.py) auto-detects which is bundled (via `config.is_encoder_decoder`) and routes inference to either span extraction or `.generate()` accordingly. Container log prints `QA model: gen-finetuned (generative) ...` or `ext-finetuned (extractive) ...` on first request.
+The container's [nlp_manager.py](../../nlp/src/nlp_manager.py) now defaults to
+extractive QA even if an old Flan-T5 directory is present, because `v8a-genqa`
+regressed on cloud. Set `NLP_QA_MODE=generative` only when deliberately
+reproducing that experiment. Container log prints `QA model: ...` on first
+request.
 
 ## Local corpus inspection
 
@@ -34,6 +39,44 @@ python training/nlp/replay_canonicalizer.py \
 ```
 
 This script imports [nlp_manager.py](../../nlp/src/nlp_manager.py) with lightweight stubs for model-only dependencies, so it tests the actual `_canonicalize_answer` implementation. The first v11 replay against the v9 failure pack moved the exact/substr proxy `451 -> 461` and diff `395 -> 385`, with retrieval unchanged at `37` misses and no proxy regressions.
+
+## v12 — answer-candidate reranking
+
+The v12 path keeps the winning v9 retrieval and extractive RoBERTa answerer,
+then generates multiple short answer candidates:
+
+- top RoBERTa spans instead of only the single best span
+- arithmetic/date candidates from existing rules
+- full-document canonicalizer candidates
+- literal candidates mined from the top-3 returned docs: dates, money, codes,
+  percentages, proper nouns, and short relation phrases
+
+The manager chooses with a conservative heuristic by default. If
+`nlp/models/answer_ranker.json` exists, Docker bakes it into
+`/workspace/models/answer_ranker.json` and the manager uses it as a learned
+candidate ranker with a small heuristic prior.
+
+Train the ranker on Workbench:
+
+```bash
+cd /home/jupyter/til
+
+python training/nlp/train_answer_ranker.py \
+  --data /home/jupyter/novice/nlp/nlp.jsonl \
+  --docs /home/jupyter/novice/nlp/documents \
+  --out nlp/models/answer_ranker.json
+
+til build nlp v12-candidate-ranker
+til test nlp v12-candidate-ranker
+python nlp/error_report.py /home/jupyter/melanie-minions/nlp_results.json \
+                          /home/jupyter/novice/nlp/nlp.jsonl
+til submit nlp v12-candidate-ranker
+```
+
+Decision rule: submit if local equiv_rate beats `v9` under the same
+`test_nlp.py`, or if exact/substr proxy improves without increasing retrieval
+misses. If the learned ranker hurts, rebuild with `NLP_ANSWER_RANK_MODE=off`
+to keep only the heuristic candidate path.
 
 ## v7 — extractive fine-tune (shipped at 0.517/0.880)
 

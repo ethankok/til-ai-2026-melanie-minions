@@ -1,8 +1,10 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 16 May 2026 05:35 SGT — **NLP PARKED** at v9-doc-ensemble
-0.683/0.886 (new speed-bump high after 16/05 05:21 resubmit; blended ~0.734).
+Last updated: 16 May 2026 — **NLP UN-PARKED locally for v12 candidate-answer
+reranking; no new v12 cloud score yet.** Shipped NLP baseline remains
+v9-doc-ensemble 0.683/0.886 (new speed-bump high after 16/05 05:21 resubmit;
+blended ~0.734).
 v8a-genqa (Flan-T5-base generative, submitted 16/05 05:10) REGRESSED to
 0.652/0.836 — generative QA confirmed dead lever on this corpus. NLP has
 now exhausted: paragraph chunking, low-conf fallback, rapidfuzz spans,

@@ -1,6 +1,52 @@
 # NLP — notes & history
 
-Last updated: 16 May 2026 05:35 SGT — **NLP PARKED at v9-doc-ensemble 0.683/0.886** (3rd resubmit nudged speed 0.883→0.886, new blended high 0.734). v8a-genqa (Flan-T5-base, submitted 16/05 05:10) REGRESSED to 0.652/0.836 — landed at the low end of our predicted band, local→cloud gap held at 0.030 (matched v9's 0.028). **Generative QA is now a confirmed dead lever** alongside paragraph chunking, low-conf fallback, rapidfuzz spans, narrow templates, and full-doc canonicalization. v11-canonical-answer earlier regressed -0.003 because its +10 replay was against the OLD pre-14-May rubric. Every NLP lever inside this pipeline architecture has been tried; remaining ~7 days reallocated to AE.
+Last updated: 16 May 2026 — **NLP UN-PARKED for v12 candidate-answer
+reranking.** v9-doc-ensemble stays the shipped baseline at 0.683/0.886, but
+the loss analysis says retrieval misses are only ~4-5% while the large
+remaining loss is right-doc / wrong-answer-form (`retrieval_hit_diff`). v12
+keeps v9 retrieval + extractive RoBERTa, generates multiple answer candidates,
+and ranks them with a heuristic or optional learned `answer_ranker.json`.
+Full generative QA is still a confirmed dead primary path (`v8a-genqa`
+regressed to 0.652/0.836); v12 uses candidate ranking instead of replacing the
+extractor.
+
+## v12 — candidate-answer reranker (16 May)
+
+Implemented in [src/nlp_manager.py](src/nlp_manager.py):
+
+- Default QA mode is extractive even if stale Flan-T5 weights exist. Set
+  `NLP_QA_MODE=generative` only to reproduce the regressed v8a path.
+- RoBERTa now emits the top answer spans, not only the single best span.
+- Candidate pool also includes date/year/percentage rules, v11-style
+  canonicalizer outputs, and short literal candidates mined from the top-3
+  returned docs: dates, money, codenames, percentages, proper nouns, and
+  relation phrases.
+- Candidate selection uses a conservative heuristic by default and can load a
+  trained lightweight ranker from `nlp/models/answer_ranker.json`.
+- [Dockerfile](Dockerfile) now bakes `answer_ranker.json` when present.
+- [../training/nlp/train_answer_ranker.py](../training/nlp/train_answer_ranker.py)
+  trains that ranker on Workbench from local `nlp.jsonl` using the exact/substr
+  proxy.
+
+Runbook:
+
+```bash
+python training/nlp/train_answer_ranker.py \
+  --data /home/jupyter/novice/nlp/nlp.jsonl \
+  --docs /home/jupyter/novice/nlp/documents \
+  --out nlp/models/answer_ranker.json
+
+til build nlp v12-candidate-ranker
+til test nlp v12-candidate-ranker
+python nlp/error_report.py /home/jupyter/melanie-minions/nlp_results.json \
+                          /home/jupyter/novice/nlp/nlp.jsonl
+til submit nlp v12-candidate-ranker
+```
+
+Decision rule: submit if local equiv_rate beats v9 under the same evaluator or
+if exact/substr proxy improves with retrieval misses flat. If the learned JSON
+ranker overfits, rebuild with `NLP_ANSWER_RANK_MODE=off` to test the heuristic
+candidate path alone.
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
@@ -8,7 +54,7 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`v9-doc-ensemble` — official 0.683 / 0.883 on resubmit (15 May 19:46 SGT, 0 of 700 errors).** Best current NLP blend. The first v9 submit was `0.683 / 0.868`; resubmitting the exact same image later returned `0.683 / 0.883`, confirming that the speed metric has measurable run-to-run noise. v9 keeps the v8b chunked-context RoBERTa answerer, then adds whole-document BM25 + BGE retrieval as a light prior and reranker seeder. Local moved `0.708` → `0.711`; retrieval misses dropped `40` → `37` and retrieval hit rate improved `95.5%` → `95.8%`.
+**`v9-doc-ensemble` — official 0.683 / 0.886 after the third resubmit (16 May 05:21 SGT, 0 of 700 errors).** Best current NLP blend. The first v9 submit was `0.683 / 0.868`; resubmitting the exact same image later returned `0.683 / 0.883`, then `0.683 / 0.886`, confirming that the speed metric has measurable run-to-run noise. v9 keeps the v8b chunked-context RoBERTa answerer, then adds whole-document BM25 + BGE retrieval as a light prior and reranker seeder. Local moved `0.708` → `0.711`; retrieval misses dropped `40` → `37` and retrieval hit rate improved `95.5%` → `95.8%`.
 
 ## `v10-template-lite` — neutral A/B
 

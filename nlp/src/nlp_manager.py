@@ -39,12 +39,15 @@ Models (all bundled into the image; see download_models.py):
 
 from __future__ import annotations
 
+import json
+import math
 import os
 import re
 import string
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 import torch
@@ -65,14 +68,14 @@ from transformers import (
 MODEL_DIR = Path(os.getenv("NLP_MODEL_DIR", "/workspace/models"))
 DENSE_DIR = MODEL_DIR / "bge-small-en-v1.5"
 RERANKER_DIR = MODEL_DIR / "bge-reranker-base"
-# QA model preference, in priority order:
-#   1. Fine-tuned generative (seq2seq Flan-T5) — see training/nlp/finetune_genqa.py
-#   2. Fine-tuned extractive (RoBERTa-SQuAD2) — see training/nlp/finetune_qa.py
-#   3. Stock SQuAD2 weights downloaded by download_models.py
-#   4. HF hub fallback (only if container is online)
+# QA model locations. Default selection is extractive first; Flan-T5 is now
+# opt-in via NLP_QA_MODE=generative because v8a regressed on cloud.
 QA_GEN_FINETUNED_DIR = MODEL_DIR / "flan-t5-finetuned"
 QA_EXT_FINETUNED_DIR = MODEL_DIR / "roberta-finetuned-squad2"
 QA_BASE_DIR = MODEL_DIR / "roberta-base-squad2"
+ANSWER_RANKER_PATH = Path(
+    os.getenv("NLP_ANSWER_RANKER", str(MODEL_DIR / "answer_ranker.json"))
+)
 
 CHUNK_SENTENCES = 3
 CHUNK_OVERLAP = 1
@@ -86,12 +89,16 @@ QA_MAX_ANSWER_TOKENS = 64    # eval truncates beyond this
 EMBED_BATCH = 64
 RERANK_BATCH = 32
 QA_BATCH = 16
+QA_SPAN_CANDIDATES = int(os.getenv("NLP_QA_SPAN_CANDIDATES", "12"))
+ANSWER_CANDIDATE_LIMIT = int(os.getenv("NLP_ANSWER_CANDIDATE_LIMIT", "32"))
 DENSE_MAX_LEN = 256
 RERANK_MAX_LEN = 256
 QA_MAX_SEQ_LEN = 384
 QA_DOC_STRIDE = 128
+QA_MODE = os.getenv("NLP_QA_MODE", "extractive").strip().lower()
 RULE_MODE = os.getenv("NLP_RULE_MODE", "conservative").strip().lower()
 CANON_MODE = os.getenv("NLP_CANON_MODE", "conservative").strip().lower()
+ANSWER_RANK_MODE = os.getenv("NLP_ANSWER_RANK_MODE", "heuristic").strip().lower()
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
@@ -106,6 +113,16 @@ _MONEY_CREDITS_RE = re.compile(r"\b(\d[\d,]*(?:\.\d+)?)\s*(?:Phi\s+)?Credits?\b"
 _SCALED_CREDITS_RE = re.compile(
     r"\b(\d[\d,]*(?:\.\d+)?)\s+"
     r"(thousand|million|billion|trillion)\s+(?:Phi\s+)?Credits?\b",
+    re.I,
+)
+_PROPER_NOUN_RE = re.compile(
+    r"\b[A-Z][A-Za-z0-9'/-]*(?:\s+[A-Z][A-Za-z0-9'/-]*){0,5}\b"
+)
+_RELATION_PHRASE_RE = re.compile(
+    r"\b(?:is|was|were|are|became|becomes|remained|remains|"
+    r"called|named|designated|codenamed|identified as|assessed at|"
+    r"set at|valued at|located in|based in|from)\s+"
+    r"([^.;:\n]{2,120})",
     re.I,
 )
 _STOPWORDS = frozenset(
@@ -125,6 +142,33 @@ _CANON_STOPWORDS = _STOPWORDS | frozenset(
     }
 )
 _PRINTABLE = set(string.printable)
+
+
+@dataclass
+class AnswerCandidate:
+    text: str
+    source: str
+    score: float = 0.0
+    passage_idx: int | None = None
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+def _answer_key(text: str) -> str:
+    text = (text or "").lower().strip()
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[^\w\s%.-]", "", text)
+    return text
+
+
+def _answer_token_len(text: str) -> int:
+    return len(_TOKEN_RE.findall(text or ""))
+
+
+def _clip_answer_tokens(text: str, limit: int = QA_MAX_ANSWER_TOKENS) -> str:
+    words = (text or "").strip().split()
+    if len(words) <= limit:
+        return (text or "").strip()
+    return " ".join(words[:limit]).strip()
 
 
 def _doc_id_positional(idx0: int) -> str:
@@ -292,6 +336,7 @@ class NLPManager:
         self._qa_tok = None
         self._qa_model = None
         self._qa_is_generative = False
+        self._answer_ranker: dict[str, Any] | None = None
 
         # Corpus state.
         self.documents: list[str] = []
@@ -315,14 +360,20 @@ class NLPManager:
         rerank_path = (
             str(RERANKER_DIR) if RERANKER_DIR.exists() else "BAAI/bge-reranker-base"
         )
-        # QA model selection ladder. We detect seq2seq (generative) vs encoder
-        # (extractive) from the saved config's is_encoder_decoder flag.
-        if QA_GEN_FINETUNED_DIR.exists():
+        # QA model selection ladder. Default to extractive even if an old
+        # Flan-T5 directory is present; v8a proved full generative primary QA
+        # regresses under the 0.9 answer-equivalence threshold. Set
+        # NLP_QA_MODE=generative explicitly to reproduce that path.
+        want_generative = QA_MODE in {"gen", "generative", "t5"}
+        if want_generative and QA_GEN_FINETUNED_DIR.exists():
             qa_path = str(QA_GEN_FINETUNED_DIR)
             qa_source = "gen-finetuned"
         elif QA_EXT_FINETUNED_DIR.exists():
             qa_path = str(QA_EXT_FINETUNED_DIR)
             qa_source = "ext-finetuned"
+        elif QA_GEN_FINETUNED_DIR.exists() and want_generative:
+            qa_path = str(QA_GEN_FINETUNED_DIR)
+            qa_source = "gen-finetuned"
         elif QA_BASE_DIR.exists():
             qa_path = str(QA_BASE_DIR)
             qa_source = "ext-base"
@@ -376,6 +427,28 @@ class NLPManager:
                 self._qa_model = self._qa_model.half()
 
         self._models_initialized = True
+
+    def _load_answer_ranker(self) -> None:
+        if self._answer_ranker is not None:
+            return
+        if ANSWER_RANK_MODE in {"0", "off", "false", "none"}:
+            self._answer_ranker = {}
+            return
+        if not ANSWER_RANKER_PATH.exists():
+            self._answer_ranker = {}
+            return
+        try:
+            self._answer_ranker = json.loads(ANSWER_RANKER_PATH.read_text())
+            print(
+                f"[nlp_manager] loaded answer ranker from {ANSWER_RANKER_PATH}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[nlp_manager] answer ranker load failed: {exc}; using heuristic",
+                flush=True,
+            )
+            self._answer_ranker = {}
 
     # ----------------------------------------------------------------- corpus
 
@@ -609,9 +682,20 @@ class NLPManager:
 
     @torch.no_grad()
     def _extract_answer(self, question: str, passage_idxs: list[int]) -> str:
+        candidates = self._extract_answer_candidates(question, passage_idxs)
+        return candidates[0].text if candidates else ""
+
+    @torch.no_grad()
+    def _extract_answer_candidates(
+        self, question: str, passage_idxs: list[int]
+    ) -> list[AnswerCandidate]:
         if self._qa_is_generative:
-            return self._generate_answer(question, passage_idxs)
-        return self._extract_answer_span(question, passage_idxs)
+            answer = self._generate_answer(question, passage_idxs)
+            return (
+                [AnswerCandidate(answer, source="gen_qa", score=1.0)]
+                if answer else []
+            )
+        return self._extract_answer_span_candidates(question, passage_idxs)
 
     @torch.no_grad()
     def _generate_answer(self, question: str, passage_idxs: list[int]) -> str:
@@ -640,9 +724,17 @@ class NLPManager:
 
     @torch.no_grad()
     def _extract_answer_span(self, question: str, passage_idxs: list[int]) -> str:
+        candidates = self._extract_answer_span_candidates(question, passage_idxs)
+        return candidates[0].text if candidates else ""
+
+    @torch.no_grad()
+    def _extract_answer_span_candidates(
+        self, question: str, passage_idxs: list[int]
+    ) -> list[AnswerCandidate]:
         if not passage_idxs:
-            return ""
-        contexts = [self.passages[i] for i in passage_idxs[:TOP_K_RERANK]]
+            return []
+        ctx_passage_idxs = passage_idxs[:TOP_K_RERANK]
+        contexts = [self.passages[i] for i in ctx_passage_idxs]
 
         # Tokenize all (question, context) pairs at once. Long contexts overflow
         # into multiple windows; `overflow_to_sample_mapping` tells us which
@@ -662,7 +754,7 @@ class NLPManager:
         sample_mapping = enc.pop("overflow_to_sample_mapping")
         num_features = enc["input_ids"].shape[0]
         if num_features == 0:
-            return ""
+            return []
 
         # Batched forward over features. With QA_BATCH=16 and TOP_K_RERANK=10
         # contexts, most queries fit in a single forward pass — replacing the
@@ -681,11 +773,11 @@ class NLPManager:
         start_logits = torch.cat(start_logits_chunks, dim=0)
         end_logits = torch.cat(end_logits_chunks, dim=0)
 
-        best_text = ""
-        best_score = -1e9
+        candidates_by_key: dict[str, AnswerCandidate] = {}
         for feat in range(num_features):
             ctx_idx = int(sample_mapping[feat])
             ctx = contexts[ctx_idx]
+            passage_idx = ctx_passage_idxs[ctx_idx]
             seq_ids = enc.sequence_ids(feat)
             valid = torch.tensor(
                 [1.0 if sid == 1 else 0.0 for sid in seq_ids], dtype=torch.float32
@@ -707,8 +799,6 @@ class NLPManager:
                     if seq_ids[si] != 1 or seq_ids[ei] != 1:
                         continue
                     score = float(s[si] + e[ei])
-                    if score <= best_score:
-                        continue
                     start_char, _ = offsets[si]
                     _, end_char = offsets[ei]
                     if end_char <= start_char:
@@ -716,10 +806,24 @@ class NLPManager:
                     cand = ctx[start_char:end_char].strip()
                     if not cand:
                         continue
-                    best_score = score
-                    best_text = cand
+                    cand = _clean_answer(_clip_answer_tokens(cand))
+                    if not cand:
+                        continue
+                    key = _answer_key(cand)
+                    old = candidates_by_key.get(key)
+                    if old is None or score > old.score:
+                        candidates_by_key[key] = AnswerCandidate(
+                            cand,
+                            source="qa_span",
+                            score=score,
+                            passage_idx=passage_idx,
+                            meta={"context_rank": ctx_idx},
+                        )
 
-        return _clean_answer(best_text)
+        candidates = sorted(
+            candidates_by_key.values(), key=lambda cand: -cand.score
+        )
+        return candidates[:QA_SPAN_CANDIDATES]
 
     # --------------------------------------------------------------- rules
 
@@ -796,9 +900,16 @@ class NLPManager:
         return f"{_format_number(delta)} percentage points"
 
     def _rule_answer(self, question: str, passage_idxs: list[int]) -> str:
+        candidates = self._rule_candidates(question, passage_idxs)
+        return candidates[0].text if candidates else ""
+
+    def _rule_candidates(
+        self, question: str, passage_idxs: list[int]
+    ) -> list[AnswerCandidate]:
         if RULE_MODE in {"0", "off", "false", "none"} or not passage_idxs:
-            return ""
+            return []
         text = self._rule_context(passage_idxs)
+        candidates: list[AnswerCandidate] = []
         for rule in (
             self._rule_elapsed_days,
             self._rule_elapsed_years,
@@ -806,8 +917,10 @@ class NLPManager:
         ):
             answer = rule(question, text)
             if answer:
-                return answer
-        return ""
+                candidates.append(
+                    AnswerCandidate(answer, source=f"rule:{rule.__name__}", score=2.0)
+                )
+        return candidates
 
     def _choose_answer(self, question: str, model_answer: str, rule_answer: str) -> str:
         if not rule_answer:
@@ -1047,6 +1160,282 @@ class NLPManager:
                 return _clean_answer(candidate)
         return _clean_answer(answer)
 
+    # ------------------------------------------------------- v12 candidates
+
+    def _question_profile(self, question: str) -> dict[str, bool]:
+        ql = question.lower()
+        return {
+            "wants_days": "day" in ql,
+            "wants_years": "year" in ql,
+            "wants_percent": "percent" in ql or "%" in ql,
+            "wants_percentage_points": "percentage point" in ql,
+            "wants_money": any(
+                key in ql for key in ("credit", "cost", "price", "penalty", "fine")
+            ),
+            "wants_code": "codename" in ql or "code name" in ql,
+            "wants_date": "when" in ql or "date" in ql,
+            "wants_person": ql.startswith("who "),
+            "wants_place": ql.startswith("where "),
+            "wants_entity": ql.startswith(("what ", "which ", "who ", "where ")),
+        }
+
+    @staticmethod
+    def _trim_phrase(text: str) -> str:
+        text = (text or "").strip(" \t\n\r\"'`“”‘’()[]{}")
+        text = re.split(
+            r"\s+(?:while|although|because|after|before|when|where|which|who|that)\b",
+            text,
+            maxsplit=1,
+            flags=re.I,
+        )[0]
+        text = re.split(r"[,;:]", text, maxsplit=1)[0]
+        text = re.sub(r"\s+", " ", text).strip(" .")
+        return _clean_answer(_clip_answer_tokens(text, limit=16))
+
+    def _document_answer_candidates(
+        self, question: str, document_ids: list[str]
+    ) -> list[AnswerCandidate]:
+        """Mine short literal candidates from the top returned documents.
+
+        This is deliberately conservative: it does not replace the extractor
+        by itself, it just gives the v12 ranker options for non-span cases
+        such as dates, money, codenames, vote counts, and short entity phrases.
+        """
+        if not document_ids:
+            return []
+        profile = self._question_profile(question)
+        candidates: list[AnswerCandidate] = []
+        for rank, sentence in enumerate(
+            self._canon_top_sentences(question, document_ids, n=18)
+        ):
+            sent_score = max(0.0, 1.5 - 0.05 * rank)
+
+            for yy, mm, dd in _DATE_RE.findall(sentence):
+                candidates.append(
+                    AnswerCandidate(
+                        f"{yy}-{mm}-{dd}", "doc:date", score=sent_score + 0.5
+                    )
+                )
+            for value in _PERCENT_RE.findall(sentence):
+                candidates.append(
+                    AnswerCandidate(f"{value}%", "doc:percent", score=sent_score)
+                )
+            money = _extract_credit_amount(sentence, keep_phi=True)
+            if money:
+                candidates.append(
+                    AnswerCandidate(money, "doc:money", score=sent_score + 0.5)
+                )
+            for token in _UPPER_TOKEN_RE.findall(sentence):
+                if token not in {"CGC", "ONE", "PCE", "DOC", "CLASSIFICATION"}:
+                    candidates.append(
+                        AnswerCandidate(token, "doc:code", score=sent_score + 0.5)
+                    )
+            for phrase in _PROPER_NOUN_RE.findall(sentence):
+                phrase = self._trim_phrase(phrase)
+                if _answer_token_len(phrase) <= 8 and phrase.lower() not in _STOPWORDS:
+                    candidates.append(
+                        AnswerCandidate(phrase, "doc:entity", score=sent_score)
+                    )
+            if profile["wants_entity"] or profile["wants_money"]:
+                for match in _RELATION_PHRASE_RE.findall(sentence):
+                    phrase = self._trim_phrase(match)
+                    if 1 <= _answer_token_len(phrase) <= 12:
+                        candidates.append(
+                            AnswerCandidate(phrase, "doc:relation", score=sent_score)
+                        )
+        return candidates
+
+    def _canonical_candidates(
+        self,
+        question: str,
+        base_candidates: list[AnswerCandidate],
+        document_ids: list[str],
+    ) -> list[AnswerCandidate]:
+        if CANON_MODE in {"0", "off", "false", "none"}:
+            return []
+
+        candidates: list[AnswerCandidate] = []
+        doc_only = self._canonicalize_answer(question, "", document_ids)
+        if doc_only:
+            candidates.append(AnswerCandidate(doc_only, "canon:doc", score=3.0))
+
+        for cand in base_candidates:
+            canonical = self._canonicalize_answer(question, cand.text, document_ids)
+            if canonical and _answer_key(canonical) != _answer_key(cand.text):
+                candidates.append(
+                    AnswerCandidate(
+                        canonical,
+                        source=f"canon:{cand.source}",
+                        score=cand.score + 1.0,
+                        passage_idx=cand.passage_idx,
+                    )
+                )
+        return candidates
+
+    def _dedupe_candidates(
+        self, candidates: list[AnswerCandidate]
+    ) -> list[AnswerCandidate]:
+        best: dict[str, AnswerCandidate] = {}
+        for cand in candidates:
+            text = _clean_answer(_clip_answer_tokens(cand.text))
+            if not text:
+                continue
+            if _answer_token_len(text) > QA_MAX_ANSWER_TOKENS:
+                continue
+            key = _answer_key(text)
+            if not key:
+                continue
+            normalized = AnswerCandidate(
+                text=text,
+                source=cand.source,
+                score=cand.score,
+                passage_idx=cand.passage_idx,
+                meta=dict(cand.meta),
+            )
+            old = best.get(key)
+            if old is None or self._heuristic_candidate_score(
+                "", normalized, []
+            ) > self._heuristic_candidate_score("", old, []):
+                best[key] = normalized
+        deduped = list(best.values())
+        deduped.sort(
+            key=lambda cand: self._heuristic_candidate_score("", cand, []),
+            reverse=True,
+        )
+        return deduped[:ANSWER_CANDIDATE_LIMIT]
+
+    def _candidate_features(
+        self, question: str, cand: AnswerCandidate, document_ids: list[str]
+    ) -> dict[str, float]:
+        text = cand.text
+        lower = text.lower()
+        key = _answer_key(text)
+        profile = self._question_profile(question)
+        docs_text = _answer_key("\n".join(self._doc_text_for_ids(document_ids)))
+        n_tokens = _answer_token_len(text)
+        source = cand.source.split(":", 1)[0]
+        features = {
+            "bias": 1.0,
+            "source_qa": float(source == "qa_span"),
+            "source_rule": float(source == "rule"),
+            "source_canon": float(source == "canon"),
+            "source_doc": float(source == "doc"),
+            "len_1_4": float(1 <= n_tokens <= 4),
+            "len_5_10": float(5 <= n_tokens <= 10),
+            "too_long": float(n_tokens > 14),
+            "verbatim_in_docs": float(bool(key and key in docs_text)),
+            "echoes_question": float(bool(key and key in _answer_key(question))),
+            "has_date": float(bool(_DATE_RE.search(text))),
+            "has_year_unit": float(bool(re.search(r"\b\d+\s+years?\b", lower))),
+            "has_day_unit": float(bool(re.search(r"\b\d+\s+days?\b", lower))),
+            "has_percent": float(bool(_PERCENT_RE.search(text))),
+            "has_percentage_points": float("percentage point" in lower),
+            "has_money": float(
+                "credit" in lower or bool(_MONEY_CREDITS_RE.search(text))
+            ),
+            "has_code": float(bool(_UPPER_TOKEN_RE.fullmatch(text.strip()))),
+            "has_proper": float(bool(_PROPER_NOUN_RE.search(text))),
+            "qa_score": (
+                math.tanh(cand.score / 20.0) if source == "qa_span" else 0.0
+            ),
+        }
+        features.update(
+            {
+                "match_days": float(
+                    profile["wants_days"] and features["has_day_unit"]
+                ),
+                "match_years": float(
+                    profile["wants_years"] and features["has_year_unit"]
+                ),
+                "match_percent": float(
+                    profile["wants_percent"] and features["has_percent"]
+                ),
+                "match_percentage_points": float(
+                    profile["wants_percentage_points"]
+                    and features["has_percentage_points"]
+                ),
+                "match_money": float(profile["wants_money"] and features["has_money"]),
+                "match_code": float(profile["wants_code"] and features["has_code"]),
+                "match_date": float(profile["wants_date"] and features["has_date"]),
+                "match_entity": float(profile["wants_entity"] and features["has_proper"]),
+            }
+        )
+        return features
+
+    def _heuristic_candidate_score(
+        self, question: str, cand: AnswerCandidate, document_ids: list[str]
+    ) -> float:
+        features = self._candidate_features(question, cand, document_ids)
+        score = 0.0
+        score += 4.0 * features["source_qa"]
+        score += 4.5 * features["source_rule"]
+        score += 3.0 * features["source_canon"]
+        score += 1.3 * features["source_doc"]
+        score += 1.0 * features["len_1_4"]
+        score += 0.4 * features["len_5_10"]
+        score -= 2.2 * features["too_long"]
+        score += 0.8 * features["verbatim_in_docs"]
+        score -= 2.0 * features["echoes_question"]
+        score += 2.8 * features["match_days"]
+        score += 2.8 * features["match_years"]
+        score += 2.0 * features["match_percent"]
+        score += 3.0 * features["match_percentage_points"]
+        score += 2.5 * features["match_money"]
+        score += 3.0 * features["match_code"]
+        score += 2.0 * features["match_date"]
+        score += 0.8 * features["match_entity"]
+        score += 1.2 * features["qa_score"]
+        return score
+
+    def _learned_candidate_score(
+        self, question: str, cand: AnswerCandidate, document_ids: list[str]
+    ) -> float | None:
+        self._load_answer_ranker()
+        ranker = self._answer_ranker or {}
+        weights = ranker.get("weights") or {}
+        if not weights:
+            return None
+        features = self._candidate_features(question, cand, document_ids)
+        score = float(ranker.get("bias", 0.0))
+        for name, value in features.items():
+            score += float(weights.get(name, 0.0)) * value
+        source_bias = ranker.get("source_bias") or {}
+        source = cand.source.split(":", 1)[0]
+        score += float(source_bias.get(source, 0.0))
+        return score
+
+    def _rank_answer_candidates(
+        self,
+        question: str,
+        candidates: list[AnswerCandidate],
+        document_ids: list[str],
+    ) -> list[AnswerCandidate]:
+        candidates = self._dedupe_candidates(candidates)
+        if not candidates:
+            return []
+
+        def score(cand: AnswerCandidate) -> float:
+            learned = self._learned_candidate_score(question, cand, document_ids)
+            heuristic = self._heuristic_candidate_score(question, cand, document_ids)
+            if learned is None:
+                return heuristic
+            # Keep a small heuristic prior so a bad/overfit JSON ranker cannot
+            # fully invert obvious type matches like "37 days".
+            return learned + 0.15 * heuristic
+
+        return sorted(candidates, key=score, reverse=True)
+
+    def _answer_candidates(
+        self, question: str, passage_idxs: list[int], document_ids: list[str]
+    ) -> list[AnswerCandidate]:
+        qa_candidates = self._extract_answer_candidates(question, passage_idxs)
+        candidates: list[AnswerCandidate] = []
+        candidates.extend(qa_candidates)
+        candidates.extend(self._rule_candidates(question, passage_idxs))
+        candidates.extend(self._document_answer_candidates(question, document_ids))
+        candidates.extend(self._canonical_candidates(question, candidates, document_ids))
+        return self._rank_answer_candidates(question, candidates, document_ids)
+
     # ----------------------------------------------------------------- query
 
     def _answer_one(self, question: str) -> dict:
@@ -1058,10 +1447,8 @@ class NLPManager:
         documents = self._top_doc_ids(
             reranked, fallback=retrieved, doc_fallback=doc_candidates
         )
-        model_answer = self._extract_answer(question, reranked)
-        rule_answer = self._rule_answer(question, reranked)
-        answer = self._choose_answer(question, model_answer, rule_answer)
-        answer = self._canonicalize_answer(question, answer, documents)
+        candidates = self._answer_candidates(question, reranked, documents)
+        answer = candidates[0].text if candidates else ""
         return {"documents": documents, "answer": answer}
 
     def qa_batch(self, questions: list[str]) -> list[dict]:
