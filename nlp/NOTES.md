@@ -1,6 +1,6 @@
 # NLP — notes & history
 
-Last updated: 16 May 2026 — v11-canonical-answer SUBMITTED twice (15/05 21:26 and 21:39 SGT), both 0.680 (speeds 0.881/0.873). REGRESSED -0.003 vs v9; canonicalizer's +10 replay proxy did NOT transfer through the 0.9 AE threshold. v9-doc-ensemble (0.683/0.883) remains the best submitted blend. Local test_nlp.py was on the pre-14-May rubric until 16/05; the new upstream local eval (threshold 0.9, 0.4 retrieval-only partial credit) is now the proper ship gate.
+Last updated: 16 May 2026 05:35 SGT — **NLP PARKED at v9-doc-ensemble 0.683/0.886** (3rd resubmit nudged speed 0.883→0.886, new blended high 0.734). v8a-genqa (Flan-T5-base, submitted 16/05 05:10) REGRESSED to 0.652/0.836 — landed at the low end of our predicted band, local→cloud gap held at 0.030 (matched v9's 0.028). **Generative QA is now a confirmed dead lever** alongside paragraph chunking, low-conf fallback, rapidfuzz spans, narrow templates, and full-doc canonicalization. v11-canonical-answer earlier regressed -0.003 because its +10 replay was against the OLD pre-14-May rubric. Every NLP lever inside this pipeline architecture has been tried; remaining ~7 days reallocated to AE.
 
 Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp).
@@ -149,6 +149,25 @@ til submit nlp v8a-genqa
 - Local equiv_rate (new test) ≥ v9 under new test → submit.
 - Local equiv_rate (new test) within -0.005 of v9 AND retrieval_hit_diff ↓ by >= 20 → submit (the chunked-context lesson: cloud sometimes rewards distribution shift that local doesn't reveal).
 - Otherwise: drop, freeze on v9.
+
+### Cloud result (16/05 05:10) — REGRESSED, dead lever
+
+```text
+v8a-genqa     16/05 05:10:19    0.652 / 0.836    0 / 700    local 0.682
+v9 baseline   16/05 05:21:57    0.683 / 0.886    0 / 700    local 0.711  (best ever)
+```
+
+- **Accuracy** -0.031 vs v9. Local→cloud gap was 0.030 (0.682 → 0.652), almost identical to v9's 0.028 (0.711 → 0.683). Translation: the generative head transferred cleanly; it's just structurally worse than fine-tuned RoBERTa-large extractive on this corpus.
+- **Speed** -0.047 vs v9. Local timing was 5:21 vs v9's 4:23 (~22% slower); that 22% materialised on cloud as 257s vs 211s.
+- **Blended** ≈ 0.652 × 0.75 + 0.836 × 0.25 = `0.694` vs v9's `0.734`. Net -0.040.
+
+**Why generative lost here, when v7-v1 (RoBERTa-large fine-tune) had won:**
+
+1. **0.9 AE threshold punishes paraphrase.** Extractive spans are verbatim source text — the ModernBERT equivalence model rates them high on lexical overlap. Generative outputs reword (even when correct) and slip below 0.9. We knew this risk going in; it was the deciding factor.
+2. **883 examples is too thin for seq2seq.** RoBERTa fine-tunes well at this scale because the span-prediction head is small and pre-conditioned. Flan-T5 has to learn answer *style* from few-shot.
+3. **One-shot generation, not batched.** Cost us 22% wall-clock — `v8a-genqa-batched` could recover most of that, but with accuracy already -0.031 it can't win blended even with v9-equivalent speed. Don't build the batched variant.
+
+**Verdict:** generative QA is a dead lever on this corpus. NLP parks at v9-doc-ensemble.
 
 ## New eval (FINAL — pinned 14 May)
 

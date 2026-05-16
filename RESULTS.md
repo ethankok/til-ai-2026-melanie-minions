@@ -1,22 +1,24 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 16 May 2026 04:30 SGT — **CV PARKED** at tier1 0.556/0.956
-after three more 16/05 attempts to dethrone it: tiled inference patch (local
-+0.006 only on medium AP at 3× compute, not shipped), v8s-1024 retrain
-(regressed locally, NOT submitted), v11m@1280 aug=0 submitted as
-`v11m-1280-noaug-v1` (cloud `0.474/0.949`, regressed -0.082). v11m's
-local→cloud gap is structurally ~0.44 vs v8s's ~0.35.
-NLP `v11-canonical-answer` SUBMITTED twice (15/05 21:26, 21:39 SGT) and
-REGRESSED to 0.680/0.881 and 0.680/0.873. v9-doc-ensemble (0.683/0.883)
-STILL the best submitted blend; v11 canonicalizer's +10 replay proxy did
-not transfer through the 0.9 AE threshold.
+Last updated: 16 May 2026 05:35 SGT — **NLP PARKED** at v9-doc-ensemble
+0.683/0.886 (new speed-bump high after 16/05 05:21 resubmit; blended ~0.734).
+v8a-genqa (Flan-T5-base generative, submitted 16/05 05:10) REGRESSED to
+0.652/0.836 — generative QA confirmed dead lever on this corpus. NLP has
+now exhausted: paragraph chunking, low-conf fallback, rapidfuzz spans,
+canonicalization, full-doc rewrites, AND generative answers. **CV PARKED**
+at tier1 0.556/0.956 after three more 16/05 attempts (tiled inference
+patch local-only; v8s-1024 retrain regressed locally NOT submitted;
+v11m-1280-noaug-v1 submitted cloud 0.474/0.949 -0.082). v11m's local→cloud
+gap is structurally ~0.44 vs v8s's ~0.35.
 
 ## Latest submitted scores
 
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
-NLP    melanie-minions-nlp      v9-doc-ensemble 15/05/2026 19:46:01 0 / 700 0.683   0.883  ← BEST BLEND; same image resubmit, speed variance helped
+NLP    melanie-minions-nlp      v9-doc-ensemble 16/05/2026 05:21:57 0 / 700 0.683   0.886  ← BEST BLEND; 3rd v9 resubmit, new speed high 0.883→0.886. Blended ~0.734.
+NLP (v8a regressed) melanie-minions-nlp v8a-genqa 16/05/2026 05:10:19 0 / 700 0.652 0.836  ← REGRESSED -0.031 acc, -0.047 speed vs v9. Flan-T5-base generative; landed at low end of predicted band. Generative confirmed dead lever.
+NLP (v9 prior) melanie-minions-nlp v9-doc-ensemble 15/05/2026 19:46:01 0 / 700 0.683 0.883
 NLP (v11 regressed) melanie-minions-nlp v11-canonical-answer 15/05/2026 21:26:38 0 / 700 0.680 0.881  ← REGRESSED -0.003 vs v9; canonicalizer rewrites didn't pass 0.9 AE threshold
 NLP (v11 resubmit) melanie-minions-nlp v11-canonical-answer 15/05/2026 21:39:55 0 / 700 0.680 0.873  ← Same image resubmit confirms accuracy is real -0.003, speed within variance
 NLP (v10 neutral) melanie-minions-nlp v10-template-lite 15/05/2026 20:16:17 0 / 700 0.683 0.882
@@ -58,6 +60,8 @@ v9-doc-ensemble 15/05 19:46      0.683   0.883   0 / 700   0.711        Same ima
 v10-template-lite 15/05 20:16     0.683   0.882   0 / 700   0.711        NEUTRAL. Narrow deterministic answer layer for elapsed days/years and percentage-point deltas. Local substr +1 / diff -1, retrieval unchanged; cloud accuracy unchanged.
 v11-canonical-answer 15/05 21:26  0.680   0.881   0 / 700   0.711(old)   REGRESSED -0.003 vs v9. Full-doc canonicalizer's +10 replay (exact/substr 451→461 on OLD-eval proxy) did not transfer through the 0.9 AE threshold; rewrites either weren't sampled on the hidden corpus, or were canonicalized into forms that the ModernBERT equivalence model rated below 0.9. Blended 0.730 vs v9 0.733.
 v11-canonical-answer 15/05 21:39  0.680   0.873   0 / 700   0.711(old)   Same image resubmit. Accuracy stable at 0.680 (confirms the -0.003 is real, not variance); speed dropped slightly. v9-doc-ensemble retains the leaderboard slot.
+v8a-genqa            16/05 05:10  0.652   0.836   0 / 700   0.682        REGRESSED -0.031 acc, -0.047 speed vs v9. Flan-T5-base fine-tuned on all 883 (q,ctx,ans) triples with --use-chunk-context, fp32 inference (T5 fp16 NaN trap), beam=4 generation on top reranked chunk. Local→cloud gap (0.030) was consistent with v9 (0.028) → transferred predictably. Generative answers either failed 0.9 AE threshold or paraphrased away. Blended 0.694 vs v9 0.733. **Generative QA confirmed dead lever on this corpus.**
+v9-doc-ensemble      16/05 05:21  0.683   0.886   0 / 700   0.711        Third v9 resubmit. Accuracy unchanged; speed bumped to new high 0.883→0.886 (+0.003). Best NLP blend now 0.734. Marginal speed variance.
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.
