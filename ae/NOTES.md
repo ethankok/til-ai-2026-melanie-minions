@@ -1,6 +1,8 @@
 # AE — notes & history
 
-Last updated: 16 May 2026 ~23:15 SGT — **`mcts-light-v1` TIMED OUT on cloud** ("Your model took too long to evaluate"; no score returned, no leaderboard impact). MCTS budget arithmetic was wrong: `AE_MCTS_DEPTH=5 × AE_MCTS_WIDTH=96` ran on **every** tick with no latency cap → ~2400 state expansions/tick × ~0.5-1 ms each = **1.2-2.4 s/tick** vs cloud's ~600 ms/tick budget (30 min / 30 games / ~100 ticks/game). Local `til test` has no wall-clock cap so it succeeded slowly and masked the bug. **`mcts-light-v2`** addresses this with three changes: (1) hard per-call latency budget via `time.monotonic()` with best-so-far fallback, (2) cheap pre-flight gate so MCTS only fires when something tactical is in reach, (3) shrunk defaults `DEPTH=3 WIDTH=24`. Hybrid-v3 (0.555/0.849) stays shipped via highest-score retention throughout.
+Last updated: 17 May 2026 ~00:30 SGT — **`mcts-light-v2` SHIPPED 23:52 at 0.487/0.595 — REGRESSED.** Blended 0.514 vs hybrid-v3's 0.628 (−0.114). The speed cap + pre-flight gate prevented the v1 timeout, but MCTS still cost +9 minutes of cloud wall-clock (4.5 → 12.2 min); speed score dropped 0.849 → 0.595. Accuracy ALSO regressed (−0.068 vs hybrid-v3), suggesting MCTS is *replacing* hybrid-v3 actions with cloud-worse choices, not just being slower. Best read: MCTS commits to simulated combat lines based on a stationary-opponent assumption that cloud opponents don't honor — same local-cloud distribution-shift failure mode that killed bc-belief and ppo-selfplay, this time at inference instead of training. Hybrid-v3 (0.555/0.849) stays leaderboard-shipped via highest-score retention. **Both training-side (bc-belief, ppo-selfplay) and inference-side (mcts-light at two configs) hypotheses are now falsified.** Remaining cheap iterations: (A) conservative-MCTS variant (raised `AE_MCTS_MIN_SCORE` + smaller `DEPTH/WIDTH`) so MCTS is a high-confidence override layer only; (B) heuristic-only MCTS A/B to isolate the MCTS contribution from the hybrid wrapper. After that, AE is genuinely exhausted at hybrid-v3.
+
+Earlier today: `mcts-light-v1` TIMED OUT on cloud ("Your model took too long to evaluate"; no score, no leaderboard impact). MCTS budget arithmetic was wrong: `AE_MCTS_DEPTH=5 × AE_MCTS_WIDTH=96` ran on **every** tick with no latency cap → ~2400 state expansions/tick × ~0.5-1 ms each = **1.2-2.4 s/tick** vs cloud's ~600 ms/tick budget. v2 fixed the timeout (latency cap + gate + smaller defaults) but introduced the speed/accuracy regression above.
 
 ## CURRENT CANDIDATE — `mcts-light-v2` (timeout fix on v1)
 
@@ -140,7 +142,7 @@ til test ae mcts-light-heuristic-v1
 til submit ae mcts-light-heuristic-v1
 ```
 
-Decision rule (applied to v2 once it returns a score, since v1 timed out):
+Decision rule (was set before v2 had a score):
 
 - Cloud `> 0.555`: keep iterating MCTS thresholds/depth; this is the first
   inference-side evidence that combat lookahead transfers.
@@ -151,6 +153,81 @@ Decision rule (applied to v2 once it returns a score, since v1 timed out):
 - Cloud `TIMEOUT`: speed budget blown — shrink depth/width further, tighten
   the latency cap, and re-test locally with timing instrumentation before
   re-submitting. (This is what happened to v1.)
+
+### v2 result — SHIPPED 16/05 23:52 SGT, REGRESSED 0.487/0.595
+
+| Eval | Score | Speed |
+|---|---:|---:|
+| hybrid-v3 (shipped) | 0.555 | 0.849 |
+| mcts-light-v2 cloud | **0.487** | **0.595** |
+| Delta vs hybrid-v3 | **−0.068** | **−0.254** |
+| Blended (75% acc + 25% speed) — v2 | **0.514** | |
+| Blended — hybrid-v3 | **0.628** | |
+| Blended delta | **−0.114** | |
+
+Speed cost in wall-clock: hybrid-v3 finished cloud eval in ~4.5 min;
+v2 took ~12.2 min. The 80 ms per-call cap + pre-flight gate prevented
+the v1 timeout, but MCTS still added real compute. Local `til test`
+already foreshadowed this: each round took 17-25 s (vs ~3-5 s for
+hybrid-v3), total local test ~2 min vs ~30 s.
+
+Local-cloud gap on v2 was 0.175 (local til test 0.662 → cloud 0.487),
+*narrower* than hybrid-v3's 0.219. Same pattern as the
+ppo-selfplay-v1-vs-v2 finding: changing the inference layer changes
+the gap, but the local floor dropped enough that the tighter gap
+didn't help.
+
+Best read on why accuracy regressed (not just speed):
+- MCTS commits to simulated tactical lines using a stationary-opponent
+  assumption. Cloud opponents move on their own logic, so simulated
+  detonations sometimes miss while we still pay the danger/escape cost.
+- We're paying the *cost of simulated combat* without earning the
+  *reward of simulated combat*. Same distribution-shift failure that
+  killed bc-belief (training-side) and ppo-selfplay (training-side),
+  this time at inference.
+
+**Conclusion on MCTS as a class**: as a *primary* planner that
+overrides hybrid actions on positive scores, MCTS loses to hybrid-v3
+on this cloud. Two cheap variants are still worth one submission
+each before declaring AE done:
+
+### Cheap remaining iterations (each ~30 min)
+
+**A. Conservative-MCTS** — make MCTS a high-confidence override layer
+only, not a primary planner. Raise `AE_MCTS_MIN_SCORE` from 12 → 22
+so MCTS only commits to *clearly* high-value lines; shrink
+`DEPTH=2 WIDTH=16` to recover speed.
+
+```dockerfile
+ENV AE_MCTS_DEPTH=2
+ENV AE_MCTS_WIDTH=16
+ENV AE_MCTS_MIN_SCORE=22
+ENV AE_HYBRID_MCTS_MIN_SCORE=22
+```
+
+Tag: `mcts-light-v3-conservative`. Expected: speed back to 0.80+,
+accuracy hopefully closer to hybrid-v3-ish since MCTS only fires
+on the high-confidence subset of tactical ticks.
+
+**B. Heuristic-only MCTS A/B** — `AE_MODE=heuristic`. Bypasses the
+neural policy entirely; tells us whether MCTS adds value over plain
+planner-v3b (0.499 cloud baseline) or just adds cost.
+
+```bash
+echo heuristic > ae/src/.ae_mode
+til build ae mcts-light-heuristic-v1
+til test  ae mcts-light-heuristic-v1
+til submit ae mcts-light-heuristic-v1
+echo hybrid > ae/src/.ae_mode   # restore for future builds
+```
+
+Tag: `mcts-light-heuristic-v1`. Diagnostic-only — isolates the MCTS
+contribution from the hybrid wrapper interaction.
+
+After A and B (or just A if speed remains the dominant blocker), AE
+is exhausted at hybrid-v3 across both training-side and inference-side
+interventions. The next-highest EV remaining qualifier lever is the
+NLP `v13b-deberta` retune already wired up.
 
 ## NEXT EXPERIMENT — self-play PPO retrain (workshop-recommended)
 
