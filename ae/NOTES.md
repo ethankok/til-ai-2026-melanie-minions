@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 16 May 2026 ~17:00 SGT — **`ppo-selfplay-v2` SUBMITTED, cloud pending.** Training peaked at update 120/200 with best PPO eval 0.6601 against league (7 monotonic saves: 0.4908 → 0.5038 → 0.5327 → 0.5333 → 0.5982 → 0.6428 → 0.6601). Workbench auto-restart killed tmux at update 162 but best checkpoint preserved. Local eval against mixed (pure policy): **0.5747** (+0.088 over BC, +0.171 over v1). Local docker `til test` (6 games, hybrid wrapper ON): **0.7068** — wrapper adds ~0.13 on top. v1 reference: til test 0.264 → cloud 0.305 (cloud +0.04 vs til test). If v2 follows same pattern, projected cloud **0.55-0.75**, conservative 0.48. First plausible candidate to beat hybrid-v3 (0.555) since 14 May. No leaderboard risk via highest-score retention.
+Last updated: 16 May 2026 ~18:25 SGT — **`ppo-selfplay-v2` SHIPPED 18:09 at 0.436/0.857 — REGRESSED -0.119 vs hybrid-v3.** Beats v1 (0.305) by +0.131 (BC warm-start + self-play > from-scratch self-play), but doesn't clear hybrid-v3's 0.555. The v1 local-cloud gap of 0.10 was an ARTIFACT — v2's gap is 0.271 (til test 0.7068 → cloud 0.436), BIGGER than hybrid-v3's structural 0.219. **AE re-parked at hybrid-v3.** Clean negative result on the league/self-play hypothesis: training-side interventions can move the local score but the local-cloud gap is structural to the hidden eval distribution, not to our training opponent mix. Remaining AE moves all have realistic ceiling 0.58-0.62 at best; recommend pivoting remaining qualifier hours to CV Phase C (the next-best per-hour swing).
 
 ## NEXT EXPERIMENT — self-play PPO retrain (workshop-recommended)
 
@@ -93,7 +93,7 @@ interesting:
 - If the gap stays at ~0.10, projected v2 cloud is **0.45-0.55** — first
   AE submission to plausibly beat hybrid-v3 (0.555) since 14 May.
 
-### ppo-selfplay-v2 — SUBMITTED 16 May ~16:55 SGT (cloud pending)
+### ppo-selfplay-v2 — SHIPPED 16 May 18:09 SGT, REGRESSED to 0.436/0.857
 
 Training summary:
 - `warm-started actor from training/ae/checkpoints/bc.pt (n_frames=4, use_belief=False)` ✓
@@ -106,7 +106,7 @@ Training summary:
   dropping (0.37 → 0.13-0.20), `entropy` 0.10 → 0.25 (gentle exploration
   pickup), `pool=5` reached at update 50 and stayed full.
 
-Local evals (apples-to-apples comparisons):
+Full results table:
 
 | Eval setup | Score | Notes |
 |---|---:|---|
@@ -114,29 +114,58 @@ Local evals (apples-to-apples comparisons):
 | ppo-selfplay-v1 vs mixed (pure policy) | 0.4040 | From-scratch (no warm-start) |
 | **ppo-selfplay-v2 vs mixed (pure policy)** | **0.5747** | +0.088 over BC, +0.171 over v1 |
 | ppo-selfplay-v2 `til test` (hybrid wrapper) | **0.7068** | Wrapper adds ~0.13 |
+| **ppo-selfplay-v2 — CLOUD (16/05 18:09)** | **0.436 / 0.857** | -0.119 vs hybrid-v3, but +0.131 over v1, 0/30 errors |
 
-Cloud projection:
-- v1 reference: `til test` 0.264 → cloud 0.305 (cloud *higher* by 0.04).
-- If v2 follows same pattern: `til test` 0.7068 → cloud **0.65-0.75**.
-- If gap reverts to structural ~0.23: cloud ~0.48.
-- Conservative band: **0.50-0.65**.
+### What we learned (negative result, but informative)
 
-Submitted at ~16:55 SGT after `til test` showed 0.7068 with 0/6 errors and
-the container loaded the new-arch weights cleanly. After submission,
-restored `ae/models/bc.pt` from
-`~/ae-checkpoints-backup/deployed-bc-v1.pt.local-snapshot` so future builds
-default to hybrid-v3 weights, not v2.
+**v2 vs v1 (+0.131 cloud, 0.305 → 0.436)**: BC warm-start + self-play
+opponent curriculum is strictly better than self-play from random init. This
+piece of the workshop's prescription was correct.
 
-### Decision when cloud lands
+**v2 vs hybrid-v3 (-0.119 cloud, 0.555 → 0.436)**: but it doesn't clear the
+hybrid-v3 ceiling. Self-play training improves the policy, but not enough
+to compensate for the local-cloud gap.
 
-- **Cloud ≥ 0.58**: new high. Iterate further (longer training, larger pool,
-  maybe re-introduce belief-map architecture now that we know self-play
-  doesn't overfit the way bc-belief did).
-- **Cloud 0.50-0.58**: competitive with hybrid-v3. Within ±0.04 noise of
-  hybrid-v3 (0.555). Both stay on leaderboard via highest-score retention.
-  Probably done with AE for this qualifier; pivot to NLP/CV polish if any.
-- **Cloud < 0.50**: regressed. Hybrid-v3 stays as our deployed weights;
-  document the negative result and pivot.
+**The v1 "gap tightening" was an artifact**. v1's local-cloud gap of 0.099
+looked like a breakthrough, but the actual local→cloud transformation was:
+
+| Submission | Local (mode) | Cloud (hybrid wrapper) | Gap |
+|---|---|---:|---:|
+| v1 | 0.404 (pure policy) | 0.305 | 0.099 |
+| v2 | 0.575 (pure policy) | 0.436 | 0.139 |
+| v2 | 0.7068 (til test, hybrid) | 0.436 | **0.271** |
+| hybrid-v3 | 0.774 (til test, hybrid) | 0.555 | 0.219 |
+
+The apples-to-apples comparison (both in hybrid mode) shows the gap is
+**0.27 for v2**, *larger* than hybrid-v3's 0.22. The v1 "tightening" was
+an illusion: v1's pure-policy raw score (0.404) happened to be closer to
+its hybrid-wrapped cloud score (0.305) because v1's weak policy meant the
+hybrid wrapper was carrying more of the cloud performance proportionally.
+With v2's stronger raw policy, the wrapper contributes less in relative
+terms, and the structural gap re-emerges.
+
+**Conclusion**: training-side interventions (BC, league opponents, self-play
+snapshots) can move the *local* score by significant amounts but the
+local-cloud gap is structural to the hidden eval distribution, not to our
+training opponent distribution. Memory-augmented BC (bc-belief) tried to
+close it through state representation and failed. League + self-play tried
+to close it through opponent diversity and failed. The gap survives both.
+
+### AE re-parked at hybrid-v3 (0.555/0.849)
+
+Remaining AE moves and realistic ceilings:
+
+| Move | Effort | Realistic cloud | Notes |
+|---|---|---:|---|
+| Longer v2 training (300-500 updates) | 4-8h | 0.45-0.50 | Best v2 eval was at epoch 120 of 200; further training likely drifts. |
+| Larger snapshot pool (10-20) | 4-6h | 0.45-0.55 | More opponent diversity. Might shift gap a little. |
+| MCTS-light at inference | 1-2 days | 0.55-0.65 | Only approach that *doesn't* depend on opponent distribution. Speed budget risk. |
+| Re-introduce belief-map + self-play | 4-6h training | 0.40-0.55 | bc-belief was killed by random opponents; self-play might save it. Untested. |
+
+None of these has a strong path to clearing hybrid-v3 by a margin worth a
+submission slot. **Recommend pivoting to CV Phase C** (active workstream,
+hypothesis-aligned recipe TBD, +0.03-0.07 cloud lift band) — higher
+EV-per-hour than any remaining AE move with 7 days left.
 
 ### Workflow improvement — SSH access from Mac
 
