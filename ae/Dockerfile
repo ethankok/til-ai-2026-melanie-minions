@@ -32,6 +32,32 @@ ENV AE_MCTS_MIN_SCORE=12
 ENV AE_HYBRID_TRUST_MCTS=1
 ENV AE_HYBRID_MCTS_MIN_SCORE=12
 
+# Tier-1 / Tier-2 toggles. Bisect on 100-200 round local sims (17 May 2026)
+# showed individual changes are net-positive, but the 5-toggle bundle has
+# negative interaction (planner thrashes between defense / kill / item).
+# Ship the clean winning subset by default:
+#   #6 NO_STAY_PENALTY  +0.034 (safe, 1-line change in fallback scoring)
+#   #3 REPEAT_KILL      +0.029 (bomb cells where we just killed)
+#   #7 PREDICTIVE_WALK  +0.013 (random-walk-aware bomb EV)
+# Disabled by default (negative or neutral on random opponents):
+#   #2 DEFENSE          +0.004 — neutral; may help on cloud, opt-in only
+#   #4 SHARED_CREDIT    -0.044 — confirmed regressor; do not enable
+# Tier 1 #1 (playbook) and Tier 2 #8 (opponent model) DEFAULT OFF after
+# 200-round A/Bs (17 May 2026): playbook regressed -0.097 standalone on
+# random opponents; bomb-only filter still -0.033. Hypothesis falsified
+# locally — kept as opt-in for cloud-only A/Bs but not auto-enabled.
+# To re-enable any, set the matching env var to 1 here or via `docker run -e ...`.
+ENV AE_TIER1_DEFENSE=0
+ENV AE_TIER1_REPEAT_KILL=1
+ENV AE_TIER1_SHARED_CREDIT=0
+ENV AE_TIER1_NO_STAY_PENALTY=1
+ENV AE_TIER1_PREDICTIVE_WALK=1
+ENV AE_USE_PLAYBOOK=0
+ENV AE_USE_OPPONENT_MODEL=0
+# Opt-in via `-e AE_USE_PLAYBOOK=1 -e AE_PLAYBOOK_FILTER=bomb_only` for a
+# cloud-only A/B if local-cloud distribution gap turns out to favor the
+# playbook on real opponents.
+
 # Installs your dependencies.
 RUN pip install -U pip
 COPY requirements.txt .
@@ -42,6 +68,11 @@ COPY src .
 
 # Copies trained policy weights (if any). Build still succeeds with an empty
 # `models/` and the server falls back to the heuristic planner at runtime.
+# Models can include:
+#   bc.pt              — neural policy checkpoint (used by AE_MODE=hybrid|policy)
+#   playbook.npz       — Tier-1 #1 offline playbook (built by training/ae/build_playbook.py)
+#   opponent_model.json — Tier-2 #8 opponent action distribution
+#   oracle_table.npz   — Tier-2 #10 oracle BC lookup
 COPY models /workspace/models
 
 # Starts your model server. uvloop + httptools are already pulled in by

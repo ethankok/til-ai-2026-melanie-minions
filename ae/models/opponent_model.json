@@ -1,0 +1,68 @@
+{
+  "rounds": 200,
+  "opponents": [
+    "random",
+    "greedy",
+    "bomber",
+    "defender",
+    "hunter"
+  ],
+  "by_opponent_name": {
+    "random": {
+      "FORWARD": 0.147975,
+      "BACKWARD": 0.14905,
+      "LEFT": 0.19765,
+      "RIGHT": 0.19765,
+      "STAY": 0.217525,
+      "PLACE_BOMB": 0.09015
+    },
+    "greedy": {
+      "FORWARD": 0.501125,
+      "BACKWARD": 0.2192,
+      "LEFT": 0.125475,
+      "RIGHT": 0.129525,
+      "STAY": 0.024675,
+      "PLACE_BOMB": 0.0
+    },
+    "bomber": {
+      "FORWARD": 0.449025,
+      "BACKWARD": 0.158775,
+      "LEFT": 0.1609,
+      "RIGHT": 0.1213,
+      "STAY": 0.005725,
+      "PLACE_BOMB": 0.104275
+    },
+    "defender": {
+      "FORWARD": 0.44565,
+      "BACKWARD": 0.17475,
+      "LEFT": 0.15675,
+      "RIGHT": 0.1155,
+      "STAY": 0.019975,
+      "PLACE_BOMB": 0.087375
+    },
+    "hunter": {
+      "FORWARD": 0.43815,
+      "BACKWARD": 0.157075,
+      "LEFT": 0.1695,
+      "RIGHT": 0.1371,
+      "STAY": 0.008,
+      "PLACE_BOMB": 0.090175
+    }
+  },
+  "expected_walk_distance_per_step": {
+    "random": 0.2847989949748744,
+    "greedy": 0.6590452261306533,
+    "bomber": 0.5881155778894472,
+    "defender": 0.583140703517588,
+    "hunter": 0.5636180904522613
+  },
+  "weighted_mix": {
+    "FORWARD": 0.39638500000000004,
+    "BACKWARD": 0.17176999999999998,
+    "LEFT": 0.162055,
+    "RIGHT": 0.140215,
+    "STAY": 0.05518000000000001,
+    "PLACE_BOMB": 0.074395
+  },
+  "weighted_walk_distance": 0.5357437185929649
+}

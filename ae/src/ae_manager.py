@@ -44,6 +44,12 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+# Module-level cache for the opponent-model walk scale. PPO training
+# instantiates hundreds of AEManager instances per epoch (one per scripted
+# opponent per game); without caching we'd reload + re-print every time.
+_OPPONENT_WALK_SCALE_CACHE: float | None = None
+
+
 @dataclass(frozen=True)
 class _LookaheadState:
     pos: tuple[int, int]
@@ -159,6 +165,24 @@ class AEManager:
     CELL_THREAT_PENALTY = 5.0
     # Distance (Manhattan) within which an enemy near our base becomes a defense target.
     BASE_DEFENSE_RADIUS = 4
+    # Tier-1 #3: how long an enemy stays frozen after a kill (matches env config
+    # entities.agent.freeze_turns). After unfreezing they respawn at the same
+    # cell. We use this to plant follow-up bombs timed for the respawn window.
+    ENEMY_FREEZE_DURATION = 3
+    # Tier-1 #2: when our base HP drops below this AND an enemy is within
+    # BASE_DEFENSE_RADIUS, defense becomes the top objective. Set high enough
+    # that we don't preempt every offensive opportunity, low enough that we
+    # never let the base ride at <40 HP.
+    BASE_DEFENSE_HEALTH = 60
+    # Tier-1 #4: realistic shared-credit weights for cloud's 6-team game.
+    # destroy_enemy_base raw value is 50 but other teams will share the kill;
+    # mean realistic share ~30. attack_kill raw value 30 → realistic ~12.
+    SHARED_CREDIT_BASE_VALUE = 30.0
+    SHARED_CREDIT_KILL_VALUE = 12.0
+    # Tier-1 #7: window over which we credit a random-walk enemy with possibly
+    # walking into our blast. Matches BOMB_TIMER + 1; one tick of slack for
+    # detonation ordering.
+    PREDICTIVE_WALK_HORIZON = 4
 
     def __init__(self):
         self.grid_size = self.GRID_SIZE
@@ -178,6 +202,33 @@ class AEManager:
         self.mcts_log_timing = _env_flag("AE_MCTS_LOG_TIMING", True)
         self.last_lookahead_score = -inf
         self.last_lookahead_path: tuple[int, ...] = ()
+        # Tier-1 toggles. Bisect on 100-200 round local sims (17 May 2026)
+        # picked the clean winning subset: #3, #6, #7 default ON; #2, #4
+        # default OFF. Cloud A/B should validate before flipping more on.
+        # Override any individually with `AE_TIER1_*=1` / `=0`.
+        self.tier1_defense_priority = _env_flag("AE_TIER1_DEFENSE", False)
+        self.tier1_repeat_kill = _env_flag("AE_TIER1_REPEAT_KILL", True)
+        self.tier1_shared_credit = _env_flag("AE_TIER1_SHARED_CREDIT", False)
+        self.tier1_no_stay_penalty = _env_flag("AE_TIER1_NO_STAY_PENALTY", True)
+        self.tier1_predictive_walk = _env_flag("AE_TIER1_PREDICTIVE_WALK", True)
+        # Tier-1 #1: load the offline playbook if present. The lookup is a
+        # cheap dict access so we hit it on every tick before falling
+        # through to the heuristic. Disabled in two cases: env var set, or
+        # no .npz on disk. Import is local so heuristic-only paths never
+        # pay for a playbook load.
+        try:
+            from playbook import get_playbook  # noqa: WPS433
+            self.playbook = get_playbook()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[AEManager] playbook import failed: {exc}", flush=True)
+            self.playbook = None
+        # Tier-2 #8: load opponent model if present so predictive-walk
+        # credit reflects measured opponent behavior instead of a hand-tuned
+        # constant. The model is a single scalar (mean walk distance per
+        # step) — the manager scales its predictive-walk hit probabilities
+        # by min(1, walk_distance / 0.5) so values <0.5 (less mobile
+        # opponents) get downweighted and >0.5 (more mobile) get upweighted.
+        self.opponent_walk_scale = self._load_opponent_walk_scale()
         self._reset_memory()
 
     # ------------------------------------------------------------------
@@ -215,6 +266,42 @@ class AEManager:
         if location is None:
             return self._fallback_action(observation, None, direction, None)
 
+        # Tier-1 #1: playbook override. After belief is updated and frozen-
+        # state is handled, before the heuristic does any planning, check
+        # whether we have a high-confidence pre-mined action for this
+        # (location, direction, step). Only used when the action is legal
+        # under the current mask.
+        if self.playbook is not None:
+            pb_action = self.playbook.lookup(location, direction, step)
+            if pb_action is not None and self._legal(observation, pb_action):
+                # Bomb-via-playbook still needs a valid escape so we don't
+                # walk into a bomb we can't get out of (the offline trace
+                # learned an escape path on the same map; we re-verify here
+                # cheaply against current belief state).
+                if pb_action == self.PLACE_BOMB:
+                    if self._as_int(observation.get("team_bombs"), default=0) <= 0:
+                        pass
+                    else:
+                        bomb_blast = self._blast_cells(location)
+                        base = self.base_location or self._location(observation.get("base_location"))
+                        if base is not None and base in bomb_blast:
+                            pass
+                        else:
+                            escape = self._safe_escape_within(
+                                location, bomb_blast, self.BOMB_TIMER
+                            )
+                            if escape is not None:
+                                self.known_bombs[location] = {
+                                    "timer": self.BOMB_TIMER,
+                                    "own": True,
+                                    "last_step": step,
+                                }
+                                self.escape_target = escape
+                                self.escape_until_step = step + self.BOMB_TIMER
+                                return self.PLACE_BOMB
+                else:
+                    return pb_action
+
         danger = self._danger_cells()
         low_health = self.health < self.LOW_HEALTH_THRESHOLD
 
@@ -243,6 +330,58 @@ class AEManager:
     # ------------------------------------------------------------------
     # Memory and projection
     # ------------------------------------------------------------------
+    @staticmethod
+    def _load_opponent_walk_scale() -> float:
+        """Return the predictive-walk multiplier from the offline opponent model.
+
+        Tier-2 #8: if `ae/models/opponent_model.json` (or
+        `/workspace/models/opponent_model.json`) exists, read its
+        ``weighted_walk_distance`` field and convert to a 0..2 scale where
+        1.0 == default (matches the manager's hand-tuned formula calibrated
+        against random walkers, ~0.5 cells/step). Disabled by setting
+        ``AE_USE_OPPONENT_MODEL=0``.
+
+        Result is cached per-process via a module-level guard so PPO training
+        loops that instantiate hundreds of AEManager instances don't repeat
+        the load message and disk read for every opponent.
+        """
+        global _OPPONENT_WALK_SCALE_CACHE
+        if _OPPONENT_WALK_SCALE_CACHE is not None:
+            return _OPPONENT_WALK_SCALE_CACHE
+
+        if os.environ.get("AE_USE_OPPONENT_MODEL", "1").strip().lower() in {"0", "false", "no", "off"}:
+            _OPPONENT_WALK_SCALE_CACHE = 1.0
+            return 1.0
+        candidates = [
+            os.environ.get("AE_OPPONENT_MODEL_PATH"),
+            os.path.join(os.path.dirname(__file__), "models", "opponent_model.json"),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "opponent_model.json"),
+            "/workspace/models/opponent_model.json",
+        ]
+        for path in candidates:
+            if not path or not os.path.exists(path):
+                continue
+            try:
+                import json as _json  # local; cheap on Python 3
+                with open(path, "r", encoding="utf-8") as f:
+                    data = _json.load(f)
+                walk = float(data.get("weighted_walk_distance", 0.5))
+                # Normalize: 0.5 cells/step is the "neutral" expected value
+                # for a uniform random walk. Cap to [0.4, 2.0] so a
+                # weirdly-fit model can't blow the heuristic up.
+                scale = max(0.4, min(2.0, walk / 0.5))
+                print(
+                    f"[AEManager] opponent model loaded ({path}); "
+                    f"walk_distance={walk:.3f} scale={scale:.2f}",
+                    flush=True,
+                )
+                _OPPONENT_WALK_SCALE_CACHE = scale
+                return scale
+            except Exception as exc:  # noqa: BLE001
+                print(f"[AEManager] opponent model load failed at {path}: {exc}", flush=True)
+        _OPPONENT_WALK_SCALE_CACHE = 1.0
+        return 1.0
+
     def _reset_memory(self) -> None:
         self.grid_size = self.GRID_SIZE
         self.seen: set[tuple[int, int]] = set()
@@ -265,6 +404,12 @@ class AEManager:
         self.last_lookahead_path = ()
         # Per-turn blast cell cache; cleared at the start of every ae() call.
         self._blast_cache: dict[tuple[int, int], frozenset[tuple[int, int]]] = {}
+        # Tier-1 #3: track recent kills so we can plant a follow-up bomb
+        # timed for the enemy's respawn. (pos, unfreeze_step).
+        self.recent_kills: list[tuple[tuple[int, int], int]] = []
+        # Tier-1 #2: per-step record of the last health value we saw on our
+        # base so we can detect "took damage this step" reliably.
+        self.last_base_health: int = 100
         self.last_step = None
 
     def _update_memory(
@@ -424,11 +569,36 @@ class AEManager:
 
         candidates: list[tuple[float, tuple[int, int]]] = []
 
+        # Tier-1 #2: when our base HP is below threshold AND an enemy is
+        # within the defense radius AND we have bombs to use, defense becomes
+        # priority 1 — a single point of base damage is -1 reward and a
+        # destroyed base is a -150 swing in our favor relative to undestroyed.
+        defense_emergency = False
+        if (
+            self.tier1_defense_priority
+            and self.base_location is not None
+            and self.base_health < self.BASE_DEFENSE_HEALTH
+        ):
+            for pos, last_seen in self.enemy_agents.items():
+                if step - int(last_seen) > self.ENEMY_STALENESS:
+                    continue
+                if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
+                    defense_emergency = True
+                    # Big constant — outweighs every other candidate so the
+                    # planner routes us toward this enemy first.
+                    candidates.append((150.0, pos))
+
         # When health is low, avoid aggressive targets (enemy bases, base
         # defense) and stick to items/exploration so we don't die in a melee.
-        if not low_health:
+        if not low_health and not defense_emergency:
             for pos in self.enemy_bases:
-                candidates.append((80.0, pos))
+                # Tier-1 #4: realistic shared-credit value for cloud's 6-team
+                # game. Was 80; under 6 teams average ~3 contributors split
+                # the +50 destroy_enemy_base, so ~17 expected. We still want
+                # a pull toward enemy bases (close-range damage on the way
+                # earns attack_damage credit) so set a moderate value.
+                value = 35.0 if self.tier1_shared_credit else 80.0
+                candidates.append((value, pos))
             # Base defense: enemies near our base become high-priority bomb
             # targets — losing the base is -50, so a 30+ value swing is worth it.
             if self.base_location is not None:
@@ -648,6 +818,15 @@ class AEManager:
                     }
                     self.escape_target = escape
                     self.escape_until_step = (self.last_step or 0) + self.BOMB_TIMER
+                    # Tier-1 #3: log every enemy_agent currently inside the
+                    # blast as a likely kill. They'll respawn in place after
+                    # ENEMY_FREEZE_DURATION ticks; remember the cell so a
+                    # later bomb can be timed for it.
+                    if self.tier1_repeat_kill and enemy_agent_hit:
+                        unfreeze = step + self.ENEMY_FREEZE_DURATION
+                        for pos, last_seen in self.enemy_agents.items():
+                            if int(last_seen) == step and pos in bomb_blast:
+                                self.recent_kills.append((pos, unfreeze))
                     return self.PLACE_BOMB
 
         # Adjacent mission grab — purely a speed optimization, not a behavior
@@ -1079,20 +1258,75 @@ class AEManager:
         score = 0.0
         tactical = False
 
+        # Tier-1 #4: shared-credit-aware values. Under cloud's 6-team game
+        # the average kill / base-destroy is shared across ~2-3 contributors,
+        # so the realistic credit is well below the raw config values. Using
+        # the inflated values pulled the planner toward marginal long-range
+        # base attacks at the expense of close-range damage and items.
+        base_value = (
+            self.SHARED_CREDIT_BASE_VALUE if self.tier1_shared_credit else 55.0
+        )
+        kill_value = (
+            self.SHARED_CREDIT_KILL_VALUE if self.tier1_shared_credit else 24.0
+        )
+
         for base in self.enemy_bases:
             if base in blast:
-                score += 55.0
+                score += base_value
                 tactical = True
         step = self.last_step if self.last_step is not None else 0
         for enemy, last_seen in self.enemy_agents.items():
             if step - int(last_seen) > self.ENEMY_STALENESS:
                 continue
             if enemy in blast:
-                score += 24.0
+                score += kill_value
                 tactical = True
             elif enemy in self._extended_blast(blast, 1):
                 score += 6.0
                 tactical = True
+
+        # Tier-1 #7: predictive walk credit. Even when no enemy is currently
+        # in the blast cone, a recently-seen enemy has nonzero probability of
+        # walking into it before detonation. Under a uniform random walker
+        # the per-step movement distribution is ~1/5 to each neighbour or
+        # STAY; the per-walk-step probability of hitting any specific cell
+        # is small but the union over 4 walk steps and 5-13 blast cells is
+        # not negligible. We approximate it cheaply: each fresh enemy within
+        # PREDICTIVE_WALK_HORIZON Manhattan steps of the blast contributes
+        # a small expected-damage term.
+        if self.tier1_predictive_walk:
+            extended = self._extended_blast(blast, self.PREDICTIVE_WALK_HORIZON)
+            for enemy, last_seen in self.enemy_agents.items():
+                if enemy in blast:
+                    continue
+                if step - int(last_seen) > self.ENEMY_STALENESS:
+                    continue
+                if enemy not in extended:
+                    continue
+                d = self._manhattan(enemy, our_pos)
+                # Probability decays with distance — an enemy 4 steps away
+                # has lower P(hit blast) than one 1 step away. Cap at 0.30.
+                # Tier-2 #8: scale by measured opponent walk distance so this
+                # tracks the actual mobility of cloud opponents instead of
+                # the random-walk default.
+                p_hit = max(0.0, 0.30 - 0.06 * d) * self.opponent_walk_scale
+                score += kill_value * p_hit
+                tactical = True
+
+        # Tier-1 #3: respawn-camp credit. If a kill cell from `recent_kills`
+        # is in our blast AND the enemy is still frozen / about to unfreeze
+        # within the bomb's effective window, count expected hit value.
+        if self.tier1_repeat_kill and self.recent_kills:
+            for kpos, unfreeze in self.recent_kills:
+                if kpos not in blast:
+                    continue
+                # Detonation arrives roughly BOMB_TIMER ticks after placement.
+                # If the unfreeze step lands inside that window, the enemy is
+                # at the kill cell exactly when we explode there.
+                detonation_step = step + self.BOMB_TIMER
+                if abs(detonation_step - unfreeze) <= 1:
+                    score += kill_value
+                    tactical = True
 
         if self.base_location is not None and self.base_location in blast:
             score -= 65.0
@@ -1166,6 +1400,15 @@ class AEManager:
         for pos, last_seen in list(self.enemy_agents.items()):
             if step - int(last_seen) > self.ENEMY_AGENT_MEMORY_STEPS:
                 self.enemy_agents.pop(pos, None)
+        # Tier-1 #3: drop kill records whose respawn window has fully passed.
+        # We keep them through ENEMY_FREEZE_DURATION + a little slack for
+        # follow-up bomb timing.
+        if self.recent_kills:
+            self.recent_kills = [
+                (pos, unfreeze)
+                for pos, unfreeze in self.recent_kills
+                if step <= unfreeze + self.BOMB_TIMER + 1
+            ]
 
     def _danger_cells(self) -> set[tuple[int, int]]:
         danger: set[tuple[int, int]] = set()
@@ -1305,6 +1548,37 @@ class AEManager:
             if nearby >= 2:
                 tactical_target = True
 
+        # Tier-1 #7: predictive random-walk bomb. If there is at least one
+        # fresh enemy sighting within PREDICTIVE_WALK_HORIZON of the blast,
+        # the union probability of any one enemy walking into the blast over
+        # the bomb timer window is non-trivial. We use a conservative
+        # threshold (expected value >= 8 reward, ~one mission's worth) so
+        # this only fires on high-EV placements.
+        if not tactical_target and self.tier1_predictive_walk and self.enemy_agents:
+            extended = self._extended_blast(bomb_blast, self.PREDICTIVE_WALK_HORIZON)
+            expected_damage = 0.0
+            for pos, last_seen in self.enemy_agents.items():
+                if step - int(last_seen) > self.ENEMY_STALENESS:
+                    continue
+                if pos not in extended:
+                    continue
+                d = self._manhattan(pos, location)
+                # Tier-2 #8: scale by opponent_walk_scale.
+                p_hit = max(0.0, 0.30 - 0.06 * d) * self.opponent_walk_scale
+                expected_damage += 20.0 * p_hit  # 20 damage per blast hit
+            if expected_damage >= 8.0:
+                tactical_target = True
+
+        # Tier-1 #3: respawn-camp predictive bomb. If a kill cell falls in
+        # our blast and the enemy unfreeze step lines up with this bomb's
+        # detonation step, fire even without other targets.
+        if not tactical_target and self.tier1_repeat_kill and self.recent_kills:
+            detonation_step = step + self.BOMB_TIMER
+            for kpos, unfreeze in self.recent_kills:
+                if kpos in bomb_blast and abs(detonation_step - unfreeze) <= 1:
+                    tactical_target = True
+                    break
+
         wall_to_open = False
         # Proactive wall break: if the target is high-value (enemy base or
         # mission) and a destructible wall sits between us and it, bomb
@@ -1404,9 +1678,15 @@ class AEManager:
             if new_pos in self.recent_locations[-3:]:
                 score -= 1.5
             if action == self.STAY:
-                # Low-health agent can usefully hide one tick to recover; mild
-                # penalty instead of strong avoidance.
-                score -= 1.0 if low_health else 4.0
+                # Tier-1 #6: cloud reward for STAY is 0 (stationary_penalty=0
+                # in the env config). Standing still in safety while a hostile
+                # bomb resolves is sometimes optimal. Drop the penalty under
+                # the tier-1 toggle; only keep a tiny tie-breaker so MOVE wins
+                # all-else-equal.
+                if self.tier1_no_stay_penalty:
+                    score -= 0.2 if low_health else 0.5
+                else:
+                    score -= 1.0 if low_health else 4.0
             if target is not None:
                 score -= 0.12 * self._manhattan(new_pos, target)
                 desired_dir = self._rough_direction(new_pos, target)
