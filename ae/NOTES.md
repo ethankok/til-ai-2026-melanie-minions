@@ -23,17 +23,26 @@ The workshop's prescription:
 
 Critical: the prior `FrozenPolicyOpponent` deepcopied the *live* actor at rollout construction. In late training that meant "play yourself" — almost no gradient signal. The snapshot pool fixes this: late-training rollouts face opponents from updates 10, 30, 50, 80, 100 ago, preserving curriculum diversity.
 
-### Recommended run command (Workbench)
+### Recommended run command (Workbench) — `--n-frames` MUST match BC checkpoint
 
 ```bash
-# 1. Make sure BC checkpoint is in place
-ls training/ae/checkpoints/bc.pt
+# 1. Check the BC checkpoint's n_frames first — train_ppo.py silently
+#    SKIPS the warm-start if --n-frames doesn't match (lines 656-661).
+#    This cost us ppo-selfplay-v1: ran with --n-frames 1 against a
+#    n_frames=4 BC ckpt, trained 200 updates from random init, regressed
+#    -0.083 vs BC baseline. Don't repeat.
+python - <<'PY'
+import torch
+ckpt = torch.load("training/ae/checkpoints/bc.pt", map_location="cpu", weights_only=False)
+print("BC n_frames=", ckpt.get("n_frames"), "use_belief=", ckpt.get("use_belief"))
+PY
 
 # 2. Launch self-play PPO with league opponents (random + planner +
 #    aggressive + snapshot pool). 200 updates × 12 games ≈ 4-6 h on T4.
+#    The shipped bc.pt is n_frames=4 → pass --n-frames 4.
 python training/ae/train_ppo.py \
     --bc-checkpoint training/ae/checkpoints/bc.pt \
-    --out training/ae/checkpoints/ppo-selfplay-v1.pt \
+    --out training/ae/checkpoints/ppo-selfplay-v2.pt \
     --opponents league \
     --eval-opponents league \
     --snapshot-interval 10 \
@@ -41,15 +50,40 @@ python training/ae/train_ppo.py \
     --updates 200 \
     --games-per-update 12 \
     --eval-games 12 \
-    --n-frames 1
+    --n-frames 4
 
-# 3. Deploy
-cp training/ae/checkpoints/ppo-selfplay-v1.pt ae/models/bc.pt
+# 3. Deploy (only if local eval beats BC baseline 0.4866 against mixed)
+cp training/ae/checkpoints/ppo-selfplay-v2.pt ae/models/bc.pt
 echo hybrid > ae/src/.ae_mode      # keep the safety-veto wrapper
-til build ae ppo-selfplay-v1
-til test ae ppo-selfplay-v1
-til submit ae ppo-selfplay-v1
+til build ae ppo-selfplay-v2
+til test ae ppo-selfplay-v2
+til submit ae ppo-selfplay-v2
 ```
+
+### ppo-selfplay-v1 result (16 May, 4h GPU) — BC WARM-START WAS SKIPPED
+
+| Eval (12 games, mixed opponents, GPU) | Score | Notes |
+|---|---:|---|
+| BC checkpoint (training/ae/checkpoints/bc.pt, n_frames=4) | **0.4866** | Starting point we should have warm-started from |
+| ppo-selfplay-v1 (epoch=150, n_frames=1) | **0.4040** | -0.083 vs BC — REGRESSED |
+| ppo-selfplay-v1 vs league (training-time peak) | 0.4362 | Misleading because measured against harder distribution |
+
+Training command had `--n-frames 1` (my recommendation in NOTES.md, copied
+incorrectly from the bc-belief example), but BC checkpoint is `n_frames=4`.
+`load_actor` prints a WARN and skips state_dict load when shapes mismatch.
+PPO trained from random init for 200 updates against league opponents.
+
+That ppo-selfplay-v1 reached 0.4040 against mixed from random init is
+actually a positive signal for the self-play *training loop itself* — it
+produced a policy that holds its own against league. But it's below the BC
+starting point, so NOT SHIPPED. Hybrid-v3 (0.555 cloud) stays on the
+leaderboard.
+
+**Next attempt**: rerun with `--n-frames 4` (the v2 command above) so the
+BC warm-start actually applies. Expected behavior:
+- Training starts from a policy that scores 0.4866 against mixed.
+- Self-play layers on top.
+- Realistic final: 0.55-0.70 against mixed, → cloud 0.50-0.65.
 
 ### Decision tree
 
