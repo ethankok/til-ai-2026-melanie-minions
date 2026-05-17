@@ -37,17 +37,28 @@ from typing import Sequence
 _VLLM_IMPORTED = False
 _LLM = None
 _SamplingParams = None
+_LoRARequest = None
 
 
 def _import_vllm() -> None:
-    global _VLLM_IMPORTED, _LLM, _SamplingParams
+    global _VLLM_IMPORTED, _LLM, _SamplingParams, _LoRARequest
     if _VLLM_IMPORTED:
         return
     from vllm import LLM, SamplingParams  # type: ignore
+    from vllm.lora.request import LoRARequest  # type: ignore
 
     _LLM = LLM
     _SamplingParams = SamplingParams
+    _LoRARequest = LoRARequest
     _VLLM_IMPORTED = True
+
+
+def _lora_dir_is_ready(path: str | os.PathLike) -> bool:
+    p = Path(path)
+    if not p.is_dir():
+        return False
+    # peft saves adapter_config.json + adapter_model.safetensors
+    return (p / "adapter_config.json").exists()
 
 
 _PRINTABLE = set(string.printable)
@@ -134,14 +145,39 @@ class LLMAnswerer:
         self,
         model_dir: str | os.PathLike,
         few_shots_path: str | os.PathLike | None = None,
+        lora_dir: str | os.PathLike | None = None,
         max_context_chunks: int = 3,
         gpu_memory_utilization: float | None = None,
         max_model_len: int = 4096,
         max_new_tokens: int = 32,
+        max_lora_rank: int = 16,
     ) -> None:
         self.model_dir = str(model_dir)
         self.max_context_chunks = max_context_chunks
         self.max_new_tokens = max_new_tokens
+        self.max_lora_rank = max_lora_rank
+
+        # v15-lora: detect a bundled adapter. If NLP_LLM_LORA_DIR is set and
+        # points at a directory with adapter_config.json, we'll enable LoRA in
+        # the vLLM engine and apply this adapter to every generate call.
+        if lora_dir is None:
+            lora_dir = os.getenv("NLP_LLM_LORA_DIR", "")
+        self.lora_dir: str | None = (
+            str(lora_dir)
+            if lora_dir and _lora_dir_is_ready(lora_dir)
+            else None
+        )
+        if self.lora_dir:
+            print(
+                f"[llm_answerer] LoRA adapter detected at {self.lora_dir} "
+                f"(max_rank={self.max_lora_rank})",
+                flush=True,
+            )
+        else:
+            print(
+                "[llm_answerer] no LoRA adapter (running base model only)",
+                flush=True,
+            )
 
         self._few_shots: list[dict] = []
         if few_shots_path is None:
@@ -191,7 +227,11 @@ class LLMAnswerer:
             f"max_model_len={max_model_len}, enforce_eager={enforce_eager})",
             flush=True,
         )
-        self.llm = _LLM(  # type: ignore[misc]
+        # v15-lora: enable LoRA in the engine if we have an adapter on disk.
+        # max_loras=1 + max_lora_rank=16 matches our QLoRA training config.
+        # Enabling LoRA adds a small per-request overhead (~5-10%) on every
+        # request — only do it if we actually have an adapter.
+        llm_kwargs: dict = dict(
             model=self.model_dir,
             quantization=quant,
             dtype="float16",
@@ -201,7 +241,25 @@ class LLMAnswerer:
             disable_log_stats=True,
             trust_remote_code=False,
         )
+        if self.lora_dir:
+            llm_kwargs.update(
+                enable_lora=True,
+                max_loras=1,
+                max_lora_rank=self.max_lora_rank,
+            )
+        self.llm = _LLM(**llm_kwargs)  # type: ignore[misc]
         self.tokenizer = self.llm.get_tokenizer()
+
+        # Pre-build the LoRARequest once. Numeric ID is arbitrary but must
+        # be stable across calls. vLLM caches loaded adapters by ID so this
+        # path-load cost is amortised.
+        self._lora_request = None
+        if self.lora_dir:
+            self._lora_request = _LoRARequest(  # type: ignore[misc]
+                lora_name="v15-lora",
+                lora_int_id=1,
+                lora_path=self.lora_dir,
+            )
         # Greedy decoding + short cap is what prevents paraphrase past the
         # ModernBERT AE 0.9 threshold (the v8a failure mode).
         self.sampling = _SamplingParams(  # type: ignore[misc]
@@ -270,8 +328,12 @@ class LLMAnswerer:
             self._build_prompt(q, c)
             for q, c in zip(questions, chunks_per_question)
         ]
-        # vLLM continuously batches whatever we hand it.
-        outputs = self.llm.generate(prompts, self.sampling, use_tqdm=False)
+        # vLLM continuously batches whatever we hand it. Pass the LoRA
+        # adapter (if any) so the engine applies it to every prompt.
+        gen_kwargs: dict = {"use_tqdm": False}
+        if self._lora_request is not None:
+            gen_kwargs["lora_request"] = self._lora_request
+        outputs = self.llm.generate(prompts, self.sampling, **gen_kwargs)
         answers: list[str] = []
         for out in outputs:
             text = out.outputs[0].text if out.outputs else ""

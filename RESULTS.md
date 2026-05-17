@@ -1,19 +1,25 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 17 May 2026 ~16:15 SGT — **NLP UN-FROZEN. `v14-llm-rag`
-shipped at `0.734 / 0.286` — new NLP accuracy high (+0.051 vs v9's 0.683,
-above the previous public leaderboard top of 0.711)**. Architecture: kept
-v9's BM25+BGE+rerank retrieval, replaced RoBERTa-large extractive head with
+Last updated: 17 May 2026 ~18:25 SGT — **v14d-qwen3-8b cleared the local gate
+at 0.755 / 18:33** (matches v14's 0.754 accuracy, 1.5× faster). Hypothesis
+confirmed: v14c's -0.095 regression was 4B capacity, not Qwen3 paraphrase
+tendency — Qwen3-8B fully recovers Qwen2.5-7B's accuracy ceiling on this
+corpus. Cloud submission running; awaiting score. v14-llm-rag remains the
+shipped accuracy high at 0.734/0.286, v9-doc-ensemble remains the shipped
+blended high at 0.683/0.886 (blended 0.734).
+
+Earlier 17 May ~16:15 SGT — NLP UN-FROZEN. `v14-llm-rag` shipped at
+`0.734 / 0.286` — new NLP accuracy high (+0.051 vs v9's 0.683, above the
+previous public leaderboard top of 0.711). Architecture: kept v9's
+BM25+BGE+rerank retrieval, replaced RoBERTa-large extractive head with
 Qwen2.5-7B-Instruct-AWQ served by vLLM. Local 0.754 → cloud 0.734, gap 0.020
 (consistent with v9's 0.028). The non-extractive +5pp came from the model
 class change exactly as predicted — 481/883 local gold answers were
 non-literal and v13a oracle said the candidate pool had +0.10 of headroom
-extractive heads couldn't surface. **Blended cost: -0.112** (v14 blended
+extractive heads couldn't surface. Blended cost: -0.112 (v14 blended
 0.622 vs v9 0.734) because cloud wall-clock went 3:50 → ~21 min → speed
-score 0.886 → 0.286. v14b-speed (few-shots 6→3, max_new_tokens 48→32) is
-the immediate iteration; v14c-3b (swap to Qwen2.5-3B-AWQ) is the bigger
-fallback if v14b can't recover blended above v9.
+score 0.886 → 0.286.
 
 Earlier 17 May state: NLP was FROZEN at `v9-doc-ensemble` (0.683/0.886
 official, 0.711 local) after every post-v9 architecture-internal swing
@@ -135,7 +141,7 @@ v13b-deberta         16/05 local  —       —       —         0.667        N
 v14-llm-rag          17/05 16:15  0.734   0.286   0 / 700   0.754        ★ NEW NLP ACCURACY HIGH ★ (+0.051 cloud vs v9). Architecture change: kept v9 BM25+BGE+rerank retrieval, swapped RoBERTa-large extractive head for Qwen2.5-7B-Instruct-AWQ via vLLM. T4 ABI gauntlet survived: vLLM downgraded torch which broke both pre-installed torchao (`torch.int1`) and flash_attn (undefined C++ symbol); fix was pin transformers==4.46.3 (gated imports) and uninstall both broken NGC `.so`s. Runtime knobs: `quantization=awq` (Marlin needs sm_80+, T4 is sm_75), `enforce_eager=True` (skip ~60-120s CUDA-graph capture during the 5-min corpus-load gate). Local-cloud gap 0.020 (vs v9 0.028) — confirms hypothesis that the +5pp was capped by extractor class, not retrieval. **Blended REGRESSED -0.112 vs v9** (0.622 vs 0.734) because cloud wall-clock 3:50 → ~21 min (speed 0.886 → 0.286). Highest-score retention keeps v14 on the accuracy slot; v9 remains the better-blended NLP contribution to the qualifier total until v14b/v14c recover speed. Top of leaderboard now belongs to us on raw NLP score.
 v14b-speed           17/05 build  —       —       —         —            SKIPPED. Was prompt-trim only; superseded by v14c which makes the bigger swap.
 v14c-qwen3-4b        17/05 local  —       —       —         0.659        LOCAL ONLY, NOT SUBMITTED. Two-axis change: (1) model Qwen2.5-7B-AWQ → cpatonn/Qwen3-4B-Instruct-2507-AWQ-4bit, (2) base image NGC pytorch → vllm/vllm-openai:v0.9.0 (fixes NGC torch/flash_attn/torchao ABI fight + unlocks transformers ≥4.51 for Qwen3 model_type). Local wall-clock 27:29 → **5:10 (5.3× speedup)** — far above the projected 1.7×. BUT accuracy regressed -0.095 vs v14 (0.754 → 0.659) and -0.052 vs v9 (0.711 → 0.659). Projected cloud blended ~0.684 — better than v14's 0.622 but worse than v9's 0.734, so v14c is not a ship. Three hypotheses for the drop, ordered by likelihood: (1) 4B is below the QA capacity threshold for this corpus (especially L2 cross-fact composition); (2) Qwen3-Instruct-2507 paraphrases more than Qwen2.5-Instruct under the same "quote verbatim" prompt; (3) trimmed 3-shot prompt under-anchors the smaller model. Next: v14d-qwen3-8b tests whether the regression was 4B capacity vs Qwen3 paraphrase tendency.
-v14d-qwen3-8b        17/05 build  —       —       —         —            IN PROGRESS. Same architecture/base-image as v14c. Swap LLM repo to Qwen/Qwen3-8B-AWQ (or cpatonn 2507 variant if available). Bigger model, expected accuracy 0.72-0.75 / speed 0.50-0.60 → blended target 0.69-0.73. If accuracy recovers, the v14c drop was capacity. If accuracy stays flat at ~0.66, Qwen3 paraphrase tendency is the structural issue and we need Qwen2.5 family or a prompt rework.
+v14d-qwen3-8b        17/05 local  —       —       —         0.755        LOCAL CLEARED THE GATE. Same architecture/base-image as v14c, model bumped 4B → Qwen/Qwen3-8B-AWQ. Local equiv_rate 0.755 (essentially matches v14's 0.754) at wall-clock 18:33 (1.5× faster than v14's 27:29; per-question 1.59s vs v14's 2.35s). **Hypothesis confirmed**: v14c's -0.095 drop was 4B capacity floor, not Qwen3 paraphrase tendency — same family at 2× params recovers all of v14's accuracy. Cloud projection: acc ~0.73, speed ~0.38, blended ~0.643 (+0.021 over v14, still -0.091 behind v9's 0.734). Cloud submission running; waiting on score.
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.

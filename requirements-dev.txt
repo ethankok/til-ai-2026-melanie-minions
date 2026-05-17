@@ -29,6 +29,13 @@ ctranslate2
 wordfreq
 nltk
 
+# NLP v15-lora training stack (QLoRA fine-tune of Qwen3-8B for the answerer).
+# accelerate + peft come from the ASR block above. bitsandbytes provides the
+# 4-bit base loader for QLoRA; trl provides SFTTrainer with chat-template
+# loss masking.
+bitsandbytes>=0.43.0
+trl>=0.12.0
+
 # This is the til_environment package. You'll need this to train and test your
 #AE model. You can import this package using `import til_environment`.
 -e ./til-26-ae

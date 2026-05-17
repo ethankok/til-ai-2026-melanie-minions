@@ -11,12 +11,24 @@ candidate pool had +0.10 of headroom extractive heads couldn't surface.
 **Blended cost: -0.112** (v14 blended 0.622 vs v9 0.734) because cloud
 wall-clock went 3:50 → ~21 min → speed score 0.886 → 0.286.
 
-Next: **v14d-qwen3-8b**, after v14c-qwen3-4b tested locally at 0.659 / 5:10.
-v14c proved the base-image swap works and unlocked a 5.3× speedup, but
-the 4B model lost too much accuracy (-0.095 vs v14, -0.052 vs v9). v14d
-upsizes to Qwen3-8B-AWQ on the same base image / same prompt — direct
-test of whether the v14c drop was 4B capacity or Qwen3 paraphrase
-tendency. Expected acc 0.72–0.75 / speed 0.50–0.60 / blended 0.69–0.73.
+**v14d-qwen3-8b cleared the local gate at 0.755 / 18:33** — matches v14's
+0.754 accuracy at 1.5× speed (per-Q 1.59s vs v14's 2.35s). Hypothesis
+confirmed: v14c's -0.095 drop was 4B capacity, not Qwen3 paraphrase
+tendency. Cloud submission running; projected blended ~0.643 (+0.021 over
+v14 but still -0.091 behind v9 blended).
+
+Next: **v15-lora-qwen3-8b** — LoRA fine-tune Qwen3-8B-AWQ on the local 883
+(question, context, gold-answer) tuples. This is the proven lever from the
+v7→v8b path (+0.034 → +0.162 cloud accuracy from RoBERTa-large fine-tunes);
+applying it to a 30× larger generative model should compound. Expected lift
++0.05 to +0.10 cloud accuracy at unchanged speed → blended target ~0.71–0.76.
+
+(Command R7B was considered as v14e but **no off-the-shelf AWQ or GPTQ-4bit
+quantization exists on HuggingFace** — only MLX and GGUF, neither
+vLLM-compatible. BF16 is 14 GB which is too tight on T4 alongside
+BGE+reranker+KV cache. Self-quantizing via autoawq is feasible but adds
+~1 hr GPU time and a calibration variable before we know if RAG-tuned
+beats LoRA-tuned. Skipping in favour of LoRA.)
 
 Historical (pre-v14): NLP was frozen at `v9-doc-ensemble`
 (0.683/0.886 official, 0.711 local). `v13b-deberta` failed the local gate
@@ -338,6 +350,252 @@ prompt with hard literal-quote examples.
    local equiv_rate lands below 0.71 specifically because L2 cross-fact
    composition regressed, the answer is Qwen3-8B-AWQ (~5GB) rather than
    going back to v14's Qwen2.5-7B.
+
+## v14d-qwen3-8b — Qwen3-8B-AWQ on vllm-openai base (17 May)
+
+One-line change from v14c: `NLP_LLM_REPO` flipped to `Qwen/Qwen3-8B-AWQ`
+(official Qwen quant of the Qwen3 8B base, thinking mode enabled but
+suppressed via `enable_thinking=False` in `apply_chat_template`).
+Everything else — base image, prompt, 3 few-shots, retrieval — identical
+to v14c.
+
+### Local test result (17/05 ~18:25)
+
+```text
+v14d-qwen3-8b local      equiv_rate 0.755    wall-clock 18:33  (1.5× faster than v14)
+v14   reference local    equiv_rate 0.754    wall-clock 27:29
+v14c  reference local    equiv_rate 0.659    wall-clock  5:10
+v9    reference local    equiv_rate 0.711    wall-clock  3:48
+```
+
+Cloud submission running. Projected blended ~0.643 = 0.75 · 0.73 + 0.25 ·
+0.38 (using v14's local-cloud accuracy gap 0.020 and 18:33 → speed score
+1 - 18.5/30 = 0.383).
+
+### What v14d resolved
+
+The clean A/B between v14c (4B) and v14d (8B) — same family, same prompt,
+same retrieval, same base image — isolates **model capacity** as the
+single variable. v14c lost 0.095 accuracy. v14d recovered all of it. So:
+
+- **Qwen3 paraphrase tendency is NOT the problem**. The 2507 / Instruct
+  variants do follow "quote exactly" instructions when given enough
+  capacity. The v14c failure was structural — 4B is below the QA capacity
+  floor for this corpus.
+- **Qwen3-8B is the right base for fine-tuning.** Matches Qwen2.5-7B's
+  accuracy ceiling (within noise: 0.755 vs 0.754) at 1.5× speed. The
+  speed budget bought by going from 7B → 8B-Qwen3 (smaller activations,
+  newer kernels) is real even though param count went up — a counterintuitive
+  result that came from the architecture generation jump compounding with
+  the upstream base-image stack.
+
+### Why v14d is unlikely to be the final submission
+
+Cloud-projected blended ~0.643 still loses to v9's 0.734 blended. The 18:33
+local wall-clock translates to a speed score around 0.38, and accuracy at
+0.73 cloud can't compensate for that gap. Unless cloud is significantly
+faster than local (we've seen 5-10% variance, not 30%), v14d's blended
+will not beat v9's.
+
+So v14d's role is **not to ship**, it's to **be the LoRA-fine-tune base**.
+
+## v15-lora-qwen3-8b — QLoRA fine-tune of v14d on the 883 local examples
+
+The lever: in v7→v8b, fine-tuning RoBERTa-large on the local nlp.jsonl was
+worth +0.034 cloud accuracy first try and +0.162 when we matched the
+inference chunking distribution at training time. Applying the same lever
+to the 30× larger Qwen3-8B should compound — the LLM has more capacity to
+absorb Clairos vocabulary, the PCE date format, the "quote verbatim"
+behaviour, and the L2 cross-fact composition style. Speed unchanged from
+v14d (~18:33 local) — the entire bet is on accuracy.
+
+### Architecture
+
+```
+                            v14d (un-tuned base)
+question
+  → BM25+BGE hybrid retrieval       (unchanged from v9)
+  → bge-reranker-base               (unchanged)
+  → top-3 doc IDs                   (unchanged)
+  → Qwen3-8B-AWQ via vLLM           ← model class from v14d
+  → answer
+
+                            v15-lora (this section)
+question
+  → BM25+BGE hybrid retrieval       (unchanged)
+  → bge-reranker-base               (unchanged)
+  → top-3 doc IDs                   (unchanged)
+  → Qwen3-8B-AWQ + LoRA adapter     ← LoRA is the only new thing
+  → answer
+```
+
+The LoRA adapter is loaded at inference via vLLM's `LoRARequest`
+(`enable_lora=True`, `max_loras=1`, `max_lora_rank=16`). No model merge or
+re-quantisation needed: vLLM applies the adapter on top of the AWQ-
+quantised base at request time.
+
+### Code changes (17 May)
+
+- [training/nlp/finetune_lora.py](../training/nlp/finetune_lora.py) — new
+  QLoRA training script. Loads Qwen3-8B in 4-bit nf4 via bitsandbytes
+  (~4.5 GB VRAM for the base), attaches r=16 LoRA adapters to
+  `q_proj/k_proj/v_proj/o_proj`, trains 2 epochs with
+  `gradient_checkpointing=True` + `bs=2 × grad_accum=4`.
+  Inference-distribution training: for each (q, gold_answer, source_docs)
+  row in `nlp.jsonl`, builds the *exact* same prompt structure
+  `[system, *few_shots, user(question + 3 chunks)]` that `llm_answerer.py`
+  uses at inference, with the gold answer as the assistant turn. Loss is
+  masked to the assistant turn only via `SFTConfig(completion_only_loss=True)`.
+  Chunks are picked from `source_docs` using the v8b-style
+  "answer-containing chunk" heuristic; fallbacks to first chunk when the
+  answer is paraphrased.
+- [src/llm_answerer.py](src/llm_answerer.py) — added `lora_dir` constructor
+  param and `NLP_LLM_LORA_DIR` env reading. If the dir contains an
+  `adapter_config.json`, vLLM is initialised with `enable_lora=True` and a
+  `LoRARequest("v15-lora", 1, lora_dir)` is created once and passed to
+  every `generate()` call. Backward-compatible: no adapter dir → identical
+  to v14d.
+- [Dockerfile](Dockerfile) — added `ENV NLP_LLM_LORA_DIR=/workspace/models/lora`
+  and a RUN block that bundles `nlp/models/lora/` into
+  `/workspace/models/lora/` if `adapter_config.json` is present at build
+  time. Falls through to base-model-only if not.
+- [requirements-dev.txt](../requirements-dev.txt) — added `bitsandbytes>=0.43.0`
+  and `trl>=0.12.0` (peft and accelerate were already there for ASR).
+
+### Runbook (on the Workbench instance)
+
+Step 1 — pip-install the new training deps:
+
+```bash
+cd ~/til
+pip install -r requirements-dev.txt
+```
+
+Step 2 — train the adapter (~45 min on T4):
+
+```bash
+python training/nlp/finetune_lora.py \
+    --base Qwen/Qwen3-8B \
+    --data /home/jupyter/novice/nlp/nlp.jsonl \
+    --docs /home/jupyter/novice/nlp/documents \
+    --out  nlp/models/lora \
+    --epochs 2
+
+# Output: nlp/models/lora/{adapter_config.json,adapter_model.safetensors,
+#                          tokenizer*,BASE_MODEL}
+```
+
+Expected console output:
+- "loaded N training examples (skipped: ...)"  — N should be ~700–800 of 883
+- "trainable params: ~25M || all params: ~8.2B || trainable%: ~0.3%"
+- Eval loss curve: should drop from ~2.0 → ~0.4 over 2 epochs
+- `load_best_model_at_end=True` retains the lowest eval_loss checkpoint
+
+Step 3 — sanity-check the adapter loads on the base:
+
+```bash
+python - <<'PY'
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
+tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B")
+base = AutoModelForCausalLM.from_pretrained("Qwen/Qwen3-8B", torch_dtype="auto", device_map="cpu")
+model = PeftModel.from_pretrained(base, "nlp/models/lora")
+print("adapter loaded OK, adapter modules:", len(list(model.named_modules())))
+PY
+```
+
+(The base re-download here is BF16 ~16 GB if HF cache is empty. Skip this
+step if you trust the trainer output.)
+
+Step 4 — build the v15 image (the LoRA adapter gets bundled because step 2
+left it at `nlp/models/lora/`):
+
+```bash
+til build nlp v15-lora-qwen3-8b
+```
+
+Build cache state: base image cached from v14d, vLLM install cached,
+`download_models.py` cached (LLM repo unchanged), `COPY models` and the
+LoRA-bundle RUN are new layers (~30s). Total rebuild ~1–2 min.
+
+Step 5 — local A/B vs v14d:
+
+```bash
+til test nlp v14d-qwen3-8b           # baseline: 0.755, 18:33
+til test nlp v15-lora-qwen3-8b       # gate: local equiv_rate ≥ 0.78
+```
+
+Container logs should show:
+- `[llm_answerer] LoRA adapter detected at /workspace/models/lora (max_rank=16)`
+- `[llm_answerer] loading vLLM ...`  *(includes enable_lora=True in kwargs)*
+- `[nlp build] bundled v15 LoRA adapter (Qwen/Qwen3-8B)` *(from the build log)*
+
+Step 6 — submit if local clears the gate:
+
+```bash
+til submit nlp v15-lora-qwen3-8b
+```
+
+### Decision rule
+
+| Local equiv_rate | Local wall-clock | Action |
+|---|---|---|
+| ≥ 0.80 | ≤ 22:00 | Submit. New accuracy and likely new blended high. |
+| 0.78–0.80 | ≤ 22:00 | Submit. Likely beats v14 cloud (0.734); blended depends on cloud speed. |
+| 0.75–0.78 | ≤ 22:00 | Submit only if blended (`0.75·acc + 0.25·(1 − t/30)`) > v14d's projected 0.643. |
+| < 0.75 | any | LoRA underfit. Inspect eval_loss curve — if still trending down at end of training, raise to 3 epochs. If flat, raise r=16 → r=32 + extend `target_modules` to MLP layers. |
+| any | > 25:00 | Adapter inference overhead higher than expected. Try `max_loras=1` is already set; raise `NLP_LLM_GPU_MEM_FRACTION` to 0.85 to give vLLM more KV cache. |
+
+### Risks (front and center)
+
+1. **VRAM during training.** QLoRA on Qwen3-8B should sit at ~10–12 GB on
+   T4. If OOM, halve `--batch-size` to 1 and double `--grad-accum` to 8
+   (effective batch size stays at 8). Last resort: reduce `MAX_SEQ_LEN`
+   from 2048 → 1536.
+2. **Adapter doesn't apply at inference.** Symptom: `til test` runs but
+   answers look identical to v14d (no improvement). Check container logs
+   for `[llm_answerer] LoRA adapter detected ...`. If absent, the COPY at
+   build time didn't pick up `nlp/models/lora/adapter_config.json`.
+3. **Quant-format mismatch (BnB-4bit train base vs AWQ inference base).**
+   Both quantise the same underlying BF16 weights from different
+   starting points. LoRA matrices were tuned against BnB-nf4 dequantised
+   activations; they're applied against AWQ-int4 dequantised activations.
+   Small quality drift is possible (~1pp); should be far below the
+   training lift.
+4. **Train/inference prompt drift.** The system prompt in
+   `finetune_lora.py:SYSTEM_PROMPT` MUST match
+   `llm_answerer.py:_DEFAULT_SYSTEM_PROMPT` exactly. If they diverge
+   silently, the model sees a different prompt at inference and the
+   adapter underperforms. Currently duplicated; consider a single source
+   of truth if iterating further.
+5. **vLLM 0.9 LoRA+AWQ combo.** Documented to work but historically had
+   bugs. If we see crashes, downgrade to v0.8.x or fall back to
+   merging+requantizing offline (slower path but more robust).
+
+### Expected lift
+
+Comparing the v7→v8b lift (+0.162 cloud on RoBERTa-large extractive) to
+what a generative 8B LoRA fine-tune should give:
+
+- The RoBERTa-large fine-tune could only move *extracted-span quality* —
+  it was structurally capped at literal source substrings.
+- An LLM fine-tune additionally moves *generation style* — PCE date
+  format, codename casing, "approximately N years" prefixes, money unit
+  scaling. These cover the 481/883 cases where the gold answer is
+  non-literal.
+- Conservative estimate: **+0.05 cloud accuracy** over v14d. Realistic:
+  **+0.05 to +0.10**. Optimistic: **+0.10 to +0.15** (matching v8b's
+  lift scaled by capacity).
+
+Projected v15 cloud blended: `0.75 · 0.78 + 0.25 · 0.38 = 0.68` (conservative)
+to `0.75 · 0.85 + 0.25 · 0.38 = 0.73` (optimistic, near v9 blended).
+
+The first submission to actually clear v9 blended needs accuracy ≥ ~0.82
+at the current ~18 min wall-clock, which is at the optimistic end. If
+v15-lora lands in the 0.78–0.80 range, the next move is a v15b that
+ALSO trims the prompt for speed (3 few-shots → 2; max_new_tokens 32 →
+24; raise NLP_LLM_GPU_MEM_FRACTION → 0.85) to drag wall-clock down and
+flip blended.
 
 ## v12 — candidate-answer reranker (16 May)
 

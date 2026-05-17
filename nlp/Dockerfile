@@ -34,6 +34,10 @@ ENV NLP_LLM_DIR=/workspace/models/llm
 # our chat template call passes enable_thinking=False so <think>...</think>
 # blocks are suppressed at the prompt level.
 ENV NLP_LLM_REPO=Qwen/Qwen3-8B-AWQ
+# v15-lora: directory inside the image where the trained LoRA adapter
+# lives. llm_answerer.py auto-enables LoRA in vLLM when this path contains
+# an adapter_config.json. Set to empty string to force base-model-only.
+ENV NLP_LLM_LORA_DIR=/workspace/models/lora
 WORKDIR /workspace
 
 # vllm/vllm-openai already provides: vllm, torch, transformers (>=4.51),
@@ -57,6 +61,21 @@ RUN if [ "$NLP_ANSWERER" = "llm" ] && [ ! -f /workspace/models/llm/config.json ]
         echo "[nlp build] WARNING: NLP_ANSWERER=llm but /workspace/models/llm/config.json missing"; \
         echo "[nlp build] container will fall back to extractive QA at runtime"; \
     fi
+
+# v15-lora: bundle the trained LoRA adapter into the image if it's been
+# produced locally by training/nlp/finetune_lora.py. Without an adapter the
+# manager still runs with the base model (= v14d behaviour). The COPY is
+# a no-op if nlp/models/lora doesn't exist at build context — Docker still
+# COPYs an empty directory, but llm_answerer.py's _lora_dir_is_ready()
+# check requires adapter_config.json to actually enable LoRA.
+COPY models /workspace/models-local
+RUN if [ -d /workspace/models-local/lora ] && [ -f /workspace/models-local/lora/adapter_config.json ]; then \
+        mkdir -p /workspace/models/lora && \
+        cp -r /workspace/models-local/lora/* /workspace/models/lora/ && \
+        echo "[nlp build] bundled v15 LoRA adapter ($(cat /workspace/models-local/lora/BASE_MODEL 2>/dev/null || echo unknown base))"; \
+    else \
+        echo "[nlp build] no LoRA adapter at nlp/models/lora — running base model only"; \
+    fi && rm -rf /workspace/models-local
 
 # Copies your source files.
 COPY src .
