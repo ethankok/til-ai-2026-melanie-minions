@@ -47,7 +47,8 @@ RUN pip install --no-cache-dir 'rank_bm25==0.2.2'
 # download-only RUN. Pulls BGE retriever + reranker + RoBERTa-base (kept
 # for emergency extractive rollback) + the Qwen3-4B AWQ LLM.
 COPY download_models.py .
-RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python download_models.py
+# vllm/vllm-openai doesn't create a `python` symlink — only python3 is on PATH.
+RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python3 download_models.py
 
 # v14-llm-rag: hard-fail the build if the LLM weights didn't land. The
 # manager will still boot without them by falling back to extractive, but
