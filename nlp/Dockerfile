@@ -28,9 +28,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Bake model weights into the image so inference runs fully offline.
 # This must run BEFORE setting TRANSFORMERS_OFFLINE=1 takes effect for the
 # downloader — ENV directives apply to subsequent layers, so we override
-# locally with `TRANSFORMERS_OFFLINE=0`.
+# both transformers and hf_hub offline flags locally for this RUN only.
+# (v14: HF_HUB_OFFLINE=1 is set at the top for the runtime; we have to
+# override it too or huggingface_hub.snapshot_download fails before
+# transformers even gets a chance.)
 COPY download_models.py .
-RUN TRANSFORMERS_OFFLINE=0 python download_models.py
+RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python download_models.py
 
 # Bundle the fine-tuned QA model(s) and optional v12 answer-ranker JSON if
 # they've been built locally (see training/nlp/finetune_qa.py,
