@@ -125,20 +125,35 @@ class LLMAnswerer:
             if gpu_memory_utilization is not None
             else float(os.getenv("NLP_LLM_GPU_MEM_FRACTION", "0.78"))
         )
+        # Quantization kernel selection. Marlin AWQ is fastest on Ampere+
+        # (sm_80+) but requires sm_80; T4 (sm_75 / Turing) hangs or falls
+        # back slowly. Default to plain "awq" which works on every CUDA arch
+        # vLLM supports. Override with NLP_LLM_QUANT=awq_marlin on Ampere.
+        quant = os.getenv("NLP_LLM_QUANT", "awq").strip()
+        # CUDA-graph capture (~60-120s for a 7B on T4) is the dominant
+        # corpus-load cost. enforce_eager=True skips capture entirely; we
+        # pay ~10-20% per-token latency in exchange. With 700 questions and
+        # 48-token outputs, eager is still well inside the speed budget.
+        # Override with NLP_LLM_ENFORCE_EAGER=0 to enable graph capture once
+        # we know the rest of the pipeline boots.
+        enforce_eager = os.getenv("NLP_LLM_ENFORCE_EAGER", "1").lower() not in {
+            "0",
+            "false",
+            "no",
+        }
         print(
             f"[llm_answerer] loading vLLM from {self.model_dir} "
-            f"(gpu_memory_utilization={gmu}, max_model_len={max_model_len})",
+            f"(quantization={quant}, gpu_memory_utilization={gmu}, "
+            f"max_model_len={max_model_len}, enforce_eager={enforce_eager})",
             flush=True,
         )
-        # awq_marlin gives the fastest AWQ kernels on Ampere/Ada/Hopper.
-        # vLLM auto-falls-back to the standard AWQ kernel on older GPUs.
         self.llm = _LLM(  # type: ignore[misc]
             model=self.model_dir,
-            quantization="awq_marlin",
+            quantization=quant,
             dtype="float16",
             gpu_memory_utilization=gmu,
             max_model_len=max_model_len,
-            enforce_eager=False,
+            enforce_eager=enforce_eager,
             disable_log_stats=True,
             trust_remote_code=False,
         )

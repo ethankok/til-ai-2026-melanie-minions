@@ -26,18 +26,23 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # v14-llm-rag: vLLM downgrades the NGC-shipped torch to satisfy its own pin,
-# which leaves the pre-installed torchao with broken references (it expects
-# torch.int1, which only exists on the newer torch NGC ships). transformers
-# 4.46.3 hard-imports torchao via quantizers/auto.py, so the broken torchao
-# crashes every from_pretrained() call.
+# which leaves multiple precompiled NGC extensions (torchao, flash_attn, ...)
+# pointing at C++ symbols / Python attributes that no longer exist:
+#   - torchao: `module 'torch' has no attribute 'int1'`  (torch.int1 added in 2.5)
+#   - flash_attn: `undefined symbol c10::cuda::c10_cuda_check_implementation`
 #
-# Fix: bump transformers to 4.49+ (which wraps the torchao import behind
-# is_torchao_available()), then uninstall the broken torchao so the
-# is-available check returns False and the codepath is skipped entirely.
-# This is a separate RUN so the expensive `pip install -r requirements.txt`
-# layer stays cached across iterations.
-RUN pip install --no-cache-dir --upgrade 'transformers>=4.49.0,<4.55' && \
-    pip uninstall -y torchao || true
+# transformers 4.46.3 (the version requirements.txt pins) handles these
+# correctly: torchao is gated by `is_torchao_available()` and flash_attn is
+# gated by `is_flash_attn_2_available()` — both check importability before
+# importing. The fix is therefore to uninstall the broken precompiled
+# extensions so the gates return False, and to make sure we stay pinned to
+# 4.46.3 (newer transformers hard-imports flash_attn via modeling_utils →
+# integrations/flash_paged, which would defeat the gate-based approach).
+#
+# Separate RUN so the expensive `pip install -r requirements.txt` layer
+# above stays cached across iterations.
+RUN pip install --no-cache-dir 'transformers==4.46.3' && \
+    pip uninstall -y torchao flash-attn flash_attn || true
 
 # Bake model weights into the image so inference runs fully offline.
 # This must run BEFORE setting TRANSFORMERS_OFFLINE=1 takes effect for the
