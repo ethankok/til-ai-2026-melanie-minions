@@ -359,19 +359,21 @@ def main() -> None:
     model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
 
-    # Compute a stable formatting function that renders each example via the
-    # Qwen3 chat template. SFTTrainer + DataCollatorForCompletionOnlyLM
-    # would let us mask the loss to assistant turn only, but the convenience
-    # path here is SFTTrainer's `messages` field auto-handling. We let the
-    # collator do its default thing (CE over all tokens including the prompt);
-    # to focus the gradient on the answer, see masking note below.
-    def formatting_func(example: dict[str, Any]) -> str:
-        return tokenizer.apply_chat_template(
-            example["messages"],
-            tokenize=False,
-            add_generation_prompt=False,
-            enable_thinking=False,
-        )
+    # trl 1.x messages-format path: each row in the dataset has a `messages`
+    # field (list of {role, content} dicts). The trainer auto-applies the
+    # tokenizer's chat template AND knows how to mask the loss to the
+    # assistant turn — so we get completion_only_loss behaviour for free
+    # without defining a formatting_func. (trl 1.x refused to accept both
+    # `formatting_func` and `completion_only_loss=True` at the same time.)
+    #
+    # Strip the extra `question` / `answer` columns we added for debugging
+    # so the trainer doesn't try to interpret them as text fields.
+    split["train"] = split["train"].remove_columns(
+        [c for c in ("question", "answer") if c in split["train"].column_names]
+    )
+    split["test"] = split["test"].remove_columns(
+        [c for c in ("question", "answer") if c in split["test"].column_names]
+    )
 
     run_name = f"lora-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     runs_dir = Path(__file__).resolve().parent / "runs" / run_name
@@ -400,10 +402,11 @@ def main() -> None:
         report_to="none",
         max_length=MAX_SEQ_LEN,
         packing=False,
-        dataset_text_field="text",
-        # SFTTrainer needs `text` field for default formatting; we override
-        # via formatting_func, so this is unused but required by the API.
-        completion_only_loss=True,  # masks loss to only the final assistant turn
+        # trl 1.x: when the dataset has a `messages` field, the trainer
+        # auto-formats with the tokenizer's chat template and masks loss
+        # to the assistant turn when completion_only_loss=True. No
+        # formatting_func or dataset_text_field needed.
+        completion_only_loss=True,
         seed=args.seed,
     )
 
@@ -412,7 +415,6 @@ def main() -> None:
         train_dataset=split["train"],
         eval_dataset=split["test"],
         args=sft_config,
-        formatting_func=formatting_func,
         processing_class=tokenizer,
     )
 
