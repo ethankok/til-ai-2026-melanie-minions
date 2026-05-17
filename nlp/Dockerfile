@@ -25,6 +25,20 @@ RUN pip install -U pip
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# v14-llm-rag: vLLM downgrades the NGC-shipped torch to satisfy its own pin,
+# which leaves the pre-installed torchao with broken references (it expects
+# torch.int1, which only exists on the newer torch NGC ships). transformers
+# 4.46.3 hard-imports torchao via quantizers/auto.py, so the broken torchao
+# crashes every from_pretrained() call.
+#
+# Fix: bump transformers to 4.49+ (which wraps the torchao import behind
+# is_torchao_available()), then uninstall the broken torchao so the
+# is-available check returns False and the codepath is skipped entirely.
+# This is a separate RUN so the expensive `pip install -r requirements.txt`
+# layer stays cached across iterations.
+RUN pip install --no-cache-dir --upgrade 'transformers>=4.49.0,<4.55' && \
+    pip uninstall -y torchao || true
+
 # Bake model weights into the image so inference runs fully offline.
 # This must run BEFORE setting TRANSFORMERS_OFFLINE=1 takes effect for the
 # downloader — ENV directives apply to subsequent layers, so we override
