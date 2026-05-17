@@ -36,15 +36,14 @@ SPECS = [
     ),
 ]
 
-# v14c-qwen3-4b: default to the July-2025 Qwen3-4B Instruct release, AWQ-4bit
-# quantised. Picked because:
-#  - Qwen3 architecture, not Qwen2.5 (~1 year more training, stronger
-#    instruction-following at the same param count)
-#  - "2507" suffix = non-thinking Instruct variant, so we don't have to
-#    handle <think>...</think> wrappers in the answer string
-#  - ~2GB AWQ weights → comfortable T4 fit alongside BGE + reranker, with
-#    plenty of headroom for KV cache (a 7B was the speed bottleneck on T4)
-LLM_REPO = os.getenv("NLP_LLM_REPO", "cpatonn/Qwen3-4B-Instruct-2507-AWQ-4bit")
+# v14d-qwen3-8b: upsizes from v14c's 4B to 8B on the same Qwen3 family.
+# Direct test of whether v14c's accuracy drop (0.754 → 0.659 local) was 4B
+# capacity floor or Qwen3-Instruct paraphrase tendency. Using the official
+# Qwen/Qwen3-8B-AWQ (base, with thinking mode default) — apply_chat_template
+# is already called with enable_thinking=False so the chat template
+# suppresses <think>...</think> blocks. AWQ weights ~5GB; still comfortable
+# on T4 16GB with retriever + reranker + KV cache.
+LLM_REPO = os.getenv("NLP_LLM_REPO", "Qwen/Qwen3-8B-AWQ")
 LLM_LOCAL = "llm"
 
 

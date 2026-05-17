@@ -11,16 +11,12 @@ candidate pool had +0.10 of headroom extractive heads couldn't surface.
 **Blended cost: -0.112** (v14 blended 0.622 vs v9 0.734) because cloud
 wall-clock went 3:50 → ~21 min → speed score 0.886 → 0.286.
 
-Next: **v14c-qwen3-4b** (skipping v14b-speed). Replaces both the model and
-the base image:
-- Model: `cpatonn/Qwen3-4B-Instruct-2507-AWQ-4bit` (newer Qwen3
-  architecture, July-2025 non-thinking Instruct release, ~2GB AWQ weights).
-- Base image: `vllm/vllm-openai:v0.9.0` (drops the NGC ABI fight; ships a
-  coherent torch + vllm + transformers≥4.51 + flash_attn stack).
-- Expected: ~2× speedup over v14 (4B vs 7B, native sm_75 compute path),
-  accuracy within ±0.02 of v14's 0.734 thanks to the architecture
-  generation jump. Blended target ~0.73–0.76 — first v14-family submission
-  that should beat v9's 0.734 blended.
+Next: **v14d-qwen3-8b**, after v14c-qwen3-4b tested locally at 0.659 / 5:10.
+v14c proved the base-image swap works and unlocked a 5.3× speedup, but
+the 4B model lost too much accuracy (-0.095 vs v14, -0.052 vs v9). v14d
+upsizes to Qwen3-8B-AWQ on the same base image / same prompt — direct
+test of whether the v14c drop was 4B capacity or Qwen3 paraphrase
+tendency. Expected acc 0.72–0.75 / speed 0.50–0.60 / blended 0.69–0.73.
 
 Historical (pre-v14): NLP was frozen at `v9-doc-ensemble`
 (0.683/0.886 official, 0.711 local). `v13b-deberta` failed the local gate
@@ -282,12 +278,52 @@ til submit nlp v14c-qwen3-4b          # only if local clears the gate
 | `NLP_LLM_QUANT` | `awq` | `awq` for T4 (sm_75), `awq_marlin` on Ampere+. |
 | `NLP_LLM_ENFORCE_EAGER` | `1` | `1` to skip CUDA-graph capture, `0` to enable. For 4B on T4 try `0` once the rest is stable — graphs help more for smaller models. |
 
+### Local test result (17/05 09:52) — NOT SUBMITTED, regressed
+
+```text
+v14c-qwen3-4b local      equiv_rate 0.659    wall-clock  5:10  (5.3× faster than v14)
+v14   reference local    equiv_rate 0.754    wall-clock 27:29
+v9    reference local    equiv_rate 0.711    wall-clock  3:48
+```
+
+Projected cloud: blended ~0.684 (0.75·0.635 + 0.25·0.833). That's above
+v14's 0.622 but below v9's 0.734 — not a ship.
+
+**Speed unlock is real** — 0.44 s/q vs v14's 2.35 s/q. The base-image swap
+also bought us back a ~30s of vLLM init time (no CUDA-graph capture pain,
+no enforce_eager workarounds needed once the stack is coherent).
+
+**Accuracy drop of 0.095 vs v14 / 0.052 vs v9 is bigger than projected.**
+Three plausible causes, in order of likelihood:
+
+1. **4B capacity floor.** Qwen3-4B-Instruct typically sits ~5–8 pp below
+   Qwen2.5-7B-Instruct on closed-book/extractive QA benchmarks. L2 cross-
+   document questions ("how many years between X and Y") are where small
+   models fall off — they require multi-fact reasoning, not extraction.
+2. **Qwen3-Instruct-2507 paraphrases more.** The 2507 release is tuned hard
+   for chat helpfulness, which trains the model to *reword*. Our prompt
+   says "quote exactly" but a model with strong post-training pull toward
+   paraphrasing disobeys at non-trivial rate. With the cloud AE @ 0.9,
+   reworded-but-correct answers score 0.
+3. **3 few-shots under-anchors a smaller model.** v14 trimmed 6 → 3
+   assuming the 7B handled simple patterns zero-shot. A 4B has less
+   zero-shot strength; the dropped examples may have been doing real
+   work.
+
+Next move: **v14d-qwen3-8b** (one-line change to `download_models.py`,
+swap repo to `Qwen/Qwen3-8B-AWQ`). If acc recovers to ≥0.72, hypothesis (1)
+was dominant. If it stays at ~0.66, Qwen3 paraphrase tendency is the
+structural issue and we either revert to Qwen2.5 family or rebuild the
+prompt with hard literal-quote examples.
+
 ### Risks (front and center)
 
 1. **Base-image swap may break local `til test`** — the upstream image runs
    a different Python entrypoint by default. `ENTRYPOINT []` plus our
    explicit `CMD` should override cleanly; if `til test` reports the
-   container exiting immediately, that's the regression to look for.
+   container exiting immediately, that's the regression to look for. RESOLVED:
+   `python3` not `python` in the new base — fixed in commit; build now
+   completes cleanly.
 2. **Image size** — vllm/vllm-openai is ~6 GB, plus our ~2.2 GB LLM
    weights and ~0.6 GB retriever stack. Final image ~10 GB (vs v14's
    ~12 GB — actually slightly smaller). Should not hit any submission

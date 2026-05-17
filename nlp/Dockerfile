@@ -29,11 +29,11 @@ ENV NLP_MODEL_DIR=/workspace/models
 # present, which v14c does not bundle by default).
 ENV NLP_ANSWERER=llm
 ENV NLP_LLM_DIR=/workspace/models/llm
-# Default repo for download_models.py. cpatonn ships the AWQ-4bit quant of
-# the July-2025 Instruct release. The "2507" suffix denotes the
-# non-thinking instruct variant, which is exactly what we want for short
-# extractive-style answers.
-ENV NLP_LLM_REPO=cpatonn/Qwen3-4B-Instruct-2507-AWQ-4bit
+# Default repo for download_models.py. v14d: Qwen/Qwen3-8B-AWQ (official
+# Qwen quant of the Qwen3 8B base). Thinking mode is the model default;
+# our chat template call passes enable_thinking=False so <think>...</think>
+# blocks are suppressed at the prompt level.
+ENV NLP_LLM_REPO=Qwen/Qwen3-8B-AWQ
 WORKDIR /workspace
 
 # vllm/vllm-openai already provides: vllm, torch, transformers (>=4.51),
