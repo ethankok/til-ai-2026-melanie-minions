@@ -1,6 +1,10 @@
 # ASR — notes & history
 
-Last updated: 14 May 2026
+Last updated: 17 May 2026 — **PARKED at `nemo-zs` (0.956 / 0.946).** No
+active iteration since 14 May; date bumped for hygiene. Speed bottleneck is
+HTTP / audio I/O / Python overhead (see `nemo-zs-v2` row in RESULTS.md), not
+the decoder, so next move would be accuracy (Parakeet FT) only if other
+tasks plateau.
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).

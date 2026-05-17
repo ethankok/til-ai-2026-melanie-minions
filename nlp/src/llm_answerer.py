@@ -52,6 +52,14 @@ def _import_vllm() -> None:
 
 _PRINTABLE = set(string.printable)
 _MAX_ANSWER_TOKENS = 64
+# Prefixes the model sometimes emits even when the prompt forbids them.
+# Stripped case-insensitively from the start of the output, once.
+_ANSWER_PREFIXES = (
+    "answer:",
+    "the answer is",
+    "answer is",
+    "a:",
+)
 
 
 def _clean_answer(text: str) -> str:
@@ -63,6 +71,35 @@ def _clip_words(text: str, limit: int = _MAX_ANSWER_TOKENS) -> str:
     if len(words) <= limit:
         return (text or "").strip()
     return " ".join(words[:limit]).strip()
+
+
+def _strip_boilerplate(text: str) -> str:
+    """Light post-processing for the LLM's raw output. Keep this minimal —
+    over-aggressive normalisation has historically regressed cloud AE @ 0.9
+    (see v11-canonical-answer in NOTES). All we do here:
+      - Strip a single leading "Answer:" / "The answer is" prefix
+      - Strip matched surrounding quotes/parens
+      - Strip a single trailing period if the body has no internal period
+    """
+    s = (text or "").strip()
+    if not s:
+        return s
+
+    lower = s.lower()
+    for prefix in _ANSWER_PREFIXES:
+        if lower.startswith(prefix):
+            s = s[len(prefix):].lstrip(" \t:-")
+            break
+
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in {'"', "'", "`"}:
+        s = s[1:-1].strip()
+    if s.startswith("(") and s.endswith(")"):
+        s = s[1:-1].strip()
+
+    # Trim trailing period only if the answer is a single statement.
+    if s.endswith(".") and "." not in s[:-1]:
+        s = s[:-1].strip()
+    return s
 
 
 _DEFAULT_SYSTEM_PROMPT = (
@@ -84,7 +121,14 @@ _DEFAULT_SYSTEM_PROMPT = (
 
 
 class LLMAnswerer:
-    """vLLM wrapper for Qwen2.5-7B-Instruct-AWQ (or compatible)."""
+    """vLLM wrapper for an instruction-tuned chat model (Qwen2.5/Qwen3/etc).
+
+    Default expectation as of v14c is Qwen3-4B-Instruct-2507 (AWQ-4bit) —
+    the "2507" suffix is the non-thinking instruct release, so the chat
+    template doesn't emit <think>...</think> blocks. apply_chat_template
+    is called with enable_thinking=False as a defensive belt-and-braces
+    measure; tokenizers that don't know the kwarg ignore it silently.
+    """
 
     def __init__(
         self,
@@ -93,7 +137,7 @@ class LLMAnswerer:
         max_context_chunks: int = 3,
         gpu_memory_utilization: float | None = None,
         max_model_len: int = 4096,
-        max_new_tokens: int = 48,
+        max_new_tokens: int = 32,
     ) -> None:
         self.model_dir = str(model_dir)
         self.max_context_chunks = max_context_chunks
@@ -196,9 +240,21 @@ class LLMAnswerer:
 
     def _build_prompt(self, question: str, chunks: Sequence[str]) -> str:
         messages = self._build_messages(question, chunks)
-        return self.tokenizer.apply_chat_template(  # type: ignore[no-any-return]
-            messages, tokenize=False, add_generation_prompt=True
-        )
+        # enable_thinking=False is a Qwen3-specific kwarg that suppresses
+        # the <think>...</think> reasoning trace. Models that don't know
+        # the kwarg silently ignore it. Belt-and-braces in case a future
+        # repo flip puts us on a thinking-by-default variant.
+        try:
+            return self.tokenizer.apply_chat_template(  # type: ignore[no-any-return]
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except TypeError:
+            return self.tokenizer.apply_chat_template(  # type: ignore[no-any-return]
+                messages, tokenize=False, add_generation_prompt=True
+            )
 
     # ---------------------------------------------------------------- inference
 
@@ -219,7 +275,7 @@ class LLMAnswerer:
         answers: list[str] = []
         for out in outputs:
             text = out.outputs[0].text if out.outputs else ""
-            answers.append(_clean_answer(_clip_words(text)))
+            answers.append(_clean_answer(_clip_words(_strip_boilerplate(text))))
         return answers
 
     def answer(self, question: str, chunks: Sequence[str]) -> str:

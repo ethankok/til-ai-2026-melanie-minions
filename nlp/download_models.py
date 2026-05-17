@@ -36,7 +36,15 @@ SPECS = [
     ),
 ]
 
-LLM_REPO = os.getenv("NLP_LLM_REPO", "Qwen/Qwen2.5-7B-Instruct-AWQ")
+# v14c-qwen3-4b: default to the July-2025 Qwen3-4B Instruct release, AWQ-4bit
+# quantised. Picked because:
+#  - Qwen3 architecture, not Qwen2.5 (~1 year more training, stronger
+#    instruction-following at the same param count)
+#  - "2507" suffix = non-thinking Instruct variant, so we don't have to
+#    handle <think>...</think> wrappers in the answer string
+#  - ~2GB AWQ weights → comfortable T4 fit alongside BGE + reranker, with
+#    plenty of headroom for KV cache (a 7B was the speed bottleneck on T4)
+LLM_REPO = os.getenv("NLP_LLM_REPO", "cpatonn/Qwen3-4B-Instruct-2507-AWQ-4bit")
 LLM_LOCAL = "llm"
 
 

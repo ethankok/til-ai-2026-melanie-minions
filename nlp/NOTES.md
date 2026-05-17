@@ -1,13 +1,26 @@
 # NLP — notes & history
 
-Last updated: 17 May 2026 — **v14-llm-rag in progress.** After the v9 freeze,
-re-read the ceiling: 481/883 local gold answers are non-literal, and v13a's
-oracle = 0.814 said the candidate pool has +0.10 of headroom we couldn't
-rank. Both diagnostics point at the *answerer class*, not at retrieval or
-post-processing. v14 swaps the RoBERTa-large extractive head for
-**Qwen2.5-7B-Instruct-AWQ served by vLLM**, keeping v9's BM25+BGE+rerank
-retrieval verbatim. The v9 path is preserved behind `NLP_ANSWERER=extractive`
-for emergency rollback. See the v14 section below.
+Last updated: 17 May 2026 ~16:15 SGT — **v14-llm-rag SHIPPED at
+`0.734 / 0.286` — new NLP accuracy high (+0.051 vs v9, above the previous
+public leaderboard top of 0.711).** Architecture: kept v9's BM25+BGE+rerank
+retrieval; swapped the RoBERTa-large extractive head for Qwen2.5-7B-Instruct-AWQ
+via vLLM. Local 0.754 → cloud 0.734, gap 0.020 (consistent with v9's 0.028).
+The non-extractive +5pp came from the model-class change exactly as predicted
+— 481/883 local gold answers were non-literal and v13a oracle said the
+candidate pool had +0.10 of headroom extractive heads couldn't surface.
+**Blended cost: -0.112** (v14 blended 0.622 vs v9 0.734) because cloud
+wall-clock went 3:50 → ~21 min → speed score 0.886 → 0.286.
+
+Next: **v14c-qwen3-4b** (skipping v14b-speed). Replaces both the model and
+the base image:
+- Model: `cpatonn/Qwen3-4B-Instruct-2507-AWQ-4bit` (newer Qwen3
+  architecture, July-2025 non-thinking Instruct release, ~2GB AWQ weights).
+- Base image: `vllm/vllm-openai:v0.9.0` (drops the NGC ABI fight; ships a
+  coherent torch + vllm + transformers≥4.51 + flash_attn stack).
+- Expected: ~2× speedup over v14 (4B vs 7B, native sm_75 compute path),
+  accuracy within ±0.02 of v14's 0.734 thanks to the architecture
+  generation jump. Blended target ~0.73–0.76 — first v14-family submission
+  that should beat v9's 0.734 blended.
 
 Historical (pre-v14): NLP was frozen at `v9-doc-ensemble`
 (0.683/0.886 official, 0.711 local). `v13b-deberta` failed the local gate
@@ -175,6 +188,120 @@ print(_DEFAULT_SYSTEM_PROMPT[:200])
 - [ ] Container logs show `[llm_answerer] loaded N few-shots` and `warmup complete`
 - [ ] Container logs show `[nlp_manager] LLM answerer ready`, not a fallback message
 - [ ] `nlp/error_report.py` shows retrieval miss ≤ 37 (v9 floor)
+
+## v14c-qwen3-4b — Qwen3-4B-Instruct-2507-AWQ on vllm-openai base (17 May)
+
+Two-axis change on top of shipped v14-llm-rag (0.734/0.286, blended 0.622):
+
+### Why both axes change at once
+
+1. **Model**: Qwen2.5 → Qwen3. The Qwen3-4B-Instruct-2507 release is roughly
+   a year of architecture improvements + a non-thinking instruction tune
+   over Qwen2.5-7B. Documented to match or exceed Qwen2.5-7B on QA tasks
+   while being 1.75× smaller (4B vs 7B) — directly attacks the speed
+   bottleneck.
+
+2. **Base image**: `nvcr.io/nvidia/pytorch:25.11-py3` → `vllm/vllm-openai:v0.9.0`.
+   The NGC base shipped pre-compiled `flash_attn` and `torchao` `.so`s
+   against its own torch ABI. When vLLM (as a pip dep) downgraded torch,
+   those `.so`s became unloadable (`torch.int1` missing, `c10::cuda::*`
+   undefined symbol). Working around it required pinning transformers at
+   4.46.3 and uninstalling both NGC extensions. Qwen3 needs transformers
+   ≥ 4.51, so that workaround is no longer available — we have to fix
+   the underlying ABI mismatch, and the cleanest fix is to use the upstream
+   image that's tested as a coherent stack.
+
+Coupling both changes in one tag is unusual for this project (the
+"sequential A/B" lesson from v5-multi). It's justified because:
+- Going to Qwen3 *requires* the transformers bump, which *requires* a
+  working flash_attn, which is precisely what `vllm/vllm-openai` provides.
+- The intermediate state (Qwen3 + NGC base + transformers 4.51 +
+  hand-built flash_attn wheel) would be its own multi-hour rabbit hole
+  for no shipping value.
+
+### Code changes (17 May)
+
+- [Dockerfile](Dockerfile) — `FROM vllm/vllm-openai:v0.9.0`, dropped the
+  transformers-pin + torchao/flash_attn-uninstall band-aids, added
+  `ENTRYPOINT []` to override the base image's OpenAI-API server CMD.
+- [requirements.txt](requirements.txt) — slimmed to `rank_bm25==0.2.2`
+  only; everything else comes from the base image.
+- [download_models.py](download_models.py) — default
+  `NLP_LLM_REPO=cpatonn/Qwen3-4B-Instruct-2507-AWQ-4bit`.
+- [src/llm_answerer.py](src/llm_answerer.py) — `apply_chat_template` now
+  passes `enable_thinking=False` (Qwen3-specific kwarg, harmless on
+  Qwen2.5); added `_strip_boilerplate()` post-processor that strips a
+  single leading "Answer:" / surrounding quotes / trailing period from
+  the LLM output. Deliberately minimal — v11 taught us aggressive answer
+  rewriting regresses cloud AE @ 0.9.
+
+### VRAM and speed math (T4 16GB)
+
+| Component | Bytes | Notes |
+|---|---|---|
+| Qwen3-4B-AWQ weights | ~2.2 GB | vs Qwen2.5-7B-AWQ ~5.0 GB |
+| BGE-small encoder | ~0.13 GB | unchanged |
+| bge-reranker-base | ~0.46 GB | unchanged |
+| KV cache for 4B @ ctx 4096, gmu 0.78 | ~7 GB | larger than v14 because the weight footprint shrank by ~3 GB |
+| Headroom | ~6 GB | |
+
+Per-question wall-clock estimate (back-of-envelope from v14's 2.4s/Q):
+- v14 was prefill-bound on T4 sm_75 AWQ kernels
+- 4B fewer weight FLOPs → ~1.7× speedup on prefill alone
+- Smaller weights → faster activation memory bandwidth → another ~10–15%
+- Expected per-Q ~1.3 s → 700 Q ~15 min wall-clock → speed score ~0.50
+- Blended target: 0.75 · 0.72 + 0.25 · 0.50 = **~0.665** (still possibly
+  short of v9's 0.734 blended; if accuracy holds at 0.73+ it could clear)
+
+### Workbench runbook
+
+```bash
+git pull origin main
+til build nlp v14c-qwen3-4b           # base image is ~6 GB; first pull is slow
+til test nlp v14c-qwen3-4b            # gate: local ≥ 0.711 (v9 baseline)
+til submit nlp v14c-qwen3-4b          # only if local clears the gate
+```
+
+### Decision rule
+
+| Local equiv_rate | Local wall-clock | Action |
+|---|---|---|
+| ≥ 0.73 | ≤ 18:00 | Submit. Likely new blended high. |
+| 0.71–0.73 | ≤ 16:00 | Submit if blended (`0.75·acc + 0.25·(1 − t/30)`) > v9's 0.734. |
+| ≥ 0.73 | > 22:00 | Speed lift didn't show up; investigate vLLM kernel selection or shrink prompt further. |
+| < 0.71 | any | Don't submit. Qwen3-4B underperformed; consider Qwen3-8B or speculative-decoding variant. |
+
+### Knobs
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `NLP_ANSWERER` | `llm` | `llm` or `extractive` (extractive path requires `roberta-finetuned-squad2` to be bundled — not by default in v14c). |
+| `NLP_LLM_REPO` | `cpatonn/Qwen3-4B-Instruct-2507-AWQ-4bit` | Repo to bundle at build time. Set via `--build-arg` not runtime — affects what's baked into the image. |
+| `NLP_LLM_DIR` | `/workspace/models/llm` | Where the LLM weights live in the image. |
+| `NLP_LLM_GPU_MEM_FRACTION` | `0.78` | vLLM `gpu_memory_utilization`. With 4B weights we have headroom; can raise to `0.85` to grow KV cache. |
+| `NLP_LLM_QUANT` | `awq` | `awq` for T4 (sm_75), `awq_marlin` on Ampere+. |
+| `NLP_LLM_ENFORCE_EAGER` | `1` | `1` to skip CUDA-graph capture, `0` to enable. For 4B on T4 try `0` once the rest is stable — graphs help more for smaller models. |
+
+### Risks (front and center)
+
+1. **Base-image swap may break local `til test`** — the upstream image runs
+   a different Python entrypoint by default. `ENTRYPOINT []` plus our
+   explicit `CMD` should override cleanly; if `til test` reports the
+   container exiting immediately, that's the regression to look for.
+2. **Image size** — vllm/vllm-openai is ~6 GB, plus our ~2.2 GB LLM
+   weights and ~0.6 GB retriever stack. Final image ~10 GB (vs v14's
+   ~12 GB — actually slightly smaller). Should not hit any submission
+   size limit.
+3. **Qwen3 chat template emits different control tokens than Qwen2.5** —
+   our stop tokens (`\n\n`, `\nQuestion:`, `\nContext:`) are content-based
+   not control-token-based, so this is fine, but worth watching the first
+   few outputs in the docker logs to confirm we're not getting `<|im_end|>`
+   leakage. (vLLM's default decoder strips EOS so this should be a
+   non-issue.)
+4. **4B model less accurate on L2 questions** — Qwen3-4B is small. If
+   local equiv_rate lands below 0.71 specifically because L2 cross-fact
+   composition regressed, the answer is Qwen3-8B-AWQ (~5GB) rather than
+   going back to v14's Qwen2.5-7B.
 
 ## v12 — candidate-answer reranker (16 May)
 

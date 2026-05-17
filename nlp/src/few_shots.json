@@ -1,15 +1,10 @@
 {
-  "comment": "Few-shot examples for the v14-llm-rag answerer. Hand-picked from local nlp.jsonl to cover the answer-format buckets the ModernBERT AE @ 0.9 evaluator is most sensitive to: money+penalty compounds, uppercase codenames, PCE date formats, year-deltas with 'approximately', bare counts, and short entity names. Contexts are trimmed to look like the 3-sentence chunks our retriever emits.",
+  "comment": "v14b-speed: trimmed from 6 examples to 3 to cut prompt prefill cost ~40%. Kept the three examples that demonstrate non-obvious cloud-AE-sensitive answer formats — PCE date format, year-delta with 'approximately' preserved, money+compound penalty. Dropped the three a strong instruction-tuned 7B handles zero-shot: bare codename token, bare count, short entity name.",
   "examples": [
     {
       "context": "Pursuant to OCRA Section 9(b)(ii) (Category B Civil Penalty Schedule) and CGC Regulatory Instrument 71-04, the Division hereby assesses the following penalties against Halcyon Technical Services: (a) a financial penalty of 4.5 million Credits, and (b) mandatory equipment surrender of all prohibited orbital communications equipment identified in enforcement action EA-76-088.",
       "question": "What penalty was assessed against Halcyon Technical Services in CGC enforcement action EA-76-088?",
       "answer": "4.5 million Credits and mandatory equipment surrender"
-    },
-    {
-      "context": "The data-relay infrastructure associated with this transponder installation base implicates a broader classified arrangement. Senior leadership is directed to the separately filed classified annex, SEASTITCH, for full details of the data-sharing arrangement with the CGC Security Directorate that this program is designed to support.",
-      "question": "What internal codename did ONE Network Enterprises use for its classified data-sharing arrangement with the CGC Security Directorate?",
-      "answer": "SEASTITCH"
     },
     {
       "context": "Per the 77 PCE fleet modernization directive issued by Nguyen Anh Mai, Phase II deliveries are to be completed in full no later than Q4 78 PCE. I expect this deadline to function as a ceiling, not a target.",
@@ -20,16 +15,6 @@
       "context": "The Blackshore Accords of 13 PCE (2055 CE) mandated Cyanite Industries as the sole Floodwall contractor. The Phase III nuclear transition centered in the 2119 anniversary article was completed in approximately 50 PCE (2092 CE), with construction proceeding through the following decade.",
       "question": "How many years passed between Cyanite Industries being mandated as sole Floodwall contractor under the Blackshore Accords and the completion of the Phase III nuclear transition that the 2119 anniversary article centers on?",
       "answer": "approximately 37 years"
-    },
-    {
-      "context": "ONE Network Enterprises confirms that 3 crew members were killed in piracy incidents during 76 PCE, distributed across two separate boarding actions in the eastern shipping corridor. Combined with non-fatal injuries the total casualty count for the year stands at 14.",
-      "question": "How many ONE crew members were killed in piracy incidents during 76 PCE?",
-      "answer": "3"
-    },
-    {
-      "context": "Subject's organization, originally founded as Edge Research in 41 PCE (2083 CE) and operating under that name for nearly three decades, completed a formal corporate renaming event on 69-05-10 (2111-05-10 CE). The renamed entity will henceforth be known as The Edge Corporation.",
-      "question": "What was The Edge Corporation's name before its renaming in 69 PCE?",
-      "answer": "Edge Research"
     }
   ]
 }

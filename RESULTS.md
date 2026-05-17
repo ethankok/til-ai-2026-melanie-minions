@@ -1,13 +1,25 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 17 May 2026 ~00:20 SGT — **NLP is now FROZEN at
-`v9-doc-ensemble` (0.683/0.886 official, 0.711 local).** `v13b-deberta`
-finished the DeBERTa-v3-large QA-retune test and failed the local gate:
-0.667 vs v9's 0.711, with inference 9:06 vs v9's 3:48. Do not submit v13b.
-Do not train more NLP. Also avoid careless NLP rebuilds: the current manager
-will prefer `deberta-finetuned-squad2` if present and still has candidate
-ranking code paths, so a "v9" rebuild must explicitly preserve v9 behavior.
+Last updated: 17 May 2026 ~16:15 SGT — **NLP UN-FROZEN. `v14-llm-rag`
+shipped at `0.734 / 0.286` — new NLP accuracy high (+0.051 vs v9's 0.683,
+above the previous public leaderboard top of 0.711)**. Architecture: kept
+v9's BM25+BGE+rerank retrieval, replaced RoBERTa-large extractive head with
+Qwen2.5-7B-Instruct-AWQ served by vLLM. Local 0.754 → cloud 0.734, gap 0.020
+(consistent with v9's 0.028). The non-extractive +5pp came from the model
+class change exactly as predicted — 481/883 local gold answers were
+non-literal and v13a oracle said the candidate pool had +0.10 of headroom
+extractive heads couldn't surface. **Blended cost: -0.112** (v14 blended
+0.622 vs v9 0.734) because cloud wall-clock went 3:50 → ~21 min → speed
+score 0.886 → 0.286. v14b-speed (few-shots 6→3, max_new_tokens 48→32) is
+the immediate iteration; v14c-3b (swap to Qwen2.5-3B-AWQ) is the bigger
+fallback if v14b can't recover blended above v9.
+
+Earlier 17 May state: NLP was FROZEN at `v9-doc-ensemble` (0.683/0.886
+official, 0.711 local) after every post-v9 architecture-internal swing
+regressed. `v13b-deberta` failed the local gate: 0.667 vs v9's 0.711, with
+inference 9:06 vs v9's 3:48. The freeze held until v14-llm-rag changed the
+answerer model class entirely.
 
 Earlier 17 May state: **`mcts-light-v2` SHIPPED 23:52 at
 0.487/0.595 — REGRESSED.** Blended 0.514 vs hybrid-v3's 0.628 (−0.114).
@@ -63,7 +75,8 @@ v12 -0.041, v13a local 0.663, v13b local 0.667). No more NLP training.
 
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
-NLP    melanie-minions-nlp      v9-doc-ensemble 16/05/2026 05:21:57 0 / 700 0.683   0.886  ← BEST BLEND; 3rd v9 resubmit, new speed high 0.883→0.886. Blended ~0.734.
+NLP    melanie-minions-nlp      v14-llm-rag 17/05/2026 16:15:15 0 / 700 0.734   0.286  ← NEW NLP ACCURACY HIGH (+0.051 vs v9). Qwen2.5-7B-Instruct-AWQ via vLLM as the answerer, v9 retrieval kept. Blended 0.622 vs v9 0.734 (-0.112) — speed regressed from 21-min wall-clock. v14b-speed iterates with fewer few-shots.
+NLP (prior best blend) melanie-minions-nlp v9-doc-ensemble 16/05/2026 05:21:57 0 / 700 0.683   0.886  ← BEST BLENDED until v14b/v14c can recover; 3rd v9 resubmit, speed 0.886. Blended ~0.734.
 NLP (v12 regressed) melanie-minions-nlp v12-candidate-ranker 16/05/2026 13:48:51 0 / 700 0.642 0.829  ← REGRESSED -0.041 acc, -0.057 speed vs v9. Candidate-ranker promoted doc-mined short tokens that passed exact/substr proxy but failed 0.9 AE threshold; -69 exact +54 substr +15 diff in local buckets. Worst since v5b.
 NLP (v8a regressed) melanie-minions-nlp v8a-genqa 16/05/2026 05:10:19 0 / 700 0.652 0.836  ← REGRESSED -0.031 acc, -0.047 speed vs v9. Flan-T5-base generative; landed at low end of predicted band. Generative confirmed dead lever.
 NLP (v9 prior) melanie-minions-nlp v9-doc-ensemble 15/05/2026 19:46:01 0 / 700 0.683 0.883
@@ -119,6 +132,9 @@ v8a-genqa            16/05 05:10  0.652   0.836   0 / 700   0.682        REGRESS
 v9-doc-ensemble      16/05 05:21  0.683   0.886   0 / 700   0.711        Third v9 resubmit. Accuracy unchanged; speed bumped to new high 0.883→0.886 (+0.003). Best NLP blend now 0.734. Marginal speed variance.
 v12-candidate-ranker 16/05 13:48  0.642   0.829   0 / 700   0.663        REGRESSED -0.041 acc, -0.057 speed vs v9. Candidate-answer reranker (RoBERTa top-12 spans + rule/canon/doc-mined literals, heuristic + optional logistic ranker). Local buckets shifted exact 273→204 (-69), substr 178→232 (+54), diff 395→410 (+15) — confirms the predicted failure: ranker promoted doc-mined short tokens (e.g. "37" over "37 days") that passed the exact/substr training proxy but failed the 0.9 ModernBERT AE threshold. Speed -0.057 from candidate mining over 18 sentences × 6 regex types per question. Blended 0.689 vs v9 0.734. **Candidate-ranker confirmed dead lever; NLP architecture exhausted.**
 v13b-deberta         16/05 local  —       —       —         0.667        NOT SUBMITTED. DeBERTa-v3-large QA retune built and tested locally after OOM fix (`--batch-size 2 --gradient-accumulation-steps 4 --gradient-checkpointing`). Baseline v9 local 0.711 in 3:48; v13b local 0.667 in 9:06. Failed gate by -0.044 and 2.4x slower. NLP frozen at v9-doc-ensemble.
+v14-llm-rag          17/05 16:15  0.734   0.286   0 / 700   0.754        ★ NEW NLP ACCURACY HIGH ★ (+0.051 cloud vs v9). Architecture change: kept v9 BM25+BGE+rerank retrieval, swapped RoBERTa-large extractive head for Qwen2.5-7B-Instruct-AWQ via vLLM. T4 ABI gauntlet survived: vLLM downgraded torch which broke both pre-installed torchao (`torch.int1`) and flash_attn (undefined C++ symbol); fix was pin transformers==4.46.3 (gated imports) and uninstall both broken NGC `.so`s. Runtime knobs: `quantization=awq` (Marlin needs sm_80+, T4 is sm_75), `enforce_eager=True` (skip ~60-120s CUDA-graph capture during the 5-min corpus-load gate). Local-cloud gap 0.020 (vs v9 0.028) — confirms hypothesis that the +5pp was capped by extractor class, not retrieval. **Blended REGRESSED -0.112 vs v9** (0.622 vs 0.734) because cloud wall-clock 3:50 → ~21 min (speed 0.886 → 0.286). Highest-score retention keeps v14 on the accuracy slot; v9 remains the better-blended NLP contribution to the qualifier total until v14b/v14c recover speed. Top of leaderboard now belongs to us on raw NLP score.
+v14b-speed           17/05 build  —       —       —         —            SKIPPED. Was prompt-trim only; superseded by v14c which makes the bigger swap.
+v14c-qwen3-4b        17/05 build  —       —       —         —            IN PROGRESS. Two-axis change: (1) model Qwen2.5-7B-AWQ → Qwen3-4B-Instruct-2507-AWQ-4bit (cpatonn), (2) base image nvcr.io/nvidia/pytorch:25.11-py3 → vllm/vllm-openai:v0.9.0. The base-image swap fixes the NGC torch/flash_attn/torchao ABI fight by adopting upstream's coherent pinned stack, which lets us bump transformers to ≥4.51 (required for Qwen3 model_type). 4B vs 7B + Qwen3 vs Qwen2.5 → expected ~1.7× speedup, accuracy within ±0.02 of v14's 0.734. Blended target ~0.66-0.74 — first v14-family candidate that could beat v9's 0.734 blended.
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.

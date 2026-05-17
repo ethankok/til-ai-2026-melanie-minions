@@ -231,7 +231,9 @@ PY
 
 ---
 
-## GCP setup (Workbench-only)
+## GCP setup
+
+### On the Workbench (only place `til` + Docker live)
 
 Official loop:
 
@@ -255,6 +257,22 @@ If `til submit` errors with "Unauthenticated request" on the Docker push, regist
 ```bash
 gcloud auth configure-docker asia-southeast1-docker.pkg.dev
 ```
+
+### On the local Mac (gcloud SDK is installed)
+
+The Mac now has `gcloud`, `gsutil`, and `bq` (auth: `ethankok@gmail.com`
+impersonating `svc-melanie-minions`, default project `til-ai-2026`). Use it
+for things that don't need Docker or `til`:
+
+```bash
+gsutil ls gs://melanie-minions-bucket-til-26/             # see team bucket
+gsutil cp gs://melanie-minions-bucket-til-26/nlp_results.json .   # pull artifacts
+```
+
+Useful for: fetching `*_results.json` / failure packs onto the Mac for
+offline triage with `nlp/error_report.py`, `training/cv/analyze_cv_failures.py`,
+etc., without round-tripping through the Workbench. Build/test/submit still
+need the Workbench — `docker` and `til` are not installed locally.
 
 ---
 

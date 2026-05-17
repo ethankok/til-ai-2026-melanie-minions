@@ -1,10 +1,19 @@
 # Dockerfile for building the NLP image.
+#
+# v14c-qwen3-4b: base image is now vllm/vllm-openai instead of the NGC
+# pytorch container. The NGC base shipped pre-compiled flash_attn and
+# torchao .so's against its own torch ABI; vllm-as-pip-dep downgraded
+# torch and stranded those .so's with undefined symbols and missing
+# attributes. Iterating around that was costing builds. vllm/vllm-openai
+# is the upstream-blessed image — torch, vllm, transformers, and
+# flash_attn are all pinned to a coherent stack — so the ABI fight goes
+# away and we get transformers>=4.51 (required for Qwen3 model_type).
 
 
-# The base image, an example deep learning VM.
-# For a full list, see https://us-docker.pkg.dev/deeplearning-platform-release/gcr.io/
-# For info, see https://cloud.google.com/deep-learning-vm/docs/images#supported-frameworks
-FROM nvcr.io/nvidia/pytorch:25.11-py3
+# vllm/vllm-openai ships a coherent torch + vllm + transformers + flash_attn
+# stack. v0.9.x is the most recent series we've found tested against Qwen3
+# AWQ checkpoints; pin to a specific tag for reproducibility.
+FROM vllm/vllm-openai:v0.9.0
 
 # Configures settings for the image.
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -14,80 +23,35 @@ ENV HF_HUB_DISABLE_TELEMETRY=1
 ENV TRANSFORMERS_OFFLINE=1
 ENV HF_HUB_OFFLINE=1
 ENV NLP_MODEL_DIR=/workspace/models
-# v14-llm-rag: 'llm' routes the answerer through vLLM + Qwen2.5-7B-Instruct-AWQ.
-# Set NLP_ANSWERER=extractive to roll back to v9 RoBERTa-large behaviour.
+# v14-llm-rag: 'llm' routes the answerer through vLLM + a local LLM (now
+# Qwen3-4B-Instruct-2507-AWQ). Set NLP_ANSWERER=extractive to fall back to
+# the v9 RoBERTa-large path (also requires the fine-tuned weights to be
+# present, which v14c does not bundle by default).
 ENV NLP_ANSWERER=llm
 ENV NLP_LLM_DIR=/workspace/models/llm
+# Default repo for download_models.py. cpatonn ships the AWQ-4bit quant of
+# the July-2025 Instruct release. The "2507" suffix denotes the
+# non-thinking instruct variant, which is exactly what we want for short
+# extractive-style answers.
+ENV NLP_LLM_REPO=cpatonn/Qwen3-4B-Instruct-2507-AWQ-4bit
 WORKDIR /workspace
 
-# Installs your dependencies.
-RUN pip install -U pip
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# v14-llm-rag: vLLM downgrades the NGC-shipped torch to satisfy its own pin,
-# which leaves multiple precompiled NGC extensions (torchao, flash_attn, ...)
-# pointing at C++ symbols / Python attributes that no longer exist:
-#   - torchao: `module 'torch' has no attribute 'int1'`  (torch.int1 added in 2.5)
-#   - flash_attn: `undefined symbol c10::cuda::c10_cuda_check_implementation`
-#
-# transformers 4.46.3 (the version requirements.txt pins) handles these
-# correctly: torchao is gated by `is_torchao_available()` and flash_attn is
-# gated by `is_flash_attn_2_available()` — both check importability before
-# importing. The fix is therefore to uninstall the broken precompiled
-# extensions so the gates return False, and to make sure we stay pinned to
-# 4.46.3 (newer transformers hard-imports flash_attn via modeling_utils →
-# integrations/flash_paged, which would defeat the gate-based approach).
-#
-# Separate RUN so the expensive `pip install -r requirements.txt` layer
-# above stays cached across iterations.
-RUN pip install --no-cache-dir 'transformers==4.46.3' && \
-    pip uninstall -y torchao flash-attn flash_attn || true
+# vllm/vllm-openai already provides: vllm, torch, transformers (>=4.51),
+# tokenizers, safetensors, fastapi, uvicorn, numpy, huggingface_hub,
+# sentencepiece, flash_attn. We only need to add the small extras our
+# manager uses (BM25 over passages).
+RUN pip install --no-cache-dir 'rank_bm25==0.2.2'
 
 # Bake model weights into the image so inference runs fully offline.
-# This must run BEFORE setting TRANSFORMERS_OFFLINE=1 takes effect for the
-# downloader — ENV directives apply to subsequent layers, so we override
-# both transformers and hf_hub offline flags locally for this RUN only.
-# (v14: HF_HUB_OFFLINE=1 is set at the top for the runtime; we have to
-# override it too or huggingface_hub.snapshot_download fails before
-# transformers even gets a chance.)
+# ENV HF_HUB_OFFLINE=1 is set above for runtime; we override it for this
+# download-only RUN. Pulls BGE retriever + reranker + RoBERTa-base (kept
+# for emergency extractive rollback) + the Qwen3-4B AWQ LLM.
 COPY download_models.py .
 RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python download_models.py
 
-# Bundle the fine-tuned QA model(s) and optional v12 answer-ranker JSON if
-# they've been built locally (see training/nlp/finetune_qa.py,
-# training/nlp/finetune_genqa.py, and training/nlp/train_answer_ranker.py).
-# Manager prefers extractive in this order (v13b):
-#   deberta-finetuned-squad2 (DeBERTa-v3-large fine-tune, v13b)
-#   > roberta-finetuned-squad2 (RoBERTa-large fine-tune, v8b/v9)
-#   > stock SQuAD2 base
-# Flan-T5 generative is opt-in via NLP_QA_MODE=generative.
-COPY models /workspace/models-local
-RUN if [ -d /workspace/models-local/flan-t5-finetuned ]; then \
-        cp -r /workspace/models-local/flan-t5-finetuned /workspace/models/; \
-        echo "[nlp build] bundled fine-tuned generative QA (Flan-T5) weights"; \
-    fi && \
-    if [ -d /workspace/models-local/deberta-finetuned-squad2 ]; then \
-        cp -r /workspace/models-local/deberta-finetuned-squad2 /workspace/models/; \
-        echo "[nlp build] bundled fine-tuned extractive QA (DeBERTa-v3-large) weights"; \
-    fi && \
-    if [ -d /workspace/models-local/roberta-finetuned-squad2 ]; then \
-        cp -r /workspace/models-local/roberta-finetuned-squad2 /workspace/models/; \
-        echo "[nlp build] bundled fine-tuned extractive QA (RoBERTa-SQuAD2) weights"; \
-    fi && \
-    if [ ! -d /workspace/models-local/flan-t5-finetuned ] && \
-       [ ! -d /workspace/models-local/deberta-finetuned-squad2 ] && \
-       [ ! -d /workspace/models-local/roberta-finetuned-squad2 ]; then \
-        echo "[nlp build] no fine-tuned QA weights found; falling back to stock base"; \
-    fi && \
-    if [ -f /workspace/models-local/answer_ranker.json ]; then \
-        cp /workspace/models-local/answer_ranker.json /workspace/models/answer_ranker.json; \
-        echo "[nlp build] bundled v12 answer ranker"; \
-    fi && rm -rf /workspace/models-local
-
 # v14-llm-rag: hard-fail the build if the LLM weights didn't land. The
-# manager will still boot without them by falling back to extractive, but a
-# silent fallback would mask a packaging regression on a v14 tag.
+# manager will still boot without them by falling back to extractive, but
+# a silent fallback would mask a packaging regression on a v14c tag.
 RUN if [ "$NLP_ANSWERER" = "llm" ] && [ ! -f /workspace/models/llm/config.json ]; then \
         echo "[nlp build] WARNING: NLP_ANSWERER=llm but /workspace/models/llm/config.json missing"; \
         echo "[nlp build] container will fall back to extractive QA at runtime"; \
@@ -96,5 +60,7 @@ RUN if [ "$NLP_ANSWERER" = "llm" ] && [ ! -f /workspace/models/llm/config.json ]
 # Copies your source files.
 COPY src .
 
-# Starts your model server.
-CMD uvicorn nlp_server:app --port 5004 --host 0.0.0.0
+# Override vllm/vllm-openai's default OpenAI-API-server CMD with our own
+# FastAPI server. uvicorn comes pre-installed in the base image.
+ENTRYPOINT []
+CMD ["uvicorn", "nlp_server:app", "--port", "5004", "--host", "0.0.0.0"]
