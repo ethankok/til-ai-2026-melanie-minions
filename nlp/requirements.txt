@@ -12,3 +12,12 @@ rank_bm25==0.2.2
 # Flan-T5 tokenizer is SentencePiece-based; required for v8a-genqa. Harmless
 # for extractive RoBERTa builds.
 sentencepiece==0.2.0
+
+# v14-llm-rag: vLLM-served Qwen2.5-7B-Instruct-AWQ as the answerer. vLLM brings
+# its own torch pin; the nvcr.io/nvidia/pytorch base ships a compatible
+# torch+CUDA toolchain. If `pip install vllm` clobbers torch on the Workbench
+# image, install with `pip install vllm --no-deps` and add the missing runtime
+# deps individually. AWQ kernels are bundled in vllm itself; no autoawq runtime
+# import is needed at serve time.
+vllm>=0.6.6,<0.9
+huggingface-hub>=0.26.0

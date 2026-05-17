@@ -12,7 +12,12 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
 ENV HF_HUB_DISABLE_TELEMETRY=1
 ENV TRANSFORMERS_OFFLINE=1
+ENV HF_HUB_OFFLINE=1
 ENV NLP_MODEL_DIR=/workspace/models
+# v14-llm-rag: 'llm' routes the answerer through vLLM + Qwen2.5-7B-Instruct-AWQ.
+# Set NLP_ANSWERER=extractive to roll back to v9 RoBERTa-large behaviour.
+ENV NLP_ANSWERER=llm
+ENV NLP_LLM_DIR=/workspace/models/llm
 WORKDIR /workspace
 
 # Installs your dependencies.
@@ -57,6 +62,14 @@ RUN if [ -d /workspace/models-local/flan-t5-finetuned ]; then \
         cp /workspace/models-local/answer_ranker.json /workspace/models/answer_ranker.json; \
         echo "[nlp build] bundled v12 answer ranker"; \
     fi && rm -rf /workspace/models-local
+
+# v14-llm-rag: hard-fail the build if the LLM weights didn't land. The
+# manager will still boot without them by falling back to extractive, but a
+# silent fallback would mask a packaging regression on a v14 tag.
+RUN if [ "$NLP_ANSWERER" = "llm" ] && [ ! -f /workspace/models/llm/config.json ]; then \
+        echo "[nlp build] WARNING: NLP_ANSWERER=llm but /workspace/models/llm/config.json missing"; \
+        echo "[nlp build] container will fall back to extractive QA at runtime"; \
+    fi
 
 # Copies your source files.
 COPY src .

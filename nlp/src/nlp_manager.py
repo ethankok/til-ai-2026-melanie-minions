@@ -103,6 +103,11 @@ QA_MODE = os.getenv("NLP_QA_MODE", "extractive").strip().lower()
 RULE_MODE = os.getenv("NLP_RULE_MODE", "conservative").strip().lower()
 CANON_MODE = os.getenv("NLP_CANON_MODE", "conservative").strip().lower()
 ANSWER_RANK_MODE = os.getenv("NLP_ANSWER_RANK_MODE", "heuristic").strip().lower()
+# v14-llm-rag: top-level answerer switch.
+#   'llm'        — vLLM + Qwen2.5-7B-Instruct-AWQ (default in the v14 image)
+#   'extractive' — v9 RoBERTa-large fine-tune path (fallback for emergency rollback)
+ANSWERER_MODE = os.getenv("NLP_ANSWERER", "extractive").strip().lower()
+LLM_MODEL_DIR = os.getenv("NLP_LLM_DIR", str(MODEL_DIR / "llm"))
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
@@ -341,6 +346,11 @@ class NLPManager:
         self._qa_model = None
         self._qa_is_generative = False
         self._answer_ranker: dict[str, Any] | None = None
+        # v14-llm-rag: answerer mode + vLLM handle. Resolved at _init_models
+        # time, may downgrade from 'llm' to 'extractive' if weights aren't
+        # bundled or vLLM init fails.
+        self._answerer_mode: str = ANSWERER_MODE
+        self._llm_answerer = None  # type: ignore[var-annotated]
 
         # Corpus state.
         self.documents: list[str] = []
@@ -364,6 +374,64 @@ class NLPManager:
         rerank_path = (
             str(RERANKER_DIR) if RERANKER_DIR.exists() else "BAAI/bge-reranker-base"
         )
+
+        from transformers import AutoModel
+
+        self._dense_tok = AutoTokenizer.from_pretrained(dense_path)
+        # BGE uses an encoder; AutoModel gives the encoder we need for CLS pooling.
+        self._dense_model = AutoModel.from_pretrained(dense_path).to(self.device).eval()
+
+        self._rerank_tok = AutoTokenizer.from_pretrained(rerank_path)
+        self._rerank_model = (
+            AutoModelForSequenceClassification.from_pretrained(rerank_path)
+            .to(self.device)
+            .eval()
+        )
+
+        if self.device.type == "cuda":
+            # Half precision is a ~2x speedup on these small models with no
+            # measurable quality loss in our regime.
+            self._dense_model = self._dense_model.half()
+            self._rerank_model = self._rerank_model.half()
+
+        # v14-llm-rag: answerer dispatch. Try LLM first if requested; if vLLM
+        # init or the weight dir is missing, downgrade to extractive so the
+        # container still serves answers instead of returning empty strings.
+        if self._answerer_mode == "llm":
+            self._init_llm_answerer()
+            if self._llm_answerer is None:
+                print(
+                    "[nlp_manager] LLM answerer unavailable; "
+                    "falling back to extractive",
+                    flush=True,
+                )
+                self._answerer_mode = "extractive"
+
+        if self._answerer_mode != "llm":
+            self._init_extractive_qa()
+
+        self._models_initialized = True
+
+    def _init_llm_answerer(self) -> None:
+        try:
+            from llm_answerer import LLMAnswerer, llm_dir_is_ready
+
+            if not llm_dir_is_ready(LLM_MODEL_DIR):
+                print(
+                    f"[nlp_manager] LLM dir not ready at {LLM_MODEL_DIR}",
+                    flush=True,
+                )
+                return
+            self._llm_answerer = LLMAnswerer(LLM_MODEL_DIR)
+            print(
+                f"[nlp_manager] LLM answerer ready ({LLM_MODEL_DIR})",
+                flush=True,
+            )
+        except Exception as exc:  # broad: vllm import, CUDA OOM, missing weights
+            print(f"[nlp_manager] LLM init failed: {exc}", flush=True)
+            self._llm_answerer = None
+
+    def _init_extractive_qa(self) -> None:
         # QA model selection ladder. v13b: DeBERTa-v3-large fine-tune is
         # preferred extractive backbone when present (structurally +1-2% over
         # roberta-large on extractive QA). Falls back to v8b/v9 RoBERTa-large
@@ -379,9 +447,6 @@ class NLPManager:
         elif QA_EXT_FINETUNED_DIR.exists():
             qa_path = str(QA_EXT_FINETUNED_DIR)
             qa_source = "ext-finetuned"
-        elif QA_GEN_FINETUNED_DIR.exists() and want_generative:
-            qa_path = str(QA_GEN_FINETUNED_DIR)
-            qa_source = "gen-finetuned"
         elif QA_BASE_DIR.exists():
             qa_path = str(QA_BASE_DIR)
             qa_source = "ext-base"
@@ -395,19 +460,6 @@ class NLPManager:
             f"({'generative' if self._qa_is_generative else 'extractive'}) "
             f"({qa_path})",
             flush=True,
-        )
-
-        from transformers import AutoModel
-
-        self._dense_tok = AutoTokenizer.from_pretrained(dense_path)
-        # BGE uses an encoder; AutoModel gives the encoder we need for CLS pooling.
-        self._dense_model = AutoModel.from_pretrained(dense_path).to(self.device).eval()
-
-        self._rerank_tok = AutoTokenizer.from_pretrained(rerank_path)
-        self._rerank_model = (
-            AutoModelForSequenceClassification.from_pretrained(rerank_path)
-            .to(self.device)
-            .eval()
         )
 
         self._qa_tok = AutoTokenizer.from_pretrained(qa_path)
@@ -424,17 +476,9 @@ class NLPManager:
                 .eval()
             )
 
-        if self.device.type == "cuda":
-            # Half precision is a ~2x speedup on these small models with no
-            # measurable quality loss in our regime. T5 (the generative QA
-            # backbone) has known fp16 overflow in attention; keep it at fp32
-            # to avoid NaN logits at generate time. Extractive RoBERTa is fine.
-            self._dense_model = self._dense_model.half()
-            self._rerank_model = self._rerank_model.half()
-            if not self._qa_is_generative:
-                self._qa_model = self._qa_model.half()
-
-        self._models_initialized = True
+        if self.device.type == "cuda" and not self._qa_is_generative:
+            # T5 fp16 overflow → keep generative head at fp32. Extractive RoBERTa is fine.
+            self._qa_model = self._qa_model.half()
 
     def _load_answer_ranker(self) -> None:
         if self._answer_ranker is not None:
@@ -568,6 +612,12 @@ class NLPManager:
             if self.documents else torch.empty(0, self.passage_embeds.shape[1])
         )
         self.doc_id_to_idx = {doc_id: idx for idx, doc_id in enumerate(self.doc_ids)}
+
+        # v14-llm-rag: warm vLLM inside the untimed load phase so the first
+        # real /nlp question doesn't pay CUDA-graph capture cost.
+        if self._answerer_mode == "llm" and self._llm_answerer is not None:
+            self._llm_answerer.warmup()
+
         self.loaded = True
 
     # ------------------------------------------------------------- retrieval
@@ -1451,20 +1501,62 @@ class NLPManager:
 
     # ----------------------------------------------------------------- query
 
-    def _answer_one(self, question: str) -> dict:
-        if not self.loaded or not self.passages:
-            return {"documents": [], "answer": ""}
-
+    def _retrieve_for_answer(
+        self, question: str
+    ) -> tuple[list[int], list[str], list[int], list[int]]:
+        """Run retrieval + rerank, return (reranked_passage_idxs, doc_ids,
+        retrieved, doc_candidates). Shared by extractive and LLM paths."""
         retrieved, doc_candidates = self._retrieve(question, TOP_K_RETRIEVE)
         reranked = self._rerank(question, retrieved)
         documents = self._top_doc_ids(
             reranked, fallback=retrieved, doc_fallback=doc_candidates
         )
-        candidates = self._answer_candidates(question, reranked, documents)
-        answer = candidates[0].text if candidates else ""
+        return reranked, documents, retrieved, doc_candidates
+
+    def _llm_chunks_for(self, reranked: list[int]) -> list[str]:
+        n = self._llm_answerer.max_context_chunks if self._llm_answerer else 3
+        return [self.passages[i] for i in reranked[:n]]
+
+    def _answer_one(self, question: str) -> dict:
+        if not self.loaded or not self.passages:
+            return {"documents": [], "answer": ""}
+
+        reranked, documents, retrieved, _ = self._retrieve_for_answer(question)
+        if self._answerer_mode == "llm" and self._llm_answerer is not None:
+            chunks = self._llm_chunks_for(reranked)
+            answer = self._llm_answerer.answer(question, chunks)
+        else:
+            candidates = self._answer_candidates(question, reranked, documents)
+            answer = candidates[0].text if candidates else ""
         return {"documents": documents, "answer": answer}
 
     def qa_batch(self, questions: list[str]) -> list[dict]:
+        """Batched query path.
+
+        For LLM mode this is the speed lever: retrieval/rerank are still
+        sequential (different docs per question, no shared work to fuse),
+        but all questions in the batch are handed to vLLM as a single
+        .generate() call so continuous batching can overlap them.
+        Sequential extractive path keeps the v9 behavior intact.
+        """
+        if not questions:
+            return []
+        if not self.loaded or not self.passages:
+            return [{"documents": [], "answer": ""} for _ in questions]
+
+        if self._answerer_mode == "llm" and self._llm_answerer is not None:
+            doc_lists: list[list[str]] = []
+            chunks_per_q: list[list[str]] = []
+            for q in questions:
+                reranked, documents, _, _ = self._retrieve_for_answer(q)
+                doc_lists.append(documents)
+                chunks_per_q.append(self._llm_chunks_for(reranked))
+            answers = self._llm_answerer.answer_batch(questions, chunks_per_q)
+            return [
+                {"documents": docs, "answer": ans}
+                for docs, ans in zip(doc_lists, answers)
+            ]
+
         return [self._answer_one(q) for q in questions]
 
     # Compatibility shim — old call site returns a bare string.

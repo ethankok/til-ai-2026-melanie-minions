@@ -57,10 +57,12 @@ async def nlp(request: Request) -> dict[str, list[dict[str, list[str] | str]]]:
     if first.get("poll") is not None:
         return {"predictions": [{"status": load_state.status}]}
 
-    predictions = [
-        await asyncio.to_thread(manager.qa, instance["question"])
-        for instance in inputs_json["instances"]
-    ]
+    # v14-llm-rag: collect all questions in this batch and hand them to the
+    # manager in one call so vLLM can do continuous batching across them.
+    # The extractive path inside qa_batch still processes sequentially, so
+    # this change is a no-op for the v9 rollback configuration.
+    questions = [instance["question"] for instance in inputs_json["instances"]]
+    predictions = await asyncio.to_thread(manager.qa_batch, questions)
 
     return {"predictions": predictions}
 

@@ -1,7 +1,16 @@
 # NLP — notes & history
 
-Last updated: 17 May 2026 ~00:20 SGT — **NLP FROZEN at `v9-doc-ensemble`
-(0.683/0.886 official, 0.711 local).** `v13b-deberta` failed the local gate
+Last updated: 17 May 2026 — **v14-llm-rag in progress.** After the v9 freeze,
+re-read the ceiling: 481/883 local gold answers are non-literal, and v13a's
+oracle = 0.814 said the candidate pool has +0.10 of headroom we couldn't
+rank. Both diagnostics point at the *answerer class*, not at retrieval or
+post-processing. v14 swaps the RoBERTa-large extractive head for
+**Qwen2.5-7B-Instruct-AWQ served by vLLM**, keeping v9's BM25+BGE+rerank
+retrieval verbatim. The v9 path is preserved behind `NLP_ANSWERER=extractive`
+for emergency rollback. See the v14 section below.
+
+Historical (pre-v14): NLP was frozen at `v9-doc-ensemble`
+(0.683/0.886 official, 0.711 local). `v13b-deberta` failed the local gate
 at 0.667 and was 2.4x slower than v9, so it should not be submitted. `v13a`
 also confirmed candidate-ranker architecture cannot beat v9 on this corpus.
 v13a was tested two ways locally and both lost:
@@ -27,6 +36,145 @@ runtime. All post-v9 levers are now dead or below gate: deterministic
 post-processing, generative QA, candidate reranking, and DeBERTa-v3-large
 extractive retune. Protect v9 and do not rebuild NLP unless the build is forced
 back to v9 behavior.
+
+## v14-llm-rag — Qwen2.5-7B-Instruct-AWQ answerer (17 May, in progress)
+
+Rationale recap (see top of file): v9 extractive ceiling is structural, not a
+tuning problem. Every post-v9 swing inside the same architecture has regressed
+or failed gate. v14 changes the model class.
+
+### Architecture
+
+```
+question
+  → BM25+BGE hybrid retrieval         (unchanged from v9)
+  → bge-reranker-base                  (unchanged)
+  → top-3 doc IDs                      (unchanged — retrieval gate)
+  → Qwen2.5-7B-Instruct-AWQ via vLLM   ← new answerer
+  → answer string (≤ 48 tokens)
+```
+
+### Code changes (17 May)
+
+- [src/llm_answerer.py](src/llm_answerer.py) — new module. Boots vLLM with
+  `quantization=awq_marlin`, `gpu_memory_utilization=0.78` (tunable via
+  `NLP_LLM_GPU_MEM_FRACTION`), `max_model_len=4096`. Greedy decode
+  (`temperature=0`, `max_tokens=48`) + stop tokens prevent the paraphrase
+  drift that killed v8a-genqa.
+- [src/few_shots.json](src/few_shots.json) — 6 hand-picked Q/A/context
+  triples covering: money+penalty, codename, PCE date, year-delta with
+  `approximately`, bare count, short entity. Threaded through the chat
+  template as alternating user/assistant turns.
+- [src/nlp_manager.py](src/nlp_manager.py) — `NLP_ANSWERER` env switch
+  (`llm` | `extractive`). When `llm`: skip RoBERTa load entirely, init
+  vLLM in `_init_models`, warm up inside `load_corpus` (untimed phase).
+  `qa_batch` collects all questions in a request and hands them to
+  `LLMAnswerer.answer_batch` as a single batched generate call.
+- [src/nlp_server.py](src/nlp_server.py) — replaced the per-instance
+  sequential loop with a single batched `manager.qa_batch(questions)`.
+- [download_models.py](download_models.py) — pulls
+  `Qwen/Qwen2.5-7B-Instruct-AWQ` via `huggingface_hub.snapshot_download`
+  into `/workspace/models/llm`.
+- [Dockerfile](Dockerfile) — `NLP_ANSWERER=llm`, `HF_HUB_OFFLINE=1`,
+  build-time warning if the LLM dir didn't land.
+- [requirements.txt](requirements.txt) — `vllm>=0.6.6,<0.9`.
+
+### System prompt + few-shot strategy
+
+Stays in `llm_answerer._DEFAULT_SYSTEM_PROMPT`. Key constraints:
+- "Answer ONLY from the provided context. If the context does not contain
+  the answer, return an empty string." (defensive against L4-style cases,
+  even on Novice)
+- "Quote the answer using the EXACT wording, dates, numbers, and units from
+  the context. Do not paraphrase. Do not add explanation." (this is what
+  v8a-genqa lacked — instruction-tuned 7B obeys, Flan-T5-base didn't)
+- "Keep the answer as short as possible — typically 1 to 8 words."
+
+Few-shots are intentionally short and verbatim. Each demonstrates a single
+answer-form pattern.
+
+### Workbench runbook
+
+```bash
+# 1. Build (will pull ~5 GB Qwen weights at build time; first build is slow)
+til build nlp v14-llm-rag
+
+# 2. Local A/B vs v9 under the synced upstream test_nlp.py
+til test nlp v9-doc-ensemble           # baseline: 0.711, 3:48
+til test nlp v14-llm-rag               # gate (see below)
+
+# 3. Inspect failure buckets if local lands below v9
+python nlp/error_report.py /home/jupyter/melanie-minions/nlp_results.json \
+                           /home/jupyter/novice/nlp/nlp.jsonl
+
+# 4. Submit only after the gate passes
+til submit nlp v14-llm-rag
+```
+
+### Decision rule
+
+| Local equiv_rate | Local time | Action |
+|---|---|---|
+| ≥ 0.78 | ≤ 6:00 | Submit. Expected cloud: 0.85–0.92. |
+| 0.72–0.78 | ≤ 7:00 | Submit. Expected cloud: 0.78–0.87. |
+| ≥ 0.711 but slow | ≤ 8:00 | Submit if blended (`0.75*acc + 0.25*speed`) > v9's 0.733. |
+| < 0.711 | any | Do not submit. Diagnose: prompt drift, fp16 OOM fallback, or chunk-context mismatch. |
+| any | > 8:00 | Speed regression too large; investigate before submitting. |
+
+### Knobs
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `NLP_ANSWERER` | `llm` | `llm` or `extractive`. Set `extractive` to roll back to v9. |
+| `NLP_LLM_DIR` | `/workspace/models/llm` | Where the AWQ weights live in the image. |
+| `NLP_LLM_GPU_MEM_FRACTION` | `0.78` | vLLM `gpu_memory_utilization`. Drop to `0.70` if OOM with retriever+reranker on T4. |
+| `NLP_QA_MODE` | `extractive` | Extractive-path knob, ignored when `NLP_ANSWERER=llm`. |
+
+### Risks (front and center)
+
+1. **VRAM** — Qwen-7B-AWQ + BGE + reranker + KV cache on a T4 (16 GB) is
+   workable but tight. If `til test` OOMs on Workbench T4, drop
+   `NLP_LLM_GPU_MEM_FRACTION` to 0.70 or swap the repo to
+   `Qwen/Qwen2.5-3B-Instruct` in `download_models.py` (vLLM tag the build
+   `v14-llm-rag-3b`).
+2. **Paraphrase past AE 0.9** — if local equiv_rate stalls in the 0.70s
+   despite retrieval still at 95.8%, the model is rewording. Tighten by
+   prepending two more verbatim few-shots emphasising literal-quote output.
+3. **vLLM + torch ABI conflict with the base image** — if `pip install vllm`
+   clobbers the torch shipped by `nvcr.io/nvidia/pytorch:25.11-py3`, build
+   logs will show a torch version mismatch. Fallback path: install with
+   `--no-deps` and pin the few runtime deps vLLM needs (numpy, ray,
+   xformers, msgspec, prometheus-client) manually.
+4. **Speed regression** — vLLM continuous batching expects multiple
+   in-flight requests. If the evaluator sends 1 instance per HTTP call,
+   batching only helps when concurrent requests overlap. Mitigations: the
+   server-side change already batches *within* a request; we may also need
+   `uvicorn --workers 1` (already the default) so all requests hit one
+   engine. Generation cap of 48 tokens caps per-question latency at
+   ~150–250 ms even uncontested.
+
+### Local pre-build sanity
+
+`few_shots.json` and the prompt template are pure Python/JSON; quick smoke
+test of the prompt construction without loading vLLM:
+
+```bash
+python -c "
+import sys; sys.path.insert(0, 'nlp/src')
+# Avoid importing the vllm dep just to check the prompt
+from llm_answerer import _DEFAULT_SYSTEM_PROMPT
+print(_DEFAULT_SYSTEM_PROMPT[:200])
+"
+```
+
+### Submission gate — checklist before `til submit`
+
+- [ ] `til test nlp v14-llm-rag` ran end-to-end without error
+- [ ] Local equiv_rate ≥ 0.711 (v9 baseline)
+- [ ] Local wall-clock ≤ 8:00
+- [ ] Container logs show `[llm_answerer] loaded N few-shots` and `warmup complete`
+- [ ] Container logs show `[nlp_manager] LLM answerer ready`, not a fallback message
+- [ ] `nlp/error_report.py` shows retrieval miss ≤ 37 (v9 floor)
 
 ## v12 — candidate-answer reranker (16 May)
 
