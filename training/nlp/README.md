@@ -60,6 +60,27 @@ Environment lesson:
   `torchvision` compiled against the wrong torch and causing
   `RuntimeError: operator torchvision::nms does not exist`, which then surfaces
   through Transformers as `Could not import module 'PreTrainedModel'`.
+- Do **not** run `til test` while `~/quant-venv` is active. The quant venv is
+  only for merge/quantization and lacks normal test deps such as
+  `python-dotenv`.
+- If base-env `til test nlp ...` fails while loading ModernBERT with
+  `operator torchvision::nms does not exist`, remove the broken optional
+  `torchvision` package from the host env and rerun the evaluator:
+
+```bash
+deactivate 2>/dev/null || true
+python -m pip uninstall -y torchvision
+python -m pip uninstall -y torchvision  # repeat once in case both user/site copies exist
+python - <<'PY'
+from transformers import AutoModelForSequenceClassification
+AutoModelForSequenceClassification.from_pretrained(
+    "./test/models/nlp_eval_512",
+    local_files_only=True,
+)
+print("ModernBERT evaluator imports OK")
+PY
+```
+
 - Use an isolated `~/quant-venv` for quantization experiments:
 
 ```bash
@@ -94,6 +115,10 @@ Merge/quant status:
   now defaults to `--gptq-ignore-down-proj-from-layer 29`, leaving only
   `model.layers.29-35.mlp.down_proj` unquantized while quantizing the rest.
   Set `--gptq-ignore-down-proj-from-layer -1` only on larger GPUs.
+- This produced `nlp/models/llm-merged/` successfully on 18 May. Build copied a
+  6.61 GB context and the NLP container became healthy; local scoring is blocked
+  only by the host ModernBERT evaluator env until the `torchvision` repair above
+  is applied.
 - Any Docker build that falls through without `nlp/models/llm-merged/` is just
   testing the un-tuned base.
 

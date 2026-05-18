@@ -634,12 +634,27 @@ to `--gptq-ignore-down-proj-from-layer 29`. That leaves the seven late
 `down_proj` modules (`29-35`) in BF16 and still quantizes the rest of the model,
 which is the only T4 path left that can plausibly produce a bootable artifact.
 
-**Net**: the LoRA training payoff is still unproven until GPTQ produces a
-bootable `nlp/models/llm-merged/`. Two real paths forward:
+Follow-up result: the layer-29 skip completed quantization and saved
+`nlp/models/llm-merged/`. Docker build copied a 6.61 GB model context and the
+container reached healthy state. The next `til test` failures were host
+evaluator environment issues, not model/container failures:
 
-1. **Finish GPTQ or AWQ quantization of the merged Qwen3-8B-BF16.**
-   GPTQ is the current T4 attempt; AWQ may need A100 / H100 if GPTQ does
-   not boot or score well.
+- Running `til test` while `~/quant-venv` is active fails immediately with
+  `ModuleNotFoundError: No module named 'dotenv'` because the quant venv is not
+  the normal Workbench test env.
+- Running from base env then fails loading `ModernBertForSequenceClassification`
+  because broken optional `torchvision` is still installed after the earlier
+  `llmcompressor` torch downgrade (`RuntimeError: operator torchvision::nms
+  does not exist`). Fix by deactivating the quant venv and uninstalling
+  `torchvision` from the host env before rerunning `til test`.
+
+**Net**: the LoRA training payoff is still unproven until the host evaluator
+env is repaired and `til test nlp v15-merged-qwen3-8b` reaches scoring. Two
+real paths forward:
+
+1. **Repair the Workbench host test env and score the GPTQ-merged image.**
+   If it scores above v14/v14d locally, decide whether to submit despite the
+   known vllm-openai cloud-timeout risk.
 2. **Retrain LoRA on Qwen2.5-7B**, ship on NGC base. 8h retrain, but
    uses the proven cloud-shippable v14 stack and applies the v8b
    fine-tune lever cleanly. Highest-EV remaining path if NLP is to be
