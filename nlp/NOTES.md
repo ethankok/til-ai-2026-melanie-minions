@@ -628,9 +628,11 @@ Update: the script now defaults to **GPTQ W4A16** (`--quant-method gptq`,
 smoothing/propagation pass that produced the Qwen3 GQA `NoneType` failure.
 Keep GPTQ on the default block-level sequential pipeline; forcing per-Linear
 sequencing hits the same symbolic-trace failure at `o_proj`.
-If it still OOMs late in `mlp.down_proj`, use
-`--gptq-ignore-down-proj-from-layer <layer>` to leave only the remaining
-problem `down_proj` modules unquantized and still get a bootable artifact.
+GPTQ then OOMed consistently at `model.layers.29.mlp.down_proj` during
+`torch.cholesky_inverse(H)` with only ~250 MiB free, so the script now defaults
+to `--gptq-ignore-down-proj-from-layer 29`. That leaves the seven late
+`down_proj` modules (`29-35`) in BF16 and still quantizes the rest of the model,
+which is the only T4 path left that can plausibly produce a bootable artifact.
 
 **Net**: the LoRA training payoff is still unproven until GPTQ produces a
 bootable `nlp/models/llm-merged/`. Two real paths forward:

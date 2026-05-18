@@ -268,8 +268,9 @@ def step2_quantize(args) -> None:
 
     Memory budget on T4 (16 GB) is tight: the merged Qwen3-8B is ~16 GB BF16.
     We use device_map="auto" to offload most of the model to CPU, default to
-    GPTQ W4A16 to avoid AWQ's smoothing/propagation path, and cap calibration
-    length at 512 tokens so the attention path stays comfortably below T4 RAM.
+    GPTQ W4A16 to avoid AWQ's smoothing/propagation path, cap calibration
+    length at 256 tokens, and leave late MLP down projections unquantized by
+    default because their Hessian inversions OOM on T4 even at 32 samples.
     """
     # Reduce CUDA-allocator fragmentation; suppress the FastTokenizer
     # threading warning that fires during calibration.
@@ -342,8 +343,9 @@ def step2_quantize(args) -> None:
         # propagation pass, which is where the Qwen3 GQA NoneType failure
         # happens. Do not force sequential_targets=["Linear"] here: that
         # path hits the same Qwen3 symbolic-trace NoneType failure at o_proj.
-        # The default block-level sequential pipeline gets much further; use
-        # the late down_proj ignore flag if it OOMs near the end.
+        # The default block-level sequential pipeline gets much further. On
+        # T4 it still OOMs at model.layers.29.mlp.down_proj, so default to
+        # leaving layer 29+ down_proj modules BF16 while quantizing the rest.
         ignore = ["lm_head", *_late_down_proj_ignores(args.gptq_ignore_down_proj_from_layer)]
         recipe = [
             GPTQModifier(
@@ -443,10 +445,10 @@ def main() -> None:
     parser.add_argument(
         "--gptq-ignore-down-proj-from-layer",
         type=int,
-        default=-1,
-        help="Emergency T4 escape hatch. If GPTQ OOMs late in mlp.down_proj, "
-        "set this to that layer index (for example 29) to leave remaining "
-        "down_proj layers unquantized while still producing a bootable model.",
+        default=29,
+        help="T4 escape hatch. Default 29 leaves model.layers.29-35 "
+        "mlp.down_proj unquantized because GPTQ's Hessian inverse OOMs there "
+        "on a 16 GB T4. Set -1 on larger GPUs to quantize all down_proj layers.",
     )
     parser.add_argument(
         "--skip-merge", action="store_true",

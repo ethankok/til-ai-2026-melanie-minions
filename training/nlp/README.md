@@ -89,10 +89,11 @@ Merge/quant status:
   avoids AWQ smoothing and is the T4-safe retry path. Keep GPTQ on the default
   block-level sequential pipeline; forcing per-Linear sequencing hits the Qwen3
   symbolic-trace `NoneType` failure at `o_proj`.
-- If GPTQ still OOMs late in `mlp.down_proj`, rerun with
-  `--gptq-ignore-down-proj-from-layer <layer>` using the layer index from the
-  traceback. This leaves only the remaining `down_proj` layers unquantized
-  instead of losing the whole merged-model attempt.
+- On T4, GPTQ still OOMed at `model.layers.29.mlp.down_proj` during
+  `torch.cholesky_inverse(H)` even with 32 samples and 256 tokens. The script
+  now defaults to `--gptq-ignore-down-proj-from-layer 29`, leaving only
+  `model.layers.29-35.mlp.down_proj` unquantized while quantizing the rest.
+  Set `--gptq-ignore-down-proj-from-layer -1` only on larger GPUs.
 - Any Docker build that falls through without `nlp/models/llm-merged/` is just
   testing the un-tuned base.
 
