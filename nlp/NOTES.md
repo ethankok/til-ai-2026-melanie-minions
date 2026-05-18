@@ -859,6 +859,10 @@ Implementation/result notes:
   accidentally retagging a worse reader.
 - Result: local `0.547`, QA loop `14:58`. This fails both gates by a wide
   margin. Do not submit.
+- Cloud result: `0.000 / 0.417`, `700 / 700` errors. This does not change the
+  decision because local was already far below the gate. The likely cloud
+  failure is runtime/container fragility in the current-main vllm-openai image
+  family, not a useful modelling signal.
 - Interpretation: this is too large to tune around. Either the Qwen reranker
   sequence-classification wrapper is not plug-compatible with our simple
   `(question, passage)` cross-encoder call, or it is genuinely worse than BGE
