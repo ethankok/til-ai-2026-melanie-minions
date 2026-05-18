@@ -257,12 +257,18 @@ def step2_quantize(args) -> None:
     package produces `compressed-tensors`-format AWQ weights which vLLM 0.9
     loads natively.
 
-    llm-compressor's `oneshot` API:
-      - Loads the BF16 model with device_map="auto" (offloads to CPU)
-      - Applies the `AWQModifier` recipe (W4A16 group_size=128)
-      - Runs calibration over the supplied tokenized dataset
-      - Saves to output_dir in compressed-tensors AWQ format
+    Memory budget on T4 (16 GB) is tight: the merged Qwen3-8B is ~16 GB
+    BF16. We use device_map="auto" to offload most of the model to CPU,
+    `sequential_targets=["Linear"]` to slice the calibration graph at
+    individual linear layers (one layer of activations resident at a time
+    instead of one whole DecoderLayer block), and a reduced
+    `max_seq_length=1024` so attention is O(1024²) rather than O(2048²).
     """
+    # Reduce CUDA-allocator fragmentation; suppress the FastTokenizer
+    # threading warning that fires during calibration.
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
     print(
         f"\n[merge] STEP 2 — AWQ-quantize merged model on GPU (llm-compressor)\n"
         f"        in:        {args.out_merged}\n"
@@ -335,13 +341,21 @@ def step2_quantize(args) -> None:
     )
 
     print("[merge] running AWQ calibration + quantization (~30-45 min)...", flush=True)
+    # T4 memory tuning:
+    # - sequential_targets=["Linear"] slices at individual linear layers, so
+    #   only one layer's activations are GPU-resident at a time (default is
+    #   the DecoderLayer block, which OOMs an 8B model on 16 GB T4).
+    # - max_seq_length=1024 keeps attention compute at O(1024²) instead of
+    #   O(2048²) — quarters the per-sample peak in the attention path which
+    #   is exactly where the previous run OOMed.
     oneshot(
         model=model,
         dataset=calib_ds,
         recipe=recipe,
         output_dir=str(out_awq),
-        max_seq_length=2048,
+        max_seq_length=1024,
         num_calibration_samples=args.calib_n,
+        sequential_targets=["Linear"],
     )
 
     tok.save_pretrained(str(out_awq))
