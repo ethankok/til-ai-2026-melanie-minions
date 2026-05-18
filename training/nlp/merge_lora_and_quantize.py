@@ -285,7 +285,7 @@ def step2_quantize(args) -> None:
 
     import torch
     from datasets import Dataset
-    from transformers import AutoTokenizer
+    from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(str(args.out_merged), use_fast=True)
     if tok.pad_token is None:
@@ -320,18 +320,28 @@ def step2_quantize(args) -> None:
     out_awq = Path(args.out_awq)
     out_awq.mkdir(parents=True, exist_ok=True)
 
+    # llm-compressor 0.10's `oneshot()` parses its kwargs through
+    # HfArgumentParser, which rejects unknown keys like `model_kwargs`.
+    # The supported pattern is: pre-load the model with the desired
+    # device_map / dtype, then pass the loaded instance to `oneshot`.
+    # That gives us the CPU-offloading we need for an 8B BF16 on a 16 GB
+    # T4 without fighting the argparser.
+    print("[merge] loading merged model for quantization...", flush=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        str(args.out_merged),
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        low_cpu_mem_usage=True,
+    )
+
     print("[merge] running AWQ calibration + quantization (~30-45 min)...", flush=True)
     oneshot(
-        model=str(args.out_merged),
+        model=model,
         dataset=calib_ds,
         recipe=recipe,
         output_dir=str(out_awq),
         max_seq_length=2048,
         num_calibration_samples=args.calib_n,
-        # device_map=auto + torch_dtype=auto lets accelerate offload layers
-        # to CPU when not actively being calibrated. ~10-12 GB GPU peak.
-        # llm-compressor honours the model_kwargs dict for from_pretrained.
-        model_kwargs={"torch_dtype": torch.bfloat16, "device_map": "auto"},
     )
 
     tok.save_pretrained(str(out_awq))
