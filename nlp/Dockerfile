@@ -1,19 +1,9 @@
 # Dockerfile for building the NLP image.
 #
-# v14c-qwen3-4b: base image is now vllm/vllm-openai instead of the NGC
-# pytorch container. The NGC base shipped pre-compiled flash_attn and
-# torchao .so's against its own torch ABI; vllm-as-pip-dep downgraded
-# torch and stranded those .so's with undefined symbols and missing
-# attributes. Iterating around that was costing builds. vllm/vllm-openai
-# is the upstream-blessed image — torch, vllm, transformers, and
-# flash_attn are all pinned to a coherent stack — so the ABI fight goes
-# away and we get transformers>=4.51 (required for Qwen3 model_type).
-
-
-# vllm/vllm-openai ships a coherent torch + vllm + transformers + flash_attn
-# stack. v0.9.x is the most recent series we've found tested against Qwen3
-# AWQ checkpoints; pin to a specific tag for reproducibility.
-FROM vllm/vllm-openai:v0.9.0
+# v19-hybrid-router: return to the NGC base that actually survived cloud for
+# v14's Qwen2.5-7B-AWQ run. The vllm/vllm-openai base was convenient for Qwen3
+# local tests, but repeatedly timed out or errored on cloud submissions.
+FROM nvcr.io/nvidia/pytorch:25.11-py3
 
 ARG NLP_RERANKER_REPO=BAAI/bge-reranker-base
 ARG NLP_RERANKER_LOCAL_NAME=bge-reranker-base
@@ -26,34 +16,29 @@ ENV HF_HUB_DISABLE_TELEMETRY=1
 ENV TRANSFORMERS_OFFLINE=1
 ENV HF_HUB_OFFLINE=1
 ENV NLP_MODEL_DIR=/workspace/models
-# v16-deberta: default back to the fast extractive stack. The v14/v15 LLM
-# line found a higher raw-accuracy ceiling but lost the qualifier blend on
-# speed/cloud startup, and the Qwen3 LoRA merge/quant path failed quality.
-ENV NLP_ANSWERER=extractive
+# v19: route easy/L1-looking questions through v9 RoBERTa and only hard/L2-
+# looking questions through Qwen2.5-7B-AWQ. Set extractive to recover v9.
+ENV NLP_ANSWERER=hybrid
 ENV NLP_QA_MAX_SEQ_LEN=256
 ENV NLP_LLM_DIR=/workspace/models/llm
 ENV NLP_RERANKER_REPO=${NLP_RERANKER_REPO}
 ENV NLP_RERANKER_LOCAL_NAME=${NLP_RERANKER_LOCAL_NAME}
 ENV NLP_DOWNLOAD_MODERNBERT=0
-# Default repo for download_models.py. v14d: Qwen/Qwen3-8B-AWQ (official
-# Qwen quant of the Qwen3 8B base). Thinking mode is the model default;
-# our chat template call passes enable_thinking=False so <think>...</think>
-# blocks are suppressed at the prompt level.
-ENV NLP_LLM_REPO=Qwen/Qwen3-8B-AWQ
-# Do not download the 5+ GB LLM for extractive tags. Override to 0 only when
-# intentionally rebuilding the v14/v15 LLM path.
-ENV NLP_SKIP_LLM_DOWNLOAD=1
+ENV NLP_LLM_REPO=Qwen/Qwen2.5-7B-Instruct-AWQ
+ENV NLP_SKIP_LLM_DOWNLOAD=0
+ENV NLP_LLM_GPU_MEM_FRACTION=0.62
+ENV NLP_LLM_MAX_MODEL_LEN=3072
+ENV NLP_LLM_MAX_NEW_TOKENS=32
+ENV NLP_HYBRID_QWEN_THRESHOLD=3.0
 # v15-lora: directory inside the image where the trained LoRA adapter
 # lives. llm_answerer.py auto-enables LoRA in vLLM when this path contains
 # an adapter_config.json. Set to empty string to force base-model-only.
 ENV NLP_LLM_LORA_DIR=/workspace/models/lora
 WORKDIR /workspace
 
-# vllm/vllm-openai already provides: vllm, torch, transformers (>=4.51),
-# tokenizers, safetensors, fastapi, uvicorn, numpy, huggingface_hub,
-# sentencepiece, flash_attn. We only need to add the small extras our
-# manager uses (BM25 over passages).
-RUN pip install --no-cache-dir 'rank_bm25==0.2.2'
+RUN pip install -U pip
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Bake model weights into the image so inference runs fully offline.
 # ENV HF_HUB_OFFLINE=1 is set above for runtime; we override it for this
@@ -62,14 +47,13 @@ RUN pip install --no-cache-dir 'rank_bm25==0.2.2'
 # NLP_RERANKER_LOCAL_NAME only for reranker ablations; the shipped default is
 # the v9 BGE reranker because the Qwen3 reranker-only gate regressed badly.
 COPY download_models.py .
-# vllm/vllm-openai doesn't create a `python` symlink — only python3 is on PATH.
-RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python3 download_models.py
+RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python download_models.py
 
 # v14-llm-rag: hard-fail the build if the LLM weights didn't land. The
 # manager will still boot without them by falling back to extractive, but
 # a silent fallback would mask a packaging regression on a v14c tag.
-RUN if [ "$NLP_ANSWERER" = "llm" ] && [ ! -f /workspace/models/llm/config.json ]; then \
-        echo "[nlp build] WARNING: NLP_ANSWERER=llm but /workspace/models/llm/config.json missing"; \
+RUN if { [ "$NLP_ANSWERER" = "llm" ] || [ "$NLP_ANSWERER" = "hybrid" ]; } && [ ! -f /workspace/models/llm/config.json ]; then \
+        echo "[nlp build] WARNING: NLP_ANSWERER=$NLP_ANSWERER but /workspace/models/llm/config.json missing"; \
         echo "[nlp build] container will fall back to extractive QA at runtime"; \
     fi
 
@@ -118,6 +102,8 @@ RUN for d in modernbert-finetuned-squad2 deberta-finetuned-squad2 roberta-finetu
         cp -r /workspace/models-local/lora/* /workspace/models/lora/ && \
         echo "[nlp build] bundled v15 LoRA adapter ($(cat /workspace/models-local/lora/BASE_MODEL 2>/dev/null || echo unknown base))"; \
         echo "[nlp build] WARNING: runtime LoRA path is broken on T4/sm_75 (vLLM 0.9.0 Triton kernel)"; \
+    elif [ "$NLP_ANSWERER" = "hybrid" ]; then \
+        echo "[nlp build] hybrid answerer active; using downloaded LLM plus extractive QA"; \
     else \
         echo "[nlp build] extractive answerer active; LLM artefacts ignored"; \
     fi && rm -rf /workspace/models-local
@@ -125,7 +111,4 @@ RUN for d in modernbert-finetuned-squad2 deberta-finetuned-squad2 roberta-finetu
 # Copies your source files.
 COPY src .
 
-# Override vllm/vllm-openai's default OpenAI-API-server CMD with our own
-# FastAPI server. uvicorn comes pre-installed in the base image.
-ENTRYPOINT []
-CMD ["uvicorn", "nlp_server:app", "--port", "5004", "--host", "0.0.0.0"]
+CMD uvicorn nlp_server:app --port 5004 --host 0.0.0.0

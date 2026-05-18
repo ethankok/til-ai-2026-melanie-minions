@@ -204,8 +204,13 @@ class LLMAnswerer:
         max_lora_rank: int = 16,
     ) -> None:
         self.model_dir = str(model_dir)
-        self.max_context_chunks = max_context_chunks
-        self.max_new_tokens = max_new_tokens
+        self.max_context_chunks = int(
+            os.getenv("NLP_LLM_MAX_CONTEXT_CHUNKS", str(max_context_chunks))
+        )
+        self.max_new_tokens = int(
+            os.getenv("NLP_LLM_MAX_NEW_TOKENS", str(max_new_tokens))
+        )
+        max_model_len = int(os.getenv("NLP_LLM_MAX_MODEL_LEN", str(max_model_len)))
         self.max_lora_rank = max_lora_rank
 
         # v15-lora: detect a bundled adapter. If NLP_LLM_LORA_DIR is set and

@@ -894,6 +894,53 @@ The older projection above is now superseded by cloud/runtime evidence.
 Do not spend more time on prompt trimming for Qwen3 until the serving path
 itself is solved.
 
+## v19-hybrid-router — v9 easy path + Qwen2.5 hard path (18 May)
+
+This is the highest-EV remaining NLP experiment because it combines the two
+systems that each proved something real:
+
+```text
+v9 rescue: fast, cloud-safe, best blended
+v14:       Qwen answerer, best raw cloud accuracy, too slow when used always
+```
+
+The v19 idea is **not** to replace v9. It routes only hard/L2-looking questions
+to Qwen2.5-7B-AWQ and leaves easy/L1-looking questions on the v9 RoBERTa-large
+extractive path.
+
+Implementation:
+
+- Dockerfile returns to `nvcr.io/nvidia/pytorch:25.11-py3`, the v14-era base
+  that survived cloud, instead of the current-main `vllm/vllm-openai` base that
+  timed out/errored repeatedly.
+- `NLP_ANSWERER=hybrid`.
+- `NLP_LLM_REPO=Qwen/Qwen2.5-7B-Instruct-AWQ`.
+- Conservative vLLM defaults for sharing T4 VRAM with RoBERTa/retriever:
+  `NLP_LLM_GPU_MEM_FRACTION=0.62`, `NLP_LLM_MAX_MODEL_LEN=3072`,
+  `NLP_LLM_MAX_NEW_TOKENS=32`.
+- `nlp_manager.py` now loads both answerers in hybrid mode. It always performs
+  v9 retrieval/rerank/doc selection and v9 candidate extraction first, then
+  routes to Qwen only if a hand-tuned hard-score clears
+  `NLP_HYBRID_QWEN_THRESHOLD` (default `3.0`).
+- The router deliberately keeps the v9 document IDs and evidence ordering; Qwen
+  only replaces the answer string when it produces a non-empty answer.
+
+Current router features are heuristic, not learned: arithmetic/composition
+keywords (`between`, `difference`, `total`, `percentage`, `elapsed`,
+`how many`), numeric tokens, long question length, weak/long/echoing v9 answer,
+low QA score, and low candidate margin.
+
+Gate:
+
+```text
+submit only if local NLP RAG QA Accuracy > 0.711
+and runtime is close enough that projected cloud blend can beat v9 rescue
+```
+
+If v19 OOMs on startup, lower `NLP_LLM_GPU_MEM_FRACTION` to `0.55` or
+`NLP_LLM_MAX_MODEL_LEN` to `2048`. If it runs but routes too many questions,
+raise `NLP_HYBRID_QWEN_THRESHOLD`; if it routes almost none, lower it.
+
 ### Training result (18 May ~01:30 SGT)
 
 ```text

@@ -1,26 +1,27 @@
 # NLP — training fine-tuned QA models
 
 Current status: **do not train more NLP blindly for the qualifier.** The
-shipping truth after the 18 May Qwen3 push is:
+shipping truth after the 18 May NLP push is:
 
-- `v9-doc-ensemble` remains best blended: official `0.683 / 0.886`
-  (blended 0.734).
+- `v9-doc-ensemble-rescue` is the trusted blended submission: local `0.711`,
+  cloud `0.683 / 0.866`, `0 / 700`.
 - `v14-llm-rag` remains best raw accuracy: official `0.734 / 0.286`.
 - `v15-lora-qwen3-8b` trained cleanly but is blocked at serving/packaging:
   direct vLLM LoRA crashes on T4/cloud, and merged-AWQ quantization is not
   working on the Workbench T4 with current tooling.
+- Current experiment is `v19-hybrid-router`: v9 RoBERTa for easy questions,
+  Qwen2.5-7B-AWQ only for heuristic-hard questions, on the v14 NGC base.
 
 This README is historical context plus reproduction notes. If NLP is reopened,
-the credible routes are: a fast extractive-reader retry that preserves v9's
-speed profile, quantize the merged Qwen3 LoRA on bigger hardware, or retrain
-LoRA on Qwen2.5-7B so it can run on the NGC base image that already survived
-cloud.
+the credible routes are: validate the v19 router, quantize the merged Qwen3
+LoRA on bigger hardware, or retrain/merge on Qwen2.5-7B so it can run on the
+NGC base image that already survived cloud.
 
 Historical training paths:
 
 | Script | Model class | Output dir | Manager priority |
 |---|---|---|---|
-| [`finetune_qa.py`](finetune_qa.py) | extractive (RoBERTa/DeBERTa/ModernBERT SQuAD2) | `nlp/models/*-finetuned-squad2/` | ModernBERT is preferred if present, then DeBERTa, then RoBERTa |
+| [`finetune_qa.py`](finetune_qa.py) | extractive (RoBERTa/DeBERTa/ModernBERT SQuAD2) | `nlp/models/*-finetuned-squad2/` | RoBERTa v9 fine-tune is preferred; later DeBERTa/ModernBERT artefacts failed gate |
 | [`finetune_genqa.py`](finetune_genqa.py) | generative (Flan-T5) | `nlp/models/flan-t5-finetuned/` | explicit `NLP_QA_MODE=generative` only |
 | [`train_answer_ranker.py`](train_answer_ranker.py) | lightweight candidate ranker | `nlp/models/answer_ranker.json` | optional v12 reranker |
 | [`finetune_lora.py`](finetune_lora.py) | QLoRA generative LLM adapter | `nlp/models/lora/` | trained successfully; not currently shippable on Qwen3/vLLM T4 stack |
@@ -34,10 +35,10 @@ while running much slower. Do not repeat that exact run. The only DeBERTa retry
 worth trying is a lower-learning-rate, one-epoch gate to avoid the overfit
 pattern from v13b (`eval_loss` was best at epoch 1 and worsened afterward).
 
-The Dockerfile now defaults back to `NLP_ANSWERER=extractive`, skips the LLM
-download, bundles local `deberta-finetuned-squad2/` when present, and sets
-`NLP_QA_MAX_SEQ_LEN=256` for a faster local gate. This prevents a DeBERTa
-test from accidentally serving the v14/v15 LLM path.
+Historical note: during the v16 gate the Dockerfile defaulted back to
+`NLP_ANSWERER=extractive`, skipped the LLM download, bundled local
+`deberta-finetuned-squad2/` when present, and set `NLP_QA_MAX_SEQ_LEN=256`.
+Current main has moved on to the v19 hybrid-router experiment.
 
 Workbench commands:
 
@@ -188,6 +189,38 @@ Interpretation: Qwen as an answerer is still promising (`Qwen3-8B-AWQ` local
 0.755; `v14-llm-rag` cloud 0.734), but Qwen as a drop-in reranker was a bad fit
 for this pipeline and too slow. The remaining credible Qwen work is packaging
 and quantization, not reranking.
+
+## v19 hybrid router gate (18 May)
+
+This tests the GPT Pro recommendation: keep v9 for easy questions and route
+only hard/L2-looking questions to the cloud-proven v14 Qwen2.5 answerer.
+
+```bash
+cd ~/til
+git pull origin main
+
+til build nlp v19-hybrid-router
+til test nlp v19-hybrid-router
+```
+
+Expected boot logs:
+
+```text
+[llm_answerer] loading vLLM from /workspace/models/llm ...
+[nlp_manager] QA model: ext-roberta-finetuned
+[nlp_manager] hybrid routed N/M questions to Qwen (threshold=3.0)
+```
+
+Gate: submit only if local beats `0.711` and runtime is not wildly above v9.
+If startup OOMs, try one smaller build by editing Docker/env defaults:
+
+```text
+NLP_LLM_GPU_MEM_FRACTION=0.55
+NLP_LLM_MAX_MODEL_LEN=2048
+```
+
+If it runs but routes too many questions and slows down, raise
+`NLP_HYBRID_QWEN_THRESHOLD` above `3.0`.
 
 ## v15 QLoRA / AWQ lessons (18 May)
 

@@ -110,9 +110,12 @@ CANON_MODE = os.getenv("NLP_CANON_MODE", "conservative").strip().lower()
 ANSWER_RANK_MODE = os.getenv("NLP_ANSWER_RANK_MODE", "heuristic").strip().lower()
 # v14-llm-rag: top-level answerer switch.
 #   'llm'        — vLLM + Qwen2.5-7B-Instruct-AWQ (default in the v14 image)
+#   'hybrid'     — v9 extractive first; route only hard-looking questions to LLM
 #   'extractive' — v9 RoBERTa-large fine-tune path (fallback for emergency rollback)
 ANSWERER_MODE = os.getenv("NLP_ANSWERER", "extractive").strip().lower()
 LLM_MODEL_DIR = os.getenv("NLP_LLM_DIR", str(MODEL_DIR / "llm"))
+HYBRID_QWEN_THRESHOLD = float(os.getenv("NLP_HYBRID_QWEN_THRESHOLD", "3.0"))
+HYBRID_MIN_QA_SCORE = float(os.getenv("NLP_HYBRID_MIN_QA_SCORE", "8.0"))
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
@@ -402,10 +405,10 @@ class NLPManager:
             self._dense_model = self._dense_model.half()
             self._rerank_model = self._rerank_model.half()
 
-        # v14-llm-rag: answerer dispatch. Try LLM first if requested; if vLLM
-        # init or the weight dir is missing, downgrade to extractive so the
-        # container still serves answers instead of returning empty strings.
-        if self._answerer_mode == "llm":
+        # v14/v19 answerer dispatch. Try LLM if requested; if vLLM init or the
+        # weight dir is missing, downgrade to extractive so the container still
+        # serves answers instead of returning empty strings.
+        if self._answerer_mode in {"llm", "hybrid"}:
             self._init_llm_answerer()
             if self._llm_answerer is None:
                 print(
@@ -635,7 +638,7 @@ class NLPManager:
 
         # v14-llm-rag: warm vLLM inside the untimed load phase so the first
         # real /nlp question doesn't pay CUDA-graph capture cost.
-        if self._answerer_mode == "llm" and self._llm_answerer is not None:
+        if self._answerer_mode in {"llm", "hybrid"} and self._llm_answerer is not None:
             self._llm_answerer.warmup()
 
         self.loaded = True
@@ -1542,6 +1545,84 @@ class NLPManager:
         n = self._llm_answerer.max_context_chunks if self._llm_answerer else 3
         return [self.passages[i] for i in reranked[:n]]
 
+    def _hybrid_hard_score(
+        self, question: str, candidates: list[AnswerCandidate], documents: list[str]
+    ) -> float:
+        """Heuristic router score for v19.
+
+        The aim is conservative: send likely L2/compositional questions to Qwen
+        only when the v9 extractive answer also looks uncertain. This is not a
+        learned router yet; it is a hand-tuned gate to test the EV of mixing the
+        two already-proven systems without paying Qwen latency on every query.
+        """
+        q = question.lower()
+        tokens = _TOKEN_RE.findall(question)
+        nums = re.findall(r"\d+(?:\.\d+)?", question)
+        score = 0.0
+
+        hard_terms = {
+            "between": 1.8,
+            "difference": 2.0,
+            "total": 1.5,
+            "combined": 1.5,
+            "sum": 1.5,
+            "percentage": 1.4,
+            "percent": 1.2,
+            "ratio": 1.4,
+            "compare": 1.4,
+            "after": 0.8,
+            "before": 0.8,
+            "elapsed": 1.8,
+            "separate": 1.4,
+            "years": 1.0,
+            "days": 1.0,
+        }
+        for term, weight in hard_terms.items():
+            if term in q:
+                score += weight
+        if "how many" in q or "how much" in q:
+            score += 1.3
+        if len(nums) >= 1:
+            score += min(1.5, 0.5 * len(nums))
+        if len(tokens) >= 18:
+            score += 0.8
+        if len(documents) >= 3:
+            score += 0.3
+
+        best = candidates[0] if candidates else None
+        if best is None:
+            score += 2.0
+            return score
+
+        best_key = _answer_key(best.text)
+        best_len = _answer_token_len(best.text)
+        if best.source != "qa_span":
+            score += 1.0
+        if best_len == 0:
+            score += 2.0
+        elif best_len == 1 and any(w in q for w in ("why", "how", "which", "what")):
+            score += 0.7
+        elif best_len > 12:
+            score += 1.0
+        if best_key and best_key in _answer_key(question):
+            score += 1.5
+        if best.source == "qa_span" and best.score < HYBRID_MIN_QA_SCORE:
+            score += 1.2
+        if len(candidates) >= 2 and best.source == "qa_span":
+            margin = best.score - candidates[1].score
+            if margin < 2.0:
+                score += 0.7
+
+        return score
+
+    def _should_route_qwen(
+        self, question: str, candidates: list[AnswerCandidate], documents: list[str]
+    ) -> bool:
+        if self._answerer_mode != "hybrid" or self._llm_answerer is None:
+            return False
+        hard_score = self._hybrid_hard_score(question, candidates, documents)
+        return hard_score >= HYBRID_QWEN_THRESHOLD
+
     def _answer_one(self, question: str) -> dict:
         if not self.loaded or not self.passages:
             return {"documents": [], "answer": ""}
@@ -1553,6 +1634,12 @@ class NLPManager:
         else:
             candidates = self._answer_candidates(question, reranked, documents)
             answer = candidates[0].text if candidates else ""
+            if self._should_route_qwen(question, candidates, documents):
+                qwen_answer = self._llm_answerer.answer(
+                    question, self._llm_chunks_for(reranked)
+                )
+                if qwen_answer.strip():
+                    answer = qwen_answer
         return {"documents": documents, "answer": answer}
 
     def qa_batch(self, questions: list[str]) -> list[dict]:
@@ -1581,6 +1668,34 @@ class NLPManager:
                 {"documents": docs, "answer": ans}
                 for docs, ans in zip(doc_lists, answers)
             ]
+
+        if self._answerer_mode == "hybrid" and self._llm_answerer is not None:
+            results: list[dict] = []
+            qwen_jobs: list[tuple[int, str, list[str]]] = []
+            for q in questions:
+                reranked, documents, _, _ = self._retrieve_for_answer(q)
+                candidates = self._answer_candidates(q, reranked, documents)
+                answer = candidates[0].text if candidates else ""
+                result_idx = len(results)
+                results.append({"documents": documents, "answer": answer})
+                if self._should_route_qwen(q, candidates, documents):
+                    qwen_jobs.append((result_idx, q, self._llm_chunks_for(reranked)))
+
+            if qwen_jobs:
+                routed_questions = [job[1] for job in qwen_jobs]
+                routed_chunks = [job[2] for job in qwen_jobs]
+                routed_answers = self._llm_answerer.answer_batch(
+                    routed_questions, routed_chunks
+                )
+                for (result_idx, _, _), answer in zip(qwen_jobs, routed_answers):
+                    if answer.strip():
+                        results[result_idx]["answer"] = answer
+                print(
+                    f"[nlp_manager] hybrid routed {len(qwen_jobs)}/{len(questions)} "
+                    f"questions to Qwen (threshold={HYBRID_QWEN_THRESHOLD})",
+                    flush=True,
+                )
+            return results
 
         return [self._answer_one(q) for q in questions]
 

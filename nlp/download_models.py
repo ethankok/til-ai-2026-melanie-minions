@@ -48,14 +48,8 @@ if DOWNLOAD_MODERNBERT:
         )
     )
 
-# v14d-qwen3-8b: upsizes from v14c's 4B to 8B on the same Qwen3 family.
-# Direct test of whether v14c's accuracy drop (0.754 → 0.659 local) was 4B
-# capacity floor or Qwen3-Instruct paraphrase tendency. Using the official
-# Qwen/Qwen3-8B-AWQ (base, with thinking mode default) — apply_chat_template
-# is already called with enable_thinking=False so the chat template
-# suppresses <think>...</think> blocks. AWQ weights ~5GB; still comfortable
-# on T4 16GB with retriever + reranker + KV cache.
-LLM_REPO = os.getenv("NLP_LLM_REPO", "Qwen/Qwen3-8B-AWQ")
+# v19 hybrid uses the cloud-survived v14 answerer checkpoint.
+LLM_REPO = os.getenv("NLP_LLM_REPO", "Qwen/Qwen2.5-7B-Instruct-AWQ")
 LLM_LOCAL = "llm"
 
 

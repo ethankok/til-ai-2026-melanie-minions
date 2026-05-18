@@ -1,15 +1,16 @@
 # Dependencies for the NLP container.
-#
-# v14c-qwen3-4b: base image is now vllm/vllm-openai:v0.9.0, which already
-# bundles a coherent torch + vllm + transformers (>=4.51) + tokenizers +
-# safetensors + sentencepiece + fastapi + uvicorn + numpy + huggingface_hub
-# + flash_attn stack. Listing them here would either (a) be a no-op if pip
-# sees they're already satisfied, or (b) silently swap a vetted version for
-# something the base image's other code wasn't tested against. So we keep
-# this file to the deps that are NOT in the upstream vllm image.
-#
-# Anything you need to add here should be a small, standalone library.
-# Anything that touches torch ABI (flash-attn, xformers, awq kernels) MUST
-# stay out — that path is what broke the previous NGC-based builds.
+# torch comes from the nvcr.io/nvidia/pytorch base image; do not pin it here.
 
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+numpy
+transformers==4.46.3
+tokenizers==0.20.3
+safetensors==0.4.5
 rank_bm25==0.2.2
+sentencepiece==0.2.0
+huggingface-hub>=0.26.0
+
+# v19-hybrid-router reuses v14's cloud-survived Qwen2.5-7B-AWQ answerer.
+# vLLM brings the AWQ runtime; no autoawq import is needed at serving time.
+vllm>=0.6.6,<0.9
