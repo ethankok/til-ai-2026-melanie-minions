@@ -789,6 +789,28 @@ skepticism so far:
 Verdict: do not submit either ModernBERT image. Stop training extractive
 readers unless the base checkpoint changes materially.
 
+Cloud follow-up:
+
+- `v16-deberta-v3` returned "Your model took too long to evaluate."
+- `v17-modernbert-stock` failed startup on Vertex with a container timeout.
+
+Both were built from the current `vllm/vllm-openai` Dockerfile, not the old
+v9 NGC Dockerfile. The cloud failures therefore reinforce the packaging/base
+diagnosis: the current main NLP image family is not cloud-safe even for
+extractive tags.
+
+Important rescue-note: a detached `git worktree add ~/til-v9-rescue 643f9c8`
+did **not** produce a true v9 image through `til build`. The build log still
+showed the current `vllm/vllm-openai` Dockerfile and the ModernBERT artefact
+loop, and local accuracy was 0.624. That means the TIL CLI is probably building
+from its canonical `~/til` task path/config rather than the shell cwd worktree.
+Treat that "v9 rescue" result as invalid: it was the ModernBERT fine-tuned
+image retagged, not v9.
+
+Safe v9 rescue approach: temporarily put the old v9 files back into canonical
+`~/til/nlp/` (or create a branch checked out directly at `~/til`) before calling
+`til build`. Do not rely on a sibling worktree.
+
 The older projection above is now superseded by cloud/runtime evidence.
 Do not spend more time on prompt trimming for Qwen3 until the serving path
 itself is solved.

@@ -122,6 +122,17 @@ Training improved ModernBERT strongly (+0.165 absolute), so the training lever
 is real, but the ModernBERT backbone still failed the v9 local gate (`0.711`)
 and was slower than v9. Do not submit either ModernBERT image.
 
+Cloud/startup lesson: `v16-deberta-v3` timed out in cloud and
+`v17-modernbert-stock` failed Vertex startup. Both used the current
+`vllm/vllm-openai` Docker base, so this is packaging/base evidence rather than
+an extractive-reader finding. The old successful v9 image used the NGC PyTorch
+base.
+
+Do not use a sibling `git worktree` to rebuild v9 via `til build`; on Workbench
+that still built the current-main Dockerfile and retagged the ModernBERT image
+as `v9-doc-ensemble-rescue`. To rescue v9, check out or restore the v9-era NLP
+files directly in canonical `~/til` before calling `til build`.
+
 ## v15 QLoRA / AWQ lessons (18 May)
 
 The Qwen3-8B LoRA training command that completed was:
