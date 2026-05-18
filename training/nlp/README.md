@@ -86,7 +86,9 @@ Merge/quant status:
   at `sequential_targets=["Linear"]` / `max_seq_length=1024` with a Qwen3-GQA
   symbolic-trace `NoneType` failure after 3/254 calibration groups.
 - The current script defaults to GPTQ W4A16 with `max_seq_length=256`, which
-  avoids AWQ smoothing and is the T4-safe retry path.
+  avoids AWQ smoothing and is the T4-safe retry path. Keep GPTQ on the default
+  block-level sequential pipeline; forcing per-Linear sequencing hits the Qwen3
+  symbolic-trace `NoneType` failure at `o_proj`.
 - If GPTQ still OOMs late in `mlp.down_proj`, rerun with
   `--gptq-ignore-down-proj-from-layer <layer>` using the layer index from the
   traceback. This leaves only the remaining `down_proj` layers unquantized

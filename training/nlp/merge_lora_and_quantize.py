@@ -340,7 +340,10 @@ def step2_quantize(args) -> None:
     else:
         # Official llm-compressor W4A16 path. It avoids AWQ's smoothing /
         # propagation pass, which is where the Qwen3 GQA NoneType failure
-        # happens. offload_hessians=True trades runtime for lower VRAM.
+        # happens. Do not force sequential_targets=["Linear"] here: that
+        # path hits the same Qwen3 symbolic-trace NoneType failure at o_proj.
+        # The default block-level sequential pipeline gets much further; use
+        # the late down_proj ignore flag if it OOMs near the end.
         ignore = ["lm_head", *_late_down_proj_ignores(args.gptq_ignore_down_proj_from_layer)]
         recipe = [
             GPTQModifier(
@@ -352,7 +355,7 @@ def step2_quantize(args) -> None:
                 offload_hessians=True,
             ),
         ]
-        sequential_targets = ["Linear"]
+        sequential_targets = None
         if args.gptq_ignore_down_proj_from_layer >= 0:
             skipped = f"; ignored down_proj from layer {args.gptq_ignore_down_proj_from_layer}"
         else:

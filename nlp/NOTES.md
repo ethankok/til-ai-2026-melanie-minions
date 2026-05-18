@@ -626,6 +626,8 @@ at Linear granularity — likely a Qwen3 GQA edge case.
 Update: the script now defaults to **GPTQ W4A16** (`--quant-method gptq`,
 `--max-seq-length 256`) as the T4-safe retry path. GPTQ avoids the AWQ
 smoothing/propagation pass that produced the Qwen3 GQA `NoneType` failure.
+Keep GPTQ on the default block-level sequential pipeline; forcing per-Linear
+sequencing hits the same symbolic-trace failure at `o_proj`.
 If it still OOMs late in `mlp.down_proj`, use
 `--gptq-ignore-down-proj-from-layer <layer>` to leave only the remaining
 problem `down_proj` modules unquantized and still get a bootable artifact.
