@@ -1,15 +1,28 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 18 May 2026 ~01:30 SGT — **v15-lora-qwen3-8b adapter trained
-successfully** (8h on T4, bs=1 grad_accum=8 due to VRAM). Final eval_loss
+Last updated: 18 May 2026 ~04:15 SGT — **v15 family blocked on cloud and
+on AWQ-quantization simultaneously**. Three cloud submissions all failed:
+v14c-qwen3-4b TIMEOUT, v14d-qwen3-8b TIMEOUT, v15-lora-qwen3-8b 700/700
+errors (broken Triton crashed every request on cloud, vs silent fallback
+locally). **All three failures share one factor: vllm/vllm-openai base
+image.** v14 on NGC base ran 21 min cloud and worked; that's our only
+proven cloud path. v15-merged also shipped (got identical 0.755 = base
+because the Dockerfile fell through when llm-merged dir didn't exist).
+LoRA adapter merge succeeded (8h training, eval_loss 0.559) but AWQ
+re-quantization is fragile: autoawq deprecated → llm-compressor; that
+OOMed at DecoderLayer granularity → sliced at Linear granularity; that
+threw `TypeError: 'NoneType' object is not subscriptable` mid-calibration
+(subgraph forward bug for Qwen3 GQA). Currently no working path to ship
+the LoRA gains. v9-doc-ensemble remains best blended (0.683/0.886 →
+blended 0.734), v14-llm-rag remains best raw accuracy (0.734/0.286).
+
+Earlier 18 May ~01:30 SGT — v15-lora-qwen3-8b adapter trained
+successfully (8h on T4, bs=1 grad_accum=8 due to VRAM). Final eval_loss
 0.559 over 200 steps / 2 epochs, mean_token_accuracy 87.6%, loss curve
-monotonically dropping (eval_loss 0.645 → 0.580 → 0.561 → 0.559). For
-context, v8b's RoBERTa fine-tune which delivered +0.162 cloud accuracy had
-its best eval_loss at 0.872 — v15's is ~36% lower, strong signal the
-adapter absorbed the Clairos answer-form distribution. Adapter saved to
-`nlp/models/lora/`. Next: `til build nlp v15-lora-qwen3-8b` + local A/B vs
-v14d's 0.755 baseline. Submit gate: local equiv_rate ≥ 0.78.
+monotonically dropping. For context, v8b's RoBERTa fine-tune which
+delivered +0.162 cloud accuracy had its best eval_loss at 0.872 — v15's
+is ~36% lower. Adapter saved to `nlp/models/lora/`.
 
 Earlier 17 May ~18:25 SGT — v14d-qwen3-8b cleared the local gate at
 0.755 / 18:33 (matches v14's 0.754 accuracy, 1.5× faster). Hypothesis
@@ -74,18 +87,15 @@ warm-start + self-play > self-play from scratch, but the v1 gap-tightening
 cloud 0.436), bigger than hybrid-v3's 0.219. Training-side AE hypotheses
 are now falsified: league/self-play helped over from-scratch, but does not
 clear the hybrid-v3 ceiling; memory via bc-belief also regressed hard.
-The current AE push is therefore inference-side: `mcts-light-v1` adds
-bounded tactical lookahead in `AEManager` and lets `HybridAEManager` trust
-high-value bomb/base/enemy lines before the neural policy. **No MCTS-light
-official score yet; hybrid-v3 remains shipped via highest-score retention
-at 0.555/0.849.**
-**NLP FROZEN at `v9-doc-ensemble`.** Candidate-ranker arch was eliminated by
-v13a: AE-trained logistic ranker val top-1 0.384 (not built), heuristic-only
-local 0.663 = v12 (not submitted). The remaining QA-head retune (`v13b-deberta`)
-also failed: DeBERTa-v3-large trained successfully, but local `til test` landed
-0.667 vs v9's 0.711 and slowed to 9:06 vs 3:48. Every post-v9 swing has now
-regressed or failed gate (v10 neutral/slightly worse, v11 -0.003, v8a -0.031,
-v12 -0.041, v13a local 0.663, v13b local 0.667). No more NLP training.
+This older snapshot has since been superseded: `mcts-light-v1` timed out,
+`mcts-light-v2` avoided timeout but regressed to 0.487/0.595, and AE is now
+back at `hybrid-v3` with both training-side and inference-side hypotheses
+exhausted.
+
+The older NLP freeze at `v9-doc-ensemble` was also superseded by the v14/v15
+LLM push. `v14-llm-rag` broke the raw accuracy ceiling at 0.734/0.286, while
+v9 still holds blended. The Qwen3 v15 family trained successfully but is now
+blocked by cloud/runtime/quantization failures, not by answer format.
 
 ## Latest submitted scores
 
@@ -152,7 +162,15 @@ v14-llm-rag          17/05 16:15  0.734   0.286   0 / 700   0.754        ★ NEW
 v14b-speed           17/05 build  —       —       —         —            SKIPPED. Was prompt-trim only; superseded by v14c which makes the bigger swap.
 v14c-qwen3-4b        17/05 local  —       —       —         0.659        LOCAL ONLY, NOT SUBMITTED. Two-axis change: (1) model Qwen2.5-7B-AWQ → cpatonn/Qwen3-4B-Instruct-2507-AWQ-4bit, (2) base image NGC pytorch → vllm/vllm-openai:v0.9.0 (fixes NGC torch/flash_attn/torchao ABI fight + unlocks transformers ≥4.51 for Qwen3 model_type). Local wall-clock 27:29 → **5:10 (5.3× speedup)** — far above the projected 1.7×. BUT accuracy regressed -0.095 vs v14 (0.754 → 0.659) and -0.052 vs v9 (0.711 → 0.659). Projected cloud blended ~0.684 — better than v14's 0.622 but worse than v9's 0.734, so v14c is not a ship. Three hypotheses for the drop, ordered by likelihood: (1) 4B is below the QA capacity threshold for this corpus (especially L2 cross-fact composition); (2) Qwen3-Instruct-2507 paraphrases more than Qwen2.5-Instruct under the same "quote verbatim" prompt; (3) trimmed 3-shot prompt under-anchors the smaller model. Next: v14d-qwen3-8b tests whether the regression was 4B capacity vs Qwen3 paraphrase tendency.
 v14d-qwen3-8b        17/05 local  —       —       —         0.755        LOCAL CLEARED THE GATE. Same architecture/base-image as v14c, model bumped 4B → Qwen/Qwen3-8B-AWQ. Local equiv_rate 0.755 (essentially matches v14's 0.754) at wall-clock 18:33 (1.5× faster than v14's 27:29; per-question 1.59s vs v14's 2.35s). **Hypothesis confirmed**: v14c's -0.095 drop was 4B capacity floor, not Qwen3 paraphrase tendency — same family at 2× params recovers all of v14's accuracy. Cloud projection: acc ~0.73, speed ~0.38, blended ~0.643 (+0.021 over v14, still -0.091 behind v9's 0.734). Cloud submission running; waiting on score.
-v15-lora-qwen3-8b    18/05 train  —       —       —         —            ADAPTER TRAINED. QLoRA fine-tune of Qwen3-8B on local 883 (q, ctx, gold-a) tuples. Training config: bs=1 grad_accum=8 (T4 VRAM constraint, ~14GB used), r=16 LoRA on q/k/v/o, 2 epochs, 200 steps total, 8h wall-clock. Loss curve textbook: train 3.04 → 0.57, eval 0.645 → 0.580 → 0.561 → 0.559 (monotonic). mean_token_accuracy 87.6% on eval — the adapter is reproducing gold answer tokens at high fidelity. For reference v8b's eval_loss best was 0.872 (and delivered +0.162 cloud); v15's 0.559 is 36% lower. Next: til build + local test. Expected v15 local ≥ 0.78 (v14d baseline 0.755 + LoRA lift), cloud projection 0.78-0.88 if lift transfers like v8b did.
+v15-lora-qwen3-8b    18/05 train  —       —       —         —            ADAPTER TRAINED. QLoRA fine-tune of Qwen3-8B on local 883 tuples. bs=1 grad_accum=8, r=16, 2 epochs, 200 steps, 8h. Loss curve textbook: train 3.04 → 0.57, eval 0.645 → 0.580 → 0.561 → 0.559 monotonic. mean_token_acc 87.6%.
+v15-lora-qwen3-8b    18/05 local  —       —       —         0.659        LOCAL FAILED. vLLM 0.9.0 Punica Triton kernel `_lora_shrink_kernel` JIT-crashed on T4 sm_75 with `LLVM ERROR: Unsupported rounding mode for conversion`. vLLM silently fell back, partial corruption gave 0.659 (worse than base 8B 0.755).
+v15-lora-qwen3-8b    18/05 10:12  0.000   1.000   700/700   —            ★ CLOUD: 700/700 ERRORS, score 0.000. Same Triton crash but on cloud propagated as exceptions; FastAPI returned 500 every request. Speed 1.000 because eval bailed near-instantly.
+v14c-qwen3-4b        18/05 cloud  —       —       —         —            ★ CLOUD: "took too long to evaluate" (TIMEOUT). Local 5:10 → cloud >30 min implies image-pull / startup overhead from novel vllm/vllm-openai base.
+v14d-qwen3-8b        18/05 cloud  —       —       —         —            ★ CLOUD: "took too long to evaluate" (TIMEOUT). Local 18:33 → cloud >30 min, same overhead pattern.
+v15-merged-qwen3-8b  18/05 local  —       —       —         0.755        BUILT WITHOUT LORA. Step-1 merge (CPU, BF16) succeeded; step-2 AWQ-quant (autoawq) silently failed because autoawq is officially deprecated and `from awq import AutoAWQForCausalLM` raises ImportError. Dockerfile fell through to "no merged, no lora" branch, container ran pure Qwen3-8B-AWQ. Identical to v14d (0.755 / 16:36). Submitted to cloud as a wasted slot; expected to also TIMEOUT.
+v15-merged AWQ quant 18/05         —       —       —         FAILED      llm-compressor 0.10 attempts on T4: (a) OOMed at DecoderLayer granularity (14.5 GB peak in attention compute), (b) sliced at sequential_targets=["Linear"] with max_seq_length=1024 → made it past 3/254 calibration layers, then `TypeError: 'NoneType' object is not subscriptable` inside symbolic-trace subgraph forward (likely Qwen3 GQA + Linear-granularity slicing interaction). No working AWQ quant path on this T4 yet.
+
+**Architecture conclusion for NLP at this point**: vllm/vllm-openai base image is not cloud-shippable for our setup; only NGC base (v14) has cloud-verified throughput. Any further NLP work needing Qwen3 model_type must either (a) AWQ-quantize the merged model on different hardware (A100), or (b) retrain LoRA on Qwen2.5-7B and ship on NGC base. v9 keeps the blended slot, v14 keeps the accuracy slot.
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.

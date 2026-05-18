@@ -1,10 +1,19 @@
 # NLP — training fine-tuned QA models
 
-Current status: **do not train more NLP for the qualifier.** The shipped model
-is `v9-doc-ensemble` (official 0.683/0.886, local 0.711). The final QA-retune
-attempt, `v13b-deberta`, trained and built successfully but failed local gate:
-0.667 vs v9's 0.711, and 9:06 vs v9's 3:48. This README is now historical
-context plus reproduction notes.
+Current status: **do not train more NLP blindly for the qualifier.** The
+shipping truth after the 18 May Qwen3 push is:
+
+- `v9-doc-ensemble` remains best blended: official `0.683 / 0.886`
+  (blended 0.734).
+- `v14-llm-rag` remains best raw accuracy: official `0.734 / 0.286`.
+- `v15-lora-qwen3-8b` trained cleanly but is blocked at serving/packaging:
+  direct vLLM LoRA crashes on T4/cloud, and merged-AWQ quantization is not
+  working on the Workbench T4 with current tooling.
+
+This README is historical context plus reproduction notes. If NLP is reopened,
+the credible routes are: quantize the merged Qwen3 LoRA on bigger hardware, or
+retrain LoRA on Qwen2.5-7B so it can run on the NGC base image that already
+survived cloud.
 
 Historical training paths:
 
@@ -13,6 +22,64 @@ Historical training paths:
 | [`finetune_qa.py`](finetune_qa.py) | extractive (RoBERTa/DeBERTa SQuAD2) | `nlp/models/roberta-finetuned-squad2/` or `nlp/models/deberta-finetuned-squad2/` | DeBERTa is preferred if present, otherwise RoBERTa |
 | [`finetune_genqa.py`](finetune_genqa.py) | generative (Flan-T5) | `nlp/models/flan-t5-finetuned/` | explicit `NLP_QA_MODE=generative` only |
 | [`train_answer_ranker.py`](train_answer_ranker.py) | lightweight candidate ranker | `nlp/models/answer_ranker.json` | optional v12 reranker |
+| [`finetune_lora.py`](finetune_lora.py) | QLoRA generative LLM adapter | `nlp/models/lora/` | trained successfully; not currently shippable on Qwen3/vLLM T4 stack |
+| [`merge_lora_and_quantize.py`](merge_lora_and_quantize.py) | merge LoRA + AWQ quantize | `nlp/models/qwen3-8b-merged-bf16/`, `nlp/models/llm-merged/` | merge works; AWQ quant is blocked on T4 |
+
+## v15 QLoRA / AWQ lessons (18 May)
+
+The Qwen3-8B LoRA training command that completed was:
+
+```bash
+python training/nlp/finetune_lora.py \
+  --base Qwen/Qwen3-8B \
+  --data /home/jupyter/novice/nlp/nlp.jsonl \
+  --docs /home/jupyter/novice/nlp/documents \
+  --out nlp/models/lora \
+  --epochs 2 \
+  --batch-size 1 \
+  --grad-accum 8
+```
+
+Training facts:
+
+- `batch-size 2` OOMed on T4; `batch-size 1 --grad-accum 8` fits and keeps
+  the same effective batch size as `2 x 4`, just slower.
+- A free `nvidia-smi` before launch only means the GPU is idle. During training,
+  the 8B base, LoRA activations, sequence length, and shifted logits fill most
+  of the 14-15 GiB T4 memory.
+- The real T4 runtime was about 8 hours for 2 epochs / 200 steps at 2048 tokens.
+  It was not a 30-minute run.
+- If Workbench idle-shutdown settings cannot be edited, use `tmux` for the
+  training process and keep a Jupyter notebook kernel active with a tiny
+  heartbeat cell. GPU activity alone may not count as Workbench UI activity.
+
+Environment lesson:
+
+- Do **not** install `llmcompressor` into the main Workbench environment. It
+  pins `torch<=2.10.0` and can downgrade a CUDA 13 / torch 2.12 stack, leaving
+  `torchvision` compiled against the wrong torch and causing
+  `RuntimeError: operator torchvision::nms does not exist`, which then surfaces
+  through Transformers as `Could not import module 'PreTrainedModel'`.
+- Use an isolated `~/quant-venv` for quantization experiments:
+
+```bash
+python3 -m venv ~/quant-venv
+source ~/quant-venv/bin/activate
+pip install --upgrade pip
+pip install torch==2.10.0 llmcompressor transformers accelerate peft safetensors datasets
+python -c "from llmcompressor import oneshot; from llmcompressor.modifiers.awq import AWQModifier; print('OK')"
+```
+
+AWQ status:
+
+- BF16 merge into `nlp/models/qwen3-8b-merged-bf16/` works.
+- `autoawq` is not a reliable path now; the import path used by old examples is
+  broken/deprecated.
+- `llm-compressor` 0.10 on T4 failed both at DecoderLayer granularity (OOM) and
+  at `sequential_targets=["Linear"]` / `max_seq_length=1024` with a Qwen3-GQA
+  symbolic-trace `NoneType` failure after 3/254 calibration groups.
+- So `nlp/models/llm-merged/` is not a usable artifact yet, and any Docker build
+  that falls through without that directory is just testing the un-tuned base.
 
 The container's [nlp_manager.py](../../nlp/src/nlp_manager.py) now defaults to
 extractive QA even if an old Flan-T5 directory is present, because `v8a-genqa`

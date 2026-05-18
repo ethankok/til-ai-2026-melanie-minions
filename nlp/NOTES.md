@@ -1,27 +1,27 @@
 # NLP — notes & history
 
-Last updated: 17 May 2026 ~16:15 SGT — **v14-llm-rag SHIPPED at
-`0.734 / 0.286` — new NLP accuracy high (+0.051 vs v9, above the previous
-public leaderboard top of 0.711).** Architecture: kept v9's BM25+BGE+rerank
-retrieval; swapped the RoBERTa-large extractive head for Qwen2.5-7B-Instruct-AWQ
-via vLLM. Local 0.754 → cloud 0.734, gap 0.020 (consistent with v9's 0.028).
-The non-extractive +5pp came from the model-class change exactly as predicted
-— 481/883 local gold answers were non-literal and v13a oracle said the
-candidate pool had +0.10 of headroom extractive heads couldn't surface.
-**Blended cost: -0.112** (v14 blended 0.622 vs v9 0.734) because cloud
-wall-clock went 3:50 → ~21 min → speed score 0.886 → 0.286.
+Last updated: 18 May 2026 ~04:15 SGT — **v15-family is blocked, not
+"awaiting a format fix."** The v15 LoRA adapter trained successfully
+(8h T4, `bs=1 grad_accum=8`, eval_loss 0.559, mean_token_acc 87.6%),
+but there is no working path to ship it from the current Workbench T4:
 
-**v14d-qwen3-8b cleared the local gate at 0.755 / 18:33** — matches v14's
-0.754 accuracy at 1.5× speed (per-Q 1.59s vs v14's 2.35s). Hypothesis
-confirmed: v14c's -0.095 drop was 4B capacity, not Qwen3 paraphrase
-tendency. Cloud submission running; projected blended ~0.643 (+0.021 over
-v14 but still -0.091 behind v9 blended).
+- `v15-lora-qwen3-8b` direct serving hits the vLLM 0.9.0 Punica/Triton
+  LoRA kernel on Turing (`LLVM ERROR: Unsupported rounding mode for
+  conversion`). Local silently fell back/corrupted to 0.659; cloud turned
+  the same crash into 700/700 HTTP 500s.
+- `v14c-qwen3-4b` and `v14d-qwen3-8b` both served locally but timed out
+  on cloud. The common factor is the `vllm/vllm-openai` base image and
+  cloud startup/throughput, not request JSON shape.
+- `v15-merged-qwen3-8b` cannot currently be AWQ-quantized on T4:
+  `autoawq` is deprecated/broken, while `llm-compressor` either OOMs at
+  DecoderLayer granularity or fails at Linear granularity with a Qwen3-GQA
+  symbolic-trace `NoneType` error.
 
-Next: **v15-lora-qwen3-8b** — LoRA fine-tune Qwen3-8B-AWQ on the local 883
-(question, context, gold-answer) tuples. This is the proven lever from the
-v7→v8b path (+0.034 → +0.162 cloud accuracy from RoBERTa-large fine-tunes);
-applying it to a 30× larger generative model should compound. Expected lift
-+0.05 to +0.10 cloud accuracy at unchanged speed → blended target ~0.71–0.76.
+Shipping truth: **v9-doc-ensemble remains best blended** (`0.683/0.886`,
+blended 0.734) and **v14-llm-rag remains best raw accuracy**
+(`0.734/0.286`). Further NLP only makes sense through one of two paths:
+AWQ-quantize the merged Qwen3 LoRA on bigger hardware, or retrain LoRA on
+Qwen2.5-7B so it can run on the NGC base image that already survived cloud.
 
 (Command R7B was considered as v14e but **no off-the-shelf AWQ or GPTQ-4bit
 quantization exists on HuggingFace** — only MLX and GGUF, neither
@@ -429,10 +429,11 @@ question
   → answer
 ```
 
-The LoRA adapter is loaded at inference via vLLM's `LoRARequest`
-(`enable_lora=True`, `max_loras=1`, `max_lora_rank=16`). No model merge or
-re-quantisation needed: vLLM applies the adapter on top of the AWQ-
-quantised base at request time.
+The original plan loaded the LoRA adapter at inference via vLLM's
+`LoRARequest` (`enable_lora=True`, `max_loras=1`, `max_lora_rank=16`),
+with no model merge or re-quantisation. That plan is now falsified on the
+T4/cloud stack: the vLLM Punica/Triton LoRA kernel crashes, so the only
+remaining Qwen3 route would be offline merge + AWQ re-quantization.
 
 ### Code changes (17 May)
 
@@ -440,7 +441,8 @@ quantised base at request time.
   QLoRA training script. Loads Qwen3-8B in 4-bit nf4 via bitsandbytes
   (~4.5 GB VRAM for the base), attaches r=16 LoRA adapters to
   `q_proj/k_proj/v_proj/o_proj`, trains 2 epochs with
-  `gradient_checkpointing=True` + `bs=2 × grad_accum=4`.
+  `gradient_checkpointing=True`. The original default was
+  `bs=2 × grad_accum=4`; actual T4 run needed `bs=1 × grad_accum=8`.
   Inference-distribution training: for each (q, gold_answer, source_docs)
   row in `nlp.jsonl`, builds the *exact* same prompt structure
   `[system, *few_shots, user(question + 3 chunks)]` that `llm_answerer.py`
@@ -471,7 +473,7 @@ cd ~/til
 pip install -r requirements-dev.txt
 ```
 
-Step 2 — train the adapter (~45 min on T4):
+Step 2 — train the adapter (actual T4 runtime was ~8h, not 45 min):
 
 ```bash
 python training/nlp/finetune_lora.py \
@@ -479,16 +481,18 @@ python training/nlp/finetune_lora.py \
     --data /home/jupyter/novice/nlp/nlp.jsonl \
     --docs /home/jupyter/novice/nlp/documents \
     --out  nlp/models/lora \
-    --epochs 2
+    --epochs 2 \
+    --batch-size 1 \
+    --grad-accum 8
 
 # Output: nlp/models/lora/{adapter_config.json,adapter_model.safetensors,
 #                          tokenizer*,BASE_MODEL}
 ```
 
-Expected console output:
-- "loaded N training examples (skipped: ...)"  — N should be ~700–800 of 883
-- "trainable params: ~25M || all params: ~8.2B || trainable%: ~0.3%"
-- Eval loss curve: should drop from ~2.0 → ~0.4 over 2 epochs
+Actual console output from the completed run:
+- `loaded 883 training examples`
+- `trainable params: 15,335,424 || all params: 8,206,070,784 || trainable%: 0.1869`
+- Eval loss curve: 0.645 → 0.580 → 0.561 → 0.559 over 200 steps
 - `load_best_model_at_end=True` retains the lowest eval_loss checkpoint
 
 Step 3 — sanity-check the adapter loads on the base:
@@ -530,13 +534,17 @@ Container logs should show:
 - `[llm_answerer] loading vLLM ...`  *(includes enable_lora=True in kwargs)*
 - `[nlp build] bundled v15 LoRA adapter (Qwen/Qwen3-8B)` *(from the build log)*
 
-Step 6 — submit if local clears the gate:
+Step 6 — superseded. Do not submit this direct-LoRA image now:
 
 ```bash
-til submit nlp v15-lora-qwen3-8b
+# Historical only:
+# til submit nlp v15-lora-qwen3-8b
 ```
 
-### Decision rule
+### Superseded direct-LoRA decision rule
+
+This table is retained to explain the original plan, but the cloud/runtime
+failures above overrule it.
 
 | Local equiv_rate | Local wall-clock | Action |
 |---|---|---|
@@ -572,7 +580,7 @@ til submit nlp v15-lora-qwen3-8b
    bugs. If we see crashes, downgrade to v0.8.x or fall back to
    merging+requantizing offline (slower path but more robust).
 
-### Expected lift
+### Expected lift (superseded projection)
 
 Comparing the v7→v8b lift (+0.162 cloud on RoBERTa-large extractive) to
 what a generative 8B LoRA fine-tune should give:
@@ -590,12 +598,49 @@ what a generative 8B LoRA fine-tune should give:
 Projected v15 cloud blended: `0.75 · 0.78 + 0.25 · 0.38 = 0.68` (conservative)
 to `0.75 · 0.85 + 0.25 · 0.38 = 0.73` (optimistic, near v9 blended).
 
-The first submission to actually clear v9 blended needs accuracy ≥ ~0.82
-at the current ~18 min wall-clock, which is at the optimistic end. If
-v15-lora lands in the 0.78–0.80 range, the next move is a v15b that
-ALSO trims the prompt for speed (3 few-shots → 2; max_new_tokens 32 →
-24; raise NLP_LLM_GPU_MEM_FRACTION → 0.85) to drag wall-clock down and
-flip blended.
+### Update — cloud reality vs projection (18 May ~04:15)
+
+All projections above assumed v15 would actually serve requests on cloud
+like v14d does locally. **Cloud reality: vllm/vllm-openai base image
+times out or crashes on every submission**, regardless of model:
+
+```text
+v14c-qwen3-4b      18/05 cloud   TIMEOUT  (local was 5:10)
+v14d-qwen3-8b      18/05 cloud   TIMEOUT  (local was 18:33)
+v15-lora-qwen3-8b  18/05 10:12   0.000 / 1.000 / 700/700 errors
+```
+
+v14 (Qwen2.5-7B-AWQ, NGC base) ran cloud at 21 min and succeeded —
+that's our only proven cloud path. Most likely cause for the v14c/d
+timeouts is image-pull / cold-start overhead on the novel
+vllm/vllm-openai base; v15-lora's 700/700 errors are the broken Triton
+LoRA kernel exceptions propagating to FastAPI (vs. silent fallback locally).
+
+The offline AWQ-merge path also broke in two ways: **autoawq** is
+deprecated (final dev release has broken `from awq import
+AutoAWQForCausalLM`), and **llm-compressor 0.10** OOMs on T4 at default
+sequential_targets, then throws `TypeError: 'NoneType' object is not
+subscriptable` inside the symbolic-trace subgraph forward when sliced
+at Linear granularity — likely a Qwen3 GQA edge case.
+
+**Net**: the LoRA training payoff cannot be shipped from this Workbench
+T4 with current tooling. Two real paths forward:
+
+1. **AWQ-quantize the merged Qwen3-8B-BF16 on different hardware**
+   (A100 / H100). Once we have `nlp/models/llm-merged/` we *might* still
+   need to escape vllm-openai base for cloud (separate problem).
+2. **Retrain LoRA on Qwen2.5-7B**, ship on NGC base. 8h retrain, but
+   uses the proven cloud-shippable v14 stack and applies the v8b
+   fine-tune lever cleanly. Highest-EV remaining path if NLP is to be
+   pushed further.
+
+For the qualifier as-is: v9-doc-ensemble holds blended (0.683/0.886 =
+0.734), v14-llm-rag holds accuracy (0.734/0.286). Neither moves with
+v15-family until one of the two paths above lands.
+
+The older projection above is now superseded by cloud/runtime evidence.
+Do not spend more time on prompt trimming for Qwen3 until the serving path
+itself is solved.
 
 ### Training result (18 May ~01:30 SGT)
 
@@ -644,7 +689,10 @@ Adapter saved to `nlp/models/lora/`:
 - `tokenizer*`
 - `BASE_MODEL` (contains `Qwen/Qwen3-8B`)
 
-### Build + test sequence
+### Superseded direct-LoRA build + test sequence
+
+This sequence is kept for provenance only. It is **not** the current
+recommended path because vLLM's LoRA kernel crashes on the T4/cloud stack.
 
 ```bash
 # Verify adapter is in place

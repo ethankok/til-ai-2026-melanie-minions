@@ -4,6 +4,11 @@ Last updated: 17 May 2026 ~12:30 SGT — **Tier 2 #9 PPO scripted SHIPPED 17/05 
 
 Training context: Workbench T4 PPO with `--opponents scripted` (5-archetype scripted library: random/greedy/bomber/defender/hunter, no self-play), BC warm-start. Reached best eval 0.6322 at update 45 of 200 before Workbench idle-shutdown killed the run at ~update 54. Even the post-shutdown weights (containing only 45 updates of training) still regressed cloud −0.105 vs hybrid-v3 — confirming the hypothesis is structural, not a "needed more training" issue.
 
+Operational note for any future long AE run: if Workbench settings cannot be
+changed, start training inside `tmux` and keep a Jupyter notebook kernel active
+with a simple one-minute heartbeat cell. GPU utilization by itself did not
+reliably prevent idle shutdown on the runs above.
+
 Earlier 17 May (~03:30 SGT) — Tier 1 + Tier 2 wired in but local-falsified before submission. 200-round A/Bs against three opponent distributions show no meaningful lift over hybrid-v3 baseline:
 
 | Opponent | OFF baseline | Tier 1 shipping (#3+#6+#7) | Δ |
