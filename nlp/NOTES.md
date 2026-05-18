@@ -837,10 +837,10 @@ This is slightly slower than the best same-image v9 resubmit (`0.886` speed),
 but accuracy is exactly the known v9 plateau and the image is valid. Keep this
 as the trusted blended NLP submission unless a new local+cloud run clears it.
 
-Next low-risk experiment: **v18-qwen-reranker**. Do not adopt the full
-Qwen3-4B + Qwen embedding + Qwen reranker stack yet; Qwen3-4B already failed
-locally at `0.659`, and replacing the whole retrieval stack adds cloud/startup
-risk. Instead, isolate the only credible lever:
+Next low-risk experiment tried: **v18-qwen-reranker**. We did not adopt the
+full Qwen3-4B + Qwen embedding + Qwen reranker stack because Qwen3-4B already
+failed locally at `0.659`, and replacing the whole retrieval stack adds
+cloud/startup risk. Instead, we isolated the only credible lever:
 
 ```text
 BM25 + BGE dense retrieval        unchanged
@@ -848,17 +848,22 @@ Qwen3-Reranker-0.6B seq-cls       replaces BGE cross-encoder reranker
 RoBERTa-large fine-tuned QA       unchanged v9 answerer
 ```
 
-Implementation notes:
+Implementation/result notes:
 
-- Docker now sets `NLP_RERANKER_REPO=tomaarsen/Qwen3-Reranker-0.6B-seq-cls`
+- The v18 run set `NLP_RERANKER_REPO=tomaarsen/Qwen3-Reranker-0.6B-seq-cls`
   and `NLP_RERANKER_LOCAL_NAME=qwen3-reranker-0.6b-seq-cls`.
 - `nlp_manager.py` now handles rerankers with either one relevance logit or
   two `[no, yes]` logits.
 - QA selection now prefers `roberta-finetuned-squad2` before later failed
   DeBERTa/ModernBERT artefacts, so v18 really tests the reranker instead of
   accidentally retagging a worse reader.
-- Gate: local must beat `0.711` and stay close to v9 runtime before cloud
-  submission. If local is <= `0.711`, stop and keep v9 rescue.
+- Result: local `0.547`, QA loop `14:58`. This fails both gates by a wide
+  margin. Do not submit.
+- Interpretation: this is too large to tune around. Either the Qwen reranker
+  sequence-classification wrapper is not plug-compatible with our simple
+  `(question, passage)` cross-encoder call, or it is genuinely worse than BGE
+  for Clairos-style sparse names/facts. In either case, revert the default
+  Docker reranker to BGE and keep `v9-doc-ensemble-rescue`.
 
 The older projection above is now superseded by cloud/runtime evidence.
 Do not spend more time on prompt trimming for Qwen3 until the serving path

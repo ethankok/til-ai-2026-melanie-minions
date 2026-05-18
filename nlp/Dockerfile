@@ -15,6 +15,9 @@
 # AWQ checkpoints; pin to a specific tag for reproducibility.
 FROM vllm/vllm-openai:v0.9.0
 
+ARG NLP_RERANKER_REPO=BAAI/bge-reranker-base
+ARG NLP_RERANKER_LOCAL_NAME=bge-reranker-base
+
 # Configures settings for the image.
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -29,8 +32,8 @@ ENV NLP_MODEL_DIR=/workspace/models
 ENV NLP_ANSWERER=extractive
 ENV NLP_QA_MAX_SEQ_LEN=256
 ENV NLP_LLM_DIR=/workspace/models/llm
-ENV NLP_RERANKER_REPO=tomaarsen/Qwen3-Reranker-0.6B-seq-cls
-ENV NLP_RERANKER_LOCAL_NAME=qwen3-reranker-0.6b-seq-cls
+ENV NLP_RERANKER_REPO=${NLP_RERANKER_REPO}
+ENV NLP_RERANKER_LOCAL_NAME=${NLP_RERANKER_LOCAL_NAME}
 ENV NLP_DOWNLOAD_MODERNBERT=0
 # Default repo for download_models.py. v14d: Qwen/Qwen3-8B-AWQ (official
 # Qwen quant of the Qwen3 8B base). Thinking mode is the model default;
@@ -55,8 +58,9 @@ RUN pip install --no-cache-dir 'rank_bm25==0.2.2'
 # Bake model weights into the image so inference runs fully offline.
 # ENV HF_HUB_OFFLINE=1 is set above for runtime; we override it for this
 # download-only RUN. Pulls BGE retriever + configured reranker + RoBERTa-base
-# (kept for emergency extractive rollback). The v18 experiment swaps only the
-# reranker to Qwen3 and leaves the v9 RoBERTa answerer path intact.
+# (kept for emergency extractive rollback). Override NLP_RERANKER_REPO and
+# NLP_RERANKER_LOCAL_NAME only for reranker ablations; the shipped default is
+# the v9 BGE reranker because the Qwen3 reranker-only gate regressed badly.
 COPY download_models.py .
 # vllm/vllm-openai doesn't create a `python` symlink — only python3 is on PATH.
 RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python3 download_models.py

@@ -142,14 +142,18 @@ submission candidate.
 ## v18 Qwen reranker-only gate (18 May)
 
 Do not try the full Qwen3-4B answerer stack first: `v14c-qwen3-4b` already
-failed local gate at `0.659`. The cheap ablation is to keep the v9 RoBERTa
+failed local gate at `0.659`. The cheap ablation was to keep the v9 RoBERTa
 answerer and replace only the cross-encoder reranker:
 
 ```bash
 cd ~/til
 git pull origin main
 
-til build nlp v18-qwen-reranker
+docker build \
+  --build-arg NLP_RERANKER_REPO=tomaarsen/Qwen3-Reranker-0.6B-seq-cls \
+  --build-arg NLP_RERANKER_LOCAL_NAME=qwen3-reranker-0.6b-seq-cls \
+  -t melanie-minions-nlp:v18-qwen-reranker \
+  nlp
 til test nlp v18-qwen-reranker
 ```
 
@@ -160,8 +164,17 @@ Expected boot log should include:
 [nlp_manager] QA model: ext-roberta-finetuned
 ```
 
-Gate: submit only if local `NLP RAG QA Accuracy` beats `0.711` and runtime is
-close to v9. If it ties or regresses, keep `v9-doc-ensemble-rescue`.
+Result:
+
+```text
+v18-qwen-reranker local 0.547
+QA loop: 14:58
+```
+
+This failed both gates by a wide margin. Do not submit. The Dockerfile default
+has been reverted to the BGE reranker so normal `til build nlp ...` recreates
+the trusted v9-style retrieval stack unless the reranker env/build args are
+explicitly overridden.
 
 ## v15 QLoRA / AWQ lessons (18 May)
 
