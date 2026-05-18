@@ -29,6 +29,9 @@ ENV NLP_MODEL_DIR=/workspace/models
 ENV NLP_ANSWERER=extractive
 ENV NLP_QA_MAX_SEQ_LEN=256
 ENV NLP_LLM_DIR=/workspace/models/llm
+ENV NLP_RERANKER_REPO=tomaarsen/Qwen3-Reranker-0.6B-seq-cls
+ENV NLP_RERANKER_LOCAL_NAME=qwen3-reranker-0.6b-seq-cls
+ENV NLP_DOWNLOAD_MODERNBERT=0
 # Default repo for download_models.py. v14d: Qwen/Qwen3-8B-AWQ (official
 # Qwen quant of the Qwen3 8B base). Thinking mode is the model default;
 # our chat template call passes enable_thinking=False so <think>...</think>
@@ -51,8 +54,9 @@ RUN pip install --no-cache-dir 'rank_bm25==0.2.2'
 
 # Bake model weights into the image so inference runs fully offline.
 # ENV HF_HUB_OFFLINE=1 is set above for runtime; we override it for this
-# download-only RUN. Pulls BGE retriever + reranker + RoBERTa-base (kept
-# for emergency extractive rollback) + the Qwen3-4B AWQ LLM.
+# download-only RUN. Pulls BGE retriever + configured reranker + RoBERTa-base
+# (kept for emergency extractive rollback). The v18 experiment swaps only the
+# reranker to Qwen3 and leaves the v9 RoBERTa answerer path intact.
 COPY download_models.py .
 # vllm/vllm-openai doesn't create a `python` symlink — only python3 is on PATH.
 RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python3 download_models.py

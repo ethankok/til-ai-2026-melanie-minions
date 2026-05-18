@@ -822,9 +822,43 @@ QA loop: 221 requests in 4:13
 ```
 
 That matches the known v9 local baseline and proves the rescue image is the
-real RoBERTa/v9 path, not the invalid ModernBERT-retag attempt. Cloud score is
-pending. Until it returns, **do not submit any newer NLP tags**; they either
-missed the local gate or use the timeout-prone vllm-openai base.
+real RoBERTa/v9 path, not the invalid ModernBERT-retag attempt.
+
+Cloud result returned 18/05 19:13 SGT:
+
+```text
+tag:   v9-doc-ensemble-rescue
+score: 0.683
+speed: 0.866
+errors: 0 / 700
+```
+
+This is slightly slower than the best same-image v9 resubmit (`0.886` speed),
+but accuracy is exactly the known v9 plateau and the image is valid. Keep this
+as the trusted blended NLP submission unless a new local+cloud run clears it.
+
+Next low-risk experiment: **v18-qwen-reranker**. Do not adopt the full
+Qwen3-4B + Qwen embedding + Qwen reranker stack yet; Qwen3-4B already failed
+locally at `0.659`, and replacing the whole retrieval stack adds cloud/startup
+risk. Instead, isolate the only credible lever:
+
+```text
+BM25 + BGE dense retrieval        unchanged
+Qwen3-Reranker-0.6B seq-cls       replaces BGE cross-encoder reranker
+RoBERTa-large fine-tuned QA       unchanged v9 answerer
+```
+
+Implementation notes:
+
+- Docker now sets `NLP_RERANKER_REPO=tomaarsen/Qwen3-Reranker-0.6B-seq-cls`
+  and `NLP_RERANKER_LOCAL_NAME=qwen3-reranker-0.6b-seq-cls`.
+- `nlp_manager.py` now handles rerankers with either one relevance logit or
+  two `[no, yes]` logits.
+- QA selection now prefers `roberta-finetuned-squad2` before later failed
+  DeBERTa/ModernBERT artefacts, so v18 really tests the reranker instead of
+  accidentally retagging a worse reader.
+- Gate: local must beat `0.711` and stay close to v9 runtime before cloud
+  submission. If local is <= `0.711`, stop and keep v9 rescue.
 
 The older projection above is now superseded by cloud/runtime evidence.
 Do not spend more time on prompt trimming for Qwen3 until the serving path

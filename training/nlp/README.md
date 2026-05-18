@@ -136,7 +136,32 @@ files directly in canonical `~/til` before calling `til build`.
 Validated rescue: after killing the stale container on port 5004 and rebuilding
 from canonical `~/til`, `til test nlp v9-doc-ensemble-rescue` returned local
 `0.711` with a 4:13 QA loop. This matches the real v9 baseline. Cloud score is
-pending; this rescue tag is the trusted NLP submission candidate.
+`0.683 / 0.866` with `0 / 700` errors; this rescue tag is the trusted NLP
+submission candidate.
+
+## v18 Qwen reranker-only gate (18 May)
+
+Do not try the full Qwen3-4B answerer stack first: `v14c-qwen3-4b` already
+failed local gate at `0.659`. The cheap ablation is to keep the v9 RoBERTa
+answerer and replace only the cross-encoder reranker:
+
+```bash
+cd ~/til
+git pull origin main
+
+til build nlp v18-qwen-reranker
+til test nlp v18-qwen-reranker
+```
+
+Expected boot log should include:
+
+```text
+[nlp_manager] reranker model: /workspace/models/qwen3-reranker-0.6b-seq-cls
+[nlp_manager] QA model: ext-roberta-finetuned
+```
+
+Gate: submit only if local `NLP RAG QA Accuracy` beats `0.711` and runtime is
+close to v9. If it ties or regresses, keep `v9-doc-ensemble-rescue`.
 
 ## v15 QLoRA / AWQ lessons (18 May)
 

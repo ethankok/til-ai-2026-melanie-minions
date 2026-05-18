@@ -21,25 +21,32 @@ from transformers import (
 )
 
 OUT = Path("/workspace/models")
+RERANKER_REPO = os.getenv("NLP_RERANKER_REPO", "BAAI/bge-reranker-base")
+RERANKER_LOCAL_NAME = os.getenv("NLP_RERANKER_LOCAL_NAME", "bge-reranker-base")
+DOWNLOAD_MODERNBERT = os.getenv("NLP_DOWNLOAD_MODERNBERT", "0").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 SPECS = [
     ("BAAI/bge-small-en-v1.5", AutoModel, "bge-small-en-v1.5"),
-    (
-        "BAAI/bge-reranker-base",
-        AutoModelForSequenceClassification,
-        "bge-reranker-base",
-    ),
+    (RERANKER_REPO, AutoModelForSequenceClassification, RERANKER_LOCAL_NAME),
     (
         "deepset/roberta-base-squad2",
         AutoModelForQuestionAnswering,
         "roberta-base-squad2",
     ),
-    (
-        "kiddothe2b/ModernBERT-base-squad2",
-        AutoModelForQuestionAnswering,
-        "modernbert-base-squad2",
-    ),
 ]
+
+if DOWNLOAD_MODERNBERT:
+    SPECS.append(
+        (
+            "kiddothe2b/ModernBERT-base-squad2",
+            AutoModelForQuestionAnswering,
+            "modernbert-base-squad2",
+        )
+    )
 
 # v14d-qwen3-8b: upsizes from v14c's 4B to 8B on the same Qwen3 family.
 # Direct test of whether v14c's accuracy drop (0.754 → 0.659 local) was 4B

@@ -33,7 +33,7 @@ fallback.
 
 Models (all bundled into the image; see download_models.py):
   - dense:    BAAI/bge-small-en-v1.5
-  - reranker: BAAI/bge-reranker-base
+  - reranker: BAAI/bge-reranker-base, or NLP_RERANKER_REPO override
   - qa:       deepset/roberta-base-squad2
 """
 
@@ -67,7 +67,9 @@ from transformers import (
 
 MODEL_DIR = Path(os.getenv("NLP_MODEL_DIR", "/workspace/models"))
 DENSE_DIR = MODEL_DIR / "bge-small-en-v1.5"
-RERANKER_DIR = MODEL_DIR / "bge-reranker-base"
+RERANKER_REPO = os.getenv("NLP_RERANKER_REPO", "BAAI/bge-reranker-base").strip()
+RERANKER_LOCAL_NAME = os.getenv("NLP_RERANKER_LOCAL_NAME", "bge-reranker-base").strip()
+RERANKER_DIR = MODEL_DIR / RERANKER_LOCAL_NAME
 # QA model locations. Default selection is extractive first; Flan-T5 is now
 # opt-in via NLP_QA_MODE=generative because v8a regressed on cloud.
 # v13b: prefer DeBERTa-v3-large fine-tuned weights if present; falls through
@@ -374,9 +376,7 @@ class NLPManager:
             return
 
         dense_path = str(DENSE_DIR) if DENSE_DIR.exists() else "BAAI/bge-small-en-v1.5"
-        rerank_path = (
-            str(RERANKER_DIR) if RERANKER_DIR.exists() else "BAAI/bge-reranker-base"
-        )
+        rerank_path = str(RERANKER_DIR) if RERANKER_DIR.exists() else RERANKER_REPO
 
         from transformers import AutoModel
 
@@ -385,11 +385,16 @@ class NLPManager:
         self._dense_model = AutoModel.from_pretrained(dense_path).to(self.device).eval()
 
         self._rerank_tok = AutoTokenizer.from_pretrained(rerank_path)
+        if self._rerank_tok.pad_token is None:
+            self._rerank_tok.pad_token = self._rerank_tok.eos_token or self._rerank_tok.unk_token
         self._rerank_model = (
             AutoModelForSequenceClassification.from_pretrained(rerank_path)
             .to(self.device)
             .eval()
         )
+        if getattr(self._rerank_model.config, "pad_token_id", None) is None:
+            self._rerank_model.config.pad_token_id = self._rerank_tok.pad_token_id
+        print(f"[nlp_manager] reranker model: {rerank_path}", flush=True)
 
         if self.device.type == "cuda":
             # Half precision is a ~2x speedup on these small models with no
@@ -435,11 +440,10 @@ class NLPManager:
             self._llm_answerer = None
 
     def _init_extractive_qa(self) -> None:
-        # QA model selection ladder. v13b: DeBERTa-v3-large fine-tune is
-        # preferred extractive backbone when present (structurally +1-2% over
-        # roberta-large on extractive QA). Falls back to v8b/v9 RoBERTa-large
-        # fine-tune, then stock base, then hub. Flan-T5 generative remains
-        # opt-in via NLP_QA_MODE=generative.
+        # QA model selection ladder. The v9 RoBERTa fine-tune is the known-good
+        # extractive reader (0.711 local / 0.683 cloud). Later DeBERTa and
+        # ModernBERT retries did not beat it, so keep those as explicit
+        # artefact fallbacks rather than letting a stock bundled model mask v9.
         want_generative = QA_MODE in {"gen", "generative", "t5"}
         if QA_MODEL_OVERRIDE:
             qa_path = QA_MODEL_OVERRIDE
@@ -447,18 +451,18 @@ class NLPManager:
         elif want_generative and QA_GEN_FINETUNED_DIR.exists():
             qa_path = str(QA_GEN_FINETUNED_DIR)
             qa_source = "gen-finetuned"
+        elif QA_EXT_FINETUNED_DIR.exists():
+            qa_path = str(QA_EXT_FINETUNED_DIR)
+            qa_source = "ext-roberta-finetuned"
+        elif QA_DEBERTA_FINETUNED_DIR.exists():
+            qa_path = str(QA_DEBERTA_FINETUNED_DIR)
+            qa_source = "ext-deberta-finetuned"
         elif QA_MODERNBERT_FINETUNED_DIR.exists():
             qa_path = str(QA_MODERNBERT_FINETUNED_DIR)
             qa_source = "ext-modernbert-finetuned"
         elif QA_MODERNBERT_BASE_DIR.exists():
             qa_path = str(QA_MODERNBERT_BASE_DIR)
             qa_source = "ext-modernbert-base-squad2"
-        elif QA_DEBERTA_FINETUNED_DIR.exists():
-            qa_path = str(QA_DEBERTA_FINETUNED_DIR)
-            qa_source = "ext-deberta-finetuned"
-        elif QA_EXT_FINETUNED_DIR.exists():
-            qa_path = str(QA_EXT_FINETUNED_DIR)
-            qa_source = "ext-finetuned"
         elif QA_BASE_DIR.exists():
             qa_path = str(QA_BASE_DIR)
             qa_source = "ext-base"
@@ -709,10 +713,15 @@ class NLPManager:
                 max_length=RERANK_MAX_LEN,
                 return_tensors="pt",
             ).to(self.device)
-            logits = self._rerank_model(**enc).logits.squeeze(-1).float().cpu().tolist()
-            if isinstance(logits, float):
-                logits = [logits]
-            scores.extend(logits)
+            logits = self._rerank_model(**enc).logits.float().cpu()
+            if logits.ndim == 1:
+                batch_scores = logits.tolist()
+            elif logits.shape[-1] == 1:
+                batch_scores = logits[:, 0].tolist()
+            else:
+                # Qwen3 reranker seq-cls variants expose [no, yes] logits.
+                batch_scores = (logits[:, -1] - logits[:, 0]).tolist()
+            scores.extend(float(score) for score in batch_scores)
         order = sorted(range(len(passage_idxs)), key=lambda i: -scores[i])
         return [passage_idxs[i] for i in order]
 
