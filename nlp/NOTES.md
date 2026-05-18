@@ -679,6 +679,41 @@ is too pathological for that conclusion. The likely failure chain is one of:
 `quant_method`, and `MERGED_FROM`) so the next `docker logs ...` can separate
 "wrong thing served" from "right thing served but quantization/merge failed".
 
+## v16-deberta-v3 — extractive-reader retry (18 May)
+
+Decision: try one more fast-reader path before spending more time on LLM
+serving. The old `v13b-deberta` run already tried DeBERTa-v3-large and failed
+locally (`0.667` vs v9's `0.711`, 9:06 vs 3:48). The only reason to reopen it
+is a materially different gate:
+
+- restore the Dockerfile default to `NLP_ANSWERER=extractive` so the image
+  actually serves the QA reader instead of the v14/v15 LLM path;
+- skip the LLM download for this tag so build/runtime stay fast;
+- bundle `nlp/models/deberta-finetuned-squad2/` if present;
+- reduce runtime QA max sequence length to 256 via `NLP_QA_MAX_SEQ_LEN=256`;
+- train for **one epoch at lr=1e-5**, because v13b's eval loss was best at
+  epoch 1 and then overfit.
+
+Run:
+
+```bash
+python training/nlp/finetune_qa.py \
+  --base-model deepset/deberta-v3-large-squad2 \
+  --use-answer-chunk \
+  --epochs 1 \
+  --lr 1e-5 \
+  --batch-size 2 \
+  --gradient-accumulation-steps 4 \
+  --gradient-checkpointing \
+  --output nlp/models/deberta-finetuned-squad2
+
+til build nlp v16-deberta-v3
+til test nlp v16-deberta-v3
+```
+
+Gate: only submit if local `NLP RAG QA Accuracy` clears v9's 0.711. If not,
+do not keep iterating DeBERTa; v13b plus this v16 gate are enough evidence.
+
 The older projection above is now superseded by cloud/runtime evidence.
 Do not spend more time on prompt trimming for Qwen3 until the serving path
 itself is solved.

@@ -23,17 +23,20 @@ ENV HF_HUB_DISABLE_TELEMETRY=1
 ENV TRANSFORMERS_OFFLINE=1
 ENV HF_HUB_OFFLINE=1
 ENV NLP_MODEL_DIR=/workspace/models
-# v14-llm-rag: 'llm' routes the answerer through vLLM + a local LLM (now
-# Qwen3-4B-Instruct-2507-AWQ). Set NLP_ANSWERER=extractive to fall back to
-# the v9 RoBERTa-large path (also requires the fine-tuned weights to be
-# present, which v14c does not bundle by default).
-ENV NLP_ANSWERER=llm
+# v16-deberta: default back to the fast extractive stack. The v14/v15 LLM
+# line found a higher raw-accuracy ceiling but lost the qualifier blend on
+# speed/cloud startup, and the Qwen3 LoRA merge/quant path failed quality.
+ENV NLP_ANSWERER=extractive
+ENV NLP_QA_MAX_SEQ_LEN=256
 ENV NLP_LLM_DIR=/workspace/models/llm
 # Default repo for download_models.py. v14d: Qwen/Qwen3-8B-AWQ (official
 # Qwen quant of the Qwen3 8B base). Thinking mode is the model default;
 # our chat template call passes enable_thinking=False so <think>...</think>
 # blocks are suppressed at the prompt level.
 ENV NLP_LLM_REPO=Qwen/Qwen3-8B-AWQ
+# Do not download the 5+ GB LLM for extractive tags. Override to 0 only when
+# intentionally rebuilding the v14/v15 LLM path.
+ENV NLP_SKIP_LLM_DOWNLOAD=1
 # v15-lora: directory inside the image where the trained LoRA adapter
 # lives. llm_answerer.py auto-enables LoRA in vLLM when this path contains
 # an adapter_config.json. Set to empty string to force base-model-only.
@@ -62,7 +65,7 @@ RUN if [ "$NLP_ANSWERER" = "llm" ] && [ ! -f /workspace/models/llm/config.json ]
         echo "[nlp build] container will fall back to extractive QA at runtime"; \
     fi
 
-# v15-lora / v15-merged: bundle locally-produced model artefacts.
+# Bundle locally-produced model artefacts.
 #
 # Two paths are supported, in priority order:
 #
@@ -80,7 +83,19 @@ RUN if [ "$NLP_ANSWERER" = "llm" ] && [ ! -f /workspace/models/llm/config.json ]
 # ignored (so we don't double-apply). To force the runtime-LoRA path, move
 # nlp/models/llm-merged/ out of the build context.
 COPY models /workspace/models-local
-RUN if [ -d /workspace/models-local/llm-merged ] && [ -f /workspace/models-local/llm-merged/config.json ]; then \
+RUN for d in deberta-finetuned-squad2 roberta-finetuned-squad2 flan-t5-finetuned; do \
+        if [ -d "/workspace/models-local/$d" ] && [ -f "/workspace/models-local/$d/config.json" ]; then \
+            rm -rf "/workspace/models/$d" && \
+            mkdir -p "/workspace/models/$d" && \
+            cp -r "/workspace/models-local/$d/"* "/workspace/models/$d/" && \
+            echo "[nlp build] bundled local QA artefact: $d"; \
+        fi; \
+    done && \
+    if [ -f /workspace/models-local/answer_ranker.json ]; then \
+        cp /workspace/models-local/answer_ranker.json /workspace/models/answer_ranker.json && \
+        echo "[nlp build] bundled local answer ranker"; \
+    fi && \
+    if [ "$NLP_ANSWERER" = "llm" ] && [ -d /workspace/models-local/llm-merged ] && [ -f /workspace/models-local/llm-merged/config.json ]; then \
         rm -rf /workspace/models/llm && \
         mkdir -p /workspace/models/llm && \
         cp -r /workspace/models-local/llm-merged/* /workspace/models/llm/ && \
@@ -90,13 +105,13 @@ RUN if [ -d /workspace/models-local/llm-merged ] && [ -f /workspace/models-local
             sed 's/^/[nlp build]     /' /workspace/models-local/llm-merged/MERGED_FROM; \
         fi; \
         echo "[nlp build] runtime LoRA path will be DISABLED (merged weights already include fine-tune)"; \
-    elif [ -d /workspace/models-local/lora ] && [ -f /workspace/models-local/lora/adapter_config.json ]; then \
+    elif [ "$NLP_ANSWERER" = "llm" ] && [ -d /workspace/models-local/lora ] && [ -f /workspace/models-local/lora/adapter_config.json ]; then \
         mkdir -p /workspace/models/lora && \
         cp -r /workspace/models-local/lora/* /workspace/models/lora/ && \
         echo "[nlp build] bundled v15 LoRA adapter ($(cat /workspace/models-local/lora/BASE_MODEL 2>/dev/null || echo unknown base))"; \
         echo "[nlp build] WARNING: runtime LoRA path is broken on T4/sm_75 (vLLM 0.9.0 Triton kernel)"; \
     else \
-        echo "[nlp build] no LoRA adapter and no merged LLM — running base model only"; \
+        echo "[nlp build] extractive answerer active; LLM artefacts ignored"; \
     fi && rm -rf /workspace/models-local
 
 # Copies your source files.

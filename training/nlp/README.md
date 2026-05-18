@@ -11,9 +11,10 @@ shipping truth after the 18 May Qwen3 push is:
   working on the Workbench T4 with current tooling.
 
 This README is historical context plus reproduction notes. If NLP is reopened,
-the credible routes are: quantize the merged Qwen3 LoRA on bigger hardware, or
-retrain LoRA on Qwen2.5-7B so it can run on the NGC base image that already
-survived cloud.
+the credible routes are: a fast extractive-reader retry that preserves v9's
+speed profile, quantize the merged Qwen3 LoRA on bigger hardware, or retrain
+LoRA on Qwen2.5-7B so it can run on the NGC base image that already survived
+cloud.
 
 Historical training paths:
 
@@ -24,6 +25,42 @@ Historical training paths:
 | [`train_answer_ranker.py`](train_answer_ranker.py) | lightweight candidate ranker | `nlp/models/answer_ranker.json` | optional v12 reranker |
 | [`finetune_lora.py`](finetune_lora.py) | QLoRA generative LLM adapter | `nlp/models/lora/` | trained successfully; not currently shippable on Qwen3/vLLM T4 stack |
 | [`merge_lora_and_quantize.py`](merge_lora_and_quantize.py) | merge LoRA + AWQ quantize | `nlp/models/qwen3-8b-merged-bf16/`, `nlp/models/llm-merged/` | merge works; AWQ quant is blocked on T4 |
+
+## v16 DeBERTa-v3 extractive retry
+
+`v13b-deberta` already tried `deepset/deberta-v3-large-squad2` with the v8b
+chunked-context recipe and failed the local gate (`0.667` vs v9's `0.711`)
+while running much slower. Do not repeat that exact run. The only DeBERTa retry
+worth trying is a lower-learning-rate, one-epoch gate to avoid the overfit
+pattern from v13b (`eval_loss` was best at epoch 1 and worsened afterward).
+
+The Dockerfile now defaults back to `NLP_ANSWERER=extractive`, skips the LLM
+download, bundles local `deberta-finetuned-squad2/` when present, and sets
+`NLP_QA_MAX_SEQ_LEN=256` for a faster local gate. This prevents a DeBERTa
+test from accidentally serving the v14/v15 LLM path.
+
+Workbench commands:
+
+```bash
+cd ~/til
+git pull origin main
+
+python training/nlp/finetune_qa.py \
+  --base-model deepset/deberta-v3-large-squad2 \
+  --use-answer-chunk \
+  --epochs 1 \
+  --lr 1e-5 \
+  --batch-size 2 \
+  --gradient-accumulation-steps 4 \
+  --gradient-checkpointing \
+  --output nlp/models/deberta-finetuned-squad2
+
+til build nlp v16-deberta-v3
+til test nlp v16-deberta-v3
+```
+
+Gate: submit only if local `NLP RAG QA Accuracy` clears `0.711`; otherwise keep
+`v9-doc-ensemble` as the blended-score submission.
 
 ## v15 QLoRA / AWQ lessons (18 May)
 
