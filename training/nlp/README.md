@@ -139,6 +139,13 @@ from canonical `~/til`, `til test nlp v9-doc-ensemble-rescue` returned local
 `0.683 / 0.866` with `0 / 700` errors; this rescue tag is the trusted NLP
 submission candidate.
 
+Current decision after the v18 session: do not spend more time on reranker
+swaps or on post-hoc analysis of failed local runs. `nlp_results.json` is worth
+mining only when a model clears the local gate or is close enough to explain a
+small regression. `v18-qwen-reranker` was not close (`0.547`, 14:58 QA loop,
+then cloud `700 / 700` errors), so keep v9 rescue and only reopen Qwen work on
+the higher-upside answerer-serving problem.
+
 ## v18 Qwen reranker-only gate (18 May)
 
 Do not try the full Qwen3-4B answerer stack first: `v14c-qwen3-4b` already
@@ -169,12 +176,18 @@ Result:
 ```text
 v18-qwen-reranker local 0.547
 QA loop: 14:58
+cloud: 0.000 / 0.417, 700 / 700 errors
 ```
 
 This failed both gates by a wide margin. Do not submit. The Dockerfile default
 has been reverted to the BGE reranker so normal `til build nlp ...` recreates
 the trusted v9-style retrieval stack unless the reranker env/build args are
 explicitly overridden.
+
+Interpretation: Qwen as an answerer is still promising (`Qwen3-8B-AWQ` local
+0.755; `v14-llm-rag` cloud 0.734), but Qwen as a drop-in reranker was a bad fit
+for this pipeline and too slow. The remaining credible Qwen work is packaging
+and quantization, not reranking.
 
 ## v15 QLoRA / AWQ lessons (18 May)
 

@@ -1,21 +1,32 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 18 May 2026 ~04:15 SGT — **v15 family blocked on cloud and
-on AWQ-quantization simultaneously**. Three cloud submissions all failed:
+Last updated: 18 May 2026 ~20:40 SGT — **NLP is locked back to the v9
+rescue for blended score.** `v9-doc-ensemble-rescue` was validated locally
+at `0.711` and on cloud at `0.683 / 0.866` with `0 / 700` errors. That is
+slightly slower than the best same-image v9 speed resubmit (`0.886`) but
+keeps the same v9 accuracy plateau and is the only current NLP tag worth
+trusting for the qualifier blend.
+
+The new Qwen reranker-only ablation is dead: `v18-qwen-reranker` collapsed
+locally to `0.547` with a 14:58 QA loop, then cloud returned `700 / 700`
+errors. Do not debug or submit it. The local failure is already decisive;
+the cloud failure is just more evidence that current-main/vllm-openai
+packaging is fragile for non-v9 NLP tags. This does **not** mean Qwen models
+are bad: `Qwen3-8B-AWQ` previously scored `0.755` locally and `v14-llm-rag`
+with Qwen2.5-7B remains the best raw cloud accuracy (`0.734`). The unresolved
+problem is cloud-safe, fast serving/quantization for the strong Qwen answerer
+path, not model capability.
+
+Earlier 18 May ~04:15 SGT — v15 family blocked on cloud and
+AWQ/GPTQ quantization simultaneously. Three cloud submissions all failed:
 v14c-qwen3-4b TIMEOUT, v14d-qwen3-8b TIMEOUT, v15-lora-qwen3-8b 700/700
 errors (broken Triton crashed every request on cloud, vs silent fallback
 locally). **All three failures share one factor: vllm/vllm-openai base
 image.** v14 on NGC base ran 21 min cloud and worked; that's our only
-proven cloud path. v15-merged also shipped (got identical 0.755 = base
-because the Dockerfile fell through when llm-merged dir didn't exist).
-LoRA adapter merge succeeded (8h training, eval_loss 0.559) but AWQ
-re-quantization is fragile: autoawq deprecated → llm-compressor; that
-OOMed at DecoderLayer granularity → sliced at Linear granularity; that
-threw `TypeError: 'NoneType' object is not subscriptable` mid-calibration
-(subgraph forward bug for Qwen3 GQA). Currently no working path to ship
-the LoRA gains. v9-doc-ensemble remains best blended (0.683/0.886 →
-blended 0.734), v14-llm-rag remains best raw accuracy (0.734/0.286).
+proven cloud LLM path. v15-merged also built but regressed/failed quality.
+LoRA adapter training succeeded (8h, eval_loss 0.559), but quantization and
+serving never produced a better shippable image.
 
 Earlier 18 May ~01:30 SGT — v15-lora-qwen3-8b adapter trained
 successfully (8h on T4, bs=1 grad_accum=8 due to VRAM). Final eval_loss
@@ -102,7 +113,8 @@ blocked by cloud/runtime/quantization failures, not by answer format.
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
 NLP    melanie-minions-nlp      v14-llm-rag 17/05/2026 16:15:15 0 / 700 0.734   0.286  ← NEW NLP ACCURACY HIGH (+0.051 vs v9). Qwen2.5-7B-Instruct-AWQ via vLLM as the answerer, v9 retrieval kept. Blended 0.622 vs v9 0.734 (-0.112) — speed regressed from 21-min wall-clock. v14b-speed iterates with fewer few-shots.
-NLP (prior best blend) melanie-minions-nlp v9-doc-ensemble 16/05/2026 05:21:57 0 / 700 0.683   0.886  ← BEST BLENDED until v14b/v14c can recover; 3rd v9 resubmit, speed 0.886. Blended ~0.734.
+NLP (current trusted blend) melanie-minions-nlp v9-doc-ensemble-rescue 18/05/2026 18:53:03 0 / 700 0.683 0.866 ← Valid rescue of v9 path; local 0.711, cloud accuracy matches v9 plateau. Use this over all v16/v17/v18 tags.
+NLP (prior best blend) melanie-minions-nlp v9-doc-ensemble 16/05/2026 05:21:57 0 / 700 0.683   0.886  ← Same accuracy, better speed variance than rescue; 3rd v9 resubmit. Blended ~0.734.
 NLP (v12 regressed) melanie-minions-nlp v12-candidate-ranker 16/05/2026 13:48:51 0 / 700 0.642 0.829  ← REGRESSED -0.041 acc, -0.057 speed vs v9. Candidate-ranker promoted doc-mined short tokens that passed exact/substr proxy but failed 0.9 AE threshold; -69 exact +54 substr +15 diff in local buckets. Worst since v5b.
 NLP (v8a regressed) melanie-minions-nlp v8a-genqa 16/05/2026 05:10:19 0 / 700 0.652 0.836  ← REGRESSED -0.031 acc, -0.047 speed vs v9. Flan-T5-base generative; landed at low end of predicted band. Generative confirmed dead lever.
 NLP (v9 prior) melanie-minions-nlp v9-doc-ensemble 15/05/2026 19:46:01 0 / 700 0.683 0.883

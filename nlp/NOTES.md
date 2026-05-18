@@ -1,9 +1,29 @@
 # NLP — notes & history
 
-Last updated: 18 May 2026 ~04:15 SGT — **v15-family is blocked, not
-"awaiting a format fix."** The v15 LoRA adapter trained successfully
-(8h T4, `bs=1 grad_accum=8`, eval_loss 0.559, mean_token_acc 87.6%),
-but there is no working path to ship it from the current Workbench T4:
+Last updated: 18 May 2026 ~20:40 SGT — **ship/keep
+`v9-doc-ensemble-rescue` for NLP blended score.** It reproduced the real v9
+path locally (`0.711`, QA loop 4:13) and cloud validated it at
+`0.683 / 0.866`, `0 / 700` errors. This is slightly slower than the best
+same-image v9 speed resubmit (`0.886`) but keeps the same accuracy and is
+the trusted current NLP tag.
+
+What this session ruled out:
+
+- `v18-qwen-reranker` is not shippable. Replacing only the BGE reranker with
+  `tomaarsen/Qwen3-Reranker-0.6B-seq-cls` collapsed local accuracy to `0.547`
+  and slowed the QA loop to `14:58`, then cloud returned `0.000 / 0.417`,
+  `700 / 700` errors. Do not investigate this tag for submission.
+- Do not interpret the v18 cloud failure as "Qwen models are bad." Qwen3-8B
+  previously reached `0.755` locally, and Qwen2.5-7B in `v14-llm-rag` still
+  owns the raw cloud accuracy high (`0.734`). The issue is cloud-safe serving
+  and quantization for the strong Qwen answerer path, not the model family.
+- `nlp_results.json` is useful only for a model that passes the local gate.
+  For v18, local score and runtime are already decisive.
+
+Earlier 18 May ~04:15 SGT — **v15-family is blocked, not "awaiting a format
+fix."** The v15 LoRA adapter trained successfully (8h T4,
+`bs=1 grad_accum=8`, eval_loss 0.559, mean_token_acc 87.6%), but there is no
+working path to ship it from the current Workbench T4:
 
 - `v15-lora-qwen3-8b` direct serving hits the vLLM 0.9.0 Punica/Triton
   LoRA kernel on Turing (`LLVM ERROR: Unsupported rounding mode for
@@ -17,11 +37,12 @@ but there is no working path to ship it from the current Workbench T4:
   DecoderLayer granularity or fails at Linear granularity with a Qwen3-GQA
   symbolic-trace `NoneType` error.
 
-Shipping truth: **v9-doc-ensemble remains best blended** (`0.683/0.886`,
-blended 0.734) and **v14-llm-rag remains best raw accuracy**
-(`0.734/0.286`). Further NLP only makes sense through one of two paths:
-AWQ-quantize the merged Qwen3 LoRA on bigger hardware, or retrain LoRA on
-Qwen2.5-7B so it can run on the NGC base image that already survived cloud.
+Shipping truth: **v9/v9-rescue remains best blended** (`0.683/0.866-0.886`,
+blended about 0.729-0.734 depending on speed variance) and **v14-llm-rag
+remains best raw accuracy** (`0.734/0.286`). Further NLP only makes sense
+through one of two high-upside paths: make the `Qwen3-8B-AWQ`/LoRA path
+cloud-safe and faster, or retrain/merge on a Qwen2.5-7B path that can run on
+the NGC base image that already survived cloud.
 
 (Command R7B was considered as v14e but **no off-the-shelf AWQ or GPTQ-4bit
 quantization exists on HuggingFace** — only MLX and GGUF, neither
