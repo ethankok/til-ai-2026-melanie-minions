@@ -67,10 +67,17 @@ python3 -m venv ~/quant-venv
 source ~/quant-venv/bin/activate
 pip install --upgrade pip
 pip install torch==2.10.0 llmcompressor transformers accelerate peft safetensors datasets
-python -c "from llmcompressor import oneshot; from llmcompressor.modifiers.awq import AWQModifier; print('OK')"
+python - <<'PY'
+from llmcompressor import oneshot
+try:
+    from llmcompressor.modifiers.gptq import GPTQModifier
+except ImportError:
+    from llmcompressor.modifiers.quantization import GPTQModifier
+print("OK")
+PY
 ```
 
-AWQ status:
+Merge/quant status:
 
 - BF16 merge into `nlp/models/qwen3-8b-merged-bf16/` works.
 - `autoawq` is not a reliable path now; the import path used by old examples is
@@ -78,8 +85,10 @@ AWQ status:
 - `llm-compressor` 0.10 on T4 failed both at DecoderLayer granularity (OOM) and
   at `sequential_targets=["Linear"]` / `max_seq_length=1024` with a Qwen3-GQA
   symbolic-trace `NoneType` failure after 3/254 calibration groups.
-- So `nlp/models/llm-merged/` is not a usable artifact yet, and any Docker build
-  that falls through without that directory is just testing the un-tuned base.
+- The current script defaults to GPTQ W4A16 with `max_seq_length=512`, which
+  avoids AWQ smoothing and is the T4-safe retry path.
+- Any Docker build that falls through without `nlp/models/llm-merged/` is just
+  testing the un-tuned base.
 
 The container's [nlp_manager.py](../../nlp/src/nlp_manager.py) now defaults to
 extractive QA even if an old Flan-T5 directory is present, because `v8a-genqa`

@@ -1,4 +1,4 @@
-"""Merge a trained LoRA adapter into the Qwen3-8B base, then AWQ-quantize the
+"""Merge a trained LoRA adapter into the Qwen3-8B base, then quantize the
 merged model for T4 inference. v15.1-lora-merged.
 
 Why this script exists: vLLM 0.9.0's Punica LoRA Triton kernels crash on T4
@@ -6,18 +6,18 @@ Why this script exists: vLLM 0.9.0's Punica LoRA Triton kernels crash on T4
 JIT-compiling `_lora_shrink_kernel`. The base+adapter at runtime path is
 therefore broken on our hardware. Merging the adapter into the base weights
 offline produces a model that's mathematically equivalent to base+LoRA,
-needs no runtime LoRA application, and runs on vLLM's vanilla AWQ path
-(which we already know works on T4 from v14d).
+needs no runtime LoRA application, and runs through vLLM's vanilla int4 path.
 
 Pipeline:
   1. CPU merge:    Load Qwen3-8B BF16 on CPU, apply LoRA, merge_and_unload(),
                    save merged BF16 to nlp/models/qwen3-8b-merged-bf16/.
                    ~10 min, ~32 GB system RAM peak.
-  2. GPU quantize: Load merged BF16, AWQ-calibrate using nlp.jsonl prompts
-                   (128 samples), save AWQ-int4 to nlp/models/llm-merged/.
-                   ~30-45 min on T4 with offloading.
+  2. GPU quantize: Load merged BF16, calibrate using nlp.jsonl prompts, save
+                   an int4 W4A16 model to nlp/models/llm-merged/. GPTQ is the
+                   default because llm-compressor's AWQ smoothing path hits a
+                   Qwen3/T4 failure in this environment.
   3. Verify:       Quick sanity load + generate via vLLM (separate from main
-                   container) to confirm AWQ output looks reasonable.
+                   container) to confirm the quantized output looks reasonable.
 
 After this completes, build the v15.1 image: the Dockerfile will COPY
 nlp/models/llm-merged/ into /workspace/models/llm/ (overrides the
@@ -36,7 +36,7 @@ Usage on Workbench:
         --docs       /home/jupyter/novice/nlp/documents \\
         --out-merged nlp/models/qwen3-8b-merged-bf16 \\
         --out-awq    nlp/models/llm-merged \\
-        --calib-n    128
+        --calib-n    64
 """
 
 from __future__ import annotations
@@ -248,21 +248,19 @@ def step1_merge(args) -> None:
 
 
 def step2_quantize(args) -> None:
-    """Quantize the merged BF16 model to AWQ using llm-compressor.
+    """Quantize the merged BF16 model to int4 using llm-compressor.
 
     AutoAWQ is officially deprecated as of 2025 — its `__init__.py` prints
     a farewell message and `from awq import AutoAWQForCausalLM` raises
     ImportError in the final dev release. The deprecation message itself
     points users at `vllm-project/llm-compressor` as the successor; that
-    package produces `compressed-tensors`-format AWQ weights which vLLM 0.9
+    package produces `compressed-tensors`-format weights which vLLM 0.9
     loads natively.
 
-    Memory budget on T4 (16 GB) is tight: the merged Qwen3-8B is ~16 GB
-    BF16. We use device_map="auto" to offload most of the model to CPU,
-    `sequential_targets=["Linear"]` to slice the calibration graph at
-    individual linear layers (one layer of activations resident at a time
-    instead of one whole DecoderLayer block), and a reduced
-    `max_seq_length=1024` so attention is O(1024²) rather than O(2048²).
+    Memory budget on T4 (16 GB) is tight: the merged Qwen3-8B is ~16 GB BF16.
+    We use device_map="auto" to offload most of the model to CPU, default to
+    GPTQ W4A16 to avoid AWQ's smoothing/propagation path, and cap calibration
+    length at 512 tokens so the attention path stays comfortably below T4 RAM.
     """
     # Reduce CUDA-allocator fragmentation; suppress the FastTokenizer
     # threading warning that fires during calibration.
@@ -270,16 +268,22 @@ def step2_quantize(args) -> None:
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
     print(
-        f"\n[merge] STEP 2 — AWQ-quantize merged model on GPU (llm-compressor)\n"
+        f"\n[merge] STEP 2 — {args.quant_method.upper()}-quantize merged model "
+        f"on GPU (llm-compressor)\n"
         f"        in:        {args.out_merged}\n"
         f"        out:       {args.out_awq}\n"
-        f"        calib-n:   {args.calib_n}\n",
+        f"        calib-n:   {args.calib_n}\n"
+        f"        seq-len:   {args.max_seq_length}\n",
         flush=True,
     )
 
     try:
         from llmcompressor import oneshot  # type: ignore
         from llmcompressor.modifiers.awq import AWQModifier  # type: ignore
+        try:
+            from llmcompressor.modifiers.gptq import GPTQModifier  # type: ignore
+        except ImportError:
+            from llmcompressor.modifiers.quantization import GPTQModifier  # type: ignore
     except ImportError as exc:
         sys.exit(
             f"llm-compressor not available ({exc}).\n"
@@ -312,16 +316,34 @@ def step2_quantize(args) -> None:
     # llm-compressor expects a HF dataset with a `text` column it can tokenize.
     calib_ds = Dataset.from_list([{"text": p} for p in calib_prompts])
 
-    # AWQModifier recipe: 4-bit weights, 128-group size, asymmetric (zero
-    # point) quantization on all Linear layers. Mirrors autoawq's
-    # default GEMM-W4A16 config.
-    recipe = [
-        AWQModifier(
-            targets="Linear",
-            scheme="W4A16_ASYM",
-            ignore=["lm_head"],  # leave the output projection in BF16
-        ),
-    ]
+    if args.quant_method == "awq":
+        # Closest to autoawq's GEMM-W4A16 config, but this currently fails on
+        # Qwen3/T4 after a few calibration groups. Keep it for non-T4 retries.
+        recipe = [
+            AWQModifier(
+                targets="Linear",
+                scheme="W4A16_ASYM",
+                ignore=["lm_head"],
+            ),
+        ]
+        sequential_targets = ["Linear"]
+        quantizer_label = "llmcompressor AWQModifier W4A16_ASYM g128"
+    else:
+        # Official llm-compressor W4A16 path. It avoids AWQ's smoothing /
+        # propagation pass, which is where the Qwen3 GQA NoneType failure
+        # happens. offload_hessians=True trades runtime for lower VRAM.
+        recipe = [
+            GPTQModifier(
+                targets="Linear",
+                scheme="W4A16",
+                ignore=["lm_head"],
+                block_size=64,
+                dampening_frac=0.01,
+                offload_hessians=True,
+            ),
+        ]
+        sequential_targets = None
+        quantizer_label = "llmcompressor GPTQModifier W4A16 g128 block64"
 
     out_awq = Path(args.out_awq)
     out_awq.mkdir(parents=True, exist_ok=True)
@@ -340,32 +362,29 @@ def step2_quantize(args) -> None:
         low_cpu_mem_usage=True,
     )
 
-    print("[merge] running AWQ calibration + quantization (~30-45 min)...", flush=True)
-    # T4 memory tuning:
-    # - sequential_targets=["Linear"] slices at individual linear layers, so
-    #   only one layer's activations are GPU-resident at a time (default is
-    #   the DecoderLayer block, which OOMs an 8B model on 16 GB T4).
-    # - max_seq_length=1024 keeps attention compute at O(1024²) instead of
-    #   O(2048²) — quarters the per-sample peak in the attention path which
-    #   is exactly where the previous run OOMed.
-    oneshot(
+    print("[merge] running calibration + quantization...", flush=True)
+    oneshot_kwargs = dict(
         model=model,
         dataset=calib_ds,
         recipe=recipe,
         output_dir=str(out_awq),
-        max_seq_length=1024,
+        max_seq_length=args.max_seq_length,
         num_calibration_samples=args.calib_n,
-        sequential_targets=["Linear"],
+        batch_size=1,
     )
+    if sequential_targets is not None:
+        oneshot_kwargs["sequential_targets"] = sequential_targets
+    oneshot(**oneshot_kwargs)
 
     tok.save_pretrained(str(out_awq))
 
     # Write a marker noting what produced this dir.
     (out_awq / "MERGED_FROM").write_text(
         f"base={args.base}\nadapter={args.lora_dir}\ncalib_n={args.calib_n}\n"
-        f"quantizer=llmcompressor AWQModifier W4A16_ASYM g128\n"
+        f"max_seq_length={args.max_seq_length}\nquant_method={args.quant_method}\n"
+        f"quantizer={quantizer_label}\n"
     )
-    print(f"[merge] step 2 done. AWQ-quantized merged model at {out_awq}", flush=True)
+    print(f"[merge] step 2 done. Quantized merged model at {out_awq}", flush=True)
 
 
 def main() -> None:
@@ -387,9 +406,21 @@ def main() -> None:
     parser.add_argument("--out-merged", default="nlp/models/qwen3-8b-merged-bf16")
     parser.add_argument("--out-awq", default="nlp/models/llm-merged")
     parser.add_argument(
-        "--calib-n", type=int, default=128,
-        help="Number of calibration prompts. 64-256 is the sweet spot; more "
-        "than ~256 has diminishing returns and slows quantization.",
+        "--calib-n", type=int, default=64,
+        help="Number of calibration prompts. 64 is the T4-safe default; more "
+        "than ~128 has diminishing returns and slows quantization.",
+    )
+    parser.add_argument(
+        "--max-seq-length", type=int, default=512,
+        help="Calibration token length. 512 is the T4-safe default for the "
+        "merged 8B BF16 model; raise only on larger GPUs.",
+    )
+    parser.add_argument(
+        "--quant-method",
+        choices=["gptq", "awq"],
+        default="gptq",
+        help="Quantizer to use. gptq is the T4-safe default; awq is kept for "
+        "larger GPUs because llm-compressor AWQ fails on Qwen3/T4 here.",
     )
     parser.add_argument(
         "--skip-merge", action="store_true",

@@ -53,6 +53,27 @@ def _import_vllm() -> None:
     _VLLM_IMPORTED = True
 
 
+def _detect_quantization(model_dir: str) -> str:
+    """Pick the vLLM quantization backend from local model metadata."""
+    override = os.getenv("NLP_LLM_QUANT")
+    if override is not None:
+        return override.strip()
+
+    config_path = Path(model_dir) / "config.json"
+    try:
+        config = json.loads(config_path.read_text())
+        qconf = config.get("quantization_config") or {}
+        method = str(qconf.get("quant_method") or "").lower()
+        if method in {"compressed-tensors", "compressed_tensors"}:
+            return "compressed-tensors"
+        if method in {"gptq", "awq"}:
+            return method
+    except Exception:
+        pass
+
+    return "awq"
+
+
 def _lora_dir_is_ready(path: str | os.PathLike) -> bool:
     p = Path(path)
     if not p.is_dir():
@@ -205,11 +226,10 @@ class LLMAnswerer:
             if gpu_memory_utilization is not None
             else float(os.getenv("NLP_LLM_GPU_MEM_FRACTION", "0.78"))
         )
-        # Quantization kernel selection. Marlin AWQ is fastest on Ampere+
-        # (sm_80+) but requires sm_80; T4 (sm_75 / Turing) hangs or falls
-        # back slowly. Default to plain "awq" which works on every CUDA arch
-        # vLLM supports. Override with NLP_LLM_QUANT=awq_marlin on Ampere.
-        quant = os.getenv("NLP_LLM_QUANT", "awq").strip()
+        # Quantization kernel selection. Official Qwen AWQ checkpoints need
+        # "awq"; llm-compressor W4A16 outputs are usually saved as
+        # compressed-tensors. NLP_LLM_QUANT remains an explicit override.
+        quant = _detect_quantization(self.model_dir)
         # CUDA-graph capture (~60-120s for a 7B on T4) is the dominant
         # corpus-load cost. enforce_eager=True skips capture entirely; we
         # pay ~10-20% per-token latency in exchange. With 700 questions and

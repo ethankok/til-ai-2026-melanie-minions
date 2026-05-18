@@ -623,12 +623,16 @@ sequential_targets, then throws `TypeError: 'NoneType' object is not
 subscriptable` inside the symbolic-trace subgraph forward when sliced
 at Linear granularity — likely a Qwen3 GQA edge case.
 
-**Net**: the LoRA training payoff cannot be shipped from this Workbench
-T4 with current tooling. Two real paths forward:
+Update: the script now defaults to **GPTQ W4A16** (`--quant-method gptq`,
+`--max-seq-length 512`) as the T4-safe retry path. GPTQ avoids the AWQ
+smoothing/propagation pass that produced the Qwen3 GQA `NoneType` failure.
 
-1. **AWQ-quantize the merged Qwen3-8B-BF16 on different hardware**
-   (A100 / H100). Once we have `nlp/models/llm-merged/` we *might* still
-   need to escape vllm-openai base for cloud (separate problem).
+**Net**: the LoRA training payoff is still unproven until GPTQ produces a
+bootable `nlp/models/llm-merged/`. Two real paths forward:
+
+1. **Finish GPTQ or AWQ quantization of the merged Qwen3-8B-BF16.**
+   GPTQ is the current T4 attempt; AWQ may need A100 / H100 if GPTQ does
+   not boot or score well.
 2. **Retrain LoRA on Qwen2.5-7B**, ship on NGC base. 8h retrain, but
    uses the proven cloud-shippable v14 stack and applies the v8b
    fine-tune lever cleanly. Highest-EV remaining path if NLP is to be

@@ -66,8 +66,8 @@ RUN if [ "$NLP_ANSWERER" = "llm" ] && [ ! -f /workspace/models/llm/config.json ]
 #
 # Two paths are supported, in priority order:
 #
-#   1. nlp/models/llm-merged/ (PREFERRED on T4) — an AWQ-quantised, already
-#      LoRA-merged Qwen3-8B. Produced by
+#   1. nlp/models/llm-merged/ (PREFERRED on T4) — a quantised, already
+#      LoRA-merged Qwen3-8B (currently GPTQ W4A16 by default). Produced by
 #      training/nlp/merge_lora_and_quantize.py. Avoids vLLM 0.9.0's broken
 #      Punica LoRA Triton kernels on sm_75 (T4). If this dir exists, it
 #      overrides the downloaded base at /workspace/models/llm/.
