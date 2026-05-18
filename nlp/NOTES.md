@@ -624,8 +624,11 @@ subscriptable` inside the symbolic-trace subgraph forward when sliced
 at Linear granularity — likely a Qwen3 GQA edge case.
 
 Update: the script now defaults to **GPTQ W4A16** (`--quant-method gptq`,
-`--max-seq-length 512`) as the T4-safe retry path. GPTQ avoids the AWQ
+`--max-seq-length 256`) as the T4-safe retry path. GPTQ avoids the AWQ
 smoothing/propagation pass that produced the Qwen3 GQA `NoneType` failure.
+If it still OOMs late in `mlp.down_proj`, use
+`--gptq-ignore-down-proj-from-layer <layer>` to leave only the remaining
+problem `down_proj` modules unquantized and still get a bootable artifact.
 
 **Net**: the LoRA training payoff is still unproven until GPTQ produces a
 bootable `nlp/models/llm-merged/`. Two real paths forward:

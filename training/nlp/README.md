@@ -85,8 +85,12 @@ Merge/quant status:
 - `llm-compressor` 0.10 on T4 failed both at DecoderLayer granularity (OOM) and
   at `sequential_targets=["Linear"]` / `max_seq_length=1024` with a Qwen3-GQA
   symbolic-trace `NoneType` failure after 3/254 calibration groups.
-- The current script defaults to GPTQ W4A16 with `max_seq_length=512`, which
+- The current script defaults to GPTQ W4A16 with `max_seq_length=256`, which
   avoids AWQ smoothing and is the T4-safe retry path.
+- If GPTQ still OOMs late in `mlp.down_proj`, rerun with
+  `--gptq-ignore-down-proj-from-layer <layer>` using the layer index from the
+  traceback. This leaves only the remaining `down_proj` layers unquantized
+  instead of losing the whole merged-model attempt.
 - Any Docker build that falls through without `nlp/models/llm-merged/` is just
   testing the un-tuned base.
 

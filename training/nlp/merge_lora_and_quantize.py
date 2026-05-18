@@ -201,6 +201,15 @@ def _build_calibration_set(
     return prompts
 
 
+def _late_down_proj_ignores(start_layer: int) -> list[str]:
+    if start_layer < 0:
+        return []
+    # Qwen3-8B has 36 decoder layers. This helper intentionally returns
+    # explicit module names instead of regexes because llm-compressor's ignore
+    # handling has been more predictable with exact paths across releases.
+    return [f"model.layers.{i}.mlp.down_proj" for i in range(start_layer, 36)]
+
+
 # ----------------------------------------------------------------- pipeline
 
 
@@ -332,18 +341,23 @@ def step2_quantize(args) -> None:
         # Official llm-compressor W4A16 path. It avoids AWQ's smoothing /
         # propagation pass, which is where the Qwen3 GQA NoneType failure
         # happens. offload_hessians=True trades runtime for lower VRAM.
+        ignore = ["lm_head", *_late_down_proj_ignores(args.gptq_ignore_down_proj_from_layer)]
         recipe = [
             GPTQModifier(
                 targets="Linear",
                 scheme="W4A16",
-                ignore=["lm_head"],
+                ignore=ignore,
                 block_size=64,
                 dampening_frac=0.01,
                 offload_hessians=True,
             ),
         ]
-        sequential_targets = None
-        quantizer_label = "llmcompressor GPTQModifier W4A16 g128 block64"
+        sequential_targets = ["Linear"]
+        if args.gptq_ignore_down_proj_from_layer >= 0:
+            skipped = f"; ignored down_proj from layer {args.gptq_ignore_down_proj_from_layer}"
+        else:
+            skipped = ""
+        quantizer_label = f"llmcompressor GPTQModifier W4A16 g128 block64{skipped}"
 
     out_awq = Path(args.out_awq)
     out_awq.mkdir(parents=True, exist_ok=True)
@@ -382,6 +396,7 @@ def step2_quantize(args) -> None:
     (out_awq / "MERGED_FROM").write_text(
         f"base={args.base}\nadapter={args.lora_dir}\ncalib_n={args.calib_n}\n"
         f"max_seq_length={args.max_seq_length}\nquant_method={args.quant_method}\n"
+        f"gptq_ignore_down_proj_from_layer={args.gptq_ignore_down_proj_from_layer}\n"
         f"quantizer={quantizer_label}\n"
     )
     print(f"[merge] step 2 done. Quantized merged model at {out_awq}", flush=True)
@@ -406,13 +421,13 @@ def main() -> None:
     parser.add_argument("--out-merged", default="nlp/models/qwen3-8b-merged-bf16")
     parser.add_argument("--out-awq", default="nlp/models/llm-merged")
     parser.add_argument(
-        "--calib-n", type=int, default=64,
-        help="Number of calibration prompts. 64 is the T4-safe default; more "
+        "--calib-n", type=int, default=32,
+        help="Number of calibration prompts. 32 is the T4-safe default; more "
         "than ~128 has diminishing returns and slows quantization.",
     )
     parser.add_argument(
-        "--max-seq-length", type=int, default=512,
-        help="Calibration token length. 512 is the T4-safe default for the "
+        "--max-seq-length", type=int, default=256,
+        help="Calibration token length. 256 is the T4-safe default for the "
         "merged 8B BF16 model; raise only on larger GPUs.",
     )
     parser.add_argument(
@@ -421,6 +436,14 @@ def main() -> None:
         default="gptq",
         help="Quantizer to use. gptq is the T4-safe default; awq is kept for "
         "larger GPUs because llm-compressor AWQ fails on Qwen3/T4 here.",
+    )
+    parser.add_argument(
+        "--gptq-ignore-down-proj-from-layer",
+        type=int,
+        default=-1,
+        help="Emergency T4 escape hatch. If GPTQ OOMs late in mlp.down_proj, "
+        "set this to that layer index (for example 29) to leave remaining "
+        "down_proj layers unquantized while still producing a bootable model.",
     )
     parser.add_argument(
         "--skip-merge", action="store_true",
