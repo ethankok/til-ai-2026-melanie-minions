@@ -35,7 +35,7 @@ SPECS = [
         "roberta-base-squad2",
     ),
     (
-        "smangla/ModernBERT-base-squad2",
+        "kiddothe2b/ModernBERT-base-squad2",
         AutoModelForQuestionAnswering,
         "modernbert-base-squad2",
     ),
@@ -58,6 +58,9 @@ def _download_retrievers() -> None:
         print(f"--> {repo} -> {dest}")
         tok = AutoTokenizer.from_pretrained(repo, trust_remote_code=True)
         mdl = model_cls.from_pretrained(repo, trust_remote_code=True)
+        if local_name == "modernbert-base-squad2":
+            arch = getattr(mdl.config, "architectures", None)
+            print(f"[download_models] ModernBERT QA architectures={arch}")
         tok.save_pretrained(dest)
         mdl.save_pretrained(dest)
 

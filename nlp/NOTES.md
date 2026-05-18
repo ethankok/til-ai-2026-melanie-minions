@@ -726,12 +726,12 @@ small, synthetic Clairos span-extraction corpus.
 Purpose: answer the skepticism about whether QA-head training is still useful.
 ModernBERT gives a clean fast-reader A/B:
 
-1. **Stock** `smangla/ModernBERT-base-squad2` with no Clairos fine-tune.
+1. **Stock** `kiddothe2b/ModernBERT-base-squad2` with no Clairos fine-tune.
 2. **Fine-tuned** same checkpoint on our retained chunked-context examples.
 
 Code changes:
 
-- `download_models.py` now downloads `smangla/ModernBERT-base-squad2` into
+- `download_models.py` now downloads `kiddothe2b/ModernBERT-base-squad2` into
   `/workspace/models/modernbert-base-squad2`.
 - `nlp_manager.py` now supports `modernbert-finetuned-squad2` and
   `modernbert-base-squad2`, plus a direct `NLP_QA_MODEL_DIR` override.
@@ -751,7 +751,7 @@ Then train and test:
 
 ```bash
 python training/nlp/finetune_qa.py \
-  --base-model smangla/ModernBERT-base-squad2 \
+  --base-model kiddothe2b/ModernBERT-base-squad2 \
   --use-answer-chunk \
   --epochs 1 \
   --lr 1e-5 \

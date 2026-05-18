@@ -72,7 +72,7 @@ fine-tune it on the retained local span examples and compare.
 
 Implementation details:
 
-- Stock QA checkpoint: `smangla/ModernBERT-base-squad2` downloaded into
+- Stock QA checkpoint: `kiddothe2b/ModernBERT-base-squad2` downloaded into
   `/workspace/models/modernbert-base-squad2`.
 - Fine-tuned output: `nlp/models/modernbert-finetuned-squad2`.
 - Manager priority is now:
@@ -95,7 +95,7 @@ Fine-tuned:
 
 ```bash
 python training/nlp/finetune_qa.py \
-  --base-model smangla/ModernBERT-base-squad2 \
+  --base-model kiddothe2b/ModernBERT-base-squad2 \
   --use-answer-chunk \
   --epochs 1 \
   --lr 1e-5 \
