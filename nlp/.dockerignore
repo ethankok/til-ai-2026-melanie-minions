@@ -1,0 +1,28 @@
+# Keep the Docker build context lean. Without this file, `COPY models ...`
+# pulls every directory under nlp/models/ — including the 16 GB BF16 merged
+# checkpoint that v15-merged-qwen3-8b produced as a STEP-1 intermediate.
+# That blows up the COPY layer to 16+ GB and makes every push to Artifact
+# Registry painful.
+#
+# We only want the runtime artefacts inside the image:
+#   - nlp/models/lora/                 — LoRA adapter (for Ampere+ runtime path)
+#   - nlp/models/llm-merged/           — AWQ-quantised merged model (T4 path)
+#   - nlp/models/answer_ranker.json    — historical v12 ranker
+#   - nlp/models/*-finetuned-squad2/   — historical extractive QA fine-tunes
+#
+# Everything else is training intermediate and stays on the Workbench disk.
+
+models/qwen3-8b-merged-bf16/
+models/lora-archive/
+models/*.bf16/
+models/checkpoints/
+
+# Per-run trainer state (only relevant when we accidentally save under
+# nlp/models/; the real runs/ dir lives at training/nlp/runs/ which is
+# already outside the nlp/ build context).
+models/runs/
+
+# HF transformers cache, just in case anyone accidentally points HF_HOME
+# at nlp/models/.
+models/.cache/
+models/.locks/

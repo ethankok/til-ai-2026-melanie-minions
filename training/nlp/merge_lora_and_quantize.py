@@ -248,8 +248,23 @@ def step1_merge(args) -> None:
 
 
 def step2_quantize(args) -> None:
+    """Quantize the merged BF16 model to AWQ using llm-compressor.
+
+    AutoAWQ is officially deprecated as of 2025 — its `__init__.py` prints
+    a farewell message and `from awq import AutoAWQForCausalLM` raises
+    ImportError in the final dev release. The deprecation message itself
+    points users at `vllm-project/llm-compressor` as the successor; that
+    package produces `compressed-tensors`-format AWQ weights which vLLM 0.9
+    loads natively.
+
+    llm-compressor's `oneshot` API:
+      - Loads the BF16 model with device_map="auto" (offloads to CPU)
+      - Applies the `AWQModifier` recipe (W4A16 group_size=128)
+      - Runs calibration over the supplied tokenized dataset
+      - Saves to output_dir in compressed-tensors AWQ format
+    """
     print(
-        f"\n[merge] STEP 2 — AWQ-quantize merged model on GPU\n"
+        f"\n[merge] STEP 2 — AWQ-quantize merged model on GPU (llm-compressor)\n"
         f"        in:        {args.out_merged}\n"
         f"        out:       {args.out_awq}\n"
         f"        calib-n:   {args.calib_n}\n",
@@ -257,18 +272,24 @@ def step2_quantize(args) -> None:
     )
 
     try:
-        from awq import AutoAWQForCausalLM  # type: ignore
-    except ImportError:
+        from llmcompressor import oneshot  # type: ignore
+        from llmcompressor.modifiers.awq import AWQModifier  # type: ignore
+    except ImportError as exc:
         sys.exit(
-            "autoawq not installed. Run: pip install autoawq>=0.2.6\n"
+            f"llm-compressor not available ({exc}).\n"
+            "Install: pip install llmcompressor\n"
             "If pip resolves a torch version that breaks your env, use:\n"
-            "  pip install autoawq --no-deps\n"
-            "and ensure transformers/torch are already present."
+            "  pip install llmcompressor --no-deps\n"
+            "then install missing top-level deps individually."
         )
 
+    import torch
+    from datasets import Dataset
     from transformers import AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(str(args.out_merged), use_fast=True)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
 
     print("[merge] building calibration set...", flush=True)
     calib_prompts = _build_calibration_set(
@@ -282,39 +303,43 @@ def step2_quantize(args) -> None:
     if not calib_prompts:
         sys.exit("no calibration prompts built; check --data and --docs paths")
 
-    quant_config = {
-        "zero_point": True,
-        "q_group_size": 128,
-        "w_bit": 4,
-        "version": "GEMM",
-    }
+    # llm-compressor expects a HF dataset with a `text` column it can tokenize.
+    calib_ds = Dataset.from_list([{"text": p} for p in calib_prompts])
 
-    print("[merge] loading merged model into AutoAWQ wrapper...", flush=True)
-    quant_model = AutoAWQForCausalLM.from_pretrained(
-        str(args.out_merged),
-        device_map="auto",     # accelerate offloads layers to CPU as needed
-        low_cpu_mem_usage=True,
-        torch_dtype="auto",
-    )
-
-    print("[merge] running AWQ calibration + quantization (~30-45 min)...", flush=True)
-    quant_model.quantize(
-        tok,
-        quant_config=quant_config,
-        calib_data=calib_prompts,
-        max_calib_samples=args.calib_n,
-        max_calib_seq_len=2048,
-    )
+    # AWQModifier recipe: 4-bit weights, 128-group size, asymmetric (zero
+    # point) quantization on all Linear layers. Mirrors autoawq's
+    # default GEMM-W4A16 config.
+    recipe = [
+        AWQModifier(
+            targets="Linear",
+            scheme="W4A16_ASYM",
+            ignore=["lm_head"],  # leave the output projection in BF16
+        ),
+    ]
 
     out_awq = Path(args.out_awq)
     out_awq.mkdir(parents=True, exist_ok=True)
-    print(f"[merge] saving AWQ to {out_awq}...", flush=True)
-    quant_model.save_quantized(str(out_awq))
+
+    print("[merge] running AWQ calibration + quantization (~30-45 min)...", flush=True)
+    oneshot(
+        model=str(args.out_merged),
+        dataset=calib_ds,
+        recipe=recipe,
+        output_dir=str(out_awq),
+        max_seq_length=2048,
+        num_calibration_samples=args.calib_n,
+        # device_map=auto + torch_dtype=auto lets accelerate offload layers
+        # to CPU when not actively being calibrated. ~10-12 GB GPU peak.
+        # llm-compressor honours the model_kwargs dict for from_pretrained.
+        model_kwargs={"torch_dtype": torch.bfloat16, "device_map": "auto"},
+    )
+
     tok.save_pretrained(str(out_awq))
 
     # Write a marker noting what produced this dir.
     (out_awq / "MERGED_FROM").write_text(
         f"base={args.base}\nadapter={args.lora_dir}\ncalib_n={args.calib_n}\n"
+        f"quantizer=llmcompressor AWQModifier W4A16_ASYM g128\n"
     )
     print(f"[merge] step 2 done. AWQ-quantized merged model at {out_awq}", flush=True)
 
