@@ -767,6 +767,28 @@ Interpretation: if stock and fine-tuned are both below v9's 0.711 local, stop
 training extractive readers. If stock is decent and fine-tuning adds a clear
 lift, ModernBERT may be the next shippable blended-score path.
 
+Result:
+
+```text
+v17-modernbert-stock   local 0.459   QA loop 6:17
+v17-modernbert-ft      local 0.624   QA loop 5:28
+v9-doc-ensemble gate   local 0.711   QA loop ~3:48
+```
+
+Fine-tuning **does** work in the narrow sense: ModernBERT gained +0.165
+absolute after one epoch on the Clairos span examples. But the starting point
+was so low that the trained model still missed v9 by -0.087, and it was slower
+than the RoBERTa-large v9 path. This is the cleanest answer to the training
+skepticism so far:
+
+- training can teach the local corpus;
+- the backbone/recipe matters more than "train vs no train";
+- ModernBERT and DeBERTa both underperform the existing RoBERTa-large
+  fine-tune on this small synthetic span corpus.
+
+Verdict: do not submit either ModernBERT image. Stop training extractive
+readers unless the base checkpoint changes materially.
+
 The older projection above is now superseded by cloud/runtime evidence.
 Do not spend more time on prompt trimming for Qwen3 until the serving path
 itself is solved.

@@ -111,6 +111,17 @@ Gate: if stock is already near v9 (`0.711`) and fine-tuning improves it, this
 is a credible extractive replacement. If stock and fine-tuned both sit below
 v9, the evidence points against more QA-head training on this corpus.
 
+Result:
+
+```text
+v17-modernbert-stock   local 0.459   QA loop 6:17
+v17-modernbert-ft      local 0.624   QA loop 5:28
+```
+
+Training improved ModernBERT strongly (+0.165 absolute), so the training lever
+is real, but the ModernBERT backbone still failed the v9 local gate (`0.711`)
+and was slower than v9. Do not submit either ModernBERT image.
+
 ## v15 QLoRA / AWQ lessons (18 May)
 
 The Qwen3-8B LoRA training command that completed was:
