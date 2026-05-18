@@ -714,6 +714,13 @@ til test nlp v16-deberta-v3
 Gate: only submit if local `NLP RAG QA Accuracy` clears v9's 0.711. If not,
 do not keep iterating DeBERTa; v13b plus this v16 gate are enough evidence.
 
+Result: **0.692 local**, question-answering loop **8:27**. This improved over
+the old DeBERTa run (`v13b` was 0.667) but still missed the v9 local gate
+(`0.711`) and remained far slower than v9 (`~3:48`). Verdict: do not submit.
+The lower-LR one-epoch recipe reduced the damage but did not overturn the core
+finding that RoBERTa-large transfers better than DeBERTa-v3-large on this
+small, synthetic Clairos span-extraction corpus.
+
 The older projection above is now superseded by cloud/runtime evidence.
 Do not spend more time on prompt trimming for Qwen3 until the serving path
 itself is solved.

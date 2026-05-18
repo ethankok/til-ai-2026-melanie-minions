@@ -59,8 +59,10 @@ til build nlp v16-deberta-v3
 til test nlp v16-deberta-v3
 ```
 
-Gate: submit only if local `NLP RAG QA Accuracy` clears `0.711`; otherwise keep
-`v9-doc-ensemble` as the blended-score submission.
+Result: local `NLP RAG QA Accuracy` was `0.692`, with the QA loop taking
+`8:27`. This improves on the old `v13b-deberta` run (`0.667`) but still misses
+the v9 local gate (`0.711`) and remains much slower than v9 (`~3:48`). Do not
+submit; keep `v9-doc-ensemble` as the blended-score submission.
 
 ## v15 QLoRA / AWQ lessons (18 May)
 
