@@ -811,6 +811,21 @@ Safe v9 rescue approach: temporarily put the old v9 files back into canonical
 `~/til/nlp/` (or create a branch checked out directly at `~/til`) before calling
 `til build`. Do not rely on a sibling worktree.
 
+Valid rescue result: after killing the stale ModernBERT container occupying
+port 5004 (`docker kill gallant_lederberg`) and rebuilding from canonical
+`~/til`, `til test nlp v9-doc-ensemble-rescue` returned:
+
+```text
+NLP RAG QA Accuracy: 0.711
+Answer Equivalence: n=883, equiv_rate=0.711, mean_prob=0.567
+QA loop: 221 requests in 4:13
+```
+
+That matches the known v9 local baseline and proves the rescue image is the
+real RoBERTa/v9 path, not the invalid ModernBERT-retag attempt. Cloud score is
+pending. Until it returns, **do not submit any newer NLP tags**; they either
+missed the local gate or use the timeout-prone vllm-openai base.
+
 The older projection above is now superseded by cloud/runtime evidence.
 Do not spend more time on prompt trimming for Qwen3 until the serving path
 itself is solved.

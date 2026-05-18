@@ -133,6 +133,11 @@ that still built the current-main Dockerfile and retagged the ModernBERT image
 as `v9-doc-ensemble-rescue`. To rescue v9, check out or restore the v9-era NLP
 files directly in canonical `~/til` before calling `til build`.
 
+Validated rescue: after killing the stale container on port 5004 and rebuilding
+from canonical `~/til`, `til test nlp v9-doc-ensemble-rescue` returned local
+`0.711` with a 4:13 QA loop. This matches the real v9 baseline. Cloud score is
+pending; this rescue tag is the trusted NLP submission candidate.
+
 ## v15 QLoRA / AWQ lessons (18 May)
 
 The Qwen3-8B LoRA training command that completed was:
