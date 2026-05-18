@@ -20,7 +20,7 @@ Historical training paths:
 
 | Script | Model class | Output dir | Manager priority |
 |---|---|---|---|
-| [`finetune_qa.py`](finetune_qa.py) | extractive (RoBERTa/DeBERTa SQuAD2) | `nlp/models/roberta-finetuned-squad2/` or `nlp/models/deberta-finetuned-squad2/` | DeBERTa is preferred if present, otherwise RoBERTa |
+| [`finetune_qa.py`](finetune_qa.py) | extractive (RoBERTa/DeBERTa/ModernBERT SQuAD2) | `nlp/models/*-finetuned-squad2/` | ModernBERT is preferred if present, then DeBERTa, then RoBERTa |
 | [`finetune_genqa.py`](finetune_genqa.py) | generative (Flan-T5) | `nlp/models/flan-t5-finetuned/` | explicit `NLP_QA_MODE=generative` only |
 | [`train_answer_ranker.py`](train_answer_ranker.py) | lightweight candidate ranker | `nlp/models/answer_ranker.json` | optional v12 reranker |
 | [`finetune_lora.py`](finetune_lora.py) | QLoRA generative LLM adapter | `nlp/models/lora/` | trained successfully; not currently shippable on Qwen3/vLLM T4 stack |
@@ -63,6 +63,53 @@ Result: local `NLP RAG QA Accuracy` was `0.692`, with the QA loop taking
 `8:27`. This improves on the old `v13b-deberta` run (`0.667`) but still misses
 the v9 local gate (`0.711`) and remains much slower than v9 (`~3:48`). Do not
 submit; keep `v9-doc-ensemble` as the blended-score submission.
+
+## v17 ModernBERT stock vs fine-tuned A/B
+
+Purpose: test whether training the extractive reader is still a real lever.
+Use the same ModernBERT QA checkpoint first without Clairos training, then
+fine-tune it on the retained local span examples and compare.
+
+Implementation details:
+
+- Stock QA checkpoint: `smangla/ModernBERT-base-squad2` downloaded into
+  `/workspace/models/modernbert-base-squad2`.
+- Fine-tuned output: `nlp/models/modernbert-finetuned-squad2`.
+- Manager priority is now:
+  `NLP_QA_MODEL_DIR override > modernbert-finetuned > modernbert-base-squad2 >
+  deberta-finetuned > roberta-finetuned > roberta-base`.
+- Use `NLP_QA_MODEL_DIR=/workspace/models/modernbert-base-squad2` for the
+  stock run if a fine-tuned ModernBERT directory is already present.
+
+Stock, no Clairos training:
+
+```bash
+cd ~/til
+git pull origin main
+
+til build nlp v17-modernbert-stock
+til test nlp v17-modernbert-stock
+```
+
+Fine-tuned:
+
+```bash
+python training/nlp/finetune_qa.py \
+  --base-model smangla/ModernBERT-base-squad2 \
+  --use-answer-chunk \
+  --epochs 1 \
+  --lr 1e-5 \
+  --batch-size 4 \
+  --gradient-accumulation-steps 2 \
+  --output nlp/models/modernbert-finetuned-squad2
+
+til build nlp v17-modernbert-ft
+til test nlp v17-modernbert-ft
+```
+
+Gate: if stock is already near v9 (`0.711`) and fine-tuning improves it, this
+is a credible extractive replacement. If stock and fine-tuned both sit below
+v9, the evidence points against more QA-head training on this corpus.
 
 ## v15 QLoRA / AWQ lessons (18 May)
 
@@ -173,9 +220,10 @@ regressed on cloud. Set `NLP_QA_MODE=generative` only when deliberately
 reproducing that experiment. Container log prints `QA model: ...` on first
 request.
 
-Build warning: the manager will prefer `deberta-finetuned-squad2` if that
-directory is bundled. Since v13b failed, a safety rebuild intended to preserve
-v9 must avoid bundling DeBERTa weights and must avoid candidate-ranker defaults.
+Build warning: the manager will prefer `modernbert-finetuned-squad2`, then
+`modernbert-base-squad2`, then `deberta-finetuned-squad2` if those directories
+are bundled. A safety rebuild intended to preserve v9 must either remove those
+directories from `nlp/models/` or set `NLP_QA_MODEL_DIR` explicitly.
 
 ## Local corpus inspection
 

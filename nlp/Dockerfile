@@ -83,7 +83,7 @@ RUN if [ "$NLP_ANSWERER" = "llm" ] && [ ! -f /workspace/models/llm/config.json ]
 # ignored (so we don't double-apply). To force the runtime-LoRA path, move
 # nlp/models/llm-merged/ out of the build context.
 COPY models /workspace/models-local
-RUN for d in deberta-finetuned-squad2 roberta-finetuned-squad2 flan-t5-finetuned; do \
+RUN for d in modernbert-finetuned-squad2 deberta-finetuned-squad2 roberta-finetuned-squad2 flan-t5-finetuned; do \
         if [ -d "/workspace/models-local/$d" ] && [ -f "/workspace/models-local/$d/config.json" ]; then \
             rm -rf "/workspace/models/$d" && \
             mkdir -p "/workspace/models/$d" && \

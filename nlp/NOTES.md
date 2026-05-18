@@ -721,6 +721,52 @@ The lower-LR one-epoch recipe reduced the damage but did not overturn the core
 finding that RoBERTa-large transfers better than DeBERTa-v3-large on this
 small, synthetic Clairos span-extraction corpus.
 
+## v17-modernbert — stock vs fine-tuned QA A/B (18 May)
+
+Purpose: answer the skepticism about whether QA-head training is still useful.
+ModernBERT gives a clean fast-reader A/B:
+
+1. **Stock** `smangla/ModernBERT-base-squad2` with no Clairos fine-tune.
+2. **Fine-tuned** same checkpoint on our retained chunked-context examples.
+
+Code changes:
+
+- `download_models.py` now downloads `smangla/ModernBERT-base-squad2` into
+  `/workspace/models/modernbert-base-squad2`.
+- `nlp_manager.py` now supports `modernbert-finetuned-squad2` and
+  `modernbert-base-squad2`, plus a direct `NLP_QA_MODEL_DIR` override.
+- Extractive priority:
+  override > modernbert-finetuned > modernbert-base-squad2 >
+  deberta-finetuned > roberta-finetuned > roberta-base.
+
+Run stock first, before creating `nlp/models/modernbert-finetuned-squad2`, so
+the manager naturally falls through to the stock ModernBERT QA model:
+
+```bash
+til build nlp v17-modernbert-stock
+til test nlp v17-modernbert-stock
+```
+
+Then train and test:
+
+```bash
+python training/nlp/finetune_qa.py \
+  --base-model smangla/ModernBERT-base-squad2 \
+  --use-answer-chunk \
+  --epochs 1 \
+  --lr 1e-5 \
+  --batch-size 4 \
+  --gradient-accumulation-steps 2 \
+  --output nlp/models/modernbert-finetuned-squad2
+
+til build nlp v17-modernbert-ft
+til test nlp v17-modernbert-ft
+```
+
+Interpretation: if stock and fine-tuned are both below v9's 0.711 local, stop
+training extractive readers. If stock is decent and fine-tuning adds a clear
+lift, ModernBERT may be the next shippable blended-score path.
+
 The older projection above is now superseded by cloud/runtime evidence.
 Do not spend more time on prompt trimming for Qwen3 until the serving path
 itself is solved.

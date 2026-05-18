@@ -74,9 +74,12 @@ RERANKER_DIR = MODEL_DIR / "bge-reranker-base"
 # to the v8b/v9 RoBERTa-large fine-tune otherwise. Image stays buildable in
 # either configuration.
 QA_DEBERTA_FINETUNED_DIR = MODEL_DIR / "deberta-finetuned-squad2"
+QA_MODERNBERT_FINETUNED_DIR = MODEL_DIR / "modernbert-finetuned-squad2"
+QA_MODERNBERT_BASE_DIR = MODEL_DIR / "modernbert-base-squad2"
 QA_GEN_FINETUNED_DIR = MODEL_DIR / "flan-t5-finetuned"
 QA_EXT_FINETUNED_DIR = MODEL_DIR / "roberta-finetuned-squad2"
 QA_BASE_DIR = MODEL_DIR / "roberta-base-squad2"
+QA_MODEL_OVERRIDE = os.getenv("NLP_QA_MODEL_DIR", "").strip()
 ANSWER_RANKER_PATH = Path(
     os.getenv("NLP_ANSWER_RANKER", str(MODEL_DIR / "answer_ranker.json"))
 )
@@ -438,9 +441,18 @@ class NLPManager:
         # fine-tune, then stock base, then hub. Flan-T5 generative remains
         # opt-in via NLP_QA_MODE=generative.
         want_generative = QA_MODE in {"gen", "generative", "t5"}
-        if want_generative and QA_GEN_FINETUNED_DIR.exists():
+        if QA_MODEL_OVERRIDE:
+            qa_path = QA_MODEL_OVERRIDE
+            qa_source = "override"
+        elif want_generative and QA_GEN_FINETUNED_DIR.exists():
             qa_path = str(QA_GEN_FINETUNED_DIR)
             qa_source = "gen-finetuned"
+        elif QA_MODERNBERT_FINETUNED_DIR.exists():
+            qa_path = str(QA_MODERNBERT_FINETUNED_DIR)
+            qa_source = "ext-modernbert-finetuned"
+        elif QA_MODERNBERT_BASE_DIR.exists():
+            qa_path = str(QA_MODERNBERT_BASE_DIR)
+            qa_source = "ext-modernbert-base-squad2"
         elif QA_DEBERTA_FINETUNED_DIR.exists():
             qa_path = str(QA_DEBERTA_FINETUNED_DIR)
             qa_source = "ext-deberta-finetuned"
@@ -453,7 +465,7 @@ class NLPManager:
         else:
             qa_path = "deepset/roberta-base-squad2"
             qa_source = "ext-hub"
-        qa_cfg = AutoConfig.from_pretrained(qa_path)
+        qa_cfg = AutoConfig.from_pretrained(qa_path, trust_remote_code=True)
         self._qa_is_generative = bool(getattr(qa_cfg, "is_encoder_decoder", False))
         print(
             f"[nlp_manager] QA model: {qa_source} "
@@ -462,16 +474,20 @@ class NLPManager:
             flush=True,
         )
 
-        self._qa_tok = AutoTokenizer.from_pretrained(qa_path)
+        self._qa_tok = AutoTokenizer.from_pretrained(qa_path, trust_remote_code=True)
         if self._qa_is_generative:
             self._qa_model = (
-                AutoModelForSeq2SeqLM.from_pretrained(qa_path)
+                AutoModelForSeq2SeqLM.from_pretrained(
+                    qa_path, trust_remote_code=True
+                )
                 .to(self.device)
                 .eval()
             )
         else:
             self._qa_model = (
-                AutoModelForQuestionAnswering.from_pretrained(qa_path)
+                AutoModelForQuestionAnswering.from_pretrained(
+                    qa_path, trust_remote_code=True
+                )
                 .to(self.device)
                 .eval()
             )

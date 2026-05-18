@@ -34,6 +34,11 @@ SPECS = [
         AutoModelForQuestionAnswering,
         "roberta-base-squad2",
     ),
+    (
+        "smangla/ModernBERT-base-squad2",
+        AutoModelForQuestionAnswering,
+        "modernbert-base-squad2",
+    ),
 ]
 
 # v14d-qwen3-8b: upsizes from v14c's 4B to 8B on the same Qwen3 family.
@@ -51,8 +56,8 @@ def _download_retrievers() -> None:
     for repo, model_cls, local_name in SPECS:
         dest = OUT / local_name
         print(f"--> {repo} -> {dest}")
-        tok = AutoTokenizer.from_pretrained(repo)
-        mdl = model_cls.from_pretrained(repo)
+        tok = AutoTokenizer.from_pretrained(repo, trust_remote_code=True)
+        mdl = model_cls.from_pretrained(repo, trust_remote_code=True)
         tok.save_pretrained(dest)
         mdl.save_pretrained(dest)
 

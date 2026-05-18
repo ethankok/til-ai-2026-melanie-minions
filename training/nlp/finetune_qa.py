@@ -416,8 +416,12 @@ def main() -> int:
           file=sys.stderr)
 
     print(f"loading base model: {args.base_model}", file=sys.stderr)
-    tokenizer = AutoTokenizer.from_pretrained(args.base_model)
-    model = AutoModelForQuestionAnswering.from_pretrained(args.base_model)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.base_model, trust_remote_code=True
+    )
+    model = AutoModelForQuestionAnswering.from_pretrained(
+        args.base_model, trust_remote_code=True
+    )
 
     train_feats = _prepare_features(
         train_examples, tokenizer, args.max_seq_len, args.doc_stride
