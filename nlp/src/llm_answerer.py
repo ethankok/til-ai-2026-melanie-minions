@@ -74,6 +74,36 @@ def _detect_quantization(model_dir: str) -> str:
     return "awq"
 
 
+def _describe_model_dir(model_dir: str) -> str:
+    """Short boot-time provenance string for debugging packaged images."""
+    model_path = Path(model_dir)
+    parts: list[str] = []
+    config_path = model_path / "config.json"
+    try:
+        config = json.loads(config_path.read_text())
+        qconf = config.get("quantization_config") or {}
+        method = qconf.get("quant_method") or "none"
+        parts.append(f"model_type={config.get('model_type', 'unknown')}")
+        parts.append(f"architectures={config.get('architectures', ['unknown'])[0]}")
+        parts.append(f"quant_method={method}")
+    except Exception as exc:
+        parts.append(f"config_unreadable={exc}")
+
+    marker = model_path / "MERGED_FROM"
+    if marker.exists():
+        try:
+            marker_text = "; ".join(
+                line.strip() for line in marker.read_text().splitlines() if line.strip()
+            )
+            parts.append(f"MERGED_FROM=({marker_text})")
+        except Exception as exc:
+            parts.append(f"MERGED_FROM_unreadable={exc}")
+    else:
+        parts.append("MERGED_FROM=absent")
+
+    return ", ".join(parts)
+
+
 def _lora_dir_is_ready(path: str | os.PathLike) -> bool:
     p = Path(path)
     if not p.is_dir():
@@ -245,6 +275,10 @@ class LLMAnswerer:
             f"[llm_answerer] loading vLLM from {self.model_dir} "
             f"(quantization={quant}, gpu_memory_utilization={gmu}, "
             f"max_model_len={max_model_len}, enforce_eager={enforce_eager})",
+            flush=True,
+        )
+        print(
+            f"[llm_answerer] model provenance: {_describe_model_dir(self.model_dir)}",
             flush=True,
         )
         # v15-lora: enable LoRA in the engine if we have an adapter on disk.

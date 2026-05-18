@@ -84,7 +84,7 @@ RUN if [ -d /workspace/models-local/llm-merged ] && [ -f /workspace/models-local
         rm -rf /workspace/models/llm && \
         mkdir -p /workspace/models/llm && \
         cp -r /workspace/models-local/llm-merged/* /workspace/models/llm/ && \
-        echo "[nlp build] bundled merged AWQ LLM (overrides downloaded base)"; \
+        echo "[nlp build] bundled merged quantized LLM (overrides downloaded base)"; \
         if [ -f /workspace/models-local/llm-merged/MERGED_FROM ]; then \
             echo "[nlp build]   provenance:"; \
             sed 's/^/[nlp build]     /' /workspace/models-local/llm-merged/MERGED_FROM; \

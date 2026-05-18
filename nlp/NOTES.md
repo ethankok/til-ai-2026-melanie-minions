@@ -664,6 +664,21 @@ For the qualifier as-is: v9-doc-ensemble holds blended (0.683/0.886 =
 0.734), v14-llm-rag holds accuracy (0.734/0.286). Neither moves with
 v15-family until one of the two paths above lands.
 
+Follow-up score: after repairing the host evaluator env, `v15-merged-qwen3-8b`
+scored **0.659** locally. That is exactly the v14c 4B / v15 runtime-corruption
+bucket and far below the v14d 8B base score of 0.755, so it is not a submit.
+This does **not** prove the LoRA training was ineffective by itself; the score
+is too pathological for that conclusion. The likely failure chain is one of:
+
+1. The image did not actually serve the intended merged GPTQ artifact.
+2. The merged artifact was built from a stale / wrong adapter.
+3. The T4-safe GPTQ escape hatch damaged the model enough to erase the 8B base
+   behavior (`calib_n=32`, seq_len=256, and late `down_proj` modules skipped).
+
+`llm_answerer.py` now prints model provenance at boot (`model_type`,
+`quant_method`, and `MERGED_FROM`) so the next `docker logs ...` can separate
+"wrong thing served" from "right thing served but quantization/merge failed".
+
 The older projection above is now superseded by cloud/runtime evidence.
 Do not spend more time on prompt trimming for Qwen3 until the serving path
 itself is solved.

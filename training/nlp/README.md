@@ -119,6 +119,12 @@ Merge/quant status:
   6.61 GB context and the NLP container became healthy; local scoring is blocked
   only by the host ModernBERT evaluator env until the `torchvision` repair above
   is applied.
+- After the host evaluator repair, `v15-merged-qwen3-8b` scored 0.659 locally.
+  That matches the known v14c 4B / corrupted-runtime bucket, not the v14d 8B
+  base score of 0.755. Treat it as failed unless container logs prove the
+  correct merged GPTQ artifact was loaded and a higher-quality quantization is
+  tested. Runtime now prints `model_type`, `quant_method`, and `MERGED_FROM`
+  from `/workspace/models/llm` at boot for this verification.
 - Any Docker build that falls through without `nlp/models/llm-merged/` is just
   testing the un-tuned base.
 
