@@ -597,6 +597,71 @@ ALSO trims the prompt for speed (3 few-shots → 2; max_new_tokens 32 →
 24; raise NLP_LLM_GPU_MEM_FRACTION → 0.85) to drag wall-clock down and
 flip blended.
 
+### Training result (18 May ~01:30 SGT)
+
+```text
+config:    bs=1 grad_accum=8  (T4 VRAM ~14GB peak; bs=2 OOMed at step 1)
+duration:  8h 06m on T4
+steps:     200 / 200 (full 2 epochs)
+final:     train_loss 0.57   eval_loss 0.559   mean_token_acc 0.876
+```
+
+Loss curve (monotonic):
+
+```text
+step  10  loss 3.04                                  acc 0.520
+step  50  loss 0.68  eval 0.645                      acc 0.864
+step 100  loss 0.58  eval 0.580                      acc 0.872
+step 150  loss 0.57  eval 0.561                      acc 0.876
+step 200  loss 0.57  eval 0.559                      acc 0.876
+```
+
+The model is correctly predicting **87.6% of the gold answer tokens**
+under teacher-forcing on the eval split. For comparison, v8b's RoBERTa
+fine-tune which delivered the +0.162 cloud accuracy lever had its best
+eval_loss at 0.872 — v15's 0.559 is 36% lower. Generative SFT loss is
+not directly comparable to extractive span CE, but the curve shape and
+plateau timing are textbook healthy.
+
+Eval_loss was still drifting down at epoch 2 (0.561 → 0.559) so a third
+epoch would have given diminishing returns at proportionally large
+wall-clock cost. Calling 2 epochs the right stopping point. `load_best_model_at_end=True`
+retained the epoch-2 checkpoint.
+
+Practical notes from this run for any future LoRA training:
+- `bs=2` OOMs on T4 16GB despite QLoRA. Default to `bs=1 grad_accum=8`.
+- `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` reduces fragmentation
+  (set it in the shell before launching).
+- Each eval pass takes ~9 min (89 examples × bs=1 bf16 fwd). 4 eval
+  passes per run cost ~36 min. For future iterations, increase
+  `eval_steps` from 50 to 100 (2 evals instead of 4) to save ~18 min.
+- Total budget on T4: ~8h for 2 epochs on this size dataset. If running
+  multiple LoRA experiments, kick them off overnight.
+
+Adapter saved to `nlp/models/lora/`:
+- `adapter_config.json`
+- `adapter_model.safetensors`  (~60 MB)
+- `tokenizer*`
+- `BASE_MODEL` (contains `Qwen/Qwen3-8B`)
+
+### Build + test sequence
+
+```bash
+# Verify adapter is in place
+ls nlp/models/lora/adapter_config.json && echo OK
+
+# Build (mostly cached from v14d; only the COPY models + LoRA-bundle layers re-run)
+til build nlp v15-lora-qwen3-8b
+# Expect in build log:
+#   [nlp build] bundled v15 LoRA adapter (Qwen/Qwen3-8B)
+
+# Local A/B vs v14d
+til test nlp v14d-qwen3-8b           # baseline: 0.755, 18:33
+til test nlp v15-lora-qwen3-8b       # target: ≥ 0.78
+# Expect in container log (early in load):
+#   [llm_answerer] LoRA adapter detected at /workspace/models/lora (max_rank=16)
+```
+
 ## v12 — candidate-answer reranker (16 May)
 
 Implemented in [src/nlp_manager.py](src/nlp_manager.py):

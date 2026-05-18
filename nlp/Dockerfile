@@ -62,19 +62,41 @@ RUN if [ "$NLP_ANSWERER" = "llm" ] && [ ! -f /workspace/models/llm/config.json ]
         echo "[nlp build] container will fall back to extractive QA at runtime"; \
     fi
 
-# v15-lora: bundle the trained LoRA adapter into the image if it's been
-# produced locally by training/nlp/finetune_lora.py. Without an adapter the
-# manager still runs with the base model (= v14d behaviour). The COPY is
-# a no-op if nlp/models/lora doesn't exist at build context — Docker still
-# COPYs an empty directory, but llm_answerer.py's _lora_dir_is_ready()
-# check requires adapter_config.json to actually enable LoRA.
+# v15-lora / v15-merged: bundle locally-produced model artefacts.
+#
+# Two paths are supported, in priority order:
+#
+#   1. nlp/models/llm-merged/ (PREFERRED on T4) — an AWQ-quantised, already
+#      LoRA-merged Qwen3-8B. Produced by
+#      training/nlp/merge_lora_and_quantize.py. Avoids vLLM 0.9.0's broken
+#      Punica LoRA Triton kernels on sm_75 (T4). If this dir exists, it
+#      overrides the downloaded base at /workspace/models/llm/.
+#
+#   2. nlp/models/lora/ (FALLBACK, Ampere+ only) — a raw LoRA adapter that
+#      vLLM applies at runtime via LoRARequest. Use this on GPUs where the
+#      Triton LoRA kernels actually compile (sm_80+).
+#
+# If BOTH dirs exist, the merged dir wins and the runtime LoRA dir is
+# ignored (so we don't double-apply). To force the runtime-LoRA path, move
+# nlp/models/llm-merged/ out of the build context.
 COPY models /workspace/models-local
-RUN if [ -d /workspace/models-local/lora ] && [ -f /workspace/models-local/lora/adapter_config.json ]; then \
+RUN if [ -d /workspace/models-local/llm-merged ] && [ -f /workspace/models-local/llm-merged/config.json ]; then \
+        rm -rf /workspace/models/llm && \
+        mkdir -p /workspace/models/llm && \
+        cp -r /workspace/models-local/llm-merged/* /workspace/models/llm/ && \
+        echo "[nlp build] bundled merged AWQ LLM (overrides downloaded base)"; \
+        if [ -f /workspace/models-local/llm-merged/MERGED_FROM ]; then \
+            echo "[nlp build]   provenance:"; \
+            sed 's/^/[nlp build]     /' /workspace/models-local/llm-merged/MERGED_FROM; \
+        fi; \
+        echo "[nlp build] runtime LoRA path will be DISABLED (merged weights already include fine-tune)"; \
+    elif [ -d /workspace/models-local/lora ] && [ -f /workspace/models-local/lora/adapter_config.json ]; then \
         mkdir -p /workspace/models/lora && \
         cp -r /workspace/models-local/lora/* /workspace/models/lora/ && \
         echo "[nlp build] bundled v15 LoRA adapter ($(cat /workspace/models-local/lora/BASE_MODEL 2>/dev/null || echo unknown base))"; \
+        echo "[nlp build] WARNING: runtime LoRA path is broken on T4/sm_75 (vLLM 0.9.0 Triton kernel)"; \
     else \
-        echo "[nlp build] no LoRA adapter at nlp/models/lora — running base model only"; \
+        echo "[nlp build] no LoRA adapter and no merged LLM — running base model only"; \
     fi && rm -rf /workspace/models-local
 
 # Copies your source files.
