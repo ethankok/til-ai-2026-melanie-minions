@@ -1,6 +1,12 @@
 # CV — notes & history
 
-Last updated: 16 May 2026 19:00 SGT — **CV RE-PARKED at `cv-yolo-v2-tier1-best`
+Last updated: 19 May 2026 18:15 SGT — **CV unparked. `ruiyang-v1` scored
+0.588/0.955 official, and the partial core sweep found a stronger local serving
+row: `CV_CONF=0.15`, `CV_IOU=0.55`, `CV_IMGSZ=896`, `CV_AUGMENT=0`,
+`CV_CROSS_CLASS_NMS_IOU=0.97` with hard held-out mAP 0.9234.** This should be
+the next build/test/submit candidate before more training.
+
+Previous 16 May note: **CV RE-PARKED at `cv-yolo-v2-tier1-best`
 0.556/0.956 after Phase C.1 didn't transfer.** Augmented training (JPEG + native
 tile crops) lifted hard held-out +0.04 (0.948 vs tier1's 0.905) but the
 local→cloud gap WIDENED from 0.349 → 0.395 — augmentation overfit to the
@@ -15,12 +21,27 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`cv-yolo-v2-tier1-best` — official 0.556 / 0.956 (14 May 17:10 SGT, 0/500 errors).**
+**`ruiyang-v1` — official 0.588 / 0.955 (19 May 13:15 SGT, 0/500 errors).**
+
+Next candidate to submit: same weights with the 19 May partial-sweep serving
+row baked into `cv/Dockerfile`:
+
+```text
+CV_CONF=0.15
+CV_IOU=0.55
+CV_IMGSZ=896
+CV_AUGMENT=0
+CV_CROSS_CLASS_NMS_IOU=0.97
+```
+
+The previous parked tag was `cv-yolo-v2-tier1-best` at 0.556 / 0.956.
 
 Tier1 + Tier2 attempts (15-16 May) all regressed cloud or were blended-flat:
 
 | Tag | Cloud | Hard held-out | Notes |
 |---|---:|---:|---|
+| `ruiyang-v1` (live) | 0.588 / 0.955 | 0.9125 | new high, real-score HTTP eval |
+| next `ruiyang-v1` env row | TBD | 0.9234 | conf=0.15 iou=0.55 imgsz=896 aug=0 cross_nms=0.97 |
 | `cv-yolo-v2-tier1-best` (live) | 0.556 / 0.956 | 0.9049 | tier1 |
 | `cv-yolo11m-v3-pre` (15/05) | 0.376 / 0.955 | 0.8673 | v11m@1024 matched-imgsz |
 | `v11m-1280-noaug-v1` (16/05) | 0.474 / 0.949 | 0.9088 | v11m at 1280 aug=0 |

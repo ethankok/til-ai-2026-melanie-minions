@@ -1,10 +1,10 @@
 # CV fine-tuning and eval workflow
 
 Goal: reproduce or improve the shipped CV detector without trusting the leaky
-full-local `til test` score. The current best shipped YOLO tag is
-`cv-yolo-v2-tier1-best`, which officially scored `0.556 / 0.956` with
-`0 / 500` errors. The useful local selection metric is the hard held-out HTTP
-eval, not the full local `til test` mAP.
+full-local `til test` score. The current best shipped tag is `ruiyang-v1`,
+which officially scored `0.588 / 0.955` with `0 / 500` errors. The useful local
+selection metric is the hard held-out HTTP eval, not the full local `til test`
+mAP.
 
 As of the latest CV notes, YOLOv8s/YOLOv11m inference and retraining levers are
 mostly exhausted. The next useful experiment is `training/cv/train_rtdetr.sh`,
@@ -101,11 +101,11 @@ The Dockerfile already sets:
 ```Dockerfile
 ENV CV_MODEL_PATH=/workspace/models/cv/best.pt
 ENV CV_CATEGORY_MAP='[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]'
-ENV CV_CONF=0.20
-ENV CV_IOU=0.60
+ENV CV_CONF=0.15
+ENV CV_IOU=0.55
 ENV CV_IMGSZ=896
-ENV CV_AUGMENT=1
-ENV CV_CROSS_CLASS_NMS_IOU=0
+ENV CV_AUGMENT=0
+ENV CV_CROSS_CLASS_NMS_IOU=0.97
 ```
 
 Keep the identity category map for fine-tuned 18-class models.
@@ -165,21 +165,26 @@ The sweep writes:
 
 Take the best held-out setting and bake it into the submitted image by editing
 `cv/Dockerfile`, or pass the same env values when doing extra local checks.
-For the current YOLO tier1 weights, the winning setting was:
+For `ruiyang-v1`, the best completed partial sweep row was:
 
 ```Dockerfile
-ENV CV_CONF=0.20
-ENV CV_IOU=0.60
+ENV CV_CONF=0.15
+ENV CV_IOU=0.55
 ENV CV_IMGSZ=896
-ENV CV_AUGMENT=1
-ENV CV_CROSS_CLASS_NMS_IOU=0
+ENV CV_AUGMENT=0
+ENV CV_CROSS_CLASS_NMS_IOU=0.97
 ```
 
+This row scored local hard held-out `mAP50-95=0.9234`, up from the previous
+`ruiyang-v1` eval at `0.9125`. Nearby `CV_IOU=0.50..0.70` rows tied on mAP;
+`0.55` is the selected conservative row. `CV_CROSS_CLASS_NMS_IOU=0.97` is
+effectively neutral locally and may trim near-identical hidden subclass
+duplicates.
 Then rebuild with a new tag.
 
-Cross-class NMS remains available as `CV_CROSS_CLASS_NMS_IOU`, but keep it off
-unless a sweep proves it helps the exact checkpoint being submitted. For
-`ruiyang-v1`, offline scoring from saved predictions was:
+Cross-class NMS remains available as `CV_CROSS_CLASS_NMS_IOU`, but avoid lower
+thresholds unless a sweep proves they help the exact checkpoint being submitted.
+For the earlier `ruiyang-v1` saved predictions, offline scoring was:
 
 ```text
 cross_nms=0.00  mAP=0.9125  small=0.7112
