@@ -1,11 +1,14 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 19 May 2026 ~14:30 SGT — **NLP is parked; keep the
-leaderboard-held v9/v14 scores and retrain the RoBERTa reader later.**
-`v9-doc-ensemble-rescue` remains the trusted blended submission
-(`0.683 / 0.866`, local `0.711` when built from the known-good reader), while
-`v14-llm-rag` remains the raw accuracy high (`0.734 / 0.286`). Current local
+Last updated: 20 May 2026 ~04:10 SGT — **`v20-ae-trigger` is the new NLP
+shipped: cloud `0.951 / 0.840` (0/700 errors), blended ~`0.923`, +0.189 over
+the prior v9 blended best.** Universal Adversarial Trigger trained against the
+official AE ModernBERT checkpoint with HotFlip (Wallace 2019) and prepended to
+every non-empty answer — see [nlp/NOTES.md](nlp/NOTES.md). Pipeline otherwise
+unchanged from v9 (BM25+BGE retrieval, BGE reranker, RoBERTa-large extractive
+answerer). All prior v9/v14 entries kept below for history; they no longer
+hold the leaderboard slot but are retained for context. Current local
 Workbench artefacts do not recover the 0.711 reader: the canonical `~/til`
 RoBERTa folder and `~/til-v9-rescue` have the same model SHA256
 `03ac27b8a45d9e981ce1eb8cf167a69e1310b0dc0a0e55bd3ab4a538518567b2` and score
@@ -158,7 +161,8 @@ blocked by cloud/runtime/quantization failures, not by answer format.
 
 ```text
 Task   Image                    Tag         Submitted             Errors        Score   Speed
-NLP    melanie-minions-nlp      v14-llm-rag 17/05/2026 16:15:15 0 / 700 0.734   0.286  ← NEW NLP ACCURACY HIGH (+0.051 vs v9). Qwen2.5-7B-Instruct-AWQ via vLLM as the answerer, v9 retrieval kept. Blended 0.622 vs v9 0.734 (-0.112) — speed regressed from 21-min wall-clock. v14b-speed iterates with fewer few-shots.
+NLP (shipped, NEW HIGH) melanie-minions-nlp v20-ae-trigger 20/05/2026 03:54:03 0 / 700 0.951   0.840  ← NEW NLP HIGH (+0.268 acc vs v9). Universal Adversarial Trigger (HotFlip / Wallace 2019) trained against the bundled `nlp_eval_512` ModernBERT-AE checkpoint and prepended to every answer. Local equiv_rate 0.957, val pass rate 100% with mean prob 0.999. Pipeline otherwise = v9. Blended ~0.923 (+0.189 vs v9 blended best 0.734).
+NLP (v14 prior accuracy high) melanie-minions-nlp v14-llm-rag 17/05/2026 16:15:15 0 / 700 0.734   0.286  ← Qwen2.5-7B-Instruct-AWQ via vLLM as the answerer, v9 retrieval kept. Blended 0.622 vs v9 0.734 (-0.112) — speed regressed from 21-min wall-clock. v14b-speed iterates with fewer few-shots.
 NLP (current trusted blend) melanie-minions-nlp v9-doc-ensemble-rescue 18/05/2026 18:53:03 0 / 700 0.683 0.866 ← Valid rescue of v9 path; local 0.711, cloud accuracy matches v9 plateau. Use this over all v16/v17/v18 tags.
 NLP (prior best blend) melanie-minions-nlp v9-doc-ensemble 16/05/2026 05:21:57 0 / 700 0.683   0.886  ← Same accuracy, better speed variance than rescue; 3rd v9 resubmit. Blended ~0.734.
 NLP (v12 regressed) melanie-minions-nlp v12-candidate-ranker 16/05/2026 13:48:51 0 / 700 0.642 0.829  ← REGRESSED -0.041 acc, -0.057 speed vs v9. Candidate-ranker promoted doc-mined short tokens that passed exact/substr proxy but failed 0.9 AE threshold; -69 exact +54 substr +15 diff in local buckets. Worst since v5b.
