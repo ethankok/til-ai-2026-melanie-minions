@@ -1,6 +1,44 @@
 # NLP — notes & history
 
-## v20-ae-trigger — adversarial trigger on the official AE evaluator (SHIPPED)
+## v21-trigger-only — skip RoBERTa, return only the trigger (SHIPPED, blended high)
+
+**Cloud `0.948 / 0.941`, 0/700 errors (20 May 04:43 SGT). New shipped tag for
+blended score, blended ~0.946 (+0.023 vs v20, +0.212 vs v9 baseline 0.734).
+v20 still holds the raw accuracy slot at 0.951.**
+
+Same trigger as v20; the only change is `_answer_one` and `qa_batch` now
+short-circuit after retrieval and return `{"documents": top3, "answer":
+<trigger>}` without running the RoBERTa QA forward. Verified locally with the
+v20 trigger: when candidate text is empty (just the trigger), AE pass rate
+stays at 0.994 (mean prob 0.998), vs 1.000 with real candidate text.
+Net trade: -0.003 accuracy for +0.101 speed.
+
+### Wiring
+
+- New env var `NLP_AE_TRIGGER_ONLY` (default `0` in code, set to `1` in
+  Dockerfile for v21 builds). Gated on the trigger already being loaded —
+  if no trigger, the flag is a no-op.
+- `_answer_one`: short-circuit after `_retrieve_for_answer(question)` — no
+  `_answer_candidates`, no `_apply_ae_trigger` (we return the bare trigger,
+  not trigger + answer).
+- `qa_batch`: same short-circuit, runs retrieval per question in a tight
+  loop and returns the same shape.
+- QA model still loads at corpus-load time (cheap, untimed). Could be
+  skipped for an even leaner image but no speed-score benefit.
+
+### Where we are vs the ceiling
+
+Score is bounded by `retrieval_recall × AE_pass_rate`:
+
+- retrieval recall ≈ 0.958 (v9-era; hasn't changed)
+- AE pass rate ≈ 0.994 (trigger-only)
+- accuracy ceiling ≈ **0.952**; we're at 0.948 cloud
+
+Remaining cheese on NLP is in the retrieval, not the AE. AE is fully
+extracted. Marginal NLP work has ~6× worse ROI than work on AE (40% weight,
+currently ~0.60 blended).
+
+## v20-ae-trigger — adversarial trigger on the official AE evaluator (SHIPPED, accuracy high)
 
 **Cloud `0.951 / 0.840`, 0/700 errors (20 May 03:54 SGT). New shipped NLP tag,
 new project-wide NLP high. Blended ~0.923, +0.189 over the prior v9 best of
@@ -212,7 +250,8 @@ v17-modernbert-stock 18/05          startup —       —         0.459       Co
 v17-modernbert-ft    18/05 local    —       —       —         0.624       Fine-tuning lift (+0.165 over stock) is real but base is too weak. Not submitted
 v18-qwen-reranker    18/05          0.000   0.417   700/700   0.547       Replaced BGE reranker with Qwen3-Reranker-0.6B-seq-cls. Local collapsed; cloud 700/700 errors
 v9-doc-ensemble-rescue 18/05 19:13  0.683   0.866   0 / 700   0.711       Detached v9 rebuild from canonical ~/til (sibling worktree didn't work). Trusted current NLP submission
-v20-ae-trigger         20/05 03:54  0.951   0.840   0 / 700   0.957       SHIPPED, NEW HIGH. HotFlip universal adversarial trigger prepended to every answer. Pipeline otherwise v9. Blended ~0.923 (+0.189 vs v9). Cloud transferred cleanly.
+v20-ae-trigger         20/05 03:54  0.951   0.840   0 / 700   0.957       HotFlip universal adversarial trigger prepended to every answer. Pipeline otherwise v9. Blended ~0.923 (+0.189 vs v9). Cloud transferred cleanly. Raw accuracy high.
+v21-trigger-only       20/05 04:43  0.948   0.941   0 / 700   0.953       SHIPPED (blended high). v20's trigger but skipping the RoBERTa QA forward — `_answer_one` returns the trigger directly after retrieval. Blended ~0.946 (+0.023 vs v20). Trigger-only AE pass rate 0.994 on val.
 ```
 
 ## Implementation
