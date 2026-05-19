@@ -1,10 +1,15 @@
 # CV fine-tuning and eval workflow
 
-Goal: reproduce or improve the shipped `cv-yolo-v2-best` detector without
-trusting the leaky full-local `til test` score. `cv-yolo-v2-best` officially
-scored `0.549 / 0.960` with `0 / 500` errors, up from `cv-yolo-ft-v1`'s
-`0.402 / 0.963`. The useful local selection metric is the hard held-out HTTP
-eval (`0.8589` for v2-best), not the full local `til test` mAP (`0.8839`).
+Goal: reproduce or improve the shipped CV detector without trusting the leaky
+full-local `til test` score. The current best shipped YOLO tag is
+`cv-yolo-v2-tier1-best`, which officially scored `0.556 / 0.956` with
+`0 / 500` errors. The useful local selection metric is the hard held-out HTTP
+eval, not the full local `til test` mAP.
+
+As of the latest CV notes, YOLOv8s/YOLOv11m inference and retraining levers are
+mostly exhausted. The next useful experiment is `training/cv/train_rtdetr.sh`,
+which tests RT-DETR-L on the clean canonical hard split before adding more
+distribution-shift augmentation.
 
 Run this on GCP Workbench. The Mac checkout does not contain the CV images.
 
@@ -96,6 +101,10 @@ The Dockerfile already sets:
 ```Dockerfile
 ENV CV_MODEL_PATH=/workspace/models/cv/best.pt
 ENV CV_CATEGORY_MAP='[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]'
+ENV CV_CONF=0.20
+ENV CV_IOU=0.60
+ENV CV_IMGSZ=896
+ENV CV_AUGMENT=1
 ```
 
 Keep the identity category map for fine-tuned 18-class models.
@@ -151,12 +160,13 @@ The sweep writes:
 
 Take the best held-out setting and bake it into the submitted image by editing
 `cv/Dockerfile`, or pass the same env values when doing extra local checks.
-For `cv-yolo-v2-best`, the winning setting was:
+For the current YOLO tier1 weights, the winning setting was:
 
 ```Dockerfile
-ENV CV_CONF=0.25
-ENV CV_IOU=0.50
-ENV CV_IMGSZ=768
+ENV CV_CONF=0.20
+ENV CV_IOU=0.60
+ENV CV_IMGSZ=896
+ENV CV_AUGMENT=1
 ```
 
 Then rebuild with a new tag.
@@ -181,6 +191,40 @@ Hard held-out HTTP eval:    mAP50-95 0.8589, mAP50 0.9414, small AP 0.5596
 Full local til test:        mAP50-95 0.8839, 0 errors
 Official hidden eval:       score 0.549, speed 0.960, 0 / 500 errors
 ```
+
+## 7. RT-DETR architecture candidate
+
+This is the current highest-information next run because v8s/v11m recipe tweaks
+have not transferred to cloud. Train:
+
+```bash
+bash training/cv/train_rtdetr.sh
+```
+
+Then build and sweep through the same HTTP service:
+
+```bash
+cp /home/jupyter/cv_runs/til-rtdetr-l-896-hard-v1/weights/best.pt cv/models/best.pt
+til build cv cv-rtdetr-l-v1
+
+python training/cv/sweep_cv_http.py \
+  --image melanie-minions-cv:cv-rtdetr-l-v1 \
+  --model-family rtdetr \
+  --data-dir /home/jupyter/novice/cv \
+  --annotations /home/jupyter/cv_yolo_dataset/coco/annotations_test.json \
+  --out-dir /home/jupyter/cv_eval_sweeps/rtdetr-l-v1 \
+  --conf 0.05,0.10,0.20,0.30 \
+  --iou 0.50,0.60,0.70 \
+  --imgsz 896,1024,1280 \
+  --augment 0 \
+  --rtdetr-eval-idx 3,5 \
+  --rtdetr-num-queries 100,300
+```
+
+If submitting an RT-DETR checkpoint, keep `CV_MODEL_FAMILY=rtdetr` baked into
+the image or passed at runtime. The serving code can auto-fallback if YOLO
+loading fails, but setting the family explicitly also enables the RT-DETR
+decoder/query controls.
 
 ## What to look for
 

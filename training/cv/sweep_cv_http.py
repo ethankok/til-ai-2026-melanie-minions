@@ -26,6 +26,11 @@ def _parse_ints(text: str) -> list[int]:
     return [int(item.strip()) for item in text.split(",") if item.strip()]
 
 
+def _parse_optional_ints(text: str) -> list[int | None]:
+    values = _parse_ints(text)
+    return values if values else [None]
+
+
 def _start_container(
     image: str,
     name: str,
@@ -70,6 +75,9 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "imgsz",
         "max_det",
         "augment",
+        "model_family",
+        "rtdetr_eval_idx",
+        "rtdetr_num_queries",
         "map",
         "map50",
         "map75",
@@ -102,6 +110,22 @@ def main() -> None:
     parser.add_argument("--imgsz", default="768,896,1024")
     parser.add_argument("--max-det", default="100")
     parser.add_argument("--augment", default="0,1", help="Comma-separated 0/1 to toggle Ultralytics TTA")
+    parser.add_argument(
+        "--model-family",
+        choices=["auto", "yolo", "rtdetr"],
+        default="auto",
+        help="Set CV_MODEL_FAMILY for the container. Use rtdetr for RT-DETR best.pt files.",
+    )
+    parser.add_argument(
+        "--rtdetr-eval-idx",
+        default="",
+        help="Comma-separated RT-DETR decoder eval_idx values to sweep; empty leaves unset.",
+    )
+    parser.add_argument(
+        "--rtdetr-num-queries",
+        default="",
+        help="Comma-separated RT-DETR num_queries values to sweep; empty leaves unset.",
+    )
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--request-timeout", type=float, default=60.0)
     parser.add_argument("--startup-timeout", type=float, default=120.0)
@@ -145,15 +169,27 @@ def main() -> None:
             _parse_ints(args.imgsz),
             _parse_ints(args.max_det),
             _parse_ints(args.augment),
+            _parse_optional_ints(args.rtdetr_eval_idx),
+            _parse_optional_ints(args.rtdetr_num_queries),
         )
     )
 
-    for idx, (conf, iou, imgsz, max_det, augment) in enumerate(combos, start=1):
+    for idx, (
+        conf,
+        iou,
+        imgsz,
+        max_det,
+        augment,
+        rtdetr_eval_idx,
+        rtdetr_num_queries,
+    ) in enumerate(combos, start=1):
         print(
             f"\n[{idx}/{len(combos)}] conf={conf} iou={iou} imgsz={imgsz} "
-            f"max_det={max_det} augment={augment}"
+            f"max_det={max_det} augment={augment} family={args.model_family} "
+            f"eval_idx={rtdetr_eval_idx} queries={rtdetr_num_queries}"
         )
         env = {
+            "CV_MODEL_FAMILY": args.model_family,
             "CV_CONF": str(conf),
             "CV_IOU": str(iou),
             "CV_IMGSZ": str(imgsz),
@@ -161,6 +197,10 @@ def main() -> None:
             "CV_AUGMENT": str(augment),
             "CV_HALF": "1",
         }
+        if rtdetr_eval_idx is not None:
+            env["CV_RTDETR_EVAL_IDX"] = str(rtdetr_eval_idx)
+        if rtdetr_num_queries is not None:
+            env["CV_RTDETR_NUM_QUERIES"] = str(rtdetr_num_queries)
         try:
             _start_container(args.image, container_name, args.port, env, use_gpus=not args.cpu)
             _wait_for_health(args.port, args.startup_timeout)
@@ -188,6 +228,9 @@ def main() -> None:
             "imgsz": imgsz,
             "max_det": max_det,
             "augment": augment,
+            "model_family": args.model_family,
+            "rtdetr_eval_idx": rtdetr_eval_idx,
+            "rtdetr_num_queries": rtdetr_num_queries,
             "map": summary["map"],
             "map50": summary["map50"],
             "map75": summary["map75"],
@@ -201,8 +244,14 @@ def main() -> None:
         }
         rows.append(row)
         run_name = (
-            f"conf{conf:.2f}_iou{iou:.2f}_img{imgsz}_max{max_det}_aug{augment}".replace(".", "p")
+            f"{args.model_family}_conf{conf:.2f}_iou{iou:.2f}_img{imgsz}"
+            f"_max{max_det}_aug{augment}"
         )
+        if rtdetr_eval_idx is not None:
+            run_name += f"_eval{rtdetr_eval_idx}"
+        if rtdetr_num_queries is not None:
+            run_name += f"_q{rtdetr_num_queries}"
+        run_name = run_name.replace(".", "p")
         (args.out_dir / f"{run_name}.json").write_text(json.dumps(row, indent=2), encoding="utf-8")
         best = max(rows, key=lambda item: item["map"])
         print(
@@ -210,7 +259,8 @@ def main() -> None:
             f"elapsed={elapsed_s:.1f}s est_speed={est_speed:.3f} "
             f"est_blended={est_blended:.4f} "
             f"best={best['map']:.4f} @ conf={best['conf']} iou={best['iou']} "
-            f"imgsz={best['imgsz']} aug={best['augment']}"
+            f"imgsz={best['imgsz']} aug={best['augment']} "
+            f"eval_idx={best['rtdetr_eval_idx']} queries={best['rtdetr_num_queries']}"
         )
 
     rows.sort(key=lambda item: item["map"], reverse=True)
@@ -222,7 +272,9 @@ def main() -> None:
             f"mAP={row['map']:.4f} mAP50={row['map50']:.4f} "
             f"est_speed={row['est_speed']:.3f} est_blended={row['est_blended']:.4f} "
             f"conf={row['conf']} iou={row['iou']} imgsz={row['imgsz']} "
-            f"max_det={row['max_det']} aug={row['augment']}"
+            f"max_det={row['max_det']} aug={row['augment']} "
+            f"family={row['model_family']} eval_idx={row['rtdetr_eval_idx']} "
+            f"queries={row['rtdetr_num_queries']}"
         )
     print("\nTop estimated blended results")
     for row in sorted(rows, key=lambda item: item["est_blended"], reverse=True)[:10]:
@@ -230,7 +282,9 @@ def main() -> None:
             f"blend={row['est_blended']:.4f} mAP={row['map']:.4f} "
             f"est_speed={row['est_speed']:.3f} elapsed={row['elapsed_s']:.1f}s "
             f"conf={row['conf']} iou={row['iou']} imgsz={row['imgsz']} "
-            f"max_det={row['max_det']} aug={row['augment']}"
+            f"max_det={row['max_det']} aug={row['augment']} "
+            f"family={row['model_family']} eval_idx={row['rtdetr_eval_idx']} "
+            f"queries={row['rtdetr_num_queries']}"
         )
 
 

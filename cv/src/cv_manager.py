@@ -33,6 +33,11 @@ try:
 except Exception:  # pragma: no cover - keeps importable without optional deps
     YOLO = None
 
+try:
+    from ultralytics import RTDETR
+except Exception:  # pragma: no cover - older ultralytics / optional deps
+    RTDETR = None
+
 
 # Ultralytics COCO class index -> TIL CV category_id.
 # The Workbench annotations use a custom label space:
@@ -68,11 +73,29 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_optional_int(name: str) -> int | None:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"[CVManager] ignoring invalid {name}={raw!r}; expected int", flush=True)
+        return None
+
+
 class CVManager:
     """YOLO object-detection baseline with schema-safe fallbacks."""
 
     def __init__(self):
         self.model_path = os.environ.get("CV_MODEL_PATH", "yolov8n.pt")
+        self.model_family = os.environ.get("CV_MODEL_FAMILY", "auto").strip().lower()
+        if self.model_family not in ("auto", "yolo", "rtdetr"):
+            print(
+                f"[CVManager] unknown CV_MODEL_FAMILY={self.model_family!r}; using auto",
+                flush=True,
+            )
+            self.model_family = "auto"
         self.conf = float(os.environ.get("CV_CONF", "0.25"))
         self.iou = float(os.environ.get("CV_IOU", "0.70"))
         self.imgsz = int(os.environ.get("CV_IMGSZ", "640"))
@@ -80,6 +103,8 @@ class CVManager:
         self.augment = _env_bool("CV_AUGMENT", default=False)
         self.half = _env_bool("CV_HALF", default=True)
         self.device = os.environ.get("CV_DEVICE")
+        self.rtdetr_eval_idx = _env_optional_int("CV_RTDETR_EVAL_IDX")
+        self.rtdetr_num_queries = _env_optional_int("CV_RTDETR_NUM_QUERIES")
 
         # Tiled-inference settings (all opt-in; defaults reproduce single-pass).
         tile_raw = os.environ.get("CV_TILE_MODE", "off").strip().lower()
@@ -101,16 +126,17 @@ class CVManager:
 
         self.category_map = self._load_category_map()
         self.model = None
+        self.loaded_model_family = "none"
         self._inference_count = 0
 
-        if YOLO is None:
+        if YOLO is None and RTDETR is None:
             print("[CVManager] ultralytics unavailable; returning empty detections", flush=True)
             return
 
         try:
-            self.model = YOLO(self.model_path)
+            self.model = self._load_model(self.model_path)
             print(
-                f"[CVManager] loaded {self.model_path} "
+                f"[CVManager] loaded {self.model_path} family={self.loaded_model_family} "
                 f"conf={self.conf} iou={self.iou} imgsz={self.imgsz} "
                 f"max_det={self.max_det} augment={self.augment} half={self.half} "
                 f"tile_mode={self.tile_mode} tile_imgsz={self.tile_imgsz} "
@@ -119,6 +145,63 @@ class CVManager:
             )
         except Exception as exc:
             print(f"[CVManager] model load failed: {exc}; returning []", flush=True)
+
+    def _resolve_model_family(self, model_path: str) -> str:
+        if self.model_family != "auto":
+            return self.model_family
+        name = Path(model_path).name.lower()
+        if "rtdetr" in name or "rt-detr" in name:
+            return "rtdetr"
+        return "yolo"
+
+    def _load_model(self, model_path: str):
+        """Load an Ultralytics detector family while preserving one output adapter."""
+        family = self._resolve_model_family(model_path)
+        if family == "rtdetr":
+            if RTDETR is None:
+                raise RuntimeError("RT-DETR requested but ultralytics.RTDETR is unavailable")
+            model = RTDETR(model_path)
+            self._apply_rtdetr_inference_knobs(model)
+        else:
+            if YOLO is None:
+                raise RuntimeError("YOLO requested but ultralytics.YOLO is unavailable")
+            try:
+                model = YOLO(model_path)
+            except Exception as yolo_exc:
+                if self.model_family == "auto" and RTDETR is not None:
+                    try:
+                        model = RTDETR(model_path)
+                    except Exception as rtdetr_exc:
+                        raise RuntimeError(
+                            "auto model load failed as both YOLO "
+                            f"({yolo_exc}) and RT-DETR ({rtdetr_exc})"
+                        ) from rtdetr_exc
+                    self._apply_rtdetr_inference_knobs(model)
+                    self.loaded_model_family = "rtdetr"
+                    return model
+                raise
+        self.loaded_model_family = family
+        return model
+
+    def _apply_rtdetr_inference_knobs(self, model) -> None:
+        """Optionally trade RT-DETR latency for accuracy via decoder/query limits."""
+        if self.rtdetr_eval_idx is None and self.rtdetr_num_queries is None:
+            return
+        try:
+            head = model.model.model[-1]
+        except Exception as exc:
+            print(f"[CVManager] could not access RT-DETR head: {exc}", flush=True)
+            return
+        if self.rtdetr_eval_idx is not None:
+            try:
+                head.decoder.eval_idx = self.rtdetr_eval_idx
+            except Exception as exc:
+                print(f"[CVManager] could not set CV_RTDETR_EVAL_IDX: {exc}", flush=True)
+        if self.rtdetr_num_queries is not None:
+            try:
+                head.num_queries = self.rtdetr_num_queries
+            except Exception as exc:
+                print(f"[CVManager] could not set CV_RTDETR_NUM_QUERIES: {exc}", flush=True)
 
     def _load_category_map(self) -> dict[int, int]:
         """Load class-index overrides from CV_CATEGORY_MAP when provided.
