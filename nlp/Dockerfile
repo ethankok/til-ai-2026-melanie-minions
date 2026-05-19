@@ -36,18 +36,18 @@ ENV NLP_HYBRID_QWEN_THRESHOLD=3.0
 ENV NLP_LLM_LORA_DIR=/workspace/models/lora
 WORKDIR /workspace
 
-RUN pip install -U pip
+RUN python -m pip install -U pip
 # NGC 25.11 ships optional torchao/flash-attn extensions that are compiled
 # against its original torch stack. Transformers can crash while merely
 # importing BERT (`torch.int1` missing from torchao; flash_attn can similarly
 # hit undefined symbols). They are optional for this path, so remove them
 # before model download/import.
-RUN pip uninstall -y torchao flash-attn flash_attn || true
+RUN python -m pip uninstall -y torchao flash-attn flash_attn || true
 
 # Install only the small model-download stack before pulling weights. The full
 # requirements include vLLM and are intentionally delayed until after the 4 GB
 # Qwen AWQ shard lands so Docker overlay space does not run out mid-download.
-RUN pip install --no-cache-dir \
+RUN python -m pip install --no-cache-dir \
     transformers==4.46.3 \
     tokenizers==0.20.3 \
     safetensors==0.4.5 \
@@ -68,8 +68,15 @@ RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python download_models.py
 # little free Docker overlay space for Hugging Face to write the model file on
 # Workbench.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip uninstall -y torchao flash-attn flash_attn || true
+RUN python -m pip install --no-cache-dir -r requirements.txt && \
+    python -m pip uninstall -y torchao flash-attn flash_attn || true
+RUN python - <<'PY'
+import fastapi
+import rank_bm25
+import transformers
+import uvicorn
+print("[nlp build] runtime imports ok")
+PY
 
 # v14-llm-rag: hard-fail the build if the LLM weights didn't land. The
 # manager will still boot without them by falling back to extractive, but
@@ -133,4 +140,4 @@ RUN for d in modernbert-finetuned-squad2 deberta-finetuned-squad2 roberta-finetu
 # Copies your source files.
 COPY src .
 
-CMD ["uvicorn", "nlp_server:app", "--port", "5004", "--host", "0.0.0.0"]
+CMD ["python", "-m", "uvicorn", "nlp_server:app", "--port", "5004", "--host", "0.0.0.0"]

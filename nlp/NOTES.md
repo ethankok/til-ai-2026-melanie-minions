@@ -564,7 +564,12 @@ v19 routes only hard/L2-looking questions to Qwen2.5-7B-AWQ; leaves easy/L1-look
 - **First**: failed during `download_models.py` with `AttributeError: module 'torch' has no attribute 'int1'` from `torchao` (broken optional extension after vLLM adjusts torch stack on NGC). Dockerfile now uninstalls `torchao`, `flash-attn`, `flash_attn` before any Transformers model import.
 - **Second**: `No space left on device` while downloading 4 GB Qwen2.5 AWQ shard because vLLM had already been installed into Docker overlay. Dockerfile now downloads model weights BEFORE installing heavy runtime requirements, then uninstalls broken extensions AFTER vLLM install.
 - **Third**: clean NGC base doesn't include `transformers` before `requirements.txt` is copied. Dockerfile now installs only small HF download stack (`transformers`, `tokenizers`, `safetensors`, `sentencepiece`, `huggingface-hub`) before downloading weights, still delaying vLLM until after Qwen shard lands.
-- **Fourth**: container never became healthy — startup import latency. `nlp_server.py` imported `nlp_manager` at module import time, which pulls Torch/Transformers before `/health` can respond. Server now lazy-loads `NLPManager` on corpus load or question requests; `/health` is a lightweight FastAPI endpoint.
+- **Fourth**: container never became healthy. Initial suspicion was startup
+  import latency, so `nlp_server.py` now lazy-loads `NLPManager`. Actual
+  docker logs then showed `ModuleNotFoundError: No module named 'fastapi'`:
+  bare `pip` did not install packages into the `/usr/bin/python` environment
+  that runs the server. Dockerfile now uses `python -m pip`, starts with
+  `python -m uvicorn`, and runs a build-time `fastapi`/`uvicorn` import check.
 
 ### Router logic
 
