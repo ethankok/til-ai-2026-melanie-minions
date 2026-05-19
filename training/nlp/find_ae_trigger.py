@@ -299,8 +299,10 @@ def _hotflip_step(
 
     grad = base_embeds.grad  # (B, L, H)
     trigger_len = len(trigger_ids)
-    grad_at_trigger = torch.zeros(trigger_len, grad.size(-1), device=device)
-    n_counted = torch.zeros(trigger_len, device=device)
+    grad_at_trigger = torch.zeros(
+        trigger_len, grad.size(-1), device=device, dtype=grad.dtype
+    )
+    n_counted = torch.zeros(trigger_len, device=device, dtype=grad.dtype)
     for b, (ts, te) in enumerate(trigger_slices):
         actual = te - ts
         if actual <= 0:
