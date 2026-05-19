@@ -1,12 +1,16 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 18 May 2026 ~20:40 SGT — **NLP is locked back to the v9
+Last updated: 19 May 2026 ~03:50 SGT — **NLP is locked back to the v9
 rescue for blended score.** `v9-doc-ensemble-rescue` was validated locally
 at `0.711` and on cloud at `0.683 / 0.866` with `0 / 700` errors. That is
 slightly slower than the best same-image v9 speed resubmit (`0.886`) but
 keeps the same v9 accuracy plateau and is the only current NLP tag worth
 trusting for the qualifier blend.
+
+The v19 hybrid router now also fails the local gate: after packaging fixes it
+ran end-to-end, but scored `0.705` with a 15:00 QA loop, below and much slower
+than v9 rescue (`0.711`, 4:13). Do not submit v19.
 
 The new Qwen reranker-only ablation is dead: `v18-qwen-reranker` collapsed
 locally to `0.547` with a 14:58 QA loop, then cloud returned `700 / 700`
@@ -194,7 +198,7 @@ v9-doc-ensemble-rescue 18/05 local —       —       —         0.711       V
 v9-doc-ensemble-rescue 18/05 18:53 0.683 0.866 0 / 700   0.711        VALID CLOUD RESCUE. Same accuracy as the original v9/v10 plateau, slightly lower speed than the best same-image v9 resubmit (0.886) but still the trusted blended NLP submission. Confirms the canonical-`~/til` rescue produced the real v9 RoBERTa path.
 v18-qwen-reranker    18/05 local  —       —       —         0.547       FAILED HARD. Swapped only the cross-encoder reranker to `tomaarsen/Qwen3-Reranker-0.6B-seq-cls`; local QA loop ballooned to 14:58 and accuracy collapsed from v9 rescue 0.711 → 0.547. Do not submit. Likely causes: Qwen reranker is not plug-compatible with the short pair-input BGE rerank path and/or its ordering is worse on this fictional sparse-entity corpus. Default reverted to BGE reranker.
 v18-qwen-reranker    18/05 20:28 0.000   0.417   700/700   0.547       CLOUD FAILED AS EXPECTED. Every request errored. This is not worth debugging for submission because the local gate already failed by -0.164 and runtime was ~3.5x slower than v9 rescue. Treat cloud 700/700 as the same vllm-openai/current-main packaging fragility plus a bad reranker, not as evidence that Qwen LLMs are bad.
-v19-hybrid-router    18/05 build  —       —       —         —           EXPERIMENT STARTED. Highest-EV remaining NLP test: keep v9 RoBERTa answerer for easy questions and route only heuristic-hard/L2-looking questions to the v14-proven Qwen2.5-7B-Instruct-AWQ answerer. Dockerfile intentionally returns to the NGC base that survived cloud for v14 and sets `NLP_ANSWERER=hybrid`, `NLP_LLM_REPO=Qwen/Qwen2.5-7B-Instruct-AWQ`, conservative vLLM memory/model-len knobs. First build hit the known NGC optional-extension trap (`torchao` imports `torch.int1`); fixed by uninstalling `torchao`/`flash-attn`. Second build hit Docker overlay pressure because vLLM was installed before the 4 GB Qwen shard; fixed by downloading models before installing heavy runtime deps. Third build exposed that the clean NGC base lacks `transformers`; fixed by installing a tiny pre-download HF stack, still delaying vLLM until after weights. Fourth build completed but never became healthy; docker logs showed the real cause was `ModuleNotFoundError: No module named 'fastapi'` because bare `pip` was not installing into the runtime `/usr/bin/python`; fixed by using `python -m pip`, `python -m uvicorn`, and a build-time import assertion. Gate: local must beat 0.711 and not blow up runtime before cloud submit.
+v19-hybrid-router    19/05 local  —       —       —         0.705       LOCAL FAILED GATE. Hybrid finally built and became healthy after Docker fixes (`torchao`, disk pressure, pre-download HF deps, runtime `python -m pip`). It loaded corpus and completed scoring, but QA loop was 15:00 and accuracy missed v9 rescue (0.705 vs 0.711). Do not submit. Conclusion: hard-question Qwen routing does not recover enough extra answers to pay its latency/complexity; v9 remains the blended NLP tag and v14 remains the raw-accuracy reference.
 
 **Architecture conclusion for NLP at this point**: vllm/vllm-openai base image is not cloud-shippable for our setup; only NGC base (v14) has cloud-verified LLM throughput, and v9 remains the extractive blended-score anchor. Any further NLP work should be either (a) one fast extractive-reader gate such as v16-DeBERTa, (b) AWQ-quantize the merged Qwen3 LoRA on different hardware (A100), or (c) retrain LoRA on Qwen2.5-7B and ship on NGC base. v9 keeps the blended slot, v14 keeps the accuracy slot unless a new run clears them.
 ```

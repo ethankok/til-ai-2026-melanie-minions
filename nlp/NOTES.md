@@ -1,11 +1,12 @@
 # NLP — notes & history
 
-Last updated: 18 May 2026 ~20:40 SGT — **ship/keep `v9-doc-ensemble-rescue` for NLP blended score.** Reproduces the real v9 path locally (`0.711`, QA loop 4:13); cloud-validated `0.683 / 0.866`, `0/700` errors. Slightly slower than best same-image v9 speed resubmit (`0.886`) but same accuracy and trusted current NLP tag.
+Last updated: 19 May 2026 ~03:50 SGT — **ship/keep `v9-doc-ensemble-rescue` for NLP blended score.** Reproduces the real v9 path locally (`0.711`, QA loop 4:13); cloud-validated `0.683 / 0.866`, `0/700` errors. Slightly slower than best same-image v9 speed resubmit (`0.886`) but same accuracy and trusted current NLP tag. Latest v19 hybrid router ran end-to-end but failed local gate (`0.705`, QA loop 15:00), so it should not be submitted.
 
 **Shipping truth**:
 - `v9-doc-ensemble` family — **best blended** (`0.683 / 0.866-0.886`, blended ~0.729-0.734 depending on speed variance).
 - `v14-llm-rag` — **best raw cloud accuracy** (`0.734 / 0.286`); blended 0.622, below v9.
 - `v15-lora-qwen3-8b` — LoRA adapter trained successfully (8h T4, eval_loss 0.559, mean_token_acc 87.6%), but **no working path to ship** from current Workbench T4: vLLM Punica/Triton LoRA kernel crashes on Turing; offline AWQ re-quant blocked (`autoawq` deprecated, `llm-compressor` OOMs at DecoderLayer / Qwen3-GQA `NoneType` at Linear).
+- `v19-hybrid-router` ran on the NGC base but failed local gate (`0.705`, 15:00), so routing only hard questions to Qwen2.5 did not beat v9.
 - All `v14c/v14d/v15/v16/v17/v18` cloud submissions on the `vllm/vllm-openai` base have failed (TIMEOUT or 700/700 errors). v14 on NGC base remains the only cloud-verified LLM path.
 
 **Two paths forward if NLP is reopened**: make Qwen3-8B-AWQ+LoRA cloud-safe (bigger hardware for AWQ re-quant); or retrain/merge LoRA on Qwen2.5-7B so it runs on the proven NGC base.
@@ -541,7 +542,7 @@ Result: local **0.547**, QA loop **14:58**. Fails both gates by wide margin. Clo
 
 Too large to tune around. Either the Qwen reranker sequence-classification wrapper is not plug-compatible with our simple `(question, passage)` cross-encoder call, or it's genuinely worse than BGE for Clairos-style sparse names/facts. Revert default Docker reranker to BGE; keep `v9-doc-ensemble-rescue`.
 
-## v19-hybrid-router — v9 easy + Qwen2.5 hard (18 May, in progress)
+## v19-hybrid-router — v9 easy + Qwen2.5 hard (18-19 May, failed gate)
 
 Highest-EV remaining NLP experiment — combines the two systems that each proved something real:
 
@@ -551,6 +552,11 @@ v14:        Qwen answerer, best raw cloud accuracy, too slow when used always
 ```
 
 v19 routes only hard/L2-looking questions to Qwen2.5-7B-AWQ; leaves easy/L1-looking on v9 RoBERTa-large extractive path.
+
+Final local result (19 May): **0.705**, QA loop **15:00**. This misses the
+v9 rescue local gate (`0.711`) while running about 3.5x slower than v9 rescue
+(`4:13`). **Do not submit.** The result is a valid negative: Qwen routing did
+not recover enough hard-question accuracy to overcome latency/complexity.
 
 ### Implementation
 
@@ -577,9 +583,11 @@ v19 routes only hard/L2-looking questions to Qwen2.5-7B-AWQ; leaves easy/L1-look
 
 Current router features are heuristic, not learned: arithmetic/composition keywords (`between`, `difference`, `total`, `percentage`, `elapsed`, `how many`), numeric tokens, long question length, weak/long/echoing v9 answer, low QA score, low candidate margin.
 
-### Gate
+### Gate result
 
-Submit only if local NLP RAG QA Accuracy > 0.711 and runtime is close enough that projected cloud blend can beat v9 rescue.
+Failed. Required local NLP RAG QA Accuracy > 0.711 with acceptable runtime;
+actual was 0.705 with 15:00 QA loop. Keep `v9-doc-ensemble-rescue` for blended
+score and `v14-llm-rag` only as the raw-accuracy reference.
 
 If v19 OOMs on startup: lower `NLP_LLM_GPU_MEM_FRACTION` to `0.55` or `NLP_LLM_MAX_MODEL_LEN` to `2048`. If routes too many questions: raise `NLP_HYBRID_QWEN_THRESHOLD`; if routes almost none: lower it.
 

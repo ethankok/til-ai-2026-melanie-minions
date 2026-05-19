@@ -1,7 +1,7 @@
 # NLP — training fine-tuned QA models
 
 Current status: **do not train more NLP blindly for the qualifier.** The
-shipping truth after the 18 May NLP push is:
+shipping truth after the 18-19 May NLP push is:
 
 - `v9-doc-ensemble-rescue` is the trusted blended submission: local `0.711`,
   cloud `0.683 / 0.866`, `0 / 700`.
@@ -9,13 +9,14 @@ shipping truth after the 18 May NLP push is:
 - `v15-lora-qwen3-8b` trained cleanly but is blocked at serving/packaging:
   direct vLLM LoRA crashes on T4/cloud, and merged-AWQ quantization is not
   working on the Workbench T4 with current tooling.
-- Current experiment is `v19-hybrid-router`: v9 RoBERTa for easy questions,
-  Qwen2.5-7B-AWQ only for heuristic-hard questions, on the v14 NGC base.
+- `v19-hybrid-router` ran successfully after Docker fixes but failed the local
+  gate: `0.705` with a 15:00 QA loop, below/slower than v9 rescue (`0.711`,
+  4:13). Do not submit.
 
 This README is historical context plus reproduction notes. If NLP is reopened,
-the credible routes are: validate the v19 router, quantize the merged Qwen3
-LoRA on bigger hardware, or retrain/merge on Qwen2.5-7B so it can run on the
-NGC base image that already survived cloud.
+the credible routes are: quantize the merged Qwen3 LoRA on bigger hardware, or
+retrain/merge on Qwen2.5-7B so it can run on the NGC base image that already
+survived cloud. The v19 router experiment is now closed.
 
 Historical training paths:
 
@@ -190,10 +191,13 @@ Interpretation: Qwen as an answerer is still promising (`Qwen3-8B-AWQ` local
 for this pipeline and too slow. The remaining credible Qwen work is packaging
 and quantization, not reranking.
 
-## v19 hybrid router gate (18 May)
+## v19 hybrid router gate (18-19 May)
 
 This tests the GPT Pro recommendation: keep v9 for easy questions and route
 only hard/L2-looking questions to the cloud-proven v14 Qwen2.5 answerer.
+
+Final local result: **0.705**, QA loop **15:00**. This misses the v9 rescue
+gate (`0.711`, 4:13), so **do not submit**.
 
 ```bash
 cd ~/til
@@ -211,7 +215,8 @@ Expected boot logs:
 [nlp_manager] hybrid routed N/M questions to Qwen (threshold=3.0)
 ```
 
-Gate: submit only if local beats `0.711` and runtime is not wildly above v9.
+Gate: failed. Submit only if local beats `0.711` and runtime is not wildly
+above v9.
 If startup OOMs, try one smaller build by editing Docker/env defaults:
 
 ```text
