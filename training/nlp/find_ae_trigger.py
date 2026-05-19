@@ -442,7 +442,7 @@ def main() -> int:
     parser.add_argument("--iters", type=int, default=200)
     parser.add_argument("--batch-size", type=int, default=32,
                         help="examples per gradient step")
-    parser.add_argument("--eval-size", type=int, default=64,
+    parser.add_argument("--eval-size", type=int, default=32,
                         help="held-out examples used to score each swap")
     parser.add_argument("--topk", type=int, default=40,
                         help="HotFlip candidates per position to try")
@@ -450,6 +450,9 @@ def main() -> int:
                         help="cap on suffix (real candidate) tokens during search")
     parser.add_argument("--trial-chunk", type=int, default=8,
                         help="candidates per position evaluated in one batched forward")
+    parser.add_argument("--fp16", action="store_true", default=True,
+                        help="cast AE model to half precision (~2x speed, half memory)")
+    parser.add_argument("--no-fp16", dest="fp16", action="store_false")
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -466,6 +469,10 @@ def main() -> int:
     model = AutoModelForSequenceClassification.from_pretrained(
         str(args.ae_model_path)
     ).to(device).eval()
+
+    if args.fp16 and device.type == "cuda":
+        model = model.half()
+        print("AE model cast to fp16", flush=True)
 
     # We need gradients w.r.t. embeddings, not parameters.
     for p in model.parameters():
