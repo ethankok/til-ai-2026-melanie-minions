@@ -155,12 +155,61 @@ fine-tuned folder from a known-good image or training output before building.
 Expected real-v9 local score is still about `0.711`; `0.664` means wrong
 artefact.
 
+If no known-good artifact exists on the machine, regenerate the v9 reader from
+the local snapshot or Workbench data before building:
+
+```bash
+python training/nlp/finetune_qa.py \
+  --base-model deepset/roberta-large-squad2 \
+  --data-dir data/novice/nlp \
+  --use-answer-chunk \
+  --epochs 3 \
+  --batch-size 8 \
+  --output nlp/models/roberta-finetuned-squad2
+```
+
+On Workbench, `--data-dir` can be omitted because the script defaults to
+`/home/jupyter/<track>/nlp`. On a local checkout, it will also auto-use
+`data/<track>/nlp` when present.
+
 Current decision after the v18 session: do not spend more time on reranker
 swaps or on post-hoc analysis of failed local runs. `nlp_results.json` is worth
 mining only when a model clears the local gate or is close enough to explain a
 small regression. `v18-qwen-reranker` was not close (`0.547`, 14:58 QA loop,
 then cloud `700 / 700` errors), so keep v9 rescue and only reopen Qwen work on
 the higher-upside answerer-serving problem.
+
+## v20 composition-rule gate
+
+This is the current low-risk NLP experiment: keep v9 retrieval and the
+fine-tuned RoBERTa reader unchanged, then enable a narrow answer formatter for
+repeated numeric/compositional misses.
+
+```bash
+python training/nlp/replay_composition_rules.py \
+  --analysis data/nlp-v11-failure-pack/nlp_failure_analysis.jsonl \
+  --docs data/novice/nlp/documents \
+  --changed-out data/nlp-v11-failure-pack/composition_changed.jsonl
+```
+
+Current replay result on the bundled v11 failure pack:
+
+```text
+before: retrieval_hit_diff 395, retrieval_miss 37
+after : retrieval_hit_diff 379, retrieval_miss 37, exact 11, substr 5
+```
+
+Workbench gate:
+
+```bash
+# after restoring nlp/models/roberta-finetuned-squad2/
+# edit nlp/Dockerfile: NLP_COMPOSITION_MODE=off -> conservative
+til build nlp v20-composition-lite
+til test nlp v20-composition-lite
+```
+
+Submit only if local clears the real v9 gate (`0.711`) without a speed or
+retrieval regression. If it is flat or below gate, leave v9 rescue shipped.
 
 ## v18 Qwen reranker-only gate (18 May)
 

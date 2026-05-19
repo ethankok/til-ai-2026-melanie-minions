@@ -30,6 +30,7 @@ ENV NLP_LLM_GPU_MEM_FRACTION=0.62
 ENV NLP_LLM_MAX_MODEL_LEN=3072
 ENV NLP_LLM_MAX_NEW_TOKENS=32
 ENV NLP_HYBRID_QWEN_THRESHOLD=3.0
+ENV NLP_COMPOSITION_MODE=off
 # v15-lora: directory inside the image where the trained LoRA adapter
 # lives. llm_answerer.py auto-enables LoRA in vLLM when this path contains
 # an adapter_config.json. Set to empty string to force base-model-only.
