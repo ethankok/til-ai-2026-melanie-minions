@@ -8,6 +8,10 @@ shipping truth after the 18-19 May NLP push is:
 - Current `main` builds the locked v9-style image by default:
   `NLP_ANSWERER=extractive`, `NLP_SKIP_LLM_DOWNLOAD=1`, and no default vLLM
   dependency.
+- Locked v9 needs the untracked local model artefact
+  `nlp/models/roberta-finetuned-squad2/config.json`. If that folder is missing,
+  the build used to fall back to stock `roberta-base-squad2` and score around
+  `0.664` locally. The Dockerfile now hard-fails instead.
 - `v14-llm-rag` remains best raw accuracy: official `0.734 / 0.286`.
 - `v15-lora-qwen3-8b` trained cleanly but is blocked at serving/packaging:
   direct vLLM LoRA crashes on T4/cloud, and merged-AWQ quantization is not
@@ -143,6 +147,13 @@ from canonical `~/til`, `til test nlp v9-doc-ensemble-rescue` returned local
 `0.711` with a 4:13 QA loop. This matches the real v9 baseline. Cloud score is
 `0.683 / 0.866` with `0 / 700` errors; this rescue tag is the trusted NLP
 submission candidate.
+
+Guardrail from 19 May: a `v9-locked` rebuild scored `0.664` because
+`nlp/models/roberta-finetuned-squad2/` was absent from the Docker context and
+the manager fell through to downloaded stock `roberta-base-squad2`. Restore the
+fine-tuned folder from a known-good image or training output before building.
+Expected real-v9 local score is still about `0.711`; `0.664` means wrong
+artefact.
 
 Current decision after the v18 session: do not spend more time on reranker
 swaps or on post-hoc analysis of failed local runs. `nlp_results.json` is worth
@@ -432,7 +443,11 @@ submit or retrain this path.
 
 `finetune_qa.py` takes the local `/home/jupyter/<track>/nlp/nlp.jsonl` ground-truth (883 question / answer / source_docs tuples for novice), pulls the corresponding documents from `/home/jupyter/<track>/nlp/documents/`, builds SQuAD-style training examples, and fine-tunes a SQuAD2-pretrained encoder on them.
 
-The fine-tuned weights are saved to `nlp/models/roberta-finetuned-squad2/`. The NLP Dockerfile picks them up automatically at build time; the manager prefers fine-tuned weights over the stock SQuAD2 weights it bundles via `download_models.py`.
+The fine-tuned weights are saved to `nlp/models/roberta-finetuned-squad2/`.
+This directory is intentionally not tracked by git, so keep it in the Workbench
+workspace or recover it from a known-good v9 image. The locked NLP Dockerfile
+now requires this folder for extractive builds; falling back to stock SQuAD2 is
+not considered a valid v9 build.
 
 ## Why fine-tune
 

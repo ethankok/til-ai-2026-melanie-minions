@@ -8,6 +8,12 @@ slightly slower than the best same-image v9 speed resubmit (`0.886`) but
 keeps the same v9 accuracy plateau and is the only current NLP tag worth
 trusting for the qualifier blend.
 
+Important packaging guard: a later `v9-locked` rebuild scored only `0.664`
+locally because the untracked `nlp/models/roberta-finetuned-squad2/` artefact
+was missing from the Docker context, so the image fell back to downloaded stock
+`roberta-base-squad2`. Current Dockerfile now hard-fails locked extractive
+builds unless that v9 RoBERTa fine-tuned artefact is present.
+
 The v19 hybrid router now also fails the local gate: after packaging fixes it
 ran end-to-end, but scored `0.705` with a 15:00 QA loop, below and much slower
 than v9 rescue (`0.711`, 4:13). Do not submit v19.
@@ -200,6 +206,7 @@ v17-modernbert-stock 18/05 cloud  —       —       —         STARTUP_TIMEOU
 v9-rescue attempt    18/05 local  —       —       —         INVALID     Attempted `git worktree add ~/til-v9-rescue 643f9c8`, but `til build` still used the current-main Dockerfile (`vllm/vllm-openai`, ModernBERT artefact loop) and produced 0.624. The TIL CLI appears to build from the canonical `~/til` task path/config rather than the detached worktree cwd. Do not interpret this as v9; it was the ModernBERT fine-tuned image retagged.
 v9-doc-ensemble-rescue 18/05 local —       —       —         0.711       VALID LOCAL RESCUE. Killed stale ModernBERT container on port 5004, restored v9-era NLP files into canonical `~/til`, rebuilt, and local test returned the expected v9 score (`equiv_rate=0.711`, QA loop 4:13). Cloud later validated the image at 0.683 / 0.866.
 v9-doc-ensemble-rescue 18/05 18:53 0.683 0.866 0 / 700   0.711        VALID CLOUD RESCUE. Same accuracy as the original v9/v10 plateau, slightly lower speed than the best same-image v9 resubmit (0.886) but still the trusted blended NLP submission. Confirms the canonical-`~/til` rescue produced the real v9 RoBERTa path.
+v9-locked             19/05 local  —       —       —         0.664       INVALID / FAKE V9. Build skipped Qwen but the untracked `nlp/models/roberta-finetuned-squad2/` artefact was absent from the Docker context (build context only ~1.47 KB), so manager fell back to downloaded stock `roberta-base-squad2`. Do not submit. Dockerfile now hard-fails locked extractive builds if the fine-tuned RoBERTa config is missing.
 v18-qwen-reranker    18/05 local  —       —       —         0.547       FAILED HARD. Swapped only the cross-encoder reranker to `tomaarsen/Qwen3-Reranker-0.6B-seq-cls`; local QA loop ballooned to 14:58 and accuracy collapsed from v9 rescue 0.711 → 0.547. Do not submit. Likely causes: Qwen reranker is not plug-compatible with the short pair-input BGE rerank path and/or its ordering is worse on this fictional sparse-entity corpus. Default reverted to BGE reranker.
 v18-qwen-reranker    18/05 20:28 0.000   0.417   700/700   0.547       CLOUD FAILED AS EXPECTED. Every request errored. This is not worth debugging for submission because the local gate already failed by -0.164 and runtime was ~3.5x slower than v9 rescue. Treat cloud 700/700 as the same vllm-openai/current-main packaging fragility plus a bad reranker, not as evidence that Qwen LLMs are bad.
 v19-hybrid-router    19/05 local  —       —       —         0.705       LOCAL FAILED GATE. Hybrid finally built and became healthy after Docker fixes (`torchao`, disk pressure, pre-download HF deps, runtime `python -m pip`). It loaded corpus and completed scoring, but QA loop was 15:00 and accuracy missed v9 rescue (0.705 vs 0.711). Do not submit. Conclusion: hard-question Qwen routing does not recover enough extra answers to pay its latency/complexity; v9 remains the blended NLP tag and v14 remains the raw-accuracy reference.

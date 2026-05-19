@@ -7,6 +7,10 @@ Last updated: 19 May 2026 ~03:50 SGT — **ship/keep `v9-doc-ensemble-rescue` fo
 - Current `main` is locked to the v9-style extractive image:
   `NLP_ANSWERER=extractive`, `NLP_SKIP_LLM_DOWNLOAD=1`, no default vLLM
   dependency. Future Qwen work should happen behind an explicit env/branch.
+- Locked v9 **requires** the untracked artefact
+  `nlp/models/roberta-finetuned-squad2/config.json`. Without it, the container
+  silently falls back to stock `roberta-base-squad2` and scores around `0.664`
+  locally, not the real v9 `0.711`. The Dockerfile now hard-fails this case.
 - `v14-llm-rag` — **best raw cloud accuracy** (`0.734 / 0.286`); blended 0.622, below v9.
 - `v15-lora-qwen3-8b` — LoRA adapter trained successfully (8h T4, eval_loss 0.559, mean_token_acc 87.6%), but **no working path to ship** from current Workbench T4: vLLM Punica/Triton LoRA kernel crashes on Turing; offline AWQ re-quant blocked (`autoawq` deprecated, `llm-compressor` OOMs at DecoderLayer / Qwen3-GQA `NoneType` at Linear).
 - `v19-hybrid-router` ran on the NGC base but failed local gate (`0.705`, 15:00), so routing only hard questions to Qwen2.5 did not beat v9.
@@ -525,6 +529,14 @@ QA loop: 221 requests in 4:13
 Matches known v9 baseline → proves rescue image is real RoBERTa/v9 path.
 
 Cloud 18/05 19:13 SGT: `v9-doc-ensemble-rescue` → **0.683 / 0.866 / 0 of 700 errors**. Slightly slower than best same-image v9 resubmit (0.886) but accuracy is exactly known v9 plateau and image is valid. **Trusted blended NLP submission unless a new local+cloud run clears it.**
+
+19 May guardrail: `v9-locked` returned only `0.664` locally after a tiny
+Docker build context (`~1.47 KB`). Diagnosis: it was **not** real v9; the
+fine-tuned RoBERTa artefact was missing, so `nlp_manager.py` used downloaded
+stock `roberta-base-squad2`. Locked extractive builds must now fail unless
+`nlp/models/roberta-finetuned-squad2/config.json` is present. If Workbench
+still returns around `0.664`, check the container logs for the QA model line
+and restore the artefact from a known-good v9 image before retesting.
 
 ## v18-qwen-reranker (18 May, BROKEN, do not submit)
 

@@ -86,30 +86,22 @@ RUN if { [ "$NLP_ANSWERER" = "llm" ] || [ "$NLP_ANSWERER" = "hybrid" ]; } && [ !
 
 # Bundle locally-produced model artefacts.
 #
-# Two paths are supported, in priority order:
-#
-#   1. nlp/models/llm-merged/ (PREFERRED on T4) — a quantised, already
-#      LoRA-merged Qwen3-8B (currently GPTQ W4A16 by default). Produced by
-#      training/nlp/merge_lora_and_quantize.py. Avoids vLLM 0.9.0's broken
-#      Punica LoRA Triton kernels on sm_75 (T4). If this dir exists, it
-#      overrides the downloaded base at /workspace/models/llm/.
-#
-#   2. nlp/models/lora/ (FALLBACK, Ampere+ only) — a raw LoRA adapter that
-#      vLLM applies at runtime via LoRARequest. Use this on GPUs where the
-#      Triton LoRA kernels actually compile (sm_80+).
-#
-# If BOTH dirs exist, the merged dir wins and the runtime LoRA dir is
-# ignored (so we don't double-apply). To force the runtime-LoRA path, move
-# nlp/models/llm-merged/ out of the build context.
+# Locked v9 build requires nlp/models/roberta-finetuned-squad2/. Without it,
+# the manager silently falls back to the downloaded stock roberta-base-squad2,
+# which looks "healthy" but scores around 0.66 instead of the v9 0.711 local
+# baseline. Fail loudly rather than producing a fake v9 image.
 COPY models /workspace/models-local
-RUN for d in modernbert-finetuned-squad2 deberta-finetuned-squad2 roberta-finetuned-squad2 flan-t5-finetuned; do \
-        if [ -d "/workspace/models-local/$d" ] && [ -f "/workspace/models-local/$d/config.json" ]; then \
-            rm -rf "/workspace/models/$d" && \
-            mkdir -p "/workspace/models/$d" && \
-            cp -r "/workspace/models-local/$d/"* "/workspace/models/$d/" && \
-            echo "[nlp build] bundled local QA artefact: $d"; \
-        fi; \
-    done && \
+RUN if [ -d /workspace/models-local/roberta-finetuned-squad2 ] && \
+       [ -f /workspace/models-local/roberta-finetuned-squad2/config.json ]; then \
+        rm -rf /workspace/models/roberta-finetuned-squad2 && \
+        mkdir -p /workspace/models/roberta-finetuned-squad2 && \
+        cp -r /workspace/models-local/roberta-finetuned-squad2/* /workspace/models/roberta-finetuned-squad2/ && \
+        echo "[nlp build] bundled locked v9 RoBERTa fine-tuned QA artefact"; \
+    elif [ "$NLP_ANSWERER" = "extractive" ]; then \
+        echo "[nlp build] ERROR: locked v9 build requires nlp/models/roberta-finetuned-squad2/config.json"; \
+        echo "[nlp build] restore it from a known-good v9 image or training output before building"; \
+        exit 1; \
+    fi && \
     if [ -f /workspace/models-local/answer_ranker.json ]; then \
         cp /workspace/models-local/answer_ranker.json /workspace/models/answer_ranker.json && \
         echo "[nlp build] bundled local answer ranker"; \
