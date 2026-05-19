@@ -134,7 +134,12 @@ Actual result: `hybrid-v3-speedcheck` scored `0.381 / 0.855` with `0 / 30`
 errors. This does not match the expected branches. Speed recovered, so broad
 cloud speed congestion is not the explanation; accuracy did not reproduce, so
 first verify whether the pulled registry tag is truly the old high-scoring
-image.
+image. Docker inspection confirmed the retag was clean: both tags point to
+image `sha256:5bc18298206d7958de6157019b42a7709891d5e9c3e21d9b51a1d690685aacf0`
+and registry digest
+`sha256:83c999a6f833ea464fe9742604831cc70c5eb58f4efbd109c3db5ce8d2445fea`.
+The remaining missing fact is whether that digest is the original 14 May
+`hybrid-v3` digest.
 
 Useful provenance commands on Workbench:
 
