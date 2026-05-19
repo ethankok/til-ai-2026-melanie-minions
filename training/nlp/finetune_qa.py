@@ -21,6 +21,8 @@ Usage on Workbench:
     cd ~/til
     python training/nlp/finetune_qa.py \\
         --base-model deepset/roberta-large-squad2 \\
+        --data-dir data/novice/nlp \\
+        --use-answer-chunk \\
         --epochs 3 \\
         --batch-size 8
 
@@ -196,10 +198,33 @@ def _find_span(answer: str, context: str) -> tuple[int, str] | None:
     return None
 
 
-def _build_squad_examples(track: str, use_answer_chunk: bool = False) -> list[dict]:
-    data_dir = Path(f"/home/jupyter/{track}/nlp")
-    jsonl_path = data_dir / "nlp.jsonl"
-    docs_dir = data_dir / "documents"
+def _resolve_data_dir(track: str, data_dir: str | None) -> Path:
+    """Resolve the NLP training data location.
+
+    Workbench keeps the official files under /home/jupyter/<track>/nlp. The
+    repo can also carry a local snapshot at data/<track>/nlp so restore runs
+    are not tied to one machine layout.
+    """
+
+    if data_dir:
+        return Path(data_dir).expanduser()
+    workbench_dir = Path(f"/home/jupyter/{track}/nlp")
+    if workbench_dir.exists():
+        return workbench_dir
+    local_dir = Path("data") / track / "nlp"
+    if local_dir.exists():
+        return local_dir
+    return workbench_dir
+
+
+def _build_squad_examples(
+    track: str,
+    use_answer_chunk: bool = False,
+    data_dir: str | None = None,
+) -> list[dict]:
+    data_dir_path = _resolve_data_dir(track, data_dir)
+    jsonl_path = data_dir_path / "nlp.jsonl"
+    docs_dir = data_dir_path / "documents"
 
     if not jsonl_path.exists():
         raise FileNotFoundError(f"missing ground truth: {jsonl_path}")
@@ -359,6 +384,10 @@ def main() -> int:
                    help="HF repo id of the SQuAD-pretrained checkpoint to fine-tune")
     p.add_argument("--track", default=os.getenv("TEAM_TRACK", "novice"),
                    choices=["novice", "advanced"])
+    p.add_argument("--data-dir", default=os.getenv("NLP_TRAIN_DATA_DIR"),
+                   help="directory containing nlp.jsonl and documents/; "
+                        "defaults to /home/jupyter/<track>/nlp, or "
+                        "data/<track>/nlp when present")
     p.add_argument("--output", default="nlp/models/roberta-finetuned-squad2",
                    help="where to save the final model (relative to repo root)")
     p.add_argument("--epochs", type=int, default=3)
@@ -401,7 +430,11 @@ def main() -> int:
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    examples = _build_squad_examples(args.track, use_answer_chunk=args.use_answer_chunk)
+    examples = _build_squad_examples(
+        args.track,
+        use_answer_chunk=args.use_answer_chunk,
+        data_dir=args.data_dir,
+    )
     if not examples:
         print("no training examples built — aborting", file=sys.stderr)
         return 1

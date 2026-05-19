@@ -17,19 +17,20 @@ WORKDIR /workspace
 # modes, OR write the mode into `ae/src/.ae_mode` (the server reads that
 # file at startup if AE_MODE is unset in the container env).
 ENV AE_MODE=hybrid
-# v2 (post-timeout) MCTS-light config — see ae/NOTES.md for the speed budget math.
+# MCTS-light is a known-regressed experiment, so keep it opt-in. See
+# ae/NOTES.md for the speed budget math and the v1/v2 cloud failures.
 # v1 used DEPTH=5 WIDTH=96 with no gate / no latency cap; cloud killed it after
 # 2-4× the per-tick budget. v2 caps total search at AE_MCTS_BUDGET_MS via a
 # time.monotonic() guard in AEManager._tactical_lookahead_action, AND only
 # invokes MCTS when bombs/enemies/enemy-bases are within mcts_depth+1 reach
 # (cheap _should_run_mcts pre-flight gate).
-ENV AE_MCTS=1
+ENV AE_MCTS=0
 ENV AE_MCTS_DEPTH=3
 ENV AE_MCTS_WIDTH=24
 ENV AE_MCTS_BUDGET_MS=80
-ENV AE_MCTS_LOG_TIMING=1
+ENV AE_MCTS_LOG_TIMING=0
 ENV AE_MCTS_MIN_SCORE=12
-ENV AE_HYBRID_TRUST_MCTS=1
+ENV AE_HYBRID_TRUST_MCTS=0
 ENV AE_HYBRID_MCTS_MIN_SCORE=12
 
 # Tier-1 / Tier-2 toggles. Bisect on 100-200 round local sims (17 May 2026)

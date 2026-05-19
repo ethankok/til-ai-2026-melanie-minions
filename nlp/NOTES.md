@@ -11,10 +11,14 @@ Last updated: 19 May 2026 ~03:50 SGT — **ship/keep `v9-doc-ensemble-rescue` fo
   `nlp/models/roberta-finetuned-squad2/config.json`. Without it, the container
   silently falls back to stock `roberta-base-squad2` and scores around `0.664`
   locally, not the real v9 `0.711`. The Dockerfile now hard-fails this case.
+  If the artifact is missing, restore it from the known-good v9 image/output or
+  regenerate it with:
+  `python training/nlp/finetune_qa.py --base-model deepset/roberta-large-squad2 --data-dir data/novice/nlp --use-answer-chunk --epochs 3 --batch-size 8 --output nlp/models/roberta-finetuned-squad2`.
 - `v14-llm-rag` — **best raw cloud accuracy** (`0.734 / 0.286`); blended 0.622, below v9.
 - `v15-lora-qwen3-8b` — LoRA adapter trained successfully (8h T4, eval_loss 0.559, mean_token_acc 87.6%), but **no working path to ship** from current Workbench T4: vLLM Punica/Triton LoRA kernel crashes on Turing; offline AWQ re-quant blocked (`autoawq` deprecated, `llm-compressor` OOMs at DecoderLayer / Qwen3-GQA `NoneType` at Linear).
 - `v19-hybrid-router` ran on the NGC base but failed local gate (`0.705`, 15:00), so routing only hard questions to Qwen2.5 did not beat v9.
 - All `v14c/v14d/v15/v16/v17/v18` cloud submissions on the `vllm/vllm-openai` base have failed (TIMEOUT or 700/700 errors). v14 on NGC base remains the only cloud-verified LLM path.
+- New local-only experiment staged: `NLP_COMPOSITION_MODE=conservative` adds a narrow numeric/compositional canonicalizer for repeated `retrieval_hit_diff` misses (recoup years, calibration cycles, per-year inspections, lease shortfall, cancer incidence, fleet fractions). Replay on the bundled v11 failure pack moved diff `395 -> 379`, exact `0 -> 11`, substr `0 -> 5` on changed failure rows. Keep it off for baseline v9; test as a separate tag only.
 
 **Two paths forward if NLP is reopened**: make Qwen3-8B-AWQ+LoRA cloud-safe (bigger hardware for AWQ re-quant); or retrain/merge LoRA on Qwen2.5-7B so it runs on the proven NGC base.
 
