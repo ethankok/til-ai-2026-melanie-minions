@@ -1,8 +1,8 @@
 # Dockerfile for building the NLP image.
 #
-# v19-hybrid-router: return to the NGC base that actually survived cloud for
-# v14's Qwen2.5-7B-AWQ run. The vllm/vllm-openai base was convenient for Qwen3
-# local tests, but repeatedly timed out or errored on cloud submissions.
+# Locked NLP build: keep the cloud-safe v9 extractive stack as default. The
+# Qwen/vLLM paths remain in source for historical ablations, but they are not
+# bundled unless the env vars below are explicitly changed.
 FROM nvcr.io/nvidia/pytorch:25.11-py3
 
 ARG NLP_RERANKER_REPO=BAAI/bge-reranker-base
@@ -16,16 +16,16 @@ ENV HF_HUB_DISABLE_TELEMETRY=1
 ENV TRANSFORMERS_OFFLINE=1
 ENV HF_HUB_OFFLINE=1
 ENV NLP_MODEL_DIR=/workspace/models
-# v19: route easy/L1-looking questions through v9 RoBERTa and only hard/L2-
-# looking questions through Qwen2.5-7B-AWQ. Set extractive to recover v9.
-ENV NLP_ANSWERER=hybrid
+# v9/v9-rescue default: BM25+BGE+BGE-reranker + fine-tuned RoBERTa extractive
+# answerer. This is the trusted blended submission path.
+ENV NLP_ANSWERER=extractive
 ENV NLP_QA_MAX_SEQ_LEN=256
 ENV NLP_LLM_DIR=/workspace/models/llm
 ENV NLP_RERANKER_REPO=${NLP_RERANKER_REPO}
 ENV NLP_RERANKER_LOCAL_NAME=${NLP_RERANKER_LOCAL_NAME}
 ENV NLP_DOWNLOAD_MODERNBERT=0
 ENV NLP_LLM_REPO=Qwen/Qwen2.5-7B-Instruct-AWQ
-ENV NLP_SKIP_LLM_DOWNLOAD=0
+ENV NLP_SKIP_LLM_DOWNLOAD=1
 ENV NLP_LLM_GPU_MEM_FRACTION=0.62
 ENV NLP_LLM_MAX_MODEL_LEN=3072
 ENV NLP_LLM_MAX_NEW_TOKENS=32
@@ -63,10 +63,8 @@ RUN python -m pip install --no-cache-dir \
 COPY download_models.py .
 RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python download_models.py
 
-# Install runtime dependencies after model download. vLLM and its dependency
-# stack are large; installing them before the 4 GB Qwen AWQ shard left too
-# little free Docker overlay space for Hugging Face to write the model file on
-# Workbench.
+# Install runtime dependencies after model download. The default v9 path does
+# not install vLLM; historical Qwen paths should re-add it deliberately.
 COPY requirements.txt .
 RUN python -m pip install --no-cache-dir -r requirements.txt && \
     python -m pip uninstall -y torchao flash-attn flash_attn || true

@@ -11,6 +11,5 @@ rank_bm25==0.2.2
 sentencepiece==0.2.0
 huggingface-hub>=0.26.0
 
-# v19-hybrid-router reuses v14's cloud-survived Qwen2.5-7B-AWQ answerer.
-# vLLM brings the AWQ runtime; no autoawq import is needed at serving time.
-vllm>=0.6.6,<0.9
+# Qwen/vLLM experiments are intentionally not part of the locked v9 build.
+# Re-add vLLM only for an explicit LLM ablation tag.

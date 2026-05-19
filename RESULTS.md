@@ -12,6 +12,10 @@ The v19 hybrid router now also fails the local gate: after packaging fixes it
 ran end-to-end, but scored `0.705` with a 15:00 QA loop, below and much slower
 than v9 rescue (`0.711`, 4:13). Do not submit v19.
 
+Current `main` is therefore locked back to the v9-style extractive image:
+`NLP_ANSWERER=extractive`, `NLP_SKIP_LLM_DOWNLOAD=1`, and no default vLLM
+runtime dependency. Use explicit branch/env changes for any future Qwen ablation.
+
 The new Qwen reranker-only ablation is dead: `v18-qwen-reranker` collapsed
 locally to `0.547` with a 14:58 QA loop, then cloud returned `700 / 700`
 errors. Do not debug or submit it. The local failure is already decisive;

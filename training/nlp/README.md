@@ -5,6 +5,9 @@ shipping truth after the 18-19 May NLP push is:
 
 - `v9-doc-ensemble-rescue` is the trusted blended submission: local `0.711`,
   cloud `0.683 / 0.866`, `0 / 700`.
+- Current `main` builds the locked v9-style image by default:
+  `NLP_ANSWERER=extractive`, `NLP_SKIP_LLM_DOWNLOAD=1`, and no default vLLM
+  dependency.
 - `v14-llm-rag` remains best raw accuracy: official `0.734 / 0.286`.
 - `v15-lora-qwen3-8b` trained cleanly but is blocked at serving/packaging:
   direct vLLM LoRA crashes on T4/cloud, and merged-AWQ quantization is not

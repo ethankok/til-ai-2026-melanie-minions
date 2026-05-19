@@ -4,6 +4,9 @@ Last updated: 19 May 2026 ~03:50 SGT — **ship/keep `v9-doc-ensemble-rescue` fo
 
 **Shipping truth**:
 - `v9-doc-ensemble` family — **best blended** (`0.683 / 0.866-0.886`, blended ~0.729-0.734 depending on speed variance).
+- Current `main` is locked to the v9-style extractive image:
+  `NLP_ANSWERER=extractive`, `NLP_SKIP_LLM_DOWNLOAD=1`, no default vLLM
+  dependency. Future Qwen work should happen behind an explicit env/branch.
 - `v14-llm-rag` — **best raw cloud accuracy** (`0.734 / 0.286`); blended 0.622, below v9.
 - `v15-lora-qwen3-8b` — LoRA adapter trained successfully (8h T4, eval_loss 0.559, mean_token_acc 87.6%), but **no working path to ship** from current Workbench T4: vLLM Punica/Triton LoRA kernel crashes on Turing; offline AWQ re-quant blocked (`autoawq` deprecated, `llm-compressor` OOMs at DecoderLayer / Qwen3-GQA `NoneType` at Linear).
 - `v19-hybrid-router` ran on the NGC base but failed local gate (`0.705`, 15:00), so routing only hard questions to Qwen2.5 did not beat v9.
