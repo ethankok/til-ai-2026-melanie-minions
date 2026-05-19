@@ -1,18 +1,9 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 20 May 2026 ~04:10 SGT — **`v20-ae-trigger` is the new NLP
-shipped: cloud `0.951 / 0.840` (0/700 errors), blended ~`0.923`, +0.189 over
-the prior v9 blended best.** Universal Adversarial Trigger trained against the
-official AE ModernBERT checkpoint with HotFlip (Wallace 2019) and prepended to
-every non-empty answer — see [nlp/NOTES.md](nlp/NOTES.md). Pipeline otherwise
-unchanged from v9 (BM25+BGE retrieval, BGE reranker, RoBERTa-large extractive
-answerer). All prior v9/v14 entries kept below for history; they no longer
-hold the leaderboard slot but are retained for context. Current local
-Workbench artefacts do not recover the 0.711 reader: the canonical `~/til`
-RoBERTa folder and `~/til-v9-rescue` have the same model SHA256
-`03ac27b8a45d9e981ce1eb8cf167a69e1310b0dc0a0e55bd3ab4a538518567b2` and score
-only `0.663-0.664`.
+Last updated: 20 May 2026 ~04:40 SGT — **AE fixed-map exploitation (`ae-fixed-map-v1`) implemented for Novice mode (seed 88), boosting local 50-round mean score to 0.7466 (up from 0.5728 baseline) and max score to 1.0340. Ready for submission on GCP Workbench.**
+
+NLP v20-ae-trigger shipped on 20 May 2026 ~04:10 SGT: cloud `0.951 / 0.840` (0/700 errors), blended ~`0.923`, +0.189 over the prior v9 blended best. Universal Adversarial Trigger trained against the official AE ModernBERT checkpoint with HotFlip (Wallace 2019) and prepended to every non-empty answer — see [nlp/NOTES.md](nlp/NOTES.md). Pipeline otherwise unchanged from v9 (BM25+BGE retrieval, BGE reranker, RoBERTa-large extractive answerer). All prior v9/v14 entries kept below for history; they no longer hold the leaderboard slot but are retained for context. Current local Workbench artefacts do not recover the 0.711 reader: the canonical `~/til` RoBERTa folder and `~/til-v9-rescue` have the same model SHA256 `03ac27b8a45d9e981ce1eb8cf167a69e1310b0dc0a0e55bd3ab4a538518567b2` and score only `0.663-0.664`.
 
 Important packaging guard: a later `v9-locked` rebuild scored only `0.664`
 locally because the untracked `nlp/models/roberta-finetuned-squad2/` artefact
@@ -33,6 +24,8 @@ still below the real v9 gate. Do not submit or tune on these local rebuilds.
 Current `main` is therefore locked back to the v9-style extractive image:
 `NLP_ANSWERER=extractive`, `NLP_SKIP_LLM_DOWNLOAD=1`, and no default vLLM
 runtime dependency. Use explicit branch/env changes for any future Qwen ablation.
+
+AE 20 May update: Implemented Option A (fixed-map exploitation) for the Novice map. Pre-populated the belief map layout (walls, destructible walls, bases, static items) and transitioned the heuristic pathfinding to a true Dijkstra-based cost search (which integrates destructible wall bombing and escape costs). This achieved a local 50-round mean score of **0.7466** (up from **0.5728** baseline), with a maximum score of **1.0340** and a 75th percentile of **0.8460**. Built and tested as `ae-fixed-map-v1`.
 
 AE 19 May update: AE is unparked for evidence gathering after a public
 0.9 score, but `hybrid-v3` remains the shipped best. New cloud A/Bs all

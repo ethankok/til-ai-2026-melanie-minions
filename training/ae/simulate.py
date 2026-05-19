@@ -106,6 +106,9 @@ def _make_our_agent(name: str):
     name = name.lower().strip()
     if name == "heuristic":
         return AEManager()
+    if name == "hybrid":
+        from hybrid_manager import HybridAEManager
+        return HybridAEManager()
     raise ValueError(f"unknown --our value {name!r}")
 
 

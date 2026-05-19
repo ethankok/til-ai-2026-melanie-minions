@@ -110,6 +110,8 @@ class HybridAEManager:
         # blast, the policy's tactical action is likely to walk us into
         # the blast. Trust the heuristic here.
         heuristic_action = self.heuristic.ae(observation)
+        if getattr(self.heuristic, "is_fixed_novice_map", False):
+            return heuristic_action
         if self.heuristic.escape_target is not None:
             return heuristic_action
         if self.trust_mcts:

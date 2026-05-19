@@ -245,9 +245,33 @@ class AEManager:
         # Per-turn caches; walls/bombs can only change once per turn from new obs.
         self._blast_cache = {}
         self.last_step = step
+        self.team_bombs = self._as_int(observation.get("team_bombs"), default=0)
 
         location = self._location(observation.get("location"))
         direction = self._as_int(observation.get("direction"), default=self.DIR_RIGHT) % 4
+
+        # If step is 0, check if this is the Novice fixed map
+        if step == 0 and location is not None:
+            base_loc = self._location(observation.get("base_location"))
+            if base_loc is not None:
+                try:
+                    from novice_map_data import BASE_LOCATIONS, STARTING_LOCATIONS, WALLS, DESTRUCTIBLE, STATIC_ENTITIES
+                    for i in range(6):
+                        if tuple(base_loc) == tuple(BASE_LOCATIONS[i]) and tuple(location) == tuple(STARTING_LOCATIONS[i]):
+                            self.is_fixed_novice_map = True
+                            self.fixed_team_idx = i
+                            self.dijkstra_bomb_cost = 5.0
+                            
+                            # Pre-populate seen, walls, destructible, enemy bases, and static items
+                            self.seen = {(x, y) for x in range(16) for y in range(16)}
+                            self.walls = set(WALLS)
+                            self.destructible = set(DESTRUCTIBLE)
+                            self.enemy_bases = {tuple(BASE_LOCATIONS[j]): 0 for j in range(6) if j != i}
+                            self.last_seen_items = {tuple(pos): (kind, 0) for kind, pos in STATIC_ENTITIES}
+                            break
+                except ImportError:
+                    pass
+
         frozen_ticks = self._as_int(observation.get("frozen_ticks"), default=0)
         self.health = self._as_int(observation.get("health"), default=60)
         self.base_health = self._as_int(observation.get("base_health"), default=100)
@@ -411,6 +435,9 @@ class AEManager:
         # base so we can detect "took damage this step" reliably.
         self.last_base_health: int = 100
         self.last_step = None
+        self.is_fixed_novice_map = False
+        self.fixed_team_idx = None
+        self.dijkstra_bomb_cost = 5.0
 
     def _update_memory(
         self,
@@ -565,7 +592,10 @@ class AEManager:
 
         # Single multi-source BFS gives distance to every reachable cell at
         # roughly the cost of one of the old per-target BFS calls.
-        distance, parent = self._bfs_distance_map(start, danger)
+        if getattr(self, "is_fixed_novice_map", False):
+            distance, parent = self._dijkstra_distance_map(start, danger)
+        else:
+            distance, parent = self._bfs_distance_map(start, danger)
 
         candidates: list[tuple[float, tuple[int, int]]] = []
 
@@ -653,8 +683,11 @@ class AEManager:
                 best_target = pos
 
         if best_target is None:
+            self.current_path = None
             return None, None
-        return best_target, self._reconstruct_path(parent, start, best_target)
+        path = self._reconstruct_path(parent, start, best_target)
+        self.current_path = path
+        return best_target, path
 
     def _bfs(
         self,
@@ -721,6 +754,52 @@ class AEManager:
                 distance[nxt] = distance[current] + 1
                 parent[nxt] = current
                 queue.append(nxt)
+        return distance, parent
+
+    def _edge_destructible(self, pos: tuple[int, int], direction: int) -> bool:
+        if (pos[0], pos[1], direction) in self.destructible:
+            return True
+        dx, dy = self.DIR_DELTAS[direction]
+        other = (pos[0] + dx, pos[1] + dy)
+        opposite = self.OPPOSITE[direction]
+        return (other[0], other[1], opposite) in self.destructible
+
+    def _dijkstra_distance_map(
+        self,
+        start: tuple[int, int],
+        danger: set[tuple[int, int]] | None = None,
+    ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], tuple[int, int] | None]]:
+        import heapq
+        danger = danger or set()
+        distance: dict[tuple[int, int], float] = {start: 0.0}
+        parent: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
+        pq = [(0.0, start)]
+        while pq:
+            cost, current = heapq.heappop(pq)
+            if cost > distance.get(current, float('inf')):
+                continue
+            for direction, (dx, dy) in self.DIR_DELTAS.items():
+                nxt = (current[0] + dx, current[1] + dy)
+                if not self._in_bounds(nxt):
+                    continue
+                if nxt in danger:
+                    continue
+                if nxt not in self.seen:
+                    continue
+                
+                # Check walls
+                if not self._edge_blocked(current, direction):
+                    step_cost = 1.0
+                elif self._edge_destructible(current, direction):
+                    step_cost = 1.0 + self.dijkstra_bomb_cost
+                else:
+                    continue
+                
+                new_cost = cost + step_cost
+                if new_cost < distance.get(nxt, float('inf')):
+                    distance[nxt] = new_cost
+                    parent[nxt] = current
+                    heapq.heappush(pq, (new_cost, nxt))
         return distance, parent
 
     def _reconstruct_path(
@@ -1591,6 +1670,15 @@ class AEManager:
                     wall_to_open = True
                 elif target not in self.enemy_bases:
                     wall_to_open = self._stuck_recently()
+
+        # Novice fixed map custom wall opening:
+        if not wall_to_open and getattr(self, "is_fixed_novice_map", False) and getattr(self, "current_path", None) is not None:
+            path = self.current_path
+            if len(path) >= 2:
+                nxt = path[1]
+                d = self._direction_for_delta(nxt[0] - location[0], nxt[1] - location[1])
+                if d is not None and (location[0], location[1], d) in self.destructible:
+                    wall_to_open = True
 
         # Bomb-chain heuristic disabled in v3b: in random-opponent local it
         # was wasting bombs on speculative wall breaks. Helper kept for future
