@@ -1,12 +1,15 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 19 May 2026 ~03:50 SGT — **NLP is locked back to the v9
-rescue for blended score.** `v9-doc-ensemble-rescue` was validated locally
-at `0.711` and on cloud at `0.683 / 0.866` with `0 / 700` errors. That is
-slightly slower than the best same-image v9 speed resubmit (`0.886`) but
-keeps the same v9 accuracy plateau and is the only current NLP tag worth
-trusting for the qualifier blend.
+Last updated: 19 May 2026 ~14:30 SGT — **NLP is parked; keep the
+leaderboard-held v9/v14 scores and retrain the RoBERTa reader later.**
+`v9-doc-ensemble-rescue` remains the trusted blended submission
+(`0.683 / 0.866`, local `0.711` when built from the known-good reader), while
+`v14-llm-rag` remains the raw accuracy high (`0.734 / 0.286`). Current local
+Workbench artefacts do not recover the 0.711 reader: the canonical `~/til`
+RoBERTa folder and `~/til-v9-rescue` have the same model SHA256
+`03ac27b8a45d9e981ce1eb8cf167a69e1310b0dc0a0e55bd3ab4a538518567b2` and score
+only `0.663-0.664`.
 
 Important packaging guard: a later `v9-locked` rebuild scored only `0.664`
 locally because the untracked `nlp/models/roberta-finetuned-squad2/` artefact
@@ -17,6 +20,12 @@ builds unless that v9 RoBERTa fine-tuned artefact is present.
 The v19 hybrid router now also fails the local gate: after packaging fixes it
 ran end-to-end, but scored `0.705` with a 15:00 QA loop, below and much slower
 than v9 rescue (`0.711`, 4:13). Do not submit v19.
+
+The v20 composition-lite test is also stopped for now. It scored `0.664`, and
+the `NLP_QA_MAX_SEQ_LEN=384` verification tag scored `0.663`; both inherited
+the bad/current reader artefact. Candidate checkpoint
+`training/nlp/runs/20260515-035108/checkpoint-888` reached `0.697`, better but
+still below the real v9 gate. Do not submit or tune on these local rebuilds.
 
 Current `main` is therefore locked back to the v9-style extractive image:
 `NLP_ANSWERER=extractive`, `NLP_SKIP_LLM_DOWNLOAD=1`, and no default vLLM
@@ -240,8 +249,18 @@ v9-locked             19/05 local  —       —       —         0.664       I
 v18-qwen-reranker    18/05 local  —       —       —         0.547       FAILED HARD. Swapped only the cross-encoder reranker to `tomaarsen/Qwen3-Reranker-0.6B-seq-cls`; local QA loop ballooned to 14:58 and accuracy collapsed from v9 rescue 0.711 → 0.547. Do not submit. Likely causes: Qwen reranker is not plug-compatible with the short pair-input BGE rerank path and/or its ordering is worse on this fictional sparse-entity corpus. Default reverted to BGE reranker.
 v18-qwen-reranker    18/05 20:28 0.000   0.417   700/700   0.547       CLOUD FAILED AS EXPECTED. Every request errored. This is not worth debugging for submission because the local gate already failed by -0.164 and runtime was ~3.5x slower than v9 rescue. Treat cloud 700/700 as the same vllm-openai/current-main packaging fragility plus a bad reranker, not as evidence that Qwen LLMs are bad.
 v19-hybrid-router    19/05 local  —       —       —         0.705       LOCAL FAILED GATE. Hybrid finally built and became healthy after Docker fixes (`torchao`, disk pressure, pre-download HF deps, runtime `python -m pip`). It loaded corpus and completed scoring, but QA loop was 15:00 and accuracy missed v9 rescue (0.705 vs 0.711). Do not submit. Conclusion: hard-question Qwen routing does not recover enough extra answers to pay its latency/complexity; v9 remains the blended NLP tag and v14 remains the raw-accuracy reference.
+v20-composition-lite  19/05 local  —       —       —         0.664       STOPPED / INVALID A-B. Composition rules were enabled, but the local reader artefact was not the known-good v9 reader. Logs loaded `ext-roberta-finetuned`; score stayed in the bad-reader band. Do not submit.
+v9-384-verify         19/05 local  —       —       —         0.663       Sequence-length check only. Restoring `NLP_QA_MAX_SEQ_LEN=384` did not recover v9, confirming the issue is artefact/provenance rather than max sequence length.
+v9-candidate-035108-888 19/05 local —     —       —         0.697       Best recovered checkpoint seen so far, but still below the real v9 local gate (`0.711`). Keep as retraining evidence only; do not submit or use as base for composition.
 
-**Architecture conclusion for NLP at this point**: vllm/vllm-openai base image is not cloud-shippable for our setup; only NGC base (v14) has cloud-verified LLM throughput, and v9 remains the extractive blended-score anchor. Any further NLP work should be either (a) one fast extractive-reader gate such as v16-DeBERTa, (b) AWQ-quantize the merged Qwen3 LoRA on different hardware (A100), or (c) retrain LoRA on Qwen2.5-7B and ship on NGC base. v9 keeps the blended slot, v14 keeps the accuracy slot unless a new run clears them.
+**Architecture conclusion for NLP at this point**: vllm/vllm-openai base image
+is not cloud-shippable for our setup; only NGC base (v14) has cloud-verified
+LLM throughput. Separately, the local RoBERTa reader artefact currently on
+Workbench is not the 0.711 v9 reader. Any further NLP work should begin with a
+clean RoBERTa-large v8b/v9 retrain and a plain extractive local gate near
+`0.711`; after that, test composition rules. Larger LLM work should either
+AWQ-quantize the merged Qwen3 LoRA on different hardware (A100/H100), or
+retrain LoRA on Qwen2.5-7B and ship on the proven NGC base.
 ```
 
 (1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.
