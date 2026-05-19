@@ -180,6 +180,14 @@ This row scored local hard held-out `mAP50-95=0.9234`, up from the previous
 `0.608 / 0.961`. Nearby `CV_IOU=0.50..0.70` rows tied on mAP; `0.55` is the
 selected conservative row. `CV_CROSS_CLASS_NMS_IOU=0.97` is effectively neutral
 locally and may trim near-identical hidden subclass duplicates.
+
+For the next accuracy-first candidate, `ensemble_lab.tgz` showed that the best
+cheap base is `CV_CONF=0.05`, `CV_IOU=0.70`, `CV_CROSS_CLASS_NMS_IOU=0`
+(`0.9237` local mAP). Adding a down-weighted TTA rescue pass improves local mAP
+to `0.9270` when enabled only on dense images (`CV_SECOND_MIN_DETECTIONS=7`),
+or `0.9283` when enabled on all images. The current `cv/Dockerfile` bakes the
+adaptive version.
+
 Then rebuild with a new tag.
 
 Cross-class NMS remains available as `CV_CROSS_CLASS_NMS_IOU`, but avoid lower

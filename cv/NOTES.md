@@ -6,6 +6,12 @@ the partial core sweep's serving row baked in: `CV_CONF=0.15`, `CV_IOU=0.55`,
 `CV_IMGSZ=896`, `CV_AUGMENT=0`, `CV_CROSS_CLASS_NMS_IOU=0.97`. Local hard
 held-out mAP was 0.9234.
 
+Next candidate after `ensemble_lab.tgz`: low-conf base (`CV_CONF=0.05`,
+`CV_IOU=0.70`, `CV_CROSS_CLASS_NMS_IOU=0`) plus an adaptive down-weighted TTA
+rescue pass on dense images (`CV_SECOND_MIN_DETECTIONS=7`). Offline
+ensemble-lab scoring: 0.9270 mAP for adaptive rescue, 0.9283 for full rescue,
+versus 0.9237 for the safe low-conf base and 0.9234 for `ry-v2`.
+
 Previous 16 May note: **CV RE-PARKED at `cv-yolo-v2-tier1-best`
 0.556/0.956 after Phase C.1 didn't transfer.** Augmented training (JPEG + native
 tile crops) lifted hard held-out +0.04 (0.948 vs tier1's 0.905) but the
@@ -23,14 +29,22 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 **`ry-v2` — official 0.608 / 0.961 (19 May 18:37 SGT, 0/500 errors).**
 
-Current submitted serving row baked into `cv/Dockerfile`:
+Current experimental serving row baked into `cv/Dockerfile` for the next test:
 
 ```text
-CV_CONF=0.15
-CV_IOU=0.55
+CV_CONF=0.05
+CV_IOU=0.70
 CV_IMGSZ=896
 CV_AUGMENT=0
-CV_CROSS_CLASS_NMS_IOU=0.97
+CV_CROSS_CLASS_NMS_IOU=0
+CV_SECOND_PASS=1
+CV_SECOND_CONF=0.15
+CV_SECOND_IOU=0.55
+CV_SECOND_IMGSZ=896
+CV_SECOND_AUGMENT=1
+CV_SECOND_SCORE_SCALE=0.20
+CV_SECOND_MERGE_IOU=0.95
+CV_SECOND_MIN_DETECTIONS=7
 ```
 
 The previous high was `ruiyang-v1` at 0.588 / 0.955; the older parked tag was

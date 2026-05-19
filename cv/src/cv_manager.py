@@ -84,6 +84,28 @@ def _env_optional_int(name: str) -> int | None:
         return None
 
 
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"[CVManager] ignoring invalid {name}={raw!r}; expected int", flush=True)
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"[CVManager] ignoring invalid {name}={raw!r}; expected float", flush=True)
+        return default
+
+
 class CVManager:
     """YOLO object-detection baseline with schema-safe fallbacks."""
 
@@ -129,10 +151,23 @@ class CVManager:
         self.tile_full_pass = _env_bool("CV_TILE_FULL_PASS", default=True)
         self.tile_augment = _env_bool("CV_TILE_AUGMENT", default=False)
 
+        # Accuracy-first rescue pass. The second pass is deliberately
+        # down-weighted so it can add high-IoU alternates without polluting the
+        # top of the precision-recall curve.
+        self.second_pass = _env_bool("CV_SECOND_PASS", default=False)
+        self.second_conf = _env_float("CV_SECOND_CONF", self.conf)
+        self.second_iou = _env_float("CV_SECOND_IOU", self.iou)
+        self.second_imgsz = _env_int("CV_SECOND_IMGSZ", self.imgsz)
+        self.second_augment = _env_bool("CV_SECOND_AUGMENT", default=True)
+        self.second_score_scale = _env_float("CV_SECOND_SCORE_SCALE", 0.20)
+        self.second_merge_iou = _env_float("CV_SECOND_MERGE_IOU", 0.95)
+        self.second_min_detections = max(0, _env_int("CV_SECOND_MIN_DETECTIONS", 0))
+
         self.category_map = self._load_category_map()
         self.model = None
         self.loaded_model_family = "none"
         self._inference_count = 0
+        self._last_second_pass_used = False
 
         if YOLO is None and RTDETR is None:
             print("[CVManager] ultralytics unavailable; returning empty detections", flush=True)
@@ -146,7 +181,13 @@ class CVManager:
                 f"max_det={self.max_det} augment={self.augment} half={self.half} "
                 f"cross_class_nms_iou={self.cross_class_nms_iou} "
                 f"tile_mode={self.tile_mode} tile_imgsz={self.tile_imgsz} "
-                f"tile_overlap={self.tile_overlap} tile_full_pass={self.tile_full_pass}",
+                f"tile_overlap={self.tile_overlap} tile_full_pass={self.tile_full_pass} "
+                f"second_pass={self.second_pass} second_conf={self.second_conf} "
+                f"second_iou={self.second_iou} second_imgsz={self.second_imgsz} "
+                f"second_augment={self.second_augment} "
+                f"second_score_scale={self.second_score_scale} "
+                f"second_merge_iou={self.second_merge_iou} "
+                f"second_min_detections={self.second_min_detections}",
                 flush=True,
             )
         except Exception as exc:
@@ -241,6 +282,8 @@ class CVManager:
         img: Image.Image,
         imgsz: int,
         augment: bool,
+        conf_threshold: float | None = None,
+        iou_threshold: float | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Run a single Ultralytics forward pass and return (xyxy, cls, conf).
 
@@ -248,8 +291,8 @@ class CVManager:
         """
         kwargs: dict[str, Any] = {
             "source": img,
-            "conf": self.conf,
-            "iou": self.iou,
+            "conf": self.conf if conf_threshold is None else conf_threshold,
+            "iou": self.iou if iou_threshold is None else iou_threshold,
             "imgsz": imgsz,
             "max_det": self.max_det,
             "augment": augment,
@@ -317,6 +360,7 @@ class CVManager:
         all_xyxy: list[list[float]] = []
         all_cls: list[int] = []
         all_conf: list[float] = []
+        self._last_second_pass_used = False
 
         # Tile passes: collect detections inside each tile and offset back to
         # the full image. Drop boxes that hug an internal tile edge — they are
@@ -371,6 +415,27 @@ class CVManager:
                 all_xyxy.append([bx1, by1, bx2, by2])
                 all_cls.append(int(cls_value))
                 all_conf.append(float(conf_value))
+
+        if self.second_pass and len(all_xyxy) >= self.second_min_detections:
+            self._last_second_pass_used = True
+            try:
+                xyxy, cls, conf = self._yolo_predict(
+                    img,
+                    imgsz=self.second_imgsz,
+                    augment=self.second_augment,
+                    conf_threshold=self.second_conf,
+                    iou_threshold=self.second_iou,
+                )
+            except Exception as exc:
+                print(f"[CVManager] second-pass inference failed: {exc}", flush=True)
+                xyxy = np.zeros((0, 4), dtype=np.float32)
+                cls = np.zeros((0,), dtype=np.int64)
+                conf = np.zeros((0,), dtype=np.float32)
+            for box, cls_value, conf_value in zip(xyxy, cls, conf):
+                bx1, by1, bx2, by2 = (float(v) for v in box)
+                all_xyxy.append([bx1, by1, bx2, by2])
+                all_cls.append(int(cls_value))
+                all_conf.append(float(conf_value) * self.second_score_scale)
 
         return all_xyxy, all_cls, all_conf
 
@@ -478,12 +543,17 @@ class CVManager:
         cls = np.asarray(cls_list, dtype=np.int64)
         conf = np.asarray(conf_list, dtype=np.float32)
 
-        # NMS only needed when tiling produced overlapping candidates from
-        # multiple sources. Single-pass (off-mode) detections already came
-        # from Ultralytics' built-in NMS, so skipping here keeps that path a
-        # bit-for-bit no-op.
+        # NMS only needed when tiling or the rescue pass produced overlapping
+        # candidates from multiple sources. Single-pass (off-mode) detections
+        # already came from Ultralytics' built-in NMS, so skipping here keeps
+        # that path a bit-for-bit no-op.
         if self.tile_grid is not None:
             survivors = self._class_aware_nms(xyxy, cls, conf, self.tile_merge_iou)
+            xyxy = xyxy[survivors]
+            cls = cls[survivors]
+            conf = conf[survivors]
+        elif self.second_pass:
+            survivors = self._class_aware_nms(xyxy, cls, conf, self.second_merge_iou)
             xyxy = xyxy[survivors]
             cls = cls[survivors]
             conf = conf[survivors]
@@ -504,6 +574,7 @@ class CVManager:
         if self._inference_count == 0:
             print(
                 f"[CVManager] first inference: tile_mode={self.tile_mode} "
+                f"second_pass_used={self._last_second_pass_used} "
                 f"raw={len(xyxy_list)} kept={len(xyxy)}",
                 flush=True,
             )
