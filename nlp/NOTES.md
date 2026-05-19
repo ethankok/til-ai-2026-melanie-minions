@@ -928,6 +928,11 @@ Implementation:
   Docker overlay. Dockerfile now downloads model weights before installing the
   heavy runtime requirements, then uninstalls the optional broken extensions
   again after vLLM install.
+- Third v19 build then exposed that the clean NGC base does not include
+  `transformers` before `requirements.txt` is copied. Dockerfile now installs
+  only the small Hugging Face download stack (`transformers`, `tokenizers`,
+  `safetensors`, `sentencepiece`, `huggingface-hub`) before downloading
+  weights, while still delaying vLLM until after the Qwen shard lands.
 - `nlp_manager.py` now loads both answerers in hybrid mode. It always performs
   v9 retrieval/rerank/doc selection and v9 candidate extraction first, then
   routes to Qwen only if a hand-tuned hard-score clears

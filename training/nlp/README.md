@@ -232,6 +232,11 @@ on device`, pull the latest main again. The Dockerfile now downloads model
 weights before installing the heavy vLLM runtime dependencies so the 4 GB AWQ
 shard has enough Docker overlay space to land.
 
+Third build failure note: if `download_models.py` says `No module named
+'transformers'`, pull the latest main again. The Dockerfile now installs the
+small Hugging Face download stack before model download while still delaying
+vLLM until after weights are baked.
+
 ## v15 QLoRA / AWQ lessons (18 May)
 
 The Qwen3-8B LoRA training command that completed was:

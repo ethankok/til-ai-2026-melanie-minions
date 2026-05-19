@@ -44,6 +44,16 @@ RUN pip install -U pip
 # before model download/import.
 RUN pip uninstall -y torchao flash-attn flash_attn || true
 
+# Install only the small model-download stack before pulling weights. The full
+# requirements include vLLM and are intentionally delayed until after the 4 GB
+# Qwen AWQ shard lands so Docker overlay space does not run out mid-download.
+RUN pip install --no-cache-dir \
+    transformers==4.46.3 \
+    tokenizers==0.20.3 \
+    safetensors==0.4.5 \
+    sentencepiece==0.2.0 \
+    'huggingface-hub>=0.26.0'
+
 # Bake model weights into the image so inference runs fully offline.
 # ENV HF_HUB_OFFLINE=1 is set above for runtime; we override it for this
 # download-only RUN. Pulls BGE retriever + configured reranker + RoBERTa-base
