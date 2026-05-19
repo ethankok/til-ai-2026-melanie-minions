@@ -1,12 +1,17 @@
-# AE Tier-1 + Tier-2 runbook
+# AE training pipeline + Tier-1/Tier-2 runbook
 
-This is the end-to-end recipe for the AE workstream that targets the
-0.8 score. Read top-to-bottom on first run; section headers are jump
-points after that.
+This directory holds scripts for training a learned AE policy and for the
+Tier-1/Tier-2 heuristic-augmentation workstream targeting 0.8 score. The
+current shipped agent ([../../ae/src/ae_manager.py](../../ae/src/ae_manager.py))
+is a hand-coded BFS planner; the learned-policy path imitates it via behavior
+cloning then PPO-fine-tunes against mixed opponents.
+
+Official AE spec: <https://github.com/til-ai/til-26/wiki/Challenge-specifications#ae>
 
 Quick reference of artifacts produced at each step:
 
 ```
+training/ae/checkpoints/bc.pt            BC-imitated planner            base for PPO
 training/ae/data/sim-random.npz          1000 rounds vs 5x random       Tier-1 #1, Tier-2 #8/10
 training/ae/data/sim-library.npz         1000 rounds vs scripted mix    Tier-1 #1, Tier-2 #8/10
 training/ae/data/sim-mixed.npz           1000 rounds vs 5x mixed        Tier-1 #1, Tier-2 #8/10
@@ -15,6 +20,98 @@ ae/models/opponent_model.json            walk-distance scalar           Tier-2 #
 ae/models/oracle_table.npz               oracle BC table                Tier-2 #10
 training/ae/checkpoints/ppo-scripted.pt  PPO trained vs scripted pool   Tier-2 #9
 ```
+
+---
+
+## Pipeline overview
+
+### File glossary
+
+- `encoder.py` — observation dict → float32 tensors. Single source of truth for the obs/feature shape; reused by training and deployment.
+- `model.py` — `PolicyNetwork`: small CNN over each viewcone + MLP over scalars. ~150k params, designed for CPU inference under ~5 ms/call.
+- `collect_bc.py` — rolls out the planner in `til_environment.bomberman_env`, logs every `(obs, action)` pair to a compressed `.npz`.
+- `train_bc.py` — supervised cross-entropy training of `PolicyNetwork` on the BC dataset. Masks illegal actions in both loss and argmax.
+- `eval_policy.py` — runs a checkpoint against the env for N games, reports the same `score = total_reward / games / 1000` as `test/test_ae.py`.
+- `train_ppo.py` — pure-PyTorch PPO fine-tune. Warm-starts from `bc.pt`, trains agent 0 against a mixed opponent pool, saves a deployment-compatible actor checkpoint.
+- `simulate.py`, `opponents.py` — Tier 1+2 simulation harness with the 5-archetype scripted opponent library (random / greedy / bomber / defender / hunter).
+- `build_playbook.py`, `fit_opponent_model.py`, `oracle_bc.py` — Tier 1+2 artifact builders.
+
+`data/` and `checkpoints/` are gitignored. Move/copy weights into a tracked location only at deploy time.
+
+### Status
+
+| Stage                     | Status      |
+|---------------------------|-------------|
+| Observation encoder       | implemented |
+| Policy network            | implemented |
+| Behavior-cloning collector| implemented |
+| Behavior-cloning trainer  | implemented |
+| Local policy evaluator    | implemented |
+| PPO fine-tune             | implemented; `ppo-scripted-v1` shipped, REGRESSED cloud |
+| Tier 1+2 artifact builders| implemented |
+| Deployment into `ae/src/` | implemented; shipped tag = `hybrid-v3` |
+
+### BC training (steps A–C below) is a prerequisite for PPO (step 8) but not for Tier-1/Tier-2 (steps 1-7)
+
+#### A. Collect BC dataset
+
+```bash
+# From the repo root (~/til on Workbench)
+python training/ae/collect_bc.py --games 200 --out training/ae/data/bc.npz
+```
+
+200 games × ~200 of our agent's turns = ~40k samples. With novice mode (default) the map is fixed-seed; pass `--no-novice` to sample varied maps. Random opponents play the other 5 agents. Expected: ~5-10 min on Workbench. Script prints action-class distribution at the end so you can spot collapse (e.g. 90% `FORWARD` would mean the planner barely uses the rest).
+
+#### B. Behavior clone
+
+```bash
+python training/ae/train_bc.py \
+    --data training/ae/data/bc.npz \
+    --out  training/ae/checkpoints/bc.pt \
+    --epochs 20
+```
+
+Good signal: `val_acc` rises from ~0.4 (random over 6 classes minus illegal-action filter) to **0.85-0.95**. If it plateaus below 0.7, the obs encoder is probably dropping information the planner uses — re-check `encoder.py`. Expected: ~3-5 min on Workbench GPU.
+
+#### C. Sanity-check the cloned policy
+
+```bash
+python training/ae/eval_policy.py \
+    --checkpoint training/ae/checkpoints/bc.pt \
+    --games 6
+```
+
+If BC worked, score should land near the planner's local score (~0.65-0.70). If it's far below, the network is failing to imitate — usually means more data or larger net.
+
+### Deployment mechanics (used by step 7 and step 8 below)
+
+The inference path in [../../ae/src/ae_server.py](../../ae/src/ae_server.py) supports three modes selected by `AE_MODE` (env var) or `ae/src/.ae_mode` (file fallback):
+
+- `hybrid` (default, **shipped at `hybrid-v3` 0.555/0.849**) — policy chooses, heuristic vetoes illegal / unsafe-bomb / step-into-blast / frozen-stay actions. See [../../ae/src/hybrid_manager.py](../../ae/src/hybrid_manager.py).
+- `policy` — pure `PolicyAEManager`.
+- `heuristic` — pure rule-based `AEManager` (no torch needed in the image at all).
+
+Deploy a new policy checkpoint by copying it into the model slot:
+
+```bash
+mkdir -p ae/models
+cp training/ae/checkpoints/<your>.pt ae/models/bc.pt
+echo hybrid > ae/src/.ae_mode        # or 'policy' / 'heuristic'
+til build ae <tag>                   # bakes AE_MODE into the image
+til test ae <tag>
+til submit ae <tag>
+```
+
+Keep `ae/models/bc.pt` as the expected filename unless you also set `AE_POLICY_CHECKPOINT`, because `policy_manager.py` searches for that path by default.
+
+**Important**: `AE_MODE=foo til build …` does NOT work — `docker build` doesn't inherit the shell env, so the cloud container would default to hybrid regardless. Either edit the `ENV AE_MODE=…` line in `ae/Dockerfile` or write the mode into `ae/src/.ae_mode` (gitignored) before each build.
+
+### Gotchas
+
+- The encoder normalizes scalars by max plausible values (60 hp, 100 base hp, 10 resources, 10 bombs, 200 steps). If the qualifier uses different caps these need to be re-tuned, but the values match the published env config.
+- `action_mask` is fed into the loss as `log(mask)` so the network never learns to output an illegal action; if you remove that, expect random illegal-action errors at submission time.
+- Don't trust random-opponent local score alone. `bc-v1` looked fine locally and still regressed officially. Treat PPO as ready only if it beats `planner-v3b` under mixed-opponent eval and keeps `0` invalid actions.
+- Don't commit `.npz` or `.pt` files — they're large and the dataset is reproducible by re-running `collect_bc.py`.
 
 ---
 
@@ -47,13 +144,6 @@ print('walk_scale:', m.opponent_walk_scale)
 
 If any toggle prints `False` you forgot the env var; ship-time defaults
 should be all-True.
-
-Run the existing AE planner unit tests:
-
-```bash
-.venv/bin/python training/ae/_run_tests.py
-# expect: 9/9 passed
-```
 
 ---
 
@@ -271,6 +361,12 @@ Workbench-only — local Mac CPU is too slow for 200 PPO updates. Trains
 PPO with our agent in slot 0 and the 5-opponent scripted library
 (random / greedy / bomber / defender / hunter, one per slot) in slots
 1-5. BC-warm-start from `bc.pt` is the recommended base.
+
+The scripted opponents are kept "pure" (their internal AEManager has
+playbook + opponent-model + tier-1 toggles all disabled in
+[opponents.py `_strip_aimanager_smarts`](opponents.py)) so PPO learns to
+beat raw heuristic policies, not policies amplified by our own learned
+artifacts.
 
 **Pre-flight checks (run on Workbench, before kicking off training).**
 
