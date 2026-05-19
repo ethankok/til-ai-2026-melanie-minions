@@ -122,13 +122,33 @@ docker tag asia-southeast1-docker.pkg.dev/til-ai-2026/repo-til-26-melanie-minion
 til submit ae hybrid-v3-speedcheck
 ```
 
-Interpretation:
+Expected interpretation before the result:
 
 | Speedcheck result | Meaning | Next action |
 |---|---|---|
 | ~`0.555 / 0.849` | Cloud is fine; current code/runtime additions slowed AE. | Build `hybrid-v3-lean` from the 14 May hot path. |
 | ~`0.555 / 0.60` | This week's cloud/evaluator state is slower. | Keep `hybrid-v3`; speed work is low-ROI. |
 | In between | Mixed cause. | Lean build is still worth one fast A/B. |
+
+Actual result: `hybrid-v3-speedcheck` scored `0.381 / 0.855` with `0 / 30`
+errors. This does not match the expected branches. Speed recovered, so broad
+cloud speed congestion is not the explanation; accuracy did not reproduce, so
+first verify whether the pulled registry tag is truly the old high-scoring
+image.
+
+Useful provenance commands on Workbench:
+
+```bash
+docker image inspect melanie-minions-ae:hybrid-v3-speedcheck \
+  --format '{{.Id}} {{json .RepoDigests}} {{json .RepoTags}}'
+
+docker image inspect asia-southeast1-docker.pkg.dev/til-ai-2026/repo-til-26-melanie-minions/melanie-minions-ae:hybrid-v3 \
+  --format '{{.Id}} {{json .RepoDigests}} {{json .RepoTags}}'
+```
+
+If old build logs or Discord messages contain an immutable digest for the
+original 14 May `hybrid-v3`, compare against that. If not, do not use mutable
+tags as proof of same-bytes behavior.
 
 Important training correction: `train_ppo.py` already defaults to Novice
 fixed-map mode (`--novice` is true unless `--vary-maps` or `--no-novice` is
