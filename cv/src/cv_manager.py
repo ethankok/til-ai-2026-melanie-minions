@@ -105,6 +105,11 @@ class CVManager:
         self.device = os.environ.get("CV_DEVICE")
         self.rtdetr_eval_idx = _env_optional_int("CV_RTDETR_EVAL_IDX")
         self.rtdetr_num_queries = _env_optional_int("CV_RTDETR_NUM_QUERIES")
+        self.cross_class_nms_iou = float(os.environ.get("CV_CROSS_CLASS_NMS_IOU", "0"))
+        if self.cross_class_nms_iou < 0.0:
+            self.cross_class_nms_iou = 0.0
+        if self.cross_class_nms_iou > 1.0:
+            self.cross_class_nms_iou = 1.0
 
         # Tiled-inference settings (all opt-in; defaults reproduce single-pass).
         tile_raw = os.environ.get("CV_TILE_MODE", "off").strip().lower()
@@ -139,6 +144,7 @@ class CVManager:
                 f"[CVManager] loaded {self.model_path} family={self.loaded_model_family} "
                 f"conf={self.conf} iou={self.iou} imgsz={self.imgsz} "
                 f"max_det={self.max_det} augment={self.augment} half={self.half} "
+                f"cross_class_nms_iou={self.cross_class_nms_iou} "
                 f"tile_mode={self.tile_mode} tile_imgsz={self.tile_imgsz} "
                 f"tile_overlap={self.tile_overlap} tile_full_pass={self.tile_full_pass}",
                 flush=True,
@@ -369,13 +375,14 @@ class CVManager:
         return all_xyxy, all_cls, all_conf
 
     @staticmethod
-    def _class_aware_nms(
+    def _nms(
         xyxy: np.ndarray,
         cls: np.ndarray,
         conf: np.ndarray,
         iou_threshold: float,
+        class_aware: bool,
     ) -> np.ndarray:
-        """Greedy class-aware NMS. Returns sorted survivor indices."""
+        """Greedy NMS. Returns survivor indices in descending confidence order."""
         if xyxy.size == 0:
             return np.zeros((0,), dtype=np.int64)
         order = conf.argsort()[::-1]
@@ -391,7 +398,7 @@ class CVManager:
                 if suppressed[j]:
                     continue
                 jdx = order[j]
-                if cls[jdx] != cls[idx]:
+                if class_aware and cls[jdx] != cls[idx]:
                     continue
                 bx1, by1, bx2, by2 = xyxy[jdx]
                 ix1 = max(ax1, bx1)
@@ -408,6 +415,26 @@ class CVManager:
                 if inter / union >= iou_threshold:
                     suppressed[j] = True
         return np.asarray(keep, dtype=np.int64)
+
+    @staticmethod
+    def _class_aware_nms(
+        xyxy: np.ndarray,
+        cls: np.ndarray,
+        conf: np.ndarray,
+        iou_threshold: float,
+    ) -> np.ndarray:
+        """Greedy class-aware NMS. Returns sorted survivor indices."""
+        return CVManager._nms(xyxy, cls, conf, iou_threshold, class_aware=True)
+
+    @staticmethod
+    def _class_agnostic_nms(
+        xyxy: np.ndarray,
+        cls: np.ndarray,
+        conf: np.ndarray,
+        iou_threshold: float,
+    ) -> np.ndarray:
+        """Greedy class-agnostic NMS for near-identical subclass duplicates."""
+        return CVManager._nms(xyxy, cls, conf, iou_threshold, class_aware=False)
 
     # ------------------------------------------------------------------
     # Public entrypoint
@@ -457,6 +484,18 @@ class CVManager:
         # bit-for-bit no-op.
         if self.tile_grid is not None:
             survivors = self._class_aware_nms(xyxy, cls, conf, self.tile_merge_iou)
+            xyxy = xyxy[survivors]
+            cls = cls[survivors]
+            conf = conf[survivors]
+
+        # Some tuned checkpoints emit near-identical boxes with different fine
+        # subclasses (e.g. fighter jet/fighter plane or cargo ship/warship).
+        # A very high class-agnostic threshold removes only duplicates that are
+        # effectively the same object while leaving normal overlaps intact.
+        if self.cross_class_nms_iou > 0.0:
+            survivors = self._class_agnostic_nms(
+                xyxy, cls, conf, self.cross_class_nms_iou
+            )
             xyxy = xyxy[survivors]
             cls = cls[survivors]
             conf = conf[survivors]

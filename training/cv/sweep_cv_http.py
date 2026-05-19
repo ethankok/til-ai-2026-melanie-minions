@@ -75,6 +75,7 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "imgsz",
         "max_det",
         "augment",
+        "cross_class_nms_iou",
         "model_family",
         "rtdetr_eval_idx",
         "rtdetr_num_queries",
@@ -110,6 +111,11 @@ def main() -> None:
     parser.add_argument("--imgsz", default="768,896,1024")
     parser.add_argument("--max-det", default="100")
     parser.add_argument("--augment", default="0,1", help="Comma-separated 0/1 to toggle Ultralytics TTA")
+    parser.add_argument(
+        "--cross-class-nms-iou",
+        default="0,0.95",
+        help="Comma-separated high-IoU class-agnostic post-NMS thresholds; 0 disables.",
+    )
     parser.add_argument(
         "--model-family",
         choices=["auto", "yolo", "rtdetr"],
@@ -169,6 +175,7 @@ def main() -> None:
             _parse_ints(args.imgsz),
             _parse_ints(args.max_det),
             _parse_ints(args.augment),
+            _parse_floats(args.cross_class_nms_iou),
             _parse_optional_ints(args.rtdetr_eval_idx),
             _parse_optional_ints(args.rtdetr_num_queries),
         )
@@ -180,13 +187,15 @@ def main() -> None:
         imgsz,
         max_det,
         augment,
+        cross_class_nms_iou,
         rtdetr_eval_idx,
         rtdetr_num_queries,
     ) in enumerate(combos, start=1):
         print(
             f"\n[{idx}/{len(combos)}] conf={conf} iou={iou} imgsz={imgsz} "
             f"max_det={max_det} augment={augment} family={args.model_family} "
-            f"eval_idx={rtdetr_eval_idx} queries={rtdetr_num_queries}"
+            f"cross_nms={cross_class_nms_iou} eval_idx={rtdetr_eval_idx} "
+            f"queries={rtdetr_num_queries}"
         )
         env = {
             "CV_MODEL_FAMILY": args.model_family,
@@ -196,6 +205,7 @@ def main() -> None:
             "CV_MAX_DET": str(max_det),
             "CV_AUGMENT": str(augment),
             "CV_HALF": "1",
+            "CV_CROSS_CLASS_NMS_IOU": str(cross_class_nms_iou),
         }
         if rtdetr_eval_idx is not None:
             env["CV_RTDETR_EVAL_IDX"] = str(rtdetr_eval_idx)
@@ -228,6 +238,7 @@ def main() -> None:
             "imgsz": imgsz,
             "max_det": max_det,
             "augment": augment,
+            "cross_class_nms_iou": cross_class_nms_iou,
             "model_family": args.model_family,
             "rtdetr_eval_idx": rtdetr_eval_idx,
             "rtdetr_num_queries": rtdetr_num_queries,
@@ -245,7 +256,7 @@ def main() -> None:
         rows.append(row)
         run_name = (
             f"{args.model_family}_conf{conf:.2f}_iou{iou:.2f}_img{imgsz}"
-            f"_max{max_det}_aug{augment}"
+            f"_max{max_det}_aug{augment}_xnms{cross_class_nms_iou:.2f}"
         )
         if rtdetr_eval_idx is not None:
             run_name += f"_eval{rtdetr_eval_idx}"
@@ -260,6 +271,7 @@ def main() -> None:
             f"est_blended={est_blended:.4f} "
             f"best={best['map']:.4f} @ conf={best['conf']} iou={best['iou']} "
             f"imgsz={best['imgsz']} aug={best['augment']} "
+            f"cross_nms={best['cross_class_nms_iou']} "
             f"eval_idx={best['rtdetr_eval_idx']} queries={best['rtdetr_num_queries']}"
         )
 
@@ -273,6 +285,7 @@ def main() -> None:
             f"est_speed={row['est_speed']:.3f} est_blended={row['est_blended']:.4f} "
             f"conf={row['conf']} iou={row['iou']} imgsz={row['imgsz']} "
             f"max_det={row['max_det']} aug={row['augment']} "
+            f"cross_nms={row['cross_class_nms_iou']} "
             f"family={row['model_family']} eval_idx={row['rtdetr_eval_idx']} "
             f"queries={row['rtdetr_num_queries']}"
         )
@@ -283,6 +296,7 @@ def main() -> None:
             f"est_speed={row['est_speed']:.3f} elapsed={row['elapsed_s']:.1f}s "
             f"conf={row['conf']} iou={row['iou']} imgsz={row['imgsz']} "
             f"max_det={row['max_det']} aug={row['augment']} "
+            f"cross_nms={row['cross_class_nms_iou']} "
             f"family={row['model_family']} eval_idx={row['rtdetr_eval_idx']} "
             f"queries={row['rtdetr_num_queries']}"
         )

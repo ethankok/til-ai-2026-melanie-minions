@@ -105,6 +105,7 @@ ENV CV_CONF=0.20
 ENV CV_IOU=0.60
 ENV CV_IMGSZ=896
 ENV CV_AUGMENT=1
+ENV CV_CROSS_CLASS_NMS_IOU=0.95
 ```
 
 Keep the identity category map for fine-tuned 18-class models.
@@ -167,9 +168,16 @@ ENV CV_CONF=0.20
 ENV CV_IOU=0.60
 ENV CV_IMGSZ=896
 ENV CV_AUGMENT=1
+ENV CV_CROSS_CLASS_NMS_IOU=0.95
 ```
 
 Then rebuild with a new tag.
+
+The cross-class NMS value is intentionally high. The local `cv_results.json`
+from the `ruiyang-v1` submission had hundreds of near-identical boxes with
+different fine-grained classes, especially aircraft and ship subclasses. A
+threshold around `0.95` only removes boxes that are effectively duplicate
+guesses for the same object.
 
 ## 6. Final smoke test and submit
 
@@ -217,6 +225,7 @@ python training/cv/sweep_cv_http.py \
   --iou 0.50,0.60,0.70 \
   --imgsz 896,1024,1280 \
   --augment 0 \
+  --cross-class-nms-iou 0,0.90,0.95 \
   --rtdetr-eval-idx 3,5 \
   --rtdetr-num-queries 100,300
 ```
