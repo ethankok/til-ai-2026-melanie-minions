@@ -75,6 +75,13 @@ def _strip_aimanager_smarts(m: AEManager) -> None:
     m.tier1_no_stay_penalty = False
     m.tier1_predictive_walk = False
 
+    # Force default heuristic parameters for opponents so they don't inherit our tuned settings
+    m.ENEMY_BASE_VALUE = 80.0
+    m.BASE_DEFENSE_RADIUS = 6
+    m.DIST_PENALTY = 1.15
+    m.PATH_THREAT_PENALTY = 2.0
+    m.ENEMY_CHASE_VALUE = 0.0
+
 
 def _legal_actions(obs: dict) -> list[int]:
     mask = obs.get("action_mask")

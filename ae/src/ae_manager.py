@@ -229,6 +229,21 @@ class AEManager:
         # by min(1, walk_distance / 0.5) so values <0.5 (less mobile
         # opponents) get downweighted and >0.5 (more mobile) get upweighted.
         self.opponent_walk_scale = self._load_opponent_walk_scale()
+        self.BASE_DEFENSE_HEALTH = _env_float("AE_BASE_DEFENSE_HEALTH", 60.0)
+        self.BASE_DEFENSE_RADIUS = _env_int("AE_BASE_DEFENSE_RADIUS", 4)
+        self.ENEMY_BASE_VALUE = _env_float("AE_ENEMY_BASE_VALUE", 80.0)
+        self.DIST_PENALTY = _env_float("AE_DIST_PENALTY", 1.15)
+        self.PATH_THREAT_PENALTY = _env_float("AE_PATH_THREAT_PENALTY", 2.0)
+        self.ENEMY_CHASE_VALUE = _env_float("AE_ENEMY_CHASE_VALUE", 0.0)
+        self.ENEMY_CHASE_RADIUS = _env_int("AE_ENEMY_CHASE_RADIUS", 4)
+        self.item_mission_value = _env_float("AE_ITEM_MISSION_VALUE", 50.0)
+        self.item_resource_value = _env_float("AE_ITEM_RESOURCE_VALUE", 25.0)
+        self.item_recon_value = _env_float("AE_ITEM_RECON_VALUE", 10.0)
+        self.ITEM_VALUES = {
+            "mission": self.item_mission_value,
+            "resource": self.item_resource_value,
+            "recon": self.item_recon_value,
+        }
         self._reset_memory()
 
     # ------------------------------------------------------------------
@@ -261,6 +276,15 @@ class AEManager:
                             self.is_fixed_novice_map = True
                             self.fixed_team_idx = i
                             self.dijkstra_bomb_cost = 5.0
+                            self.playbook = None
+                            if _env_float("AE_ENEMY_BASE_VALUE", -999.0) == -999.0:
+                                self.ENEMY_BASE_VALUE = 130.0
+                            if _env_int("AE_BASE_DEFENSE_RADIUS", -999) == -999:
+                                self.BASE_DEFENSE_RADIUS = 6
+                            if _env_float("AE_ENEMY_CHASE_VALUE", -999.0) == -999.0:
+                                self.ENEMY_CHASE_VALUE = 0.0
+                            if _env_int("AE_ENEMY_CHASE_RADIUS", -999) == -999:
+                                self.ENEMY_CHASE_RADIUS = 4
                             
                             # Pre-populate seen, walls, destructible, enemy bases, and static items
                             self.seen = {(x, y) for x in range(16) for y in range(16)}
@@ -446,6 +470,9 @@ class AEManager:
         location: tuple[int, int] | None,
         direction: int,
     ) -> None:
+        self.base_damaged_this_step = (self.base_health < getattr(self, "last_base_health", 100))
+        self.last_base_health = self.base_health
+
         if location is not None:
             self._infer_grid_size(location)
             self.seen.add(location)
@@ -599,44 +626,57 @@ class AEManager:
 
         candidates: list[tuple[float, tuple[int, int]]] = []
 
-        # Tier-1 #2: when our base HP is below threshold AND an enemy is
-        # within the defense radius AND we have bombs to use, defense becomes
-        # priority 1 — a single point of base damage is -1 reward and a
-        # destroyed base is a -150 swing in our favor relative to undestroyed.
+        # Proactive defense logic: if base is threatened, prioritize defense.
         defense_emergency = False
-        if (
-            self.tier1_defense_priority
-            and self.base_location is not None
-            and self.base_health < self.BASE_DEFENSE_HEALTH
-        ):
+        if self.base_location is not None:
+            should_defend = self.tier1_defense_priority or getattr(self, "is_fixed_novice_map", False)
+            if not getattr(self, "is_fixed_novice_map", False):
+                should_defend = should_defend and (self.base_health < self.BASE_DEFENSE_HEALTH)
+            
+            # Active base attack detection (even if enemy is out of sight)
+            base_damaged_recently = getattr(self, "base_damaged_this_step", False) or (self.base_health < getattr(self, "last_base_health", 100))
+            
+            # Find any enemy near base
+            enemy_near_base_list = []
+            immediate_threat = False
             for pos, last_seen in self.enemy_agents.items():
-                if step - int(last_seen) > self.ENEMY_STALENESS:
-                    continue
-                if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
-                    defense_emergency = True
-                    # Big constant — outweighs every other candidate so the
-                    # planner routes us toward this enemy first.
-                    candidates.append((150.0, pos))
+                if step - int(last_seen) <= self.ENEMY_STALENESS:
+                    dist = self._manhattan(pos, self.base_location)
+                    if dist <= self.BASE_DEFENSE_RADIUS:
+                        enemy_near_base_list.append(pos)
+                        if dist <= 2:
+                            immediate_threat = True
 
-        # When health is low, avoid aggressive targets (enemy bases, base
-        # defense) and stick to items/exploration so we don't die in a melee.
+            if enemy_near_base_list:
+                if base_damaged_recently or immediate_threat:
+                    defense_emergency = True
+                val = 160.0 if base_damaged_recently else 130.0
+                for pos in enemy_near_base_list:
+                    candidates.append((val, pos))
+                # Add base itself as a lower fallback target
+                candidates.append((90.0 if base_damaged_recently else 60.0, self.base_location))
+            else:
+                if base_damaged_recently:
+                    defense_emergency = True
+                    candidates.append((120.0, self.base_location))
+                elif self.base_health < 100 or should_defend:
+                    candidates.append((80.0, self.base_location))
+
+        # When health is low, avoid aggressive targets and stick to items/exploration
         if not low_health and not defense_emergency:
             for pos in self.enemy_bases:
-                # Tier-1 #4: realistic shared-credit value for cloud's 6-team
-                # game. Was 80; under 6 teams average ~3 contributors split
-                # the +50 destroy_enemy_base, so ~17 expected. We still want
-                # a pull toward enemy bases (close-range damage on the way
-                # earns attack_damage credit) so set a moderate value.
-                value = 35.0 if self.tier1_shared_credit else 80.0
+                if getattr(self, "is_fixed_novice_map", False):
+                    value = 40.0 if step < 85 else 130.0
+                else:
+                    value = 35.0 if self.tier1_shared_credit else self.ENEMY_BASE_VALUE
                 candidates.append((value, pos))
-            # Base defense: enemies near our base become high-priority bomb
-            # targets — losing the base is -50, so a 30+ value swing is worth it.
-            if self.base_location is not None:
+            # Target nearby enemy agents aggressively (chase & kill) if enabled
+            if self.ENEMY_CHASE_VALUE > 0.0:
                 for pos, last_seen in self.enemy_agents.items():
-                    if step - int(last_seen) > self.ENEMY_STALENESS:
+                    if step - int(last_seen) > 1:
                         continue
-                    if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
-                        candidates.append((60.0, pos))
+                    if self._manhattan(start, pos) <= self.ENEMY_CHASE_RADIUS:
+                        candidates.append((self.ENEMY_CHASE_VALUE, pos))
 
         for pos, (kind, _step) in self.last_seen_items.items():
             candidates.append((self.ITEM_VALUES.get(kind, 1.0), pos))
@@ -664,7 +704,7 @@ class AEManager:
             if pos == start or pos not in distance:
                 continue
             dist = distance[pos]
-            score = base_value - 1.15 * dist - 0.25 * self.visit_count.get(pos, 0)
+            score = base_value - self.DIST_PENALTY * dist - 0.25 * self.visit_count.get(pos, 0)
             if pos in self.recent_locations[-4:]:
                 score -= 2.0
             # Threats: penalize paths that brush near recently-seen enemies,
@@ -1471,6 +1511,17 @@ class AEManager:
             timer = int(data.get("timer", self.BOMB_TIMER)) - delta
             if timer <= 0:
                 self.known_bombs.pop(pos, None)
+                # Proactively clear destroyed walls in the blast zone
+                blast = self._blast_cells(pos)
+                for cell in blast:
+                    for d, (dx, dy) in self.DIR_DELTAS.items():
+                        edge = (cell[0], cell[1], d)
+                        self.destructible.discard(edge)
+                        # Discard opposite edge
+                        nx, ny = cell[0] + dx, cell[1] + dy
+                        opp_d = self.OPPOSITE.get(d)
+                        if opp_d is not None:
+                            self.destructible.discard((nx, ny, opp_d))
             else:
                 data["timer"] = timer
                 data["last_step"] = step
@@ -1547,6 +1598,10 @@ class AEManager:
         for pos, data in self.known_bombs.items():
             if data.get("own"):
                 forced_danger.update(self._blast_cells(pos))
+            else:
+                timer = int(data.get("timer", self.BOMB_TIMER))
+                if timer <= 3:
+                    forced_danger.update(self._blast_cells(pos))
         if location == self.escape_target and location not in forced_danger:
             self.escape_target = None
             self.escape_until_step = None
@@ -1597,10 +1652,6 @@ class AEManager:
         if self.health < self.LOW_HEALTH_THRESHOLD:
             return False
         bomb_blast = self._blast_cells(location)
-        base_location = self.base_location or self._location(observation.get("base_location"))
-        if base_location is not None and base_location in bomb_blast:
-            return False
-
         step = self.last_step if self.last_step is not None else 0
         # Direct hits: enemy base, or a fresh enemy-agent sighting already in blast.
         tactical_target = any(pos in bomb_blast for pos in self.enemy_bases)
@@ -1611,6 +1662,11 @@ class AEManager:
                 if pos in bomb_blast:
                     tactical_target = True
                     break
+
+        base_location = self.base_location or self._location(observation.get("base_location"))
+        if base_location is not None and base_location in bomb_blast:
+            if self.base_health <= 20 or not tactical_target:
+                return False
 
         # Predictive bombing: bomb when *multiple* enemies are immediately
         # adjacent to the blast cone. Random opponents wander; betting one
@@ -1686,7 +1742,7 @@ class AEManager:
 
         if not tactical_target and not wall_to_open:
             return False
-        escape_target = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER)
+        escape_target = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER, danger)
         if escape_target is None:
             return False
 
@@ -1700,6 +1756,7 @@ class AEManager:
         location: tuple[int, int],
         blast: set[tuple[int, int]],
         max_moves: int,
+        danger: set[tuple[int, int]] | None = None,
     ) -> tuple[int, int] | None:
         """Return the closest cell outside ``blast`` reachable in ≤ max_moves.
 
@@ -1717,6 +1774,8 @@ class AEManager:
                 continue
             for nxt in self._neighbors(pos):
                 if nxt in seen or nxt not in self.seen:
+                    continue
+                if danger is not None and nxt in danger:
                     continue
                 seen.add(nxt)
                 queue.append((nxt, dist + 1))
