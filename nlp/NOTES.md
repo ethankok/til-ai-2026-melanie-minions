@@ -923,6 +923,11 @@ Implementation:
   `download_models.py` with `AttributeError: module 'torch' has no attribute
   'int1'` from `torchao`; Dockerfile now uninstalls `torchao`, `flash-attn`,
   and `flash_attn` before any Transformers model import.
+- Second v19 build failed with `No space left on device` while downloading the
+  4 GB Qwen2.5 AWQ shard because vLLM had already been installed into the
+  Docker overlay. Dockerfile now downloads model weights before installing the
+  heavy runtime requirements, then uninstalls the optional broken extensions
+  again after vLLM install.
 - `nlp_manager.py` now loads both answerers in hybrid mode. It always performs
   v9 retrieval/rerank/doc selection and v9 candidate extraction first, then
   routes to Qwen only if a hand-tuned hard-score clears

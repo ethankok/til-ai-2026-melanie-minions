@@ -227,6 +227,11 @@ Build failure note: if the NGC image fails during `download_models.py` with
 broken optional NGC `torchao` and `flash-attn` packages before importing
 Transformers models.
 
+Second build failure note: if the Qwen2.5 AWQ download reports `No space left
+on device`, pull the latest main again. The Dockerfile now downloads model
+weights before installing the heavy vLLM runtime dependencies so the 4 GB AWQ
+shard has enough Docker overlay space to land.
+
 ## v15 QLoRA / AWQ lessons (18 May)
 
 The Qwen3-8B LoRA training command that completed was:

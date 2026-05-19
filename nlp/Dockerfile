@@ -37,14 +37,11 @@ ENV NLP_LLM_LORA_DIR=/workspace/models/lora
 WORKDIR /workspace
 
 RUN pip install -U pip
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 # NGC 25.11 ships optional torchao/flash-attn extensions that are compiled
-# against its original torch stack. Installing vLLM changes the active torch
-# ABI enough that Transformers can crash while merely importing BERT
-# (`torch.int1` missing from torchao; flash_attn can similarly hit undefined
-# symbols). They are optional for this path, so remove them before model
-# download/import.
+# against its original torch stack. Transformers can crash while merely
+# importing BERT (`torch.int1` missing from torchao; flash_attn can similarly
+# hit undefined symbols). They are optional for this path, so remove them
+# before model download/import.
 RUN pip uninstall -y torchao flash-attn flash_attn || true
 
 # Bake model weights into the image so inference runs fully offline.
@@ -55,6 +52,14 @@ RUN pip uninstall -y torchao flash-attn flash_attn || true
 # the v9 BGE reranker because the Qwen3 reranker-only gate regressed badly.
 COPY download_models.py .
 RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python download_models.py
+
+# Install runtime dependencies after model download. vLLM and its dependency
+# stack are large; installing them before the 4 GB Qwen AWQ shard left too
+# little free Docker overlay space for Hugging Face to write the model file on
+# Workbench.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip uninstall -y torchao flash-attn flash_attn || true
 
 # v14-llm-rag: hard-fail the build if the LLM weights didn't land. The
 # manager will still boot without them by falling back to extractive, but
