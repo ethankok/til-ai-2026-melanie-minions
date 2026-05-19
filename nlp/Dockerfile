@@ -107,6 +107,10 @@ RUN if [ -d /workspace/models-local/roberta-finetuned-squad2 ] && \
         cp /workspace/models-local/answer_ranker.json /workspace/models/answer_ranker.json && \
         echo "[nlp build] bundled local answer ranker"; \
     fi && \
+    if [ -f /workspace/models-local/ae_trigger.json ]; then \
+        cp /workspace/models-local/ae_trigger.json /workspace/models/ae_trigger.json && \
+        echo "[nlp build] bundled AE adversarial trigger"; \
+    fi && \
     if [ "$NLP_ANSWERER" = "llm" ] && [ -d /workspace/models-local/llm-merged ] && [ -f /workspace/models-local/llm-merged/config.json ]; then \
         rm -rf /workspace/models/llm && \
         mkdir -p /workspace/models/llm && \

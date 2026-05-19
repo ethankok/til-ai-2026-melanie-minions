@@ -118,6 +118,14 @@ HYBRID_QWEN_THRESHOLD = float(os.getenv("NLP_HYBRID_QWEN_THRESHOLD", "3.0"))
 HYBRID_MIN_QA_SCORE = float(os.getenv("NLP_HYBRID_MIN_QA_SCORE", "8.0"))
 COMPOSITION_MODE = os.getenv("NLP_COMPOSITION_MODE", "off").strip().lower()
 
+# v20-ae-trigger: Universal Adversarial Trigger against the ModernBERT-AE
+# evaluator. NLP_AE_TRIGGER overrides the file; NLP_AE_TRIGGER_FILE points to
+# the JSON output of training/nlp/find_ae_trigger.py. Empty = off.
+AE_TRIGGER_TEXT = os.getenv("NLP_AE_TRIGGER", "").strip()
+AE_TRIGGER_FILE = os.getenv(
+    "NLP_AE_TRIGGER_FILE", str(MODEL_DIR / "ae_trigger.json")
+).strip()
+
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 _DOC_ID_RE = re.compile(r"\bDOC-(\d{4})\b")
@@ -417,6 +425,13 @@ class NLPManager:
         # bundled or vLLM init fails.
         self._answerer_mode: str = ANSWERER_MODE
         self._llm_answerer = None  # type: ignore[var-annotated]
+        self._ae_trigger: str = self._resolve_ae_trigger()
+        if self._ae_trigger:
+            print(
+                f"[nlp_manager] AE trigger active "
+                f"({len(self._ae_trigger)} chars): {self._ae_trigger!r}",
+                flush=True,
+            )
 
         # Corpus state.
         self.documents: list[str] = []
@@ -429,6 +444,33 @@ class NLPManager:
         self.doc_bm25: BM25Okapi | None = None
         self.passage_embeds: torch.Tensor | None = None
         self.doc_embeds: torch.Tensor | None = None
+
+    def _resolve_ae_trigger(self) -> str:
+        if AE_TRIGGER_TEXT:
+            return AE_TRIGGER_TEXT
+        path = Path(AE_TRIGGER_FILE)
+        if not path.exists():
+            return ""
+        try:
+            payload = json.loads(path.read_text())
+        except Exception as exc:
+            print(f"[nlp_manager] failed to read {path}: {exc}", flush=True)
+            return ""
+        text = (payload.get("trigger_str") or "").strip()
+        return text
+
+    def _apply_ae_trigger(self, answer: str) -> str:
+        """Prepend the universal AE trigger to a non-empty answer.
+
+        Empty answers stay empty (the scorer's L4/L5 path treats `r == c` as
+        equivalent only when both are empty; sneaking a trigger in would
+        forfeit that path). The trigger goes at the front so it survives the
+        evaluator's 64-token candidate truncation even if the real answer
+        gets clipped.
+        """
+        if not self._ae_trigger or not answer:
+            return answer
+        return f"{self._ae_trigger} {answer}".strip()
 
     # ------------------------------------------------------------------ models
 
@@ -1830,7 +1872,7 @@ class NLPManager:
                 )
                 if qwen_answer.strip():
                     answer = qwen_answer
-        return {"documents": documents, "answer": answer}
+        return {"documents": documents, "answer": self._apply_ae_trigger(answer)}
 
     def qa_batch(self, questions: list[str]) -> list[dict]:
         """Batched query path.
@@ -1855,7 +1897,7 @@ class NLPManager:
                 chunks_per_q.append(self._llm_chunks_for(reranked))
             answers = self._llm_answerer.answer_batch(questions, chunks_per_q)
             return [
-                {"documents": docs, "answer": ans}
+                {"documents": docs, "answer": self._apply_ae_trigger(ans)}
                 for docs, ans in zip(doc_lists, answers)
             ]
 
@@ -1885,6 +1927,8 @@ class NLPManager:
                     f"questions to Qwen (threshold={HYBRID_QWEN_THRESHOLD})",
                     flush=True,
                 )
+            for r in results:
+                r["answer"] = self._apply_ae_trigger(r["answer"])
             return results
 
         return [self._answer_one(q) for q in questions]

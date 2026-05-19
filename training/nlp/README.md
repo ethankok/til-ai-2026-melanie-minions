@@ -19,11 +19,21 @@ shipping truth after the 18-19 May NLP push is:
 - `v19-hybrid-router` ran successfully after Docker fixes but failed the local
   gate: `0.705` with a 15:00 QA loop, below/slower than v9 rescue (`0.711`,
   4:13). Do not submit.
+- 19 May artifact-recovery stop: the currently available
+  `nlp/models/roberta-finetuned-squad2/` is not the known-good 0.711 reader.
+  It loads as `ext-roberta-finetuned`, but scores only `0.663-0.664`; the
+  `~/til-v9-rescue` copy has the same SHA256
+  `03ac27b8a45d9e981ce1eb8cf167a69e1310b0dc0a0e55bd3ab4a538518567b2`.
+  Candidate checkpoint testing found `20260515-035108/checkpoint-888` at local
+  `0.697`, which is better but still below the v9 gate. Stop here; retrain the
+  reader cleanly later instead of tuning on this artefact.
 
 This README is historical context plus reproduction notes. If NLP is reopened,
-the credible routes are: quantize the merged Qwen3 LoRA on bigger hardware, or
-retrain/merge on Qwen2.5-7B so it can run on the NGC base image that already
-survived cloud. The v19 router experiment is now closed.
+the first step is a clean RoBERTa-large v8b/v9 reader retrain and a plain
+extractive local gate near `0.711`; only then should composition rules be
+tested. The larger LLM routes remain: quantize the merged Qwen3 LoRA on bigger
+hardware, or retrain/merge on Qwen2.5-7B so it can run on the NGC base image
+that already survived cloud. The v19 router experiment is now closed.
 
 Historical training paths:
 
@@ -155,6 +165,16 @@ fine-tuned folder from a known-good image or training output before building.
 Expected real-v9 local score is still about `0.711`; `0.664` means wrong
 artefact.
 
+Later 19 May verification tightened this: even with a present
+`nlp/models/roberta-finetuned-squad2/` folder, logs showed
+`ext-roberta-finetuned` and the local score stayed at `0.664`. The canonical
+`~/til` folder and `~/til-v9-rescue` folder had identical model hashes, so the
+rescue copy was not an older/better artefact. Setting `NLP_QA_MAX_SEQ_LEN=384`
+also scored `0.663`, so the issue is not sequence length. Candidate checkpoint
+`training/nlp/runs/20260515-035108/checkpoint-888` reached `0.697`; do not
+submit it, but keep it as evidence that a clean RoBERTa retrain is the right
+next move.
+
 If no known-good artifact exists on the machine, regenerate the v9 reader from
 the local snapshot or Workbench data before building:
 
@@ -207,6 +227,11 @@ Workbench gate:
 til build nlp v20-composition-lite
 til test nlp v20-composition-lite
 ```
+
+19 May result: `v20-composition-lite` scored local `0.664`, and the
+`NLP_QA_MAX_SEQ_LEN=384` verification tag scored `0.663`. Those numbers reflect
+the bad/current reader artefact, not a fair composition-rule A/B. Stop the
+experiment until a plain v9-style image is back near `0.711`.
 
 Submit only if local clears the real v9 gate (`0.711`) without a speed or
 retrieval regression. If it is flat or below gate, leave v9 rescue shipped.

@@ -155,6 +155,12 @@ If old build logs or Discord messages contain an immutable digest for the
 original 14 May `hybrid-v3`, compare against that. If not, do not use mutable
 tags as proof of same-bytes behavior.
 
+Workbench caveat: `gcloud artifacts docker images list ... --include-tags`
+failed for `svc-melanie-minions@til-ai-2026.iam.gserviceaccount.com` with
+`artifactregistry.versions.list` denied. If provenance is needed later, use
+local shell/log search, Docker history, old Discord/build logs, or ask someone
+with Artifact Registry version-list permission.
+
 Important training correction: `train_ppo.py` already defaults to Novice
 fixed-map mode (`--novice` is true unless `--vary-maps` or `--no-novice` is
 used). An explicit fixed-Novice command is still useful for a controlled rerun,

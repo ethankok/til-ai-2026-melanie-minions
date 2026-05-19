@@ -41,7 +41,9 @@ congestion is not the explanation, but accuracy did not reproduce. Docker
 inspection confirms the retag was clean (`hybrid-v3` and speedcheck both use
 image `sha256:5bc182...`, registry digest `sha256:83c999...`); still need the
 original 14 May immutable digest before treating this as true same-image
-variance.
+variance. Workbench cannot list old Artifact Registry versions with the active
+service account (`artifactregistry.versions.list` denied), so the provenance
+hunt is deferred.
 
 The new Qwen reranker-only ablation is dead: `v18-qwen-reranker` collapsed
 locally to `0.547` with a 14:58 QA loop, then cloud returned `700 / 700`
