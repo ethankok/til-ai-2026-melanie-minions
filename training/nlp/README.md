@@ -222,6 +222,11 @@ NLP_LLM_MAX_MODEL_LEN=2048
 If it runs but routes too many questions and slows down, raise
 `NLP_HYBRID_QWEN_THRESHOLD` above `3.0`.
 
+Build failure note: if the NGC image fails during `download_models.py` with
+`torchao` / `torch.int1`, pull the latest main. The Dockerfile removes the
+broken optional NGC `torchao` and `flash-attn` packages before importing
+Transformers models.
+
 ## v15 QLoRA / AWQ lessons (18 May)
 
 The Qwen3-8B LoRA training command that completed was:

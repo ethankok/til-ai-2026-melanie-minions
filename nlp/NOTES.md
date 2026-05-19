@@ -918,6 +918,11 @@ Implementation:
 - Conservative vLLM defaults for sharing T4 VRAM with RoBERTa/retriever:
   `NLP_LLM_GPU_MEM_FRACTION=0.62`, `NLP_LLM_MAX_MODEL_LEN=3072`,
   `NLP_LLM_MAX_NEW_TOKENS=32`.
+- The NGC base has broken optional `torchao`/`flash-attn` extensions after
+  vLLM adjusts the torch stack. First v19 build failed during
+  `download_models.py` with `AttributeError: module 'torch' has no attribute
+  'int1'` from `torchao`; Dockerfile now uninstalls `torchao`, `flash-attn`,
+  and `flash_attn` before any Transformers model import.
 - `nlp_manager.py` now loads both answerers in hybrid mode. It always performs
   v9 retrieval/rerank/doc selection and v9 candidate extraction first, then
   routes to Qwen only if a hand-tuned hard-score clears

@@ -39,6 +39,13 @@ WORKDIR /workspace
 RUN pip install -U pip
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# NGC 25.11 ships optional torchao/flash-attn extensions that are compiled
+# against its original torch stack. Installing vLLM changes the active torch
+# ABI enough that Transformers can crash while merely importing BERT
+# (`torch.int1` missing from torchao; flash_attn can similarly hit undefined
+# symbols). They are optional for this path, so remove them before model
+# download/import.
+RUN pip uninstall -y torchao flash-attn flash_attn || true
 
 # Bake model weights into the image so inference runs fully offline.
 # ENV HF_HUB_OFFLINE=1 is set above for runtime; we override it for this
