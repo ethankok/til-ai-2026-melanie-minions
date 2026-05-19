@@ -105,7 +105,7 @@ ENV CV_CONF=0.20
 ENV CV_IOU=0.60
 ENV CV_IMGSZ=896
 ENV CV_AUGMENT=1
-ENV CV_CROSS_CLASS_NMS_IOU=0.95
+ENV CV_CROSS_CLASS_NMS_IOU=0
 ```
 
 Keep the identity category map for fine-tuned 18-class models.
@@ -152,6 +152,10 @@ python training/cv/sweep_cv_http.py \
   --imgsz 640,768,896
 ```
 
+By default the sweep uses an automatically chosen host port for each temporary
+container, so a still-running `cv-eval` container on port `5002` will not break
+the sweep. Pass `--port 5002` only when you specifically want that fixed port.
+
 The sweep writes:
 
 ```text
@@ -168,16 +172,24 @@ ENV CV_CONF=0.20
 ENV CV_IOU=0.60
 ENV CV_IMGSZ=896
 ENV CV_AUGMENT=1
-ENV CV_CROSS_CLASS_NMS_IOU=0.95
+ENV CV_CROSS_CLASS_NMS_IOU=0
 ```
 
 Then rebuild with a new tag.
 
-The cross-class NMS value is intentionally high. The local `cv_results.json`
-from the `ruiyang-v1` submission had hundreds of near-identical boxes with
-different fine-grained classes, especially aircraft and ship subclasses. A
-threshold around `0.95` only removes boxes that are effectively duplicate
-guesses for the same object.
+Cross-class NMS remains available as `CV_CROSS_CLASS_NMS_IOU`, but keep it off
+unless a sweep proves it helps the exact checkpoint being submitted. For
+`ruiyang-v1`, offline scoring from saved predictions was:
+
+```text
+cross_nms=0.00  mAP=0.9125  small=0.7112
+cross_nms=0.90  mAP=0.9079  small=0.7112
+cross_nms=0.95  mAP=0.9110  small=0.7112
+cross_nms=0.97  mAP=0.9124  small=0.7112
+```
+
+That makes `0` the safest local choice; `0.97` is a nearly neutral optional
+cloud A/B, while `0.90` and `0.95` should not be baked by default.
 
 ## 6. Final smoke test and submit
 
@@ -225,7 +237,7 @@ python training/cv/sweep_cv_http.py \
   --iou 0.50,0.60,0.70 \
   --imgsz 896,1024,1280 \
   --augment 0 \
-  --cross-class-nms-iou 0,0.90,0.95 \
+  --cross-class-nms-iou 0,0.97 \
   --rtdetr-eval-idx 3,5 \
   --rtdetr-num-queries 100,300
 ```

@@ -8,6 +8,7 @@ import csv
 import itertools
 import json
 import os
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -29,6 +30,12 @@ def _parse_ints(text: str) -> list[int]:
 def _parse_optional_ints(text: str) -> list[int | None]:
     values = _parse_ints(text)
     return values if values else [None]
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 def _start_container(
@@ -87,6 +94,7 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "est_full_s",
         "est_speed",
         "est_blended",
+        "port",
         "predictions",
     ]
     with path.open("w", newline="", encoding="utf-8") as csv_file:
@@ -113,7 +121,7 @@ def main() -> None:
     parser.add_argument("--augment", default="0,1", help="Comma-separated 0/1 to toggle Ultralytics TTA")
     parser.add_argument(
         "--cross-class-nms-iou",
-        default="0,0.95",
+        default="0",
         help="Comma-separated high-IoU class-agnostic post-NMS thresholds; 0 disables.",
     )
     parser.add_argument(
@@ -135,7 +143,12 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--request-timeout", type=float, default=60.0)
     parser.add_argument("--startup-timeout", type=float, default=120.0)
-    parser.add_argument("--port", type=int, default=5002)
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="Host port for the temporary container. Use 0 to auto-pick a free port.",
+    )
     parser.add_argument("--limit", type=int, default=0, help="Limit images for a quick smoke sweep")
     parser.add_argument("--cpu", action="store_true", help="Run Docker without --gpus all")
     parser.add_argument(
@@ -211,14 +224,15 @@ def main() -> None:
             env["CV_RTDETR_EVAL_IDX"] = str(rtdetr_eval_idx)
         if rtdetr_num_queries is not None:
             env["CV_RTDETR_NUM_QUERIES"] = str(rtdetr_num_queries)
+        host_port = _find_free_port() if args.port == 0 else args.port
         try:
-            _start_container(args.image, container_name, args.port, env, use_gpus=not args.cpu)
-            _wait_for_health(args.port, args.startup_timeout)
+            _start_container(args.image, container_name, host_port, env, use_gpus=not args.cpu)
+            _wait_for_health(host_port, args.startup_timeout)
             eval_start = time.time()
             predictions = collect_predictions(
                 annotations=annotations,
                 images_dir=args.data_dir / "images",
-                endpoint=f"http://localhost:{args.port}/cv",
+                endpoint=f"http://localhost:{host_port}/cv",
                 batch_size=args.batch_size,
                 timeout=args.request_timeout,
             )
@@ -250,6 +264,7 @@ def main() -> None:
             "est_full_s": est_full_s,
             "est_speed": est_speed,
             "est_blended": est_blended,
+            "port": host_port,
             "predictions": len(predictions),
             "summary": summary,
         }
