@@ -22,6 +22,20 @@ Current `main` is therefore locked back to the v9-style extractive image:
 `NLP_ANSWERER=extractive`, `NLP_SKIP_LLM_DOWNLOAD=1`, and no default vLLM
 runtime dependency. Use explicit branch/env changes for any future Qwen ablation.
 
+AE 19 May update: AE is unparked for evidence gathering after a public
+0.9 score, but `hybrid-v3` remains the shipped best. New cloud A/Bs all
+regressed: `hybrid-v3-no-mcts` scored `0.482 / 0.598`,
+`hybrid-v3-no-vetofrozen` scored `0.454 / 0.556`, and
+`hybrid-v3-conf-0.3` scored `0.411 / 0.591`. The broad speed drop across
+18/19 May AE tags (~0.56-0.62 vs old `0.849`) requires a same-bytes
+`hybrid-v3-speedcheck` before blaming code. Also note the corrected
+training premise: `train_ppo.py` already defaults to Novice fixed-map mode,
+so another `--novice` PPO run is a controlled rerun, not a first attempt at
+fixed-map training. That controlled rerun (`novice-fixed-v1`) finished
+200/200 updates with best eval `0.5915`, below prior local candidates; do
+not submit it. Follow-up Docker `til test ae novice-fixed-v1` scored only
+`0.5156667` over 6 rounds (`3094.0` total reward).
+
 The new Qwen reranker-only ablation is dead: `v18-qwen-reranker` collapsed
 locally to `0.547` with a 14:58 QA loop, then cloud returned `700 / 700`
 errors. Do not debug or submit it. The local failure is already decisive;
@@ -147,6 +161,12 @@ CV (cv-augc1-v4) melanie-minions-cv  cv-augc1-v4  16/05/2026 15:28:35 0 / 500 0.
 CV (cv-augc1-v4-1280) melanie-minions-cv  cv-augc1-v4-1280 16/05/2026 18:28:27 0 / 500 0.553 0.959  ← Same model rebuilt with matched Dockerfile config (CV_IMGSZ=1280 CV_CONF=0.001 CV_IOU=0.7 CV_AUGMENT=0). Hard held-out lifted +0.04 to 0.948 / small AP 0.779. Cloud flat at 0.553 — gap WIDENED 0.349 → 0.395. Phase C confirmed dead as a path to 0.7; v8s/v11m family at-ceiling. Tier1 stays on leaderboard.
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
 AE     melanie-minions-ae       hybrid-v3   14/05/2026 19:26:06   0 / 30        0.555   0.849  ← STILL SHIPPED via highest-score retention
+AE (hybrid-v3-no-mcts) melanie-minions-ae hybrid-v3-no-mcts 19/05/2026 0 / 30 0.482 0.598 ← REGRESSED -0.073 acc and -0.251 speed vs hybrid-v3. Local 0.6767 pointed the same direction. MCTS/trust path is load-bearing enough that removing it is not a simplification win.
+AE (hybrid-v3-no-vetofrozen) melanie-minions-ae hybrid-v3-no-vetofrozen 19/05/2026 0 / 30 0.454 0.556 ← REGRESSED -0.101 acc and -0.293 speed vs hybrid-v3. Local 0.6866 made this look nearly neutral; cloud direction flipped. `AE_HYBRID_VETO_FROZEN_STAY` is one of the most important wrapper components.
+AE (hybrid-v3-conf-0.3) melanie-minions-ae hybrid-v3-conf-0.3 19/05/2026 0 / 30 0.411 0.591 ← REGRESSED -0.144 acc and -0.258 speed vs hybrid-v3. Confirms the earlier `hybrid-conf50` result: confidence gating throws away policy actions that hidden eval needs.
+AE (heur-restore-v3) melanie-minions-ae heur-restore-v3 19/05/2026 — / 30 — 0.602 ← Speed-only note from latest result set; part of the broad ~0.25 speed drop across 18/19 May AE submissions.
+AE (heur-restore-v3-bombfix) melanie-minions-ae heur-restore-v3-bombfix 19/05/2026 — / 30 — 0.616 ← Speed-only note from latest result set; still far below hybrid-v3's old 0.849 speed.
+AE (novice-fixed-v1 local) melanie-minions-ae novice-fixed-v1 19/05/2026 LOCAL ONLY — — 0.5157 local ← PPO scripted fixed-Novice rerun finished 200/200 updates with best eval 0.5915, then Docker `til test` scored 0.5157 over 6 rounds. Do not submit.
 AE (ppo-scripted-v1) melanie-minions-ae ppo-scripted-v1 17/05/2026 12:19:21 0 / 30  0.450  0.607  ← REGRESSED -0.105 acc, -0.242 speed vs hybrid-v3; blended 0.489 (-0.139). Tier-2 #9 PPO with --opponents scripted (5-archetype scripted library, no self-play) trained from BC warm-start; best eval at update 45 was local 0.6322 (cloud only achieved 0.450). Local til test 0.741 → cloud 0.450 = gap 0.291, the same structural local→cloud gap that killed every prior PPO/BC submission. Speed regressed because policy net forward + top-K cascade adds ~3-5x per-tick wall clock vs heuristic-only path. **Confirms training-side AE hypotheses are exhausted** — even the most informative training distribution (5 distinct scripted opponents) doesn't close the cloud gap.
 AE (mcts-light-v2) melanie-minions-ae  mcts-light-v2  16/05/2026 23:52:21  0 / 30  0.487  0.595  ← REGRESSED. Blended 0.514 vs hybrid-v3's 0.628 (−0.114). Latency cap (80ms) + pre-flight gate prevented v1's timeout, but MCTS still cost +7.7 min cloud wall-clock vs hybrid-v3, AND accuracy dropped 0.068 (MCTS replacing hybrid actions with cloud-worse choices — stationary-opponent assumption doesn't transfer). Local til test 0.6618. Local-cloud gap 0.175 (tighter than hybrid-v3's 0.219 but local floor was lower). MCTS as a primary planner is dead; remaining variants: conservative-MCTS (high-confidence override only) + heuristic-only A/B.
 AE (mcts-light-v1) melanie-minions-ae  mcts-light-v1  16/05/2026 ~23:00  TIMEOUT  —  —  ← "Your model took too long to evaluate". MCTS DEPTH=5 WIDTH=96 ran every tick with no latency cap → ~2400 expansions/tick × ~0.5-1 ms = 1.2-2.4 s/tick vs cloud's ~600 ms/tick budget. Local `til test` (no wall-clock cap) didn't catch it. No score, no leaderboard impact. v2 fixed the timeout but introduced score+speed regression.

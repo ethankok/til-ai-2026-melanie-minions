@@ -1,10 +1,14 @@
 # AE — notes & history
 
-Last updated: 17 May 2026 ~12:30 SGT — **Parked at `hybrid-v3` (0.555/0.849, 0/30 errors).** Team-best AE score; top-quartile (leaderboard top 0.711). 11 submissions total, 4 post-hybrid-v3 attempts all regressed (mcts-light timeout/regress, ppo-selfplay-v1/v2 regress, ppo-scripted-v1 regress, bc-belief regress, hybrid-conf50 regress). Both **training-side** (BC, BC+belief, PPO mixed/league/selfplay/scripted) and **inference-side** (mcts-light at two configs) AE hypotheses are now exhausted. Tier 3 (hierarchical goal selector) is the only structurally different remaining option (2-3 days work, uncertain outcome); otherwise AE is final at hybrid-v3.
+Last updated: 19 May 2026 ~14:10 SGT — **UN-PARKED for evidence gathering after a public 0.9 AE score appeared, but the controlled Novice PPO rerun is not the unlock.** `hybrid-v3` is still the shipped best at `0.555 / 0.849`. Four new cloud A/Bs all regressed and are now useful evidence rather than candidates: `hybrid-v3-no-mcts` `0.482 / 0.598`, `hybrid-v3-no-vetofrozen` `0.454 / 0.556`, `hybrid-v3-conf-0.3` `0.411 / 0.591`, plus speed-only regressions for `heur-restore-v3` (`0.602`) and `heur-restore-v3-bombfix` (`0.616`). `novice-fixed-v1` training completed 200/200 updates with best eval `0.5915` at update 200, then Docker `til test` scored only `0.5156667` over 6 rounds; this is **not** a submit candidate. Immediate next step remains the `hybrid-v3-speedcheck` same-bytes resubmission to separate cloud congestion from code/runtime slowdown.
 
 **Architecture**: PPO policy (`ppo-v1` weights) wrapped by `HybridAEManager` (heuristic safety-veto + top-K policy cascade) + `AEManager`'s heuristic dominant-action shortcut firing on adjacent enemy *agents* (not just bases). Mode selection via `AE_MODE` env in `ae/Dockerfile` or `ae/src/.ae_mode` fallback (`hybrid` | `policy` | `heuristic`). Currently `hybrid`. MCTS-light is off by default again (`AE_MCTS=0`, `AE_HYBRID_TRUST_MCTS=0`) because v1 timed out and v2 regressed; opt in only for explicit A/Bs. Weights on Workbench: `ae/models/bc.pt` ← `~/ae-checkpoints-backup/deployed-bc-v1.pt`.
 
-**Central finding**: the local→cloud gap is ~0.23 for every approach we tried — heuristics, BC, mixed-opp PPO, frame-stacked PPO + varied maps, hybrid wrappers with various gates, state-augmented BC, league self-play, scripted PPO, MCTS-light inference. **The gap is structural to the hidden eval distribution; none of our training-side or inference-side interventions have moved it.** Hybrid-style wrappers moved the floor by +0.048 but the gap stayed constant; bc-belief actually *widened* it.
+**Central finding, revised 19 May**: the hybrid wrapper has very little slack. Removing MCTS cost `-0.073` cloud accuracy, removing the frozen-STAY veto cost `-0.101`, and lowering the policy confidence gate to `0.3` cost `-0.144`. The most important ablation is `AE_HYBRID_VETO_FROZEN_STAY`: local suggested it barely mattered (`0.6866`, worse than baseline by only ~0.013), while cloud said it was more important than MCTS. That is the first clean local→cloud direction flip at component level, so local A/Bs are not just noisy in aggregate; they can mis-rank individual wrapper parts.
+
+**Novice-map correction**: Claude's suggested "train Novice-specific PPO" direction had one wrong premise. `training/ae/train_ppo.py` already defaults to Novice mode: `config.env.novice = (not args.vary_maps) and args.novice`, and `--novice` defaults true. `ppo-v1` and `ppo-scripted-v1` were therefore already fixed-Novice unless their command used `--vary-maps` or `--no-novice`; only `ppo-v2` explicitly explored varied maps. A new explicit `--novice --seed 42 --eval-seed 42` run can still be useful as a controlled rerun with better logging/keepalive, but it is **not** a brand-new structural lever by itself. Treat it as lower-EV than the speedcheck and 0.9-team intelligence.
+
+**Controlled Novice PPO rerun result (19 May)**: command used `--bc-checkpoint ~/ae-checkpoints-backup/deployed-bc-v1.pt --out ~/ae-checkpoints-backup/novice-fixed-v1 --updates 200 --opponents scripted --eval-opponents scripted --novice --eval-every 5 --eval-games 30 --seed 42 --eval-seed 42`. Training finished cleanly after `223.2m`; best eval was `0.5915` at update 200, with prior peaks `0.5497` at update 105 and `0.5677` at update 140. Docker validation then copied the checkpoint to `ae/models/bc.pt`, set `ae/src/.ae_mode` to `hybrid`, built `novice-fixed-v1`, and `til test ae novice-fixed-v1` scored `3094.0` total reward / `0.5156666667` over 6 rounds. This is below even the shipped hybrid-v3 cloud score and far below prior local candidates that failed to transfer (`ppo-scripted-v1` local `0.741` -> cloud `0.450`; hybrid-v3 local `~0.774` -> cloud `0.555`). Decision: preserve checkpoint for analysis, **do not submit**.
 
 Per-task working log for AE (Autonomous Exploration / Bomberman). For the authoritative input/output/scoring spec see [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#ae). For submission history across all tasks see [../RESULTS.md](../RESULTS.md). For training pipeline see [../training/ae/RUNBOOK.md](../training/ae/RUNBOOK.md).
 
@@ -28,6 +32,12 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 | mcts-light-v1 | TIMEOUT | — | DEPTH=5 WIDTH=96 no latency cap → 1.2-2.4 s/tick vs ~600 ms budget |
 | mcts-light-v2 | 0.487 | 0.595 | 80 ms cap + pre-flight gate + DEPTH=3 WIDTH=24 — speed regressed -0.254, accuracy -0.068 |
 | ppo-scripted-v1 | 0.450 | 0.607 | Tier 2 #9 — PPO with `--opponents scripted` (5 archetypes). Gap 0.291. |
+| hybrid-v3-no-mcts | 0.482 | 0.598 | Removing MCTS/trust path regressed accuracy `-0.073`; local direction matched. |
+| hybrid-v3-no-vetofrozen | 0.454 | 0.556 | Removing frozen-STAY veto regressed accuracy `-0.101`; local direction flipped. |
+| hybrid-v3-conf-0.3 | 0.411 | 0.591 | Lower confidence gate was even worse than `conf50`; policy gating is cloud-bad. |
+| heur-restore-v3 | — | 0.602 | Speed-only note from cloud result set; broad ~0.25 speed loss vs 14 May baseline. |
+| heur-restore-v3-bombfix | — | 0.616 | Speed-only note from cloud result set; still broad speed regression. |
+| novice-fixed-v1 | local only | — | Scripted-opponent Novice PPO rerun best eval `0.5915`; Docker `til test` scored `0.5157`, so do not submit. |
 
 ## Cloud gap by submission (the structural pattern)
 
@@ -45,8 +55,18 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 | ppo-selfplay-v2 (hybrid) | 0.7068 | 0.436 | 0.271 |
 | mcts-light-v2 | 0.6618 | 0.487 | 0.175 |
 | ppo-scripted-v1 | 0.741 | 0.450 | 0.291 |
+| hybrid-v3-no-mcts | 0.6767 | 0.482 | 0.195 |
+| hybrid-v3-no-vetofrozen | 0.6866 | 0.454 | 0.233 |
 
 Pattern: ~0.19-0.30 gap for everything. Wrapper changes the gap because they change the local floor more than the cloud floor; the underlying transfer problem is invariant.
+
+## 19 May handoff — what to do next
+
+1. **Run `hybrid-v3-speedcheck` first.** The local `hybrid-v3` image was gone, but the registry copy should still exist. Pull the exact old image, retag locally as `melanie-minions-ae:hybrid-v3-speedcheck`, then `til submit ae hybrid-v3-speedcheck`. If it scores near `0.555 / 0.849`, current code accumulation is the speed culprit. If it scores near `0.555 / 0.60`, this week's cloud is slower and speed work is low-ROI.
+2. **Do not ship any of the new ablations.** `no-mcts`, `no-vetofrozen`, and `conf-0.3` all hurt accuracy, and the frozen-STAY veto is now confirmed load-bearing on hidden eval.
+3. **If speedcheck recovers speed, build `hybrid-v3-lean`.** Recreate the 14 May hybrid path without later Tier-1/MCTS/playbook/opponent-model code paths in the hot loop. Expected value is speed only, potentially ~`+0.06` blended if cloud speed returns from ~0.60 to ~0.85.
+4. **Do not chase `novice-fixed-v1` further by default.** It finished at best eval `0.5915` and Docker `til test` scored only `0.5157`, below the local bar and not worth a cloud submission.
+5. **Check external intelligence.** A public 0.9 AE score implies a structural unlock. Given our fixed-map evidence and repeated local-cloud reversals, prioritize any clue about map memorization, hand-coded route tables, reward farming, or opponent assumptions before another blind PPO day.
 
 ## Why every post-hybrid-v3 attempt failed
 
@@ -474,11 +494,15 @@ Speed is within striking distance with uvicorn/Docker tuning. **Score is the har
 - **Is `0/30 errors` masking some game-completion failures?** No invalid-action errors ≠ no agent-deaths or timeouts.
 - **Could a fundamentally different *evaluation* lens help?** Without hidden-eval per-game replays, we're guessing.
 
-## What remains worth doing (Tier 3 candidate)
+## What remains worth doing after 19 May
 
-**Hierarchical goal selector** is the only structurally different remaining option. Operates on coarser state (mission/recon/resource zones, base proximity, bomb-vs-explore phase) — coarse enough to plausibly be invariant to the local-cloud opponent distribution shift that killed everything else. 2-3 days work, uncertain outcome.
+**Immediate**: run `hybrid-v3-speedcheck` before changing code. The latest speed results are too uniformly low to distinguish code slowdown from cloud/evaluator slowdown.
 
-If not Tier 3, AE is final at hybrid-v3.
+**If speedcheck says code slowed down**: build `hybrid-v3-lean` from the 14 May hot path, stripping later MCTS/Tier-1/playbook/opponent-model hot-loop additions while preserving the hybrid wrapper pieces now proven load-bearing.
+
+**If speedcheck says cloud is slow too**: keep `hybrid-v3` as shipped and spend AE time on structural intelligence. A public 0.9 score means someone found a different frame; likely candidates are fixed-map exploitation, hand-coded route/waypoint tables, or reward-farming behavior we have not observed locally.
+
+**Tier 3 hierarchical goal selector** remains the code-heavy option. It operates on coarser state (mission/recon/resource zones, base proximity, bomb-vs-explore phase), which could be more invariant to the local-cloud opponent distribution shift that killed BC/PPO/MCTS. Cost: 2-3 days, uncertain outcome.
 
 What to avoid (lessons learned):
 - Bigger BC networks with rich state inputs against random opponents (overfits transfer).

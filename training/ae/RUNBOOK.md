@@ -106,6 +106,76 @@ Keep `ae/models/bc.pt` as the expected filename unless you also set `AE_POLICY_C
 
 **Important**: `AE_MODE=foo til build …` does NOT work — `docker build` doesn't inherit the shell env, so the cloud container would default to hybrid regardless. Either edit the `ENV AE_MODE=…` line in `ae/Dockerfile` or write the mode into `ae/src/.ae_mode` (gitignored) before each build.
 
+### 19 May immediate handoff: speedcheck before more AE code
+
+Latest cloud A/Bs (`no-mcts`, `no-vetofrozen`, `conf-0.3`, heuristic
+restores) all lost about `0.25` speed vs the 14 May `hybrid-v3` score. Before
+attributing that to code, resubmit the exact old registry image under a fresh
+tag:
+
+```bash
+cd /home/jupyter/til
+
+docker pull asia-southeast1-docker.pkg.dev/til-ai-2026/repo-til-26-melanie-minions/melanie-minions-ae:hybrid-v3
+docker tag asia-southeast1-docker.pkg.dev/til-ai-2026/repo-til-26-melanie-minions/melanie-minions-ae:hybrid-v3 \
+           melanie-minions-ae:hybrid-v3-speedcheck
+til submit ae hybrid-v3-speedcheck
+```
+
+Interpretation:
+
+| Speedcheck result | Meaning | Next action |
+|---|---|---|
+| ~`0.555 / 0.849` | Cloud is fine; current code/runtime additions slowed AE. | Build `hybrid-v3-lean` from the 14 May hot path. |
+| ~`0.555 / 0.60` | This week's cloud/evaluator state is slower. | Keep `hybrid-v3`; speed work is low-ROI. |
+| In between | Mixed cause. | Lean build is still worth one fast A/B. |
+
+Important training correction: `train_ppo.py` already defaults to Novice
+fixed-map mode (`--novice` is true unless `--vary-maps` or `--no-novice` is
+used). An explicit fixed-Novice command is still useful for a controlled rerun,
+but not a first-ever Novice-map training attempt.
+
+If running the controlled PPO rerun anyway, use the script's real argument names:
+
+```bash
+cd /home/jupyter/til
+tmux new -s ae-train
+
+python training/ae/train_ppo.py \
+  --bc-checkpoint ~/ae-checkpoints-backup/deployed-bc-v1.pt \
+  --out ~/ae-checkpoints-backup/novice-fixed-v1.pt \
+  --updates 200 \
+  --games-per-update 12 \
+  --opponents scripted \
+  --eval-opponents scripted \
+  --novice \
+  --eval-every 5 \
+  --eval-games 30 \
+  --n-frames 4 \
+  --seed 42 \
+  --eval-seed 42 \
+  2>&1 | tee ~/novice-fixed-v1.log
+```
+
+Do **not** use `--total-steps`, `--warm-start`, or `--out-dir`; those flags do
+not exist here. Detach tmux with `Ctrl-b`, then `d`; reattach with
+`tmux attach -t ae-train`.
+
+Workbench idle shutdown has killed previous AE runs. If settings cannot be
+changed, leave this Jupyter cell running while the tmux session trains:
+
+```python
+import datetime
+import time
+
+while True:
+    print(f"heartbeat {datetime.datetime.now().isoformat()}", flush=True)
+    time.sleep(45)
+```
+
+Early kill rule: if eval is still around `0.50-0.55` by update 30, stop and
+switch effort back to speedcheck/lean-build or external 0.9-score intelligence.
+
 ### Gotchas
 
 - The encoder normalizes scalars by max plausible values (60 hp, 100 base hp, 10 resources, 10 bombs, 200 steps). If the qualifier uses different caps these need to be re-tuned, but the values match the published env config.
