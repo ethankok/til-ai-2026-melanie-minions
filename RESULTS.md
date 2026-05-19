@@ -174,6 +174,7 @@ NLP (prior v5c) melanie-minions-nlp v5c-no-para 14/05/2026 19:44:08 0 / 700     
 ASR    melanie-minions-asr      nemo-zs     14/05/2026 20:33:36   0 / 400       0.956   0.946  ← NEW BLENDED HIGH; Parakeet-TDT-0.6B-v2 zero-shot, +0.097 speed vs ft-lora32-v1
 CV     melanie-minions-cv       ry-v2 19/05/2026 18:37:07 0 / 500 0.608 0.961  ← NEW CV HIGH. Same weights as `ruiyang-v1`; serving row `conf=0.15 iou=0.55 imgsz=896 aug=0 cross_nms=0.97`. Local hard held-out 0.9234; til test 0.9076.
 CV (prior high) melanie-minions-cv ruiyang-v1 19/05/2026 13:15:19 0 / 500 0.588 0.955  ← First 19 May unpark; local hard held-out 0.9125 with real-score HTTP eval.
+CV (regressed) melanie-minions-cv ry_v3_adaptive 19/05/2026 22:08:35 0 / 500 0.571 0.958  <- Low-conf + adaptive TTA rescue overfit saved JSON; til test fell to 0.8513. Do not ship.
 CV     melanie-minions-cv       cv-yolo-v2-tier1-best 14/05/2026 17:10:09 0 / 500 0.556 0.956
 CV (v3-pre) melanie-minions-cv  cv-yolo11m-v3-pre 15/05/2026 11:34:42 0 / 500   0.376   0.955  ← REGRESSED -0.180; v11m fully trained but matched-imgsz lost to v8s+upscaled. Tier1 stays on leaderboard.
 CV (v11m-1280-noaug-v1) melanie-minions-cv  v11m-1280-noaug-v1 16/05/2026 04:04:59 0 / 500 0.474 0.949  ← REGRESSED -0.082; v11m at 1280 aug=0 looked great locally (hard held-out 0.9088, +0.014 vs tier1) but v11m's local→cloud gap is structurally ~0.44 vs v8s's ~0.35. Tier1 stays on leaderboard.

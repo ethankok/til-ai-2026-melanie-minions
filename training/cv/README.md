@@ -181,14 +181,31 @@ This row scored local hard held-out `mAP50-95=0.9234`, up from the previous
 selected conservative row. `CV_CROSS_CLASS_NMS_IOU=0.97` is effectively neutral
 locally and may trim near-identical hidden subclass duplicates.
 
-For the next accuracy-first candidate, `ensemble_lab.tgz` showed that the best
-cheap base is `CV_CONF=0.05`, `CV_IOU=0.70`, `CV_CROSS_CLASS_NMS_IOU=0`
-(`0.9237` local mAP). Adding a down-weighted TTA rescue pass improves local mAP
-to `0.9270` when enabled only on dense images (`CV_SECOND_MIN_DETECTIONS=7`),
-or `0.9283` when enabled on all images. The current `cv/Dockerfile` bakes the
-adaptive version.
+The later accuracy-first candidate `ry_v3_adaptive` tried `CV_CONF=0.05`,
+`CV_IOU=0.70`, `CV_CROSS_CLASS_NMS_IOU=0` plus a down-weighted TTA rescue pass.
+Although the saved-prediction ensemble scored `0.9270` locally, it regressed to
+`0.8513` on `til test` and `0.571 / 0.958` official. Keep `CV_SECOND_PASS=0` by
+default unless a new sweep proves it against `til test`, not only saved JSON.
 
 Then rebuild with a new tag.
+
+### V5 plus-val final-data experiment
+
+The current best `ry-v2` was trained before the rare/dense held-out images were
+folded back into training. The next useful checkpoint experiment is therefore a
+conservative YOLOv8s fine-tune on old `train+val`, with old `test` kept as the
+sanity split:
+
+```bash
+python training/cv/build_final_yolo_dataset.py
+bash training/cv/train_v5_plusval.sh
+cp /home/jupyter/cv_runs/til-yolov8s-896-plusval-v5/weights/best.pt cv/models/best.pt
+til build cv ry-v4-plusval
+til test cv ry-v4-plusval
+```
+
+This is intentionally not another inference trick. It uses the restored `ry-v2`
+serving row in `cv/Dockerfile` and tries to improve the checkpoint itself.
 
 Cross-class NMS remains available as `CV_CROSS_CLASS_NMS_IOU`, but avoid lower
 thresholds unless a sweep proves they help the exact checkpoint being submitted.
