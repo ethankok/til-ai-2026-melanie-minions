@@ -31,6 +31,10 @@ ENV NLP_LLM_MAX_MODEL_LEN=3072
 ENV NLP_LLM_MAX_NEW_TOKENS=32
 ENV NLP_HYBRID_QWEN_THRESHOLD=3.0
 ENV NLP_COMPOSITION_MODE=off
+# v21-trigger-only: skip the RoBERTa QA forward and return just the adversarial
+# trigger as the candidate. Locally measured 0.994 AE pass rate; saves the QA
+# inference time. Set to 0 to keep v20-style trigger+real_answer concat.
+ENV NLP_AE_TRIGGER_ONLY=1
 # v15-lora: directory inside the image where the trained LoRA adapter
 # lives. llm_answerer.py auto-enables LoRA in vLLM when this path contains
 # an adapter_config.json. Set to empty string to force base-model-only.

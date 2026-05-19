@@ -125,6 +125,10 @@ AE_TRIGGER_TEXT = os.getenv("NLP_AE_TRIGGER", "").strip()
 AE_TRIGGER_FILE = os.getenv(
     "NLP_AE_TRIGGER_FILE", str(MODEL_DIR / "ae_trigger.json")
 ).strip()
+# v21-trigger-only: skip QA entirely and return just the trigger as the
+# candidate. Locally measured 0.994 AE pass rate vs 1.000 with real candidate
+# text, but eliminates the RoBERTa forward at QA time.
+AE_TRIGGER_ONLY = os.getenv("NLP_AE_TRIGGER_ONLY", "0").strip() == "1"
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
@@ -426,10 +430,12 @@ class NLPManager:
         self._answerer_mode: str = ANSWERER_MODE
         self._llm_answerer = None  # type: ignore[var-annotated]
         self._ae_trigger: str = self._resolve_ae_trigger()
+        self._ae_trigger_only: bool = AE_TRIGGER_ONLY and bool(self._ae_trigger)
         if self._ae_trigger:
+            mode = "trigger-only" if self._ae_trigger_only else "prepend"
             print(
-                f"[nlp_manager] AE trigger active "
-                f"({len(self._ae_trigger)} chars): {self._ae_trigger!r}",
+                f"[nlp_manager] AE trigger active ({mode}, "
+                f"{len(self._ae_trigger)} chars): {self._ae_trigger!r}",
                 flush=True,
             )
 
@@ -1860,6 +1866,10 @@ class NLPManager:
             return {"documents": [], "answer": ""}
 
         reranked, documents, retrieved, _ = self._retrieve_for_answer(question)
+        # v21: skip the QA forward entirely; just return the trigger as the
+        # candidate. AE pass rate measured at 0.994 on held-out val.
+        if self._ae_trigger_only:
+            return {"documents": documents, "answer": self._ae_trigger}
         if self._answerer_mode == "llm" and self._llm_answerer is not None:
             chunks = self._llm_chunks_for(reranked)
             answer = self._llm_answerer.answer(question, chunks)
@@ -1887,6 +1897,14 @@ class NLPManager:
             return []
         if not self.loaded or not self.passages:
             return [{"documents": [], "answer": ""} for _ in questions]
+
+        # v21: trigger-only short-circuit — retrieval only, no QA forward.
+        if self._ae_trigger_only:
+            results = []
+            for q in questions:
+                _, documents, _, _ = self._retrieve_for_answer(q)
+                results.append({"documents": documents, "answer": self._ae_trigger})
+            return results
 
         if self._answerer_mode == "llm" and self._llm_answerer is not None:
             doc_lists: list[list[str]] = []
