@@ -237,6 +237,10 @@ Third build failure note: if `download_models.py` says `No module named
 small Hugging Face download stack before model download while still delaying
 vLLM until after weights are baked.
 
+Fourth build failure note: if the image builds but never becomes healthy, pull
+the latest main again. `/health` now avoids importing Torch/Transformers by
+lazy-loading `NLPManager` only after corpus load starts.
+
 ## v15 QLoRA / AWQ lessons (18 May)
 
 The Qwen3-8B LoRA training command that completed was:

@@ -133,4 +133,4 @@ RUN for d in modernbert-finetuned-squad2 deberta-finetuned-squad2 roberta-finetu
 # Copies your source files.
 COPY src .
 
-CMD uvicorn nlp_server:app --port 5004 --host 0.0.0.0
+CMD ["uvicorn", "nlp_server:app", "--port", "5004", "--host", "0.0.0.0"]

@@ -933,6 +933,11 @@ Implementation:
   only the small Hugging Face download stack (`transformers`, `tokenizers`,
   `safetensors`, `sentencepiece`, `huggingface-hub`) before downloading
   weights, while still delaying vLLM until after the Qwen shard lands.
+- Fourth v19 build completed but the container never became healthy. The
+  suspected cause is startup import latency: `nlp_server.py` imported
+  `nlp_manager` at module import time, which pulls in Torch/Transformers before
+  `/health` can respond. Server now lazy-loads `NLPManager` on corpus load or
+  question requests, leaving `/health` as a lightweight FastAPI endpoint.
 - `nlp_manager.py` now loads both answerers in hybrid mode. It always performs
   v9 retrieval/rerank/doc selection and v9 candidate extraction first, then
   routes to Qwen only if a hand-tuned hard-score clears

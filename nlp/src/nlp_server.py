@@ -5,11 +5,11 @@ import logging
 from typing import Optional
 
 from fastapi import FastAPI, Request
-from nlp_manager import NLPManager
 
 app = FastAPI()
-manager = NLPManager()
 logger = logging.getLogger(__name__)
+manager = None
+manager_lock = asyncio.Lock()
 
 
 class _LoadState:
@@ -25,14 +25,28 @@ class _LoadState:
 load_state = _LoadState()
 
 
+async def _get_manager():
+    """Lazy-load the heavy NLP stack after /health is already responsive."""
+    global manager
+    if manager is None:
+        async with manager_lock:
+            if manager is None:
+                from nlp_manager import NLPManager
+
+                manager = NLPManager()
+    return manager
+
+
 def _do_load(documents) -> bool:
     """Synchronous corpus load. Runs on a worker thread."""
+    assert manager is not None
     manager.load_corpus(documents)
     return manager.loaded
 
 
 async def _load_task(documents) -> None:
     try:
+        await _get_manager()
         ok = await asyncio.to_thread(_do_load, documents)
         load_state.status = "loaded" if ok else "failed"
     except Exception as e:
@@ -61,6 +75,7 @@ async def nlp(request: Request) -> dict[str, list[dict[str, list[str] | str]]]:
     # manager in one call so vLLM can do continuous batching across them.
     # The extractive path inside qa_batch still processes sequentially, so
     # this change is a no-op for the v9 rollback configuration.
+    manager = await _get_manager()
     questions = [instance["question"] for instance in inputs_json["instances"]]
     predictions = await asyncio.to_thread(manager.qa_batch, questions)
 
