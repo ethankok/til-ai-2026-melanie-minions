@@ -183,6 +183,13 @@ def _make_batch(
     candidate_token_budget: int,
     device,
 ):
+    """Build a padded batch with the trigger spliced in at known offsets.
+
+    Returns (input_ids, attention_mask, trigger_slices, trigger_starts_tensor).
+    `trigger_starts_tensor` is a 1-D long tensor on `device` containing the
+    absolute index (in input_ids) where each row's trigger begins. Used by the
+    batched HotFlip trial path to overwrite single token positions cheaply.
+    """
     import torch
 
     per_example = [
@@ -198,6 +205,7 @@ def _make_batch(
     input_ids = torch.full((len(examples), max_len), pad_id, dtype=torch.long)
     attention_mask = torch.zeros_like(input_ids)
     trigger_slices: list[tuple[int, int]] = []
+    starts: list[int] = []
     for row, (ids, ts, te) in enumerate(per_example):
         ids = ids[:max_len]
         input_ids[row, :len(ids)] = torch.tensor(ids, dtype=torch.long)
@@ -206,10 +214,12 @@ def _make_batch(
         ts = min(ts, max_len)
         te = min(te, max_len)
         trigger_slices.append((ts, te))
+        starts.append(ts)
     return (
         input_ids.to(device),
         attention_mask.to(device),
         trigger_slices,
+        torch.tensor(starts, dtype=torch.long, device=device),
     )
 
 
@@ -263,14 +273,22 @@ def _hotflip_step(
     topk: int,
     candidate_token_budget: int,
     device,
+    trial_chunk: int = 8,
 ) -> tuple[list[int], float, float]:
-    """One HotFlip iteration. Returns (new_trigger, loss_before, loss_after)."""
+    """One HotFlip iteration. Returns (new_trigger, loss_before, loss_after).
+
+    Inner trial-evaluation is batched: for each position we evaluate the K
+    candidate replacements in a single forward by tiling the eval batch K
+    times and overwriting one token per row. Chunks of `trial_chunk`
+    candidates at a time keep T4 memory in check.
+    """
     import torch
 
     embed_layer = model.get_input_embeddings()
     vocab_embeds = embed_layer.weight  # (V, H)
 
-    input_ids, attention_mask, trigger_slices = _make_batch(
+    # 1) Gradient at trigger positions on the train batch.
+    input_ids, attention_mask, trigger_slices, _ = _make_batch(
         tokenizer, batch_examples, trigger_ids, candidate_token_budget, device
     )
     base_embeds = embed_layer(input_ids).detach().clone()
@@ -279,8 +297,6 @@ def _hotflip_step(
     loss, _ = _eval_loss_and_prob(model, base_embeds, attention_mask)
     loss.backward()
 
-    # Average gradient at trigger positions across the batch.
-    # Trigger positions differ per row because prefix lengths differ.
     grad = base_embeds.grad  # (B, L, H)
     trigger_len = len(trigger_ids)
     grad_at_trigger = torch.zeros(trigger_len, grad.size(-1), device=device)
@@ -293,50 +309,75 @@ def _hotflip_step(
         n_counted[:actual] += 1
     grad_at_trigger /= n_counted.clamp(min=1).unsqueeze(-1)
 
-    # First-order HotFlip score: replacing trigger[i] with v gives an expected
-    # loss change of approximately (E[v] - E[trigger[i]]) @ grad_i. Lower is
-    # better.
+    # Release the gradient graph before doing inference forwards.
+    del base_embeds, loss, grad
+    torch.cuda.empty_cache() if device.type == "cuda" else None
+
+    # 2) First-order HotFlip score per (position, vocab_id).
     with torch.no_grad():
-        cur_emb = vocab_embeds[torch.tensor(trigger_ids, device=device)]  # (T, H)
-        # delta_emb[i, v, :] = vocab_embeds[v] - cur_emb[i]
-        # scores[i, v]       = delta_emb[i, v] @ grad_at_trigger[i]
+        cur_emb = vocab_embeds[torch.tensor(trigger_ids, device=device)]
         scores = (vocab_embeds @ grad_at_trigger.T).T  # (T, V)
         scores = scores - (cur_emb * grad_at_trigger).sum(dim=-1, keepdim=True)
-        # Mask disallowed tokens to +inf so they're never picked.
         scores = scores.masked_fill(~allowed_mask.to(device), float("inf"))
+        topk_scores, topk_ids = torch.topk(scores, k=topk, largest=False, dim=-1)  # (T, K)
 
-    # Evaluate each (position, candidate) replacement on the eval batch and
-    # accept the single best swap that reduces actual loss.
-    eval_input_ids, eval_attn, _ = _make_batch(
+    # 3) Build the eval batch ONCE (tokenization is expensive); we'll only
+    #    overwrite single token positions for each trial.
+    eval_input_ids, eval_attn, _, eval_trigger_starts = _make_batch(
         tokenizer, eval_examples, trigger_ids, candidate_token_budget, device
     )
+    B, L = eval_input_ids.shape
+    row_idx = torch.arange(B, device=device)
+
     with torch.no_grad():
-        baseline_loss, _ = _eval_loss_and_prob(
+        baseline_loss_t, _ = _eval_loss_and_prob(
             model, embed_layer(eval_input_ids), eval_attn,
         )
-        baseline_loss = baseline_loss.item()
+        baseline_loss = baseline_loss_t.item()
     best_loss = baseline_loss
     best_swap: tuple[int, int] | None = None
 
-    # For each position, take the `topk` best candidate replacements; do an
-    # actual forward pass and keep the swap with the lowest eval loss.
-    topk_scores, topk_ids = torch.topk(scores, k=topk, largest=False, dim=-1)  # (T, K)
+    # 4) Batched per-position trial sweep. For each chunk of K candidates,
+    #    tile eval to (K_chunk * B, L) and overwrite one position per row.
     for pos in range(trigger_len):
-        for v in topk_ids[pos].tolist():
-            if v == trigger_ids[pos]:
-                continue
-            trial = list(trigger_ids)
-            trial[pos] = v
-            trial_input_ids, trial_attn, _ = _make_batch(
-                tokenizer, eval_examples, trial, candidate_token_budget, device
-            )
+        cand_ids = topk_ids[pos]  # (K,)
+        # Drop the current trigger token from the candidate list.
+        mask = cand_ids != trigger_ids[pos]
+        cand_ids = cand_ids[mask]
+        if cand_ids.numel() == 0:
+            continue
+        K = cand_ids.numel()
+
+        for c_start in range(0, K, trial_chunk):
+            c_end = min(c_start + trial_chunk, K)
+            chunk = cand_ids[c_start:c_end]  # (Kc,)
+            Kc = chunk.numel()
+
+            # Tile eval batch Kc times.
+            tiled_input_ids = eval_input_ids.unsqueeze(0).expand(Kc, B, L).reshape(Kc * B, L).clone()
+            tiled_attn = eval_attn.unsqueeze(0).expand(Kc, B, L).reshape(Kc * B, L)
+            # Overwrite trigger position `pos` in each row with that row's candidate.
+            # row_in_chunk r -> sample (r // B), example (r % B). Position in row =
+            # eval_trigger_starts[example] + pos.
+            r = torch.arange(Kc * B, device=device)
+            sample_idx = r // B
+            ex_idx = r % B
+            col = eval_trigger_starts[ex_idx] + pos
+            tiled_input_ids[r, col] = chunk[sample_idx]
+
             with torch.no_grad():
-                trial_loss, _ = _eval_loss_and_prob(
-                    model, embed_layer(trial_input_ids), trial_attn,
-                )
-            if trial_loss.item() < best_loss:
-                best_loss = trial_loss.item()
-                best_swap = (pos, v)
+                tiled_embeds = embed_layer(tiled_input_ids)
+                logits = model(inputs_embeds=tiled_embeds, attention_mask=tiled_attn).logits
+                # Per-sample mean loss: reshape to (Kc, B, 2), mean over B.
+                log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+                losses_per_row = -log_probs[:, 1]  # (Kc*B,)
+                losses = losses_per_row.view(Kc, B).mean(dim=1)  # (Kc,)
+
+            best_in_chunk_idx = int(losses.argmin().item())
+            best_in_chunk_loss = float(losses[best_in_chunk_idx].item())
+            if best_in_chunk_loss < best_loss:
+                best_loss = best_in_chunk_loss
+                best_swap = (pos, int(chunk[best_in_chunk_idx].item()))
 
     if best_swap is None:
         return trigger_ids, baseline_loss, baseline_loss
@@ -407,6 +448,8 @@ def main() -> int:
                         help="HotFlip candidates per position to try")
     parser.add_argument("--candidate-token-budget", type=int, default=24,
                         help="cap on suffix (real candidate) tokens during search")
+    parser.add_argument("--trial-chunk", type=int, default=8,
+                        help="candidates per position evaluated in one batched forward")
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -499,6 +542,7 @@ def main() -> int:
         trigger_ids, loss_before, loss_after = _hotflip_step(
             model, tokenizer, trigger_ids, batch, eval_batch,
             allowed_mask, args.topk, args.candidate_token_budget, device,
+            trial_chunk=args.trial_chunk,
         )
         delta = loss_before - loss_after
         if delta <= 1e-4:
@@ -513,6 +557,20 @@ def main() -> int:
                 f"(Δ {delta:+.4f})  trigger: {decoded!r}",
                 flush=True,
             )
+        # Checkpoint after every iter so Ctrl-C does not lose state.
+        ckpt = {
+            "trigger_str": tokenizer.decode(
+                trigger_ids, skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            ).strip(),
+            "trigger_ids": trigger_ids,
+            "stats": {
+                "iter": it,
+                "loss_after": loss_after,
+            },
+        }
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(ckpt, indent=2))
         if stale >= 20:
             print(f"Early stop: 20 iters without improvement.", flush=True)
             break
