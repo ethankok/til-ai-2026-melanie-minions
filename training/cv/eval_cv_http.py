@@ -12,6 +12,7 @@ import argparse
 import base64
 import json
 import math
+import time
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
@@ -87,20 +88,62 @@ def _clean_detection(detection: Mapping[str, Any], image_id: Any) -> dict[str, A
     }
 
 
+def _post_json_with_retries(
+    endpoint: str,
+    payload: Mapping[str, Any],
+    timeout: float,
+    retries: int,
+    retry_delay: float,
+) -> requests.Response:
+    last_error: BaseException | None = None
+    for attempt in range(retries + 1):
+        try:
+            response = requests.post(endpoint, json=payload, timeout=timeout)
+            if response.status_code >= 500 and attempt < retries:
+                last_error = requests.HTTPError(
+                    f"HTTP {response.status_code} from {endpoint}: {response.text[:200]}"
+                )
+            else:
+                response.raise_for_status()
+                return response
+        except (
+            requests.ConnectionError,
+            requests.Timeout,
+            requests.ChunkedEncodingError,
+        ) as exc:
+            last_error = exc
+
+        if attempt < retries:
+            tqdm.write(
+                f"CV eval request failed ({type(last_error).__name__}); "
+                f"retrying in {retry_delay:.1f}s [{attempt + 1}/{retries}]"
+            )
+            time.sleep(retry_delay)
+
+    raise RuntimeError(f"CV endpoint request failed after {retries + 1} attempts") from last_error
+
+
 def collect_predictions(
     annotations: dict[str, Any],
     images_dir: Path,
     endpoint: str,
     batch_size: int,
     timeout: float,
+    retries: int = 3,
+    retry_delay: float = 5.0,
 ) -> list[dict[str, Any]]:
     images = annotations["images"]
     results: list[dict[str, Any]] = []
     total = math.ceil(len(images) / batch_size)
     for image_batch in tqdm(list(_batched(images, batch_size)), total=total, desc="CV eval"):
         instances = list(_image_instances(image_batch, images_dir))
-        response = requests.post(endpoint, json={"instances": instances}, timeout=timeout)
-        response.raise_for_status()
+        response = _post_json_with_retries(
+            endpoint=endpoint,
+            payload={"instances": instances},
+            timeout=timeout,
+            retries=retries,
+            retry_delay=retry_delay,
+        )
         predictions = response.json()["predictions"]
         if len(predictions) != len(instances):
             raise RuntimeError(
@@ -198,6 +241,8 @@ def main() -> None:
     parser.add_argument("--endpoint", default="http://localhost:5002/cv")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--timeout", type=float, default=60.0)
+    parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument("--retry-delay", type=float, default=5.0)
     parser.add_argument("--limit", type=int, default=0, help="Limit images for a smoke test")
     parser.add_argument("--predictions-json", type=Path)
     parser.add_argument("--summary-json", type=Path)
@@ -214,6 +259,8 @@ def main() -> None:
         endpoint=args.endpoint,
         batch_size=args.batch_size,
         timeout=args.timeout,
+        retries=args.retries,
+        retry_delay=args.retry_delay,
     )
     summary = score_predictions(predictions, annotations)
     print_summary(summary)

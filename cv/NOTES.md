@@ -1,10 +1,10 @@
 # CV — notes & history
 
-Last updated: 19 May 2026 18:15 SGT — **CV unparked. `ruiyang-v1` scored
-0.588/0.955 official, and the partial core sweep found a stronger local serving
-row: `CV_CONF=0.15`, `CV_IOU=0.55`, `CV_IMGSZ=896`, `CV_AUGMENT=0`,
-`CV_CROSS_CLASS_NMS_IOU=0.97` with hard held-out mAP 0.9234.** This should be
-the next build/test/submit candidate before more training.
+Last updated: 19 May 2026 18:45 SGT — **`ry-v2` is the current CV high:
+0.608/0.961 official, 0/500 errors.** Same weights as `ruiyang-v1`, but with
+the partial core sweep's serving row baked in: `CV_CONF=0.15`, `CV_IOU=0.55`,
+`CV_IMGSZ=896`, `CV_AUGMENT=0`, `CV_CROSS_CLASS_NMS_IOU=0.97`. Local hard
+held-out mAP was 0.9234.
 
 Previous 16 May note: **CV RE-PARKED at `cv-yolo-v2-tier1-best`
 0.556/0.956 after Phase C.1 didn't transfer.** Augmented training (JPEG + native
@@ -21,10 +21,9 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`ruiyang-v1` — official 0.588 / 0.955 (19 May 13:15 SGT, 0/500 errors).**
+**`ry-v2` — official 0.608 / 0.961 (19 May 18:37 SGT, 0/500 errors).**
 
-Next candidate to submit: same weights with the 19 May partial-sweep serving
-row baked into `cv/Dockerfile`:
+Current submitted serving row baked into `cv/Dockerfile`:
 
 ```text
 CV_CONF=0.15
@@ -34,14 +33,15 @@ CV_AUGMENT=0
 CV_CROSS_CLASS_NMS_IOU=0.97
 ```
 
-The previous parked tag was `cv-yolo-v2-tier1-best` at 0.556 / 0.956.
+The previous high was `ruiyang-v1` at 0.588 / 0.955; the older parked tag was
+`cv-yolo-v2-tier1-best` at 0.556 / 0.956.
 
 Tier1 + Tier2 attempts (15-16 May) all regressed cloud or were blended-flat:
 
 | Tag | Cloud | Hard held-out | Notes |
 |---|---:|---:|---|
-| `ruiyang-v1` (live) | 0.588 / 0.955 | 0.9125 | new high, real-score HTTP eval |
-| next `ruiyang-v1` env row | TBD | 0.9234 | conf=0.15 iou=0.55 imgsz=896 aug=0 cross_nms=0.97 |
+| `ry-v2` (live) | 0.608 / 0.961 | 0.9234 | ruiyang-v1 weights, conf=0.15 iou=0.55 imgsz=896 aug=0 cross_nms=0.97 |
+| `ruiyang-v1` | 0.588 / 0.955 | 0.9125 | new high before core sweep, real-score HTTP eval |
 | `cv-yolo-v2-tier1-best` (live) | 0.556 / 0.956 | 0.9049 | tier1 |
 | `cv-yolo11m-v3-pre` (15/05) | 0.376 / 0.955 | 0.8673 | v11m@1024 matched-imgsz |
 | `v11m-1280-noaug-v1` (16/05) | 0.474 / 0.949 | 0.9088 | v11m at 1280 aug=0 |
@@ -49,10 +49,10 @@ Tier1 + Tier2 attempts (15-16 May) all regressed cloud or were blended-flat:
 | `cv-augc1-v4-1280` (16/05 18:28) | 0.553 / 0.959 | 0.948 | Phase C.1, matched config (imgsz=1280) |
 | v8s-1024 retrain (16/05) | NOT SUBMITTED | 0.8217-0.8370 | cp=0.40 toxic regression |
 
-**Final read**: parked. Inference-only and training-only levers within v8s/v11m
-recipe space are exhausted. Continuing CV would require a different architecture
-family or a fundamentally different distribution recipe; neither has high-EV
-in the remaining timeline.
+**Current read**: `ry-v2` is worth keeping. Inference-only gains within this
+weight family may still exist, but the easy row has now been shipped. Material
+next gains likely require a different architecture family or a fundamentally
+different distribution recipe.
 
 ## Calibration learned (for any future CV submission)
 
