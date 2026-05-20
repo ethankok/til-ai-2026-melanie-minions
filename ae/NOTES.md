@@ -1,6 +1,8 @@
 # AE — notes & history
 
-Last updated: 20 May 2026 ~22:35 SGT — **`ae-item-prior-strong-v1` was built/tested but not cloud-evaluated: `til submit` reached Artifact Registry upload, then ended with `context canceled` / `Terminated`. Local evidence does not justify an automatic retry: 12-round suite random `0.7012`, library `0.5712`, cloudsuite `0.2848`, aggregate `0.5190`; Docker `til test` `0.7245`. This is weaker than `ae-item-confidence-v1` on aggregate (`0.5501`) and Docker (`0.7435`), even though library improved. Diagnosis: stronger fixed-item priors likely over-commit to stale/static item routes. Keep `ae-fixed-map-v3` as high score and `ae-item-confidence-v1` as the best confirmed new run.**
+Last updated: 20 May 2026 ~23:45 SGT — **Added diagnostics to the local AE validation suite and tightened simulator seeding. No new behavior candidate was accepted. The gate now reports bombs placed, visited cells, final health/base health, early-end rate, action counts, and inferred reward components. Tested the five proposed directions one by one: stronger/conditional item-prior variants, opening-book bonuses, pressure-mode switching, and base-defense value bumps were all rejected or left off after `cloudsuite` gates. The strongest safe outcome is diagnostics-only; keep runtime behavior at `ae-item-prior-strong-v1` defaults (`AE_ITEM_PRIOR_CONF=0.70`, `AE_ITEM_PRIOR_FLOOR=0.25`) until a candidate beats it robustly.**
+
+Prior update: 20 May 2026 ~22:35 SGT — **`ae-item-prior-strong-v1` was built/tested but not cloud-evaluated: `til submit` reached Artifact Registry upload, then ended with `context canceled` / `Terminated`. Local evidence does not justify an automatic retry: 12-round suite random `0.7012`, library `0.5712`, cloudsuite `0.2848`, aggregate `0.5190`; Docker `til test` `0.7245`. This is weaker than `ae-item-confidence-v1` on aggregate (`0.5501`) and Docker (`0.7435`), even though library improved. Diagnosis: stronger fixed-item priors likely over-commit to stale/static item routes. Keep `ae-fixed-map-v3` as high score and `ae-item-confidence-v1` as the best confirmed new run.**
 
 Prior update: 20 May 2026 ~22:05 SGT — **Submitted `ae-item-confidence-v1`: cloud `0.593 / 0.844`, 0/30 errors. This beats `heuristic-tweaks` by `+0.055` and `hybrid-v3` by `+0.038`, but stays `-0.021` below the `ae-fixed-map-v3` high (`0.614 / 0.860`). Workbench Docker `til test` was `0.7435`; the 12-round validation suite was random `0.7959`, library `0.5499`, cloudsuite `0.3045`, aggregate `0.5501`. Diagnosis: item-confidence/respawn logic transferred well enough to clear 0.5, but it likely under-trusted the fixed Novice initial item priors. Next candidate `ae-item-prior-strong-v1` raised default fixed-item prior confidence from `0.58` to `0.70` and prior floor from `0.18` to `0.25`; macro routing stayed off.**
 
@@ -62,6 +64,7 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 |---|---:|---:|---:|
 | ae-item-confidence-v1 | 0.7435 Docker / 0.5501 suite mean | 0.593 | 0.1505 vs Docker |
 | ae-item-prior-strong-v1 | 0.7245 Docker / 0.5190 suite mean | not evaluated | submit push canceled |
+| diagnostic-gated local A/Bs | 24-round cloudsuite probes | not submitted | behavior changes rejected; diagnostics-only accepted |
 | heuristic-tweaks | 0.5373 | 0.538 | -0.0007 |
 | ae-fixed-map-v3 | 0.5225 | 0.614 | -0.0915 |
 | planner-v1 | 0.732 | 0.445 | 0.287 |

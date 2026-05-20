@@ -437,6 +437,14 @@ random-opponent `til test` as the first local judge:
 pressure-heavy and should expose base-defense / escape weaknesses that random
 NPCs miss. The validator defaults to shipping Docker settings
 (`AE_USE_PLAYBOOK=0`, `AE_USE_OPPONENT_MODEL=0`) unless explicitly overridden.
+It also prints diagnostics: mean bombs placed, cells visited, final health/base
+health, early-end rate, and the largest inferred reward components. These are
+best-effort local attributions, but they are good enough to identify whether a
+candidate is losing by self-damage, base damage, low coverage, or low attack
+pressure.
+
+The simulator now resets each round with `--seed + round_idx`, so A/Bs are more
+repeatable. Prefer comparing candidates on the same `--rounds` and `--seed`.
 
 For the current fixed-map candidate family, do **not** require the optional
 playbook/opponent-model artifacts. The shipping Dockerfile keeps both disabled;
@@ -452,6 +460,9 @@ For `ae-item-confidence-v1`, cloud beat the 0.5 recovery line despite a weak
 `cloudsuite` mean, so treat this as advisory rather than a hard gate. For
 `ae-item-prior-strong-v1`, stronger priors moved library up but random,
 cloudsuite, and Docker down; do not blindly retry that canceled submission.
+The 23:45 diagnostic pass rejected follow-up behavior probes, so keep the
+current runtime defaults unless a future candidate beats them on a longer
+`cloudsuite` gate.
 
 ---
 

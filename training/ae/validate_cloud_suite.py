@@ -44,6 +44,15 @@ def _aggregate(results: list[dict]) -> dict:
     }
 
 
+def _format_components(summary: dict) -> str:
+    diagnostics = summary.get("diagnostics", {})
+    components = diagnostics.get("reward_component_sum", {})
+    if not components:
+        return "components={}"
+    ordered = sorted(components.items(), key=lambda kv: -abs(float(kv[1])))
+    return "components={" + ", ".join(f"{k}:{float(v):+.1f}" for k, v in ordered[:5]) + "}"
+
+
 def run_suite(args: argparse.Namespace) -> dict:
     started = time.monotonic()
     per_suite: list[dict] = []
@@ -63,6 +72,17 @@ def run_suite(args: argparse.Namespace) -> dict:
             f"{spec}: mean={summary['mean_score']:.4f} "
             f"p50={summary['p50']:.4f} min={summary['min_score']:.4f} "
             f"max={summary['max_score']:.4f}",
+            flush=True,
+        )
+        diagnostics = summary.get("diagnostics", {})
+        print(
+            "  diag: "
+            f"bombs={diagnostics.get('mean_bombs_placed', 0.0):.1f} "
+            f"cells={diagnostics.get('mean_unique_cells_visited', 0.0):.1f} "
+            f"hp={diagnostics.get('mean_final_health', 0.0):.1f} "
+            f"base={diagnostics.get('mean_final_base_health', 0.0):.1f} "
+            f"early_end={diagnostics.get('early_end_rate', 0.0):.2f} "
+            f"{_format_components(summary)}",
             flush=True,
         )
 

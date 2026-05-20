@@ -40,7 +40,7 @@ import argparse
 import json
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable
 
@@ -68,6 +68,7 @@ from til_environment.config import default_config  # noqa: E402
 GRID_SIZE = 16
 NUM_DIRS = 4
 MAX_STEPS = 200
+ACTION_NAMES = ["FORWARD", "BACKWARD", "LEFT", "RIGHT", "STAY", "PLACE_BOMB"]
 
 
 def pack_state_key(location, direction: int, step: int) -> int:
@@ -112,6 +113,51 @@ def _make_our_agent(name: str):
     raise ValueError(f"unknown --our value {name!r}")
 
 
+def _scalar(obs: dict, key: str, default: float = 0.0) -> float:
+    value = obs.get(key, default)
+    if isinstance(value, list):
+        value = value[0] if value else default
+    if hasattr(value, "item"):
+        value = value.item()
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _classify_reward(prev: dict, cur: dict, reward_delta: float) -> dict[str, float]:
+    """Best-effort local reward attribution from observable state deltas."""
+
+    components: dict[str, float] = {}
+    health_delta = _scalar(cur, "health") - _scalar(prev, "health")
+    base_delta = _scalar(cur, "base_health") - _scalar(prev, "base_health")
+
+    if reward_delta >= 49.0:
+        components["destroy_enemy_base"] = reward_delta
+    elif reward_delta >= 14.0:
+        components["attack_kill_or_multi"] = reward_delta
+    elif 4.5 <= reward_delta <= 5.5:
+        components["collect_mission"] = reward_delta
+    elif 1.5 <= reward_delta <= 2.5:
+        components["collect_resource"] = reward_delta
+    elif 0.5 <= reward_delta <= 1.5:
+        components["collect_recon"] = reward_delta
+    elif 0.0 < reward_delta < 0.5:
+        components["attack_damage_positive"] = reward_delta
+
+    if reward_delta <= -49.0:
+        components["own_base_destroyed"] = reward_delta
+    elif reward_delta < 0.0:
+        if health_delta < 0.0:
+            components["self_damage"] = reward_delta
+        elif base_delta < 0.0:
+            components["base_damage"] = reward_delta
+        else:
+            components["other_negative"] = reward_delta
+
+    return components
+
+
 # ---------------------------------------------------------------------------
 # Single-round runner
 # ---------------------------------------------------------------------------
@@ -146,6 +192,18 @@ def run_one_round(
             op._reset_memory()
 
     cumulative_us = 0.0
+    action_counter: Counter[int] = Counter()
+    component_totals: Counter[str] = Counter()
+    visited: set[tuple[int, int]] = set()
+    prev_obs: dict | None = None
+    bombs_placed = 0
+    frozen_ticks_seen = 0
+    final_health = 0.0
+    final_base_health = 0.0
+    final_team_bombs = 0.0
+    final_team_resources = 0.0
+    final_step = 0
+    terminated_us = False
     traj = {
         "state_keys": [],
         "actions": [],
@@ -157,6 +215,7 @@ def run_one_round(
         observation, reward, termination, truncation, info = env.last()
         if agent == agent_id_us:
             cumulative_us += float(reward)
+            terminated_us = bool(termination or truncation)
 
         if termination or truncation:
             env.step(None)
@@ -169,9 +228,24 @@ def run_one_round(
         }
 
         if agent == agent_id_us:
+            loc = observation_native.get("location", [0, 0])
+            if isinstance(loc, list) and len(loc) == 2:
+                visited.add((int(loc[0]), int(loc[1])))
+            final_health = _scalar(observation_native, "health")
+            final_base_health = _scalar(observation_native, "base_health")
+            final_team_bombs = _scalar(observation_native, "team_bombs")
+            final_team_resources = _scalar(observation_native, "team_resources")
+            final_step = int(_scalar(observation_native, "step"))
+            if int(_scalar(observation_native, "frozen_ticks")) > 0:
+                frozen_ticks_seen += 1
+            if prev_obs is not None and abs(float(reward)) > 1e-6:
+                for component, value in _classify_reward(prev_obs, observation_native, float(reward)).items():
+                    component_totals[component] += value
             action = int(our_agent.ae(observation_native))
+            action_counter[action] += 1
+            if action == 5:
+                bombs_placed += 1
             if log_traj:
-                loc = observation_native.get("location", [0, 0])
                 d = int(observation_native.get("direction", 0))
                 step_idx = int(observation_native.get("step", 0))
                 key = pack_state_key(loc, d, step_idx)
@@ -182,6 +256,7 @@ def run_one_round(
                 traj["actions"].append(action)
                 traj["rewards"].append(0.0)
                 traj["step_idx"].append(step_idx)
+            prev_obs = observation_native
         else:
             slot = other_ids.index(agent)
             op = opponents[slot]
@@ -233,6 +308,20 @@ def run_one_round(
         "score": cumulative_us / 1000.0,  # matches the cloud's /1000 scaling
         "total_reward": cumulative_us,
         "traj": traj,
+        "diagnostics": {
+            "action_counts": {ACTION_NAMES[a]: c for a, c in sorted(action_counter.items()) if 0 <= a < len(ACTION_NAMES)},
+            "bombs_placed": bombs_placed,
+            "unique_cells_visited": len(visited),
+            "reward_components": dict(component_totals),
+            "final_health": final_health,
+            "final_base_health": final_base_health,
+            "final_team_bombs": final_team_bombs,
+            "final_team_resources": final_team_resources,
+            "final_step": final_step,
+            "early_end": final_step < (MAX_STEPS - 1),
+            "terminated_us": terminated_us,
+            "freeze_ticks_seen": frozen_ticks_seen,
+        },
     }
 
 
@@ -291,6 +380,7 @@ def run_simulation(
 
     scores: list[float] = []
     totals: list[float] = []
+    diagnostics: list[dict] = []
     all_traj = {
         "state_keys": [],
         "actions": [],
@@ -303,10 +393,11 @@ def run_simulation(
     t0 = time.monotonic()
     for r in range(rounds):
         result = run_one_round(
-            env, our_agent, opponents, log_traj=log_traj, seed=None
+            env, our_agent, opponents, log_traj=log_traj, seed=seed_start + r
         )
         scores.append(result["score"])
         totals.append(result["total_reward"])
+        diagnostics.append(result["diagnostics"])
 
         if log_traj:
             traj = result["traj"]
@@ -330,6 +421,16 @@ def run_simulation(
 
     env.close()
 
+    component_sum: Counter[str] = Counter()
+    action_sum: Counter[str] = Counter()
+    for diag in diagnostics:
+        component_sum.update(diag.get("reward_components", {}))
+        action_sum.update(diag.get("action_counts", {}))
+
+    def _mean_diag(key: str) -> float:
+        values = [float(d.get(key, 0.0)) for d in diagnostics]
+        return float(np.mean(values)) if values else 0.0
+
     summary = {
         "rounds": rounds,
         "opponents": names,
@@ -343,6 +444,18 @@ def run_simulation(
         "p50": float(np.percentile(scores, 50)),
         "p75": float(np.percentile(scores, 75)),
         "scores": [float(s) for s in scores],
+        "diagnostics": {
+            "mean_bombs_placed": _mean_diag("bombs_placed"),
+            "mean_unique_cells_visited": _mean_diag("unique_cells_visited"),
+            "mean_final_health": _mean_diag("final_health"),
+            "mean_final_base_health": _mean_diag("final_base_health"),
+            "mean_final_team_bombs": _mean_diag("final_team_bombs"),
+            "mean_final_team_resources": _mean_diag("final_team_resources"),
+            "early_end_rate": sum(1 for d in diagnostics if d.get("early_end")) / max(1, len(diagnostics)),
+            "terminated_rate": sum(1 for d in diagnostics if d.get("terminated_us")) / max(1, len(diagnostics)),
+            "reward_component_sum": dict(component_sum),
+            "action_counts": dict(action_sum),
+        },
     }
 
     return {"summary": summary, "trajectories": all_traj}
