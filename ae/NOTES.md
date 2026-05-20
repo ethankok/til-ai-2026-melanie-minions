@@ -1,6 +1,8 @@
 # AE — notes & history
 
-Last updated: 20 May 2026 ~21:31 SGT — **Implemented the local-cloud-gap response: item targets now use confidence/respawn priors instead of assuming every fixed-map item is currently live; fixed-map macro attack cells exist but are opt-in after local pressure-suite A/Bs; added a `cloudsuite` rusher/hunter validation pool plus `training/ae/validate_cloud_suite.py`; wired `cloudsuite` into simulator, PPO training/eval, and opponent-model fitting. Local 6-round smoke with shipping defaults: random `0.741`, library `0.555`, cloudsuite `0.306`, aggregate mean-of-means `0.534`. Next Workbench candidate tag: `ae-item-confidence-v1`; submit only if Docker `til test` is healthy.**
+Last updated: 20 May 2026 ~22:05 SGT — **Submitted `ae-item-confidence-v1`: cloud `0.593 / 0.844`, 0/30 errors. This beats `heuristic-tweaks` by `+0.055` and `hybrid-v3` by `+0.038`, but stays `-0.021` below the `ae-fixed-map-v3` high (`0.614 / 0.860`). Workbench Docker `til test` was `0.7435`; the 12-round validation suite was random `0.7959`, library `0.5499`, cloudsuite `0.3045`, aggregate `0.5501`. Diagnosis: item-confidence/respawn logic transferred well enough to clear 0.5, but it likely under-trusted the fixed Novice initial item priors. Next candidate `ae-item-prior-strong-v1` raises default fixed-item prior confidence from `0.58` to `0.70` and prior floor from `0.18` to `0.25`; macro routing remains off. Local 6-round sanity after that change: random `0.7747`, library `0.5676`, cloudsuite `0.2865`, aggregate `0.5429`.**
+
+Prior update: 20 May 2026 ~21:31 SGT — **Implemented the local-cloud-gap response: item targets now use confidence/respawn priors instead of assuming every fixed-map item is currently live; fixed-map macro attack cells exist but are opt-in after local pressure-suite A/Bs; added a `cloudsuite` rusher/hunter validation pool plus `training/ae/validate_cloud_suite.py`; wired `cloudsuite` into simulator, PPO training/eval, and opponent-model fitting. Local 6-round smoke with shipping defaults: random `0.741`, library `0.555`, cloudsuite `0.306`, aggregate mean-of-means `0.534`. Next Workbench candidate tag: `ae-item-confidence-v1`; submit only if Docker `til test` is healthy.**
 
 Prior update: 20 May 2026 ~21:00 SGT — **Submitted parameter-swept optimized heuristics (`heuristic-tweaks` tag, cloud score: 0.538 / 0.851, local mixed score: 0.5373). While parameter-swept optimal_combo parameters (Dijkstra soft penalty, low-ammo scaling, base panic defense, enemy chase) beat the baseline locally, they underperformed against the cloud's hidden opponent distribution compared to the 0.614 all-time high set by `ae-fixed-map-v3` (baseline). Revert to `ae-fixed-map-v3` as our shipped candidate.**
 
@@ -23,6 +25,7 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 
 | Tag | Cloud | Speed | Notes |
 |---|---:|---:|---|
+| **ae-item-confidence-v1** | **0.593** | **0.844** | **Item-confidence/respawn priors; second-best AE cloud score, `-0.021` vs `ae-fixed-map-v3`.** |
 | **heuristic-tweaks** | **0.538** | **0.851** | **Swept optimal_combo parameters (Dijkstra soft penalty, low-ammo scaling, base panic defense, enemy chase).** |
 | **ae-fixed-map-v3** | **0.614** | **0.860** | **Fixed-map exploitation with Dijkstra pathfinding + relaxed map detection (current high score).** |
 | baseline | 0.051 | 0.856 | Periodic FORWARD + bomb-every-20 |
@@ -54,6 +57,7 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 
 | Submission | Local (apples-to-apples) | Cloud | Gap |
 |---|---:|---:|---:|
+| ae-item-confidence-v1 | 0.7435 Docker / 0.5501 suite mean | 0.593 | 0.1505 vs Docker |
 | heuristic-tweaks | 0.5373 | 0.538 | -0.0007 |
 | ae-fixed-map-v3 | 0.5225 | 0.614 | -0.0915 |
 | planner-v1 | 0.732 | 0.445 | 0.287 |

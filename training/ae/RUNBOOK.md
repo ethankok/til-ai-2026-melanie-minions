@@ -430,7 +430,7 @@ random-opponent `til test` as the first local judge:
   --rounds 12 \
   --suites random library cloudsuite \
   --our heuristic \
-  --summary-out training/ae/data/ae-cloudsuite-candidate.json
+  --summary-out training/ae/data/ae-item-prior-strong-v1-cloudsuite.json
 ```
 
 `cloudsuite` means `rusher,hunter,bomber,defender,mixed`: it is intentionally
@@ -438,20 +438,18 @@ pressure-heavy and should expose base-defense / escape weaknesses that random
 NPCs miss. The validator defaults to shipping Docker settings
 (`AE_USE_PLAYBOOK=0`, `AE_USE_OPPONENT_MODEL=0`) unless explicitly overridden.
 
-After steps 1-5 the manager has playbook + opponent_model loaded
-automatically (because the files exist in `ae/models/`). Verify the
-gain holds on a fresh sim run:
+For the current fixed-map candidate family, do **not** require the optional
+playbook/opponent-model artifacts. The shipping Dockerfile keeps both disabled;
+the extra pressure suite is mainly a regression screen before Docker build:
 
 ```bash
 .venv/bin/python training/ae/simulate.py \
   --rounds 200 --opponents library --our heuristic --no-log-traj \
-  --summary-out training/ae/data/post-tier1-tier2.json
+  --summary-out training/ae/data/ae-item-prior-strong-v1-library.json
 ```
 
-Expect ~0.05-0.10 gain over the baseline-on number from step 1 (which
-had no playbook / opponent model). If it didn't move, the playbook
-isn't covering enough states — return to step 3 and lower
-`--min-visits`.
+For `ae-item-confidence-v1`, cloud beat the 0.5 recovery line despite a weak
+`cloudsuite` mean, so treat this as advisory rather than a hard gate.
 
 ---
 
@@ -461,13 +459,13 @@ Once local A/B looks healthy, submit:
 
 ```bash
 echo heuristic > ae/src/.ae_mode  # or 'hybrid' if PPO weights present
-til build ae tier1-tier2-v1
-til test ae tier1-tier2-v1        # last sanity, still uses random NPCs
-til submit ae tier1-tier2-v1
+til build ae ae-item-prior-strong-v1
+til test ae ae-item-prior-strong-v1        # last sanity, still uses random NPCs
+til submit ae ae-item-prior-strong-v1
 ```
 
 The leaderboard keeps the higher score from any submission, so
-shipping `tier1-tier2-v1` cannot demote `hybrid-v3` even if it
+shipping `ae-item-prior-strong-v1` cannot demote `ae-fixed-map-v3` even if it
 regresses. Watch the cloud number, not the local one.
 
 ---
