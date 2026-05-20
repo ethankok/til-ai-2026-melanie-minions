@@ -210,20 +210,9 @@ class HybridAEManager:
         base_location = self.heuristic.base_location or self.heuristic._location(
             observation.get("base_location")
         )
-        # Don't bomb our own base unless defending (tactical target in blast)
+        # Don't bomb our own base.
         if base_location is not None and base_location in blast:
-            # Check if there is an enemy in blast
-            step = self.heuristic.last_step if self.heuristic.last_step is not None else 0
-            tactical = any(pos in blast for pos in self.heuristic.enemy_bases)
-            if not tactical:
-                for pos, last_seen in self.heuristic.enemy_agents.items():
-                    if step - int(last_seen) > 1 and pos not in blast:
-                        continue
-                    if pos in blast:
-                        tactical = True
-                        break
-            if self.heuristic.base_health <= 20 or not tactical:
-                return False
+            return False
         escape = self.heuristic._safe_escape_within(
             location, blast, self.heuristic.BOMB_TIMER
         )

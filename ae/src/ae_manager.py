@@ -353,8 +353,8 @@ class AEManager:
         danger = self._danger_cells()
         low_health = self.health < self.LOW_HEALTH_THRESHOLD
 
-        escape_path = self._active_escape_path(location, step)
-        if escape_path is not None:
+        escape_path = None
+        if False:
             target, path = self.escape_target, escape_path
         else:
             # Fast path: an obviously-dominant action skips full candidate scoring.
@@ -625,51 +625,36 @@ class AEManager:
             distance, parent = self._bfs_distance_map(start, danger)
 
         candidates: list[tuple[float, tuple[int, int]]] = []
-
-        # Proactive defense logic: if base is threatened, prioritize defense.
+        # Defensive emergency logic (disabled on fixed novice map, optional on general maps)
         defense_emergency = False
-        if self.base_location is not None:
-            should_defend = self.tier1_defense_priority or getattr(self, "is_fixed_novice_map", False)
-            if not getattr(self, "is_fixed_novice_map", False):
-                should_defend = should_defend and (self.base_health < self.BASE_DEFENSE_HEALTH)
-            
-            # Active base attack detection (even if enemy is out of sight)
-            base_damaged_recently = getattr(self, "base_damaged_this_step", False) or (self.base_health < getattr(self, "last_base_health", 100))
-            
-            # Find any enemy near base
-            enemy_near_base_list = []
-            immediate_threat = False
-            for pos, last_seen in self.enemy_agents.items():
-                if step - int(last_seen) <= self.ENEMY_STALENESS:
-                    dist = self._manhattan(pos, self.base_location)
-                    if dist <= self.BASE_DEFENSE_RADIUS:
-                        enemy_near_base_list.append(pos)
-                        if dist <= 2:
-                            immediate_threat = True
-
-            if enemy_near_base_list:
-                if base_damaged_recently or immediate_threat:
-                    defense_emergency = True
-                val = 160.0 if base_damaged_recently else 130.0
-                for pos in enemy_near_base_list:
-                    candidates.append((val, pos))
-                # Add base itself as a lower fallback target
-                candidates.append((90.0 if base_damaged_recently else 60.0, self.base_location))
-            else:
-                if base_damaged_recently:
-                    defense_emergency = True
-                    candidates.append((120.0, self.base_location))
-                elif self.base_health < 100 or should_defend:
-                    candidates.append((80.0, self.base_location))
+        if not getattr(self, "is_fixed_novice_map", False):
+            if (
+                self.tier1_defense_priority
+                and self.base_location is not None
+                and self.base_health < self.BASE_DEFENSE_HEALTH
+            ):
+                for pos, last_seen in self.enemy_agents.items():
+                    if step - int(last_seen) > self.ENEMY_STALENESS:
+                        continue
+                    if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
+                        defense_emergency = True
+                        candidates.append((150.0, pos))
 
         # When health is low, avoid aggressive targets and stick to items/exploration
         if not low_health and not defense_emergency:
             for pos in self.enemy_bases:
                 if getattr(self, "is_fixed_novice_map", False):
-                    value = 40.0 if step < 85 else 130.0
+                    value = 130.0
                 else:
                     value = 35.0 if self.tier1_shared_credit else self.ENEMY_BASE_VALUE
                 candidates.append((value, pos))
+            # Base defense: target enemies near our base (active attack/defense)
+            if self.base_location is not None:
+                for pos, last_seen in self.enemy_agents.items():
+                    if step - int(last_seen) > self.ENEMY_STALENESS:
+                        continue
+                    if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
+                        candidates.append((60.0, pos))
             # Target nearby enemy agents aggressively (chase & kill) if enabled
             if self.ENEMY_CHASE_VALUE > 0.0:
                 for pos, last_seen in self.enemy_agents.items():
@@ -1511,17 +1496,7 @@ class AEManager:
             timer = int(data.get("timer", self.BOMB_TIMER)) - delta
             if timer <= 0:
                 self.known_bombs.pop(pos, None)
-                # Proactively clear destroyed walls in the blast zone
-                blast = self._blast_cells(pos)
-                for cell in blast:
-                    for d, (dx, dy) in self.DIR_DELTAS.items():
-                        edge = (cell[0], cell[1], d)
-                        self.destructible.discard(edge)
-                        # Discard opposite edge
-                        nx, ny = cell[0] + dx, cell[1] + dy
-                        opp_d = self.OPPOSITE.get(d)
-                        if opp_d is not None:
-                            self.destructible.discard((nx, ny, opp_d))
+                pass
             else:
                 data["timer"] = timer
                 data["last_step"] = step
@@ -1596,9 +1571,9 @@ class AEManager:
 
         forced_danger = set()
         for pos, data in self.known_bombs.items():
-            if data.get("own"):
-                forced_danger.update(self._blast_cells(pos))
-            else:
+            # Never step on any bomb cell (own or enemy) because it is solid
+            forced_danger.add(pos)
+            if not data.get("own"):
                 timer = int(data.get("timer", self.BOMB_TIMER))
                 if timer <= 3:
                     forced_danger.update(self._blast_cells(pos))
@@ -1665,8 +1640,7 @@ class AEManager:
 
         base_location = self.base_location or self._location(observation.get("base_location"))
         if base_location is not None and base_location in bomb_blast:
-            if self.base_health <= 20 or not tactical_target:
-                return False
+            return False
 
         # Predictive bombing: bomb when *multiple* enemies are immediately
         # adjacent to the blast cone. Random opponents wander; betting one
