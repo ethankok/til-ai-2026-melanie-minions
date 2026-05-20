@@ -678,29 +678,38 @@ class AEManager:
         defense_emergency = False
         if self.base_location is not None:
             if is_fixed:
-                panic_threshold = getattr(self, "base_health_panic_threshold", 60.0)
-                if self.base_health < panic_threshold:
-                    dist_to_base = self._manhattan(start, self.base_location)
-                    panic_radius = getattr(self, "base_defense_panic_radius", 12)
-                    if dist_to_base <= panic_radius:
-                        for pos, last_seen in self.enemy_agents.items():
-                            if step - int(last_seen) > 1:
-                                continue
-                            if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
-                                defense_emergency = True
-                                panic_val = getattr(self, "base_defense_panic_value", 150.0)
-                                candidates.append((panic_val, pos))
+                base_damaged = self.base_health < 100.0
+                enemy_near = False
+                target_enemy_pos = None
+                
+                for pos, last_seen in self.enemy_agents.items():
+                    if step - int(last_seen) > self.ENEMY_STALENESS:
+                        continue
+                    if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
+                        enemy_near = True
+                        target_enemy_pos = pos
+                        break
+                
+                if base_damaged or enemy_near:
+                    defense_emergency = True
+                    panic_val = getattr(self, "base_defense_panic_value", 150.0)
+                    defense_target = target_enemy_pos if target_enemy_pos is not None else self.base_location
+                    candidates.append((panic_val, defense_target))
             else:
-                if (
-                    self.tier1_defense_priority
-                    and self.base_health < self.BASE_DEFENSE_HEALTH
-                ):
-                    for pos, last_seen in self.enemy_agents.items():
-                        if step - int(last_seen) > self.ENEMY_STALENESS:
-                            continue
-                        if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
-                            defense_emergency = True
-                            candidates.append((150.0, pos))
+                base_damaged = self.base_health < self.BASE_DEFENSE_HEALTH
+                enemy_near = False
+                target_enemy_pos = None
+                for pos, last_seen in self.enemy_agents.items():
+                    if step - int(last_seen) > self.ENEMY_STALENESS:
+                        continue
+                    if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
+                        enemy_near = True
+                        target_enemy_pos = pos
+                        break
+                if self.tier1_defense_priority and (base_damaged or enemy_near):
+                    defense_emergency = True
+                    defense_target = target_enemy_pos if target_enemy_pos is not None else self.base_location
+                    candidates.append((150.0, defense_target))
 
         is_low_ammo = self.team_bombs <= 1
         
@@ -1840,7 +1849,7 @@ class AEManager:
                     break
 
         base_location = self.base_location or self._location(observation.get("base_location"))
-        if base_location is not None and base_location in bomb_blast:
+        if base_location is not None and base_location in bomb_blast and not tactical_target:
             return False
 
         # Predictive bombing: bomb when *multiple* enemies are immediately
