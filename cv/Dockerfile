@@ -28,6 +28,9 @@ ENV CV_SECOND_AUGMENT=1
 ENV CV_SECOND_SCORE_SCALE=0.20
 ENV CV_SECOND_MERGE_IOU=0.95
 ENV CV_SECOND_MIN_DETECTIONS=7
+ENV CV_OWLV2_MODEL_ID=google/owlv2-base-patch16-ensemble
+ENV CV_OWLV2_NMS_IOU=0.50
+ENV CV_OWLV2_LOCAL_FILES_ONLY=1
 WORKDIR /workspace
 
 # Installs your dependencies.
@@ -37,6 +40,10 @@ RUN apt-get update \
 RUN pip install -U pip
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+ARG CV_PREFETCH_OWLV2=0
+RUN if [ "$CV_PREFETCH_OWLV2" = "1" ]; then \
+        python -c "import os; from transformers import Owlv2ForObjectDetection, Owlv2Processor; m=os.environ.get('CV_OWLV2_MODEL_ID', 'google/owlv2-base-patch16-ensemble'); Owlv2Processor.from_pretrained(m); Owlv2ForObjectDetection.from_pretrained(m)"; \
+    fi
 
 # Copies your model weights and source files.
 # Put the trained checkpoint at cv/models/best.pt before building/submitting.

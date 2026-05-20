@@ -38,6 +38,61 @@ try:
 except Exception:  # pragma: no cover - older ultralytics / optional deps
     RTDETR = None
 
+try:
+    import torch
+except Exception:  # pragma: no cover - optional for non-OWLv2 paths
+    torch = None
+
+try:
+    from transformers import Owlv2ForObjectDetection, Owlv2Processor
+except Exception:  # pragma: no cover - optional for YOLO/RT-DETR paths
+    Owlv2ForObjectDetection = None
+    Owlv2Processor = None
+
+
+TIL_CATEGORY_NAMES = [
+    "cargo aircraft",
+    "commercial aircraft",
+    "drone",
+    "fighter jet",
+    "fighter plane",
+    "helicopter",
+    "light aircraft",
+    "missile",
+    "truck",
+    "car",
+    "tank",
+    "bus",
+    "van",
+    "cargo ship",
+    "yacht",
+    "cruise ship",
+    "warship",
+    "sailboat",
+]
+
+
+DEFAULT_OWLV2_PROMPTS: list[tuple[int, str]] = [
+    (0, "a photo of a cargo aircraft"),
+    (1, "a photo of a commercial aircraft"),
+    (2, "a photo of a drone"),
+    (3, "a photo of a fighter jet"),
+    (4, "a photo of a fighter plane"),
+    (5, "a photo of a helicopter"),
+    (6, "a photo of a light aircraft"),
+    (7, "a photo of a missile"),
+    (8, "a photo of a truck"),
+    (9, "a photo of a car"),
+    (10, "a photo of a military tank"),
+    (11, "a photo of a bus"),
+    (12, "a photo of a van"),
+    (13, "a photo of a cargo ship"),
+    (14, "a photo of a yacht"),
+    (15, "a photo of a cruise ship"),
+    (16, "a photo of a warship"),
+    (17, "a photo of a sailboat"),
+]
+
 
 # Ultralytics COCO class index -> TIL CV category_id.
 # The Workbench annotations use a custom label space:
@@ -112,12 +167,13 @@ class CVManager:
     def __init__(self):
         self.model_path = os.environ.get("CV_MODEL_PATH", "yolov8n.pt")
         self.model_family = os.environ.get("CV_MODEL_FAMILY", "auto").strip().lower()
-        if self.model_family not in ("auto", "yolo", "rtdetr"):
+        if self.model_family not in ("auto", "yolo", "rtdetr", "owlv2"):
             print(
                 f"[CVManager] unknown CV_MODEL_FAMILY={self.model_family!r}; using auto",
                 flush=True,
             )
             self.model_family = "auto"
+        self.resolved_model_family = self._resolve_model_family(self.model_path)
         self.conf = float(os.environ.get("CV_CONF", "0.25"))
         self.iou = float(os.environ.get("CV_IOU", "0.70"))
         self.imgsz = int(os.environ.get("CV_IMGSZ", "640"))
@@ -163,20 +219,67 @@ class CVManager:
         self.second_merge_iou = _env_float("CV_SECOND_MERGE_IOU", 0.95)
         self.second_min_detections = max(0, _env_int("CV_SECOND_MIN_DETECTIONS", 0))
 
+        # OWLv2 zero-shot settings. CV_CONF is reused as the text-conditioned
+        # detection threshold so sweeps can compare YOLO/OWLv2 with one knob.
+        self.owlv2_model_id = os.environ.get("CV_OWLV2_MODEL_ID")
+        if not self.owlv2_model_id:
+            self.owlv2_model_id = "google/owlv2-base-patch16-ensemble"
+            model_path_lower = self.model_path.lower()
+            if (
+                self.resolved_model_family == "owlv2"
+                and (self.model_family == "auto" or not model_path_lower.endswith(".pt"))
+            ):
+                self.owlv2_model_id = self.model_path
+        self.owlv2_nms_iou = min(max(_env_float("CV_OWLV2_NMS_IOU", 0.50), 0.0), 1.0)
+        self.owlv2_local_files_only = _env_bool(
+            "CV_OWLV2_LOCAL_FILES_ONLY",
+            default=_env_bool("TRANSFORMERS_OFFLINE", default=False),
+        )
+        self.owlv2_prompt_specs = self._load_owlv2_prompts()
+        self.owlv2_prompts = [prompt for _, prompt in self.owlv2_prompt_specs]
+        self.owlv2_prompt_categories = [
+            category_id for category_id, _ in self.owlv2_prompt_specs
+        ]
+        self.owlv2_prompt_to_category = {
+            prompt: category_id for category_id, prompt in self.owlv2_prompt_specs
+        }
+        self.owlv2_loaded_model_ref = self.owlv2_model_id
+        self.owlv2_device = None
+        self.owlv2_dtype = None
+        self.processor = None
+
         self.category_map = self._load_category_map()
         self.model = None
         self.loaded_model_family = "none"
         self._inference_count = 0
         self._last_second_pass_used = False
 
-        if YOLO is None and RTDETR is None:
+        if (
+            self.resolved_model_family != "owlv2"
+            and YOLO is None
+            and RTDETR is None
+        ):
             print("[CVManager] ultralytics unavailable; returning empty detections", flush=True)
+            return
+        if self.resolved_model_family == "owlv2" and (
+            torch is None or Owlv2ForObjectDetection is None or Owlv2Processor is None
+        ):
+            print(
+                "[CVManager] OWLv2 requested but torch/transformers are unavailable; "
+                "returning empty detections",
+                flush=True,
+            )
             return
 
         try:
             self.model = self._load_model(self.model_path)
+            model_ref = (
+                self.owlv2_loaded_model_ref
+                if self.loaded_model_family == "owlv2"
+                else self.model_path
+            )
             print(
-                f"[CVManager] loaded {self.model_path} family={self.loaded_model_family} "
+                f"[CVManager] loaded {model_ref} family={self.loaded_model_family} "
                 f"conf={self.conf} iou={self.iou} imgsz={self.imgsz} "
                 f"max_det={self.max_det} augment={self.augment} half={self.half} "
                 f"cross_class_nms_iou={self.cross_class_nms_iou} "
@@ -187,7 +290,10 @@ class CVManager:
                 f"second_augment={self.second_augment} "
                 f"second_score_scale={self.second_score_scale} "
                 f"second_merge_iou={self.second_merge_iou} "
-                f"second_min_detections={self.second_min_detections}",
+                f"second_min_detections={self.second_min_detections} "
+                f"owlv2_prompts={len(self.owlv2_prompts)} "
+                f"owlv2_nms_iou={self.owlv2_nms_iou} "
+                f"owlv2_local_files_only={self.owlv2_local_files_only}",
                 flush=True,
             )
         except Exception as exc:
@@ -197,13 +303,18 @@ class CVManager:
         if self.model_family != "auto":
             return self.model_family
         name = Path(model_path).name.lower()
+        lower_path = model_path.lower()
+        if "owlv2" in lower_path or "owl-v2" in lower_path:
+            return "owlv2"
         if "rtdetr" in name or "rt-detr" in name:
             return "rtdetr"
         return "yolo"
 
     def _load_model(self, model_path: str):
         """Load an Ultralytics detector family while preserving one output adapter."""
-        family = self._resolve_model_family(model_path)
+        family = self.resolved_model_family
+        if family == "owlv2":
+            return self._load_owlv2_model()
         if family == "rtdetr":
             if RTDETR is None:
                 raise RuntimeError("RT-DETR requested but ultralytics.RTDETR is unavailable")
@@ -228,6 +339,49 @@ class CVManager:
                     return model
                 raise
         self.loaded_model_family = family
+        return model
+
+    def _resolve_owlv2_model_ref(self) -> str:
+        """Prefer copied Docker model files, otherwise use the HF id/cache ref."""
+        explicit_path = Path(self.owlv2_model_id)
+        if explicit_path.exists():
+            return self.owlv2_model_id
+
+        model_dir_name = self.owlv2_model_id.rstrip("/\\").split("/")[-1].split("\\")[-1]
+        for root in (Path("/workspace/models/cv"), Path("models"), Path("cv/models")):
+            candidate = root / model_dir_name
+            if candidate.exists():
+                return str(candidate)
+        return self.owlv2_model_id
+
+    def _load_owlv2_model(self):
+        """Load a Hugging Face OWLv2 zero-shot detector."""
+        if torch is None or Owlv2ForObjectDetection is None or Owlv2Processor is None:
+            raise RuntimeError("OWLv2 requires torch and transformers")
+
+        self.owlv2_loaded_model_ref = self._resolve_owlv2_model_ref()
+        self.processor = Owlv2Processor.from_pretrained(
+            self.owlv2_loaded_model_ref,
+            local_files_only=self.owlv2_local_files_only,
+        )
+        model = Owlv2ForObjectDetection.from_pretrained(
+            self.owlv2_loaded_model_ref,
+            local_files_only=self.owlv2_local_files_only,
+        )
+
+        device_name = self.device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.owlv2_device = torch.device(device_name)
+        self.owlv2_dtype = (
+            torch.float16
+            if self.half and self.owlv2_device.type == "cuda"
+            else torch.float32
+        )
+
+        model.to(self.owlv2_device)
+        if self.owlv2_dtype == torch.float16:
+            model.half()
+        model.eval()
+        self.loaded_model_family = "owlv2"
         return model
 
     def _apply_rtdetr_inference_knobs(self, model) -> None:
@@ -257,6 +411,9 @@ class CVManager:
         list where the index is the YOLO class id and the value is eval id.
         Defaults to the sparse custom TIL label mapping above.
         """
+        if self.resolved_model_family == "owlv2" and not os.environ.get("CV_CATEGORY_MAP"):
+            return {idx: idx for idx in range(len(TIL_CATEGORY_NAMES))}
+
         mapping = dict(DEFAULT_TIL_CATEGORY_MAP)
         raw = os.environ.get("CV_CATEGORY_MAP")
         if not raw:
@@ -272,6 +429,71 @@ class CVManager:
         except Exception as exc:
             print(f"[CVManager] could not parse CV_CATEGORY_MAP: {exc}", flush=True)
         return mapping
+
+    def _load_owlv2_prompts(self) -> list[tuple[int, str]]:
+        """Load text prompts for OWLv2.
+
+        CV_OWLV2_PROMPTS may be a JSON string or path. Accepted shapes:
+        - {"3": ["a fighter jet", "a military jet"], "9": "a car"}
+        - ["cargo aircraft prompt", ..., "sailboat prompt"] in category order
+        - [{"category_id": 3, "prompt": "a fighter jet"}, ...]
+        """
+        raw = os.environ.get("CV_OWLV2_PROMPTS")
+        if not raw:
+            return list(DEFAULT_OWLV2_PROMPTS)
+
+        try:
+            stripped = raw.strip()
+            if stripped.startswith("{") or stripped.startswith("["):
+                text = stripped
+            else:
+                text = Path(raw).read_text(encoding="utf-8")
+            loaded = json.loads(text)
+            specs: list[tuple[int, str]] = []
+
+            if isinstance(loaded, dict):
+                for category_raw, prompts_raw in loaded.items():
+                    prompts = (
+                        prompts_raw
+                        if isinstance(prompts_raw, list)
+                        else [prompts_raw]
+                    )
+                    for prompt in prompts:
+                        specs.append((int(category_raw), str(prompt)))
+            elif isinstance(loaded, list) and all(isinstance(item, str) for item in loaded):
+                specs = [(idx, prompt) for idx, prompt in enumerate(loaded)]
+            elif isinstance(loaded, list):
+                for item in loaded:
+                    if not isinstance(item, dict):
+                        continue
+                    category_id = int(item["category_id"])
+                    prompts_raw = item.get("prompts", item.get("prompt", []))
+                    prompts = (
+                        prompts_raw
+                        if isinstance(prompts_raw, list)
+                        else [prompts_raw]
+                    )
+                    for prompt in prompts:
+                        specs.append((category_id, str(prompt)))
+
+            cleaned: list[tuple[int, str]] = []
+            for category_id, prompt in specs:
+                prompt = prompt.strip()
+                if not prompt:
+                    continue
+                if 0 <= category_id < len(TIL_CATEGORY_NAMES):
+                    cleaned.append((category_id, prompt))
+                else:
+                    print(
+                        f"[CVManager] ignoring OWLv2 prompt with invalid "
+                        f"category_id={category_id}",
+                        flush=True,
+                    )
+            if cleaned:
+                return cleaned
+        except Exception as exc:
+            print(f"[CVManager] could not parse CV_OWLV2_PROMPTS: {exc}", flush=True)
+        return list(DEFAULT_OWLV2_PROMPTS)
 
     # ------------------------------------------------------------------
     # Inference helpers
@@ -310,6 +532,111 @@ class CVManager:
         cls = boxes.cls.cpu().numpy().astype(np.int64, copy=False)
         conf = boxes.conf.cpu().numpy().astype(np.float32, copy=False)
         return xyxy, cls, conf
+
+    def _post_process_owlv2(self, outputs, target_sizes):
+        """Run the processor's OWLv2 postprocess across Transformers versions."""
+        if self.processor is None:
+            raise RuntimeError("OWLv2 processor is not loaded")
+
+        if hasattr(self.processor, "post_process_grounded_object_detection"):
+            try:
+                return self.processor.post_process_grounded_object_detection(
+                    outputs=outputs,
+                    target_sizes=target_sizes,
+                    threshold=self.conf,
+                    text_labels=[self.owlv2_prompts],
+                )[0]
+            except TypeError:
+                return self.processor.post_process_grounded_object_detection(
+                    outputs=outputs,
+                    target_sizes=target_sizes,
+                    threshold=self.conf,
+                )[0]
+
+        if hasattr(self.processor, "post_process_object_detection"):
+            return self.processor.post_process_object_detection(
+                outputs=outputs,
+                target_sizes=target_sizes,
+                threshold=self.conf,
+            )[0]
+
+        raise RuntimeError("OWLv2 processor has no supported postprocess method")
+
+    def _owlv2_predict(
+        self,
+        img: Image.Image,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Run OWLv2 and return (xyxy, category_id, conf)."""
+        if torch is None or self.processor is None or self.owlv2_device is None:
+            empty = np.zeros((0, 4), dtype=np.float32)
+            return empty, np.zeros((0,), dtype=np.int64), np.zeros((0,), dtype=np.float32)
+
+        inputs = self.processor(
+            text=[self.owlv2_prompts],
+            images=img,
+            return_tensors="pt",
+        )
+        model_inputs = {}
+        for key, value in inputs.items():
+            if hasattr(value, "to"):
+                value = value.to(self.owlv2_device)
+                if key == "pixel_values" and self.owlv2_dtype is not None:
+                    value = value.to(dtype=self.owlv2_dtype)
+            model_inputs[key] = value
+
+        with torch.inference_mode():
+            outputs = self.model(**model_inputs)
+
+        target_sizes = torch.tensor(
+            [(img.height, img.width)],
+            dtype=torch.float32,
+            device=self.owlv2_device,
+        )
+        result = self._post_process_owlv2(outputs, target_sizes)
+        boxes = result.get("boxes")
+        scores = result.get("scores")
+        labels = result.get("labels")
+        text_labels = result.get("text_labels")
+
+        if boxes is None or scores is None or len(boxes) == 0:
+            empty = np.zeros((0, 4), dtype=np.float32)
+            return empty, np.zeros((0,), dtype=np.int64), np.zeros((0,), dtype=np.float32)
+
+        if labels is not None and hasattr(labels, "detach"):
+            label_values = labels.detach().cpu().numpy().astype(np.int64, copy=False)
+            categories = []
+            for label_value in label_values:
+                idx = int(label_value)
+                if 0 <= idx < len(self.owlv2_prompt_categories):
+                    categories.append(self.owlv2_prompt_categories[idx])
+                else:
+                    categories.append(-1)
+            cls = np.asarray(categories, dtype=np.int64)
+        elif labels is not None:
+            categories = []
+            for label_value in labels:
+                if isinstance(label_value, str):
+                    categories.append(self.owlv2_prompt_to_category.get(label_value, -1))
+                    continue
+                idx = int(label_value)
+                if 0 <= idx < len(self.owlv2_prompt_categories):
+                    categories.append(self.owlv2_prompt_categories[idx])
+                else:
+                    categories.append(-1)
+            cls = np.asarray(categories, dtype=np.int64)
+        elif text_labels is not None:
+            cls = np.asarray(
+                [self.owlv2_prompt_to_category.get(str(label), -1) for label in text_labels],
+                dtype=np.int64,
+            )
+        else:
+            empty = np.zeros((0, 4), dtype=np.float32)
+            return empty, np.zeros((0,), dtype=np.int64), np.zeros((0,), dtype=np.float32)
+
+        xyxy = boxes.detach().cpu().numpy().astype(np.float32, copy=False)
+        conf = scores.detach().cpu().numpy().astype(np.float32, copy=False)
+        valid = cls >= 0
+        return xyxy[valid], cls[valid], conf[valid]
 
     def _tile_offsets(self, width: int, height: int) -> list[tuple[int, int, int, int]]:
         """Compute (x1, y1, x2, y2) tile rectangles in image pixel coords."""
@@ -356,11 +683,15 @@ class CVManager:
         Returns (xyxy_list, cls_list, conf_list). Boxes are in original image
         coordinates and may overlap; class-aware NMS is applied by the caller.
         """
+        self._last_second_pass_used = False
+        if self.loaded_model_family == "owlv2":
+            xyxy, cls, conf = self._owlv2_predict(img)
+            return xyxy.tolist(), cls.tolist(), conf.tolist()
+
         width, height = img.size
         all_xyxy: list[list[float]] = []
         all_cls: list[int] = []
         all_conf: list[float] = []
-        self._last_second_pass_used = False
 
         # Tile passes: collect detections inside each tile and offset back to
         # the full image. Drop boxes that hug an internal tile edge — they are
@@ -547,7 +878,12 @@ class CVManager:
         # candidates from multiple sources. Single-pass (off-mode) detections
         # already came from Ultralytics' built-in NMS, so skipping here keeps
         # that path a bit-for-bit no-op.
-        if self.tile_grid is not None:
+        if self.loaded_model_family == "owlv2":
+            survivors = self._class_aware_nms(xyxy, cls, conf, self.owlv2_nms_iou)
+            xyxy = xyxy[survivors]
+            cls = cls[survivors]
+            conf = conf[survivors]
+        elif self.tile_grid is not None:
             survivors = self._class_aware_nms(xyxy, cls, conf, self.tile_merge_iou)
             xyxy = xyxy[survivors]
             cls = cls[survivors]
@@ -573,7 +909,8 @@ class CVManager:
         # Optional one-time log so we can verify the configured path fired.
         if self._inference_count == 0:
             print(
-                f"[CVManager] first inference: tile_mode={self.tile_mode} "
+                f"[CVManager] first inference: family={self.loaded_model_family} "
+                f"tile_mode={self.tile_mode} "
                 f"second_pass_used={self._last_second_pass_used} "
                 f"raw={len(xyxy_list)} kept={len(xyxy)}",
                 flush=True,

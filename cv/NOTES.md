@@ -6,6 +6,14 @@ the partial core sweep's serving row baked in: `CV_CONF=0.15`, `CV_IOU=0.55`,
 `CV_IMGSZ=896`, `CV_AUGMENT=0`, `CV_CROSS_CLASS_NMS_IOU=0.97`. Local hard
 held-out mAP was 0.9234.
 
+20 May update: `cv/src/cv_manager.py` now has an opt-in Hugging Face OWLv2
+zero-shot detector path behind `CV_MODEL_FAMILY=owlv2`. It maps the 18 official
+TIL category prompts to LTWH output, supports custom `CV_OWLV2_PROMPTS`, and
+keeps `ry-v2` as the Docker default until Workbench `til test` / submission
+numbers prove OWLv2 helps. For offline evaluator runs, prefetch/bake the model
+cache during Docker build or point `CV_OWLV2_MODEL_ID` at a copied local model
+directory, then keep `CV_OWLV2_LOCAL_FILES_ONLY=1`.
+
 Failed follow-up: `ry_v3_adaptive` tried low-conf base (`CV_CONF=0.05`,
 `CV_IOU=0.70`, `CV_CROSS_CLASS_NMS_IOU=0`) plus an adaptive down-weighted TTA
 rescue pass on dense images (`CV_SECOND_MIN_DETECTIONS=7`). It overfit the
