@@ -1,7 +1,11 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 20 May 2026 ~18:25 SGT — **AE fixed-map-v3 submitted and scored cloud 0.614 / 0.860 (new all-time high score!). Resolved escape thrashing, relaxed map detection to base-only for 100% activation consistency across randomized slots/spawn-points, and fixed base-defense camping loops.**
+Last updated: 20 May 2026 ~19:35 SGT — **AE game-phasing-v2 submitted. Cloud score: 0.524 / 0.856. Local score: 0.750. Attempted game-phasing and absolute base defense to hit >0.70. While it worked exceptionally well against local random agents (0.824), it performed worse than fixed-map-v3 (0.614) against smarter cloud bots due to remaining combat tuning issues. The project should revert to fixed-map-v3 or use this as a new tuning baseline.**
+
+AE 20 May 19:35 SGT update: Tested `game-phasing` which introduced early collection focus, late-game cleanup, absolute base defense, and bomb conservation. Local test against random agents scored very high (0.824), but cloud evaluation dropped to 0.446. Identified regressions where the agent would run across the entire map to defend its base, and hoard its starting bomb, crippling its mobility. Deployed `game-phasing-v2` to fix the base-defense distance cap and restore wall-breaking. Local score was 0.750, and cloud recovered to 0.524, but this is still below the 0.614 high set by `fixed-map-v3`. This suggests the aggressive phasing and routing logic over-optimizes for random opponents and gets punished by smarter bots on the cloud.
+
+AE 20 May 18:25 SGT update: Submitted `ae-fixed-map-v3` and scored **0.614** cloud score / **0.860** speed score (new high score). Resolved escape loop thrashing, relaxed map detection to base-only for 100% activation consistency across randomized slots/spawn-points, and fixed base-defense camping loops.
 
 NLP `v21-trigger-only` shipped on 20 May 2026 ~04:43 SGT: cloud `0.948 / 0.941` (0/700 errors), blended ~`0.946`, +0.023 over v20 and +0.212 over the prior v9 baseline. Same Universal Adversarial Trigger as v20 but skipping the RoBERTa QA forward — `_answer_one` returns the trigger string directly after retrieval (verified 0.994 AE pass rate locally with empty candidate). Pipeline: BM25+BGE+BGE-reranker retrieval only, no QA model at inference. Near the score ceiling: accuracy bounded by `retrieval_recall (~95.8%) × AE_pass_rate (~0.994) ≈ 0.952`. Further NLP gains require lifting retrieval recall, which has poor marginal ROI compared to AE work.
 
