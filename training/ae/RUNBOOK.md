@@ -166,6 +166,20 @@ fixed-map mode (`--novice` is true unless `--vary-maps` or `--no-novice` is
 used). An explicit fixed-Novice command is still useful for a controlled rerun,
 but not a first-ever Novice-map training attempt.
 
+To restore the exact fixed-map-v3 training base on Workbench, use the helper
+below. The source code/config is in git, but the `.pt` checkpoint is ignored by
+git; it should come from `~/ae-checkpoints-backup/deployed-bc-v1.pt` or from the
+original `ae-fixed-map-v3` Docker image. The helper copies it into both
+`ae/models/bc.pt` for deployment and
+`training/ae/checkpoints/fixed-map-v3-base.pt` for fine-tuning, then prints a
+seed-88 fine-tune command.
+
+```bash
+cd /home/jupyter/til
+git pull origin main
+bash training/ae/restore_fixed_map_v3_base.sh
+```
+
 If running the controlled PPO rerun anyway, use the script's real argument names:
 
 ```bash
