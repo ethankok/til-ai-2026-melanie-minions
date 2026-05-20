@@ -430,7 +430,7 @@ random-opponent `til test` as the first local judge:
   --rounds 12 \
   --suites random library cloudsuite \
   --our heuristic \
-  --summary-out training/ae/data/ae-item-prior-strong-v1-cloudsuite.json
+  --summary-out training/ae/data/ae-candidate-cloudsuite.json
 ```
 
 `cloudsuite` means `rusher,hunter,bomber,defender,mixed`: it is intentionally
@@ -449,7 +449,9 @@ the extra pressure suite is mainly a regression screen before Docker build:
 ```
 
 For `ae-item-confidence-v1`, cloud beat the 0.5 recovery line despite a weak
-`cloudsuite` mean, so treat this as advisory rather than a hard gate.
+`cloudsuite` mean, so treat this as advisory rather than a hard gate. For
+`ae-item-prior-strong-v1`, stronger priors moved library up but random,
+cloudsuite, and Docker down; do not blindly retry that canceled submission.
 
 ---
 
@@ -459,14 +461,18 @@ Once local A/B looks healthy, submit:
 
 ```bash
 echo heuristic > ae/src/.ae_mode  # or 'hybrid' if PPO weights present
-til build ae ae-item-prior-strong-v1
-til test ae ae-item-prior-strong-v1        # last sanity, still uses random NPCs
-til submit ae ae-item-prior-strong-v1
+til build ae <candidate-tag>
+til test ae <candidate-tag>        # last sanity, still uses random NPCs
+til submit ae <candidate-tag>
 ```
 
 The leaderboard keeps the higher score from any submission, so
-shipping `ae-item-prior-strong-v1` cannot demote `ae-fixed-map-v3` even if it
+shipping a new candidate cannot demote `ae-fixed-map-v3` even if it
 regresses. Watch the cloud number, not the local one.
+
+If `til submit` ends with `context canceled` / `Terminated` during Artifact
+Registry upload, that is not a cloud evaluation. Retry only if the local result
+is still worth spending a submission on.
 
 ---
 
