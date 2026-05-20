@@ -184,7 +184,7 @@ class AEManager:
     # detonation ordering.
     PREDICTIVE_WALK_HORIZON = 4
 
-    def __init__(self):
+    def __init__(self, **kwargs):
         self.grid_size = self.GRID_SIZE
         self.last_step: int | None = None
         self.turn_counter = 0
@@ -244,6 +244,21 @@ class AEManager:
             "resource": self.item_resource_value,
             "recon": self.item_recon_value,
         }
+        
+        # --- Tunable parameters added in planning phase ---
+        self.dijkstra_no_bomb_cost = 25.0
+        self.VISIT_COUNT_PENALTY = 0.25
+        self.RECENT_LOCATION_PENALTY = 2.0
+        self.base_health_panic_threshold = 40.0
+        self.base_defense_panic_value = 150.0
+        self.base_defense_panic_radius = 8
+        self.low_ammo_enemy_base_value = 110.0
+        self.low_ammo_resource_value = 35.0
+
+        # Store and apply kwargs overrides
+        self.kwargs = kwargs
+        for k, v in kwargs.items():
+            setattr(self, k, v)
         self._reset_memory()
 
     # ------------------------------------------------------------------
@@ -282,9 +297,9 @@ class AEManager:
                             if _env_int("AE_BASE_DEFENSE_RADIUS", -999) == -999:
                                 self.BASE_DEFENSE_RADIUS = 6
                             if _env_float("AE_ENEMY_CHASE_VALUE", -999.0) == -999.0:
-                                self.ENEMY_CHASE_VALUE = 0.0
+                                self.ENEMY_CHASE_VALUE = 15.0
                             if _env_int("AE_ENEMY_CHASE_RADIUS", -999) == -999:
-                                self.ENEMY_CHASE_RADIUS = 4
+                                self.ENEMY_CHASE_RADIUS = 3
                             
                             # Pre-populate seen, walls, destructible, enemy bases, and static items
                             self.seen = {(x, y) for x in range(16) for y in range(16)}
@@ -292,6 +307,10 @@ class AEManager:
                             self.destructible = set(DESTRUCTIBLE)
                             self.enemy_bases = {tuple(BASE_LOCATIONS[j]): 0 for j in range(6) if j != i}
                             self.last_seen_items = {tuple(pos): (kind, 0) for kind, pos in STATIC_ENTITIES}
+                            
+                            # Re-apply kwargs overrides so they take precedence over novice map defaults
+                            for k, v in self.kwargs.items():
+                                setattr(self, k, v)
                             break
                 except ImportError:
                     pass
@@ -627,26 +646,57 @@ class AEManager:
 
         candidates: list[tuple[float, tuple[int, int]]] = []
 
-        # Defensive emergency logic (disabled on fixed novice map, optional on general maps)
+        # Defensive emergency logic (state-based dynamic defense)
         defense_emergency = False
-        if not is_fixed:
-            if (
-                self.tier1_defense_priority
-                and self.base_location is not None
-                and self.base_health < self.BASE_DEFENSE_HEALTH
-            ):
-                for pos, last_seen in self.enemy_agents.items():
-                    if step - int(last_seen) > self.ENEMY_STALENESS:
-                        continue
-                    if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
-                        defense_emergency = True
-                        candidates.append((150.0, pos))
+        if self.base_location is not None:
+            if is_fixed:
+                panic_threshold = getattr(self, "base_health_panic_threshold", 60.0)
+                if self.base_health < panic_threshold:
+                    dist_to_base = self._manhattan(start, self.base_location)
+                    panic_radius = getattr(self, "base_defense_panic_radius", 12)
+                    if dist_to_base <= panic_radius:
+                        for pos, last_seen in self.enemy_agents.items():
+                            if step - int(last_seen) > 1:
+                                continue
+                            if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
+                                defense_emergency = True
+                                panic_val = getattr(self, "base_defense_panic_value", 150.0)
+                                candidates.append((panic_val, pos))
+            else:
+                if (
+                    self.tier1_defense_priority
+                    and self.base_health < self.BASE_DEFENSE_HEALTH
+                ):
+                    for pos, last_seen in self.enemy_agents.items():
+                        if step - int(last_seen) > self.ENEMY_STALENESS:
+                            continue
+                        if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
+                            defense_emergency = True
+                            candidates.append((150.0, pos))
+
+        is_low_ammo = self.team_bombs <= 1
+        
+        # Determine enemy base value
+        if is_low_ammo:
+            enemy_base_val = getattr(self, "low_ammo_enemy_base_value", 50.0)
+        else:
+            enemy_base_val = self.ENEMY_BASE_VALUE
+
+        # Determine item values
+        mission_val = self.item_mission_value
+        resource_val = getattr(self, "low_ammo_resource_value", 45.0) if is_low_ammo else self.item_resource_value
+        recon_val = self.item_recon_value
+        current_item_values = {
+            "mission": mission_val,
+            "resource": resource_val,
+            "recon": recon_val,
+        }
 
         # ── Combat targets ──
         if not low_health and not defense_emergency:
             for pos in self.enemy_bases:
                 if is_fixed:
-                    value = 130.0
+                    value = enemy_base_val
                 else:
                     value = 35.0 if self.tier1_shared_credit else self.ENEMY_BASE_VALUE
                 candidates.append((value, pos))
@@ -667,13 +717,13 @@ class AEManager:
 
         # ── Items ──
         for pos, (kind, _step) in self.last_seen_items.items():
-            candidates.append((self.ITEM_VALUES.get(kind, 1.0), pos))
+            candidates.append((current_item_values.get(kind, 1.0), pos))
 
         # Respawn awareness: items we saw get collected become candidates
         # again once tile_respawn_steps have elapsed.
         for pos, (kind, collected_step) in self.collected_items.items():
             if step - collected_step >= self.TILE_RESPAWN_STEPS:
-                candidates.append((0.5 * self.ITEM_VALUES.get(kind, 1.0), pos))
+                candidates.append((0.5 * current_item_values.get(kind, 1.0), pos))
 
         # ── Frontier and anti-stall fallback ──
         # Weight frontier cells by how much new area they likely reveal.
@@ -688,13 +738,15 @@ class AEManager:
 
         best_target = None
         best_score = -inf
+        visit_penalty_coeff = getattr(self, "VISIT_COUNT_PENALTY", 0.25)
+        recent_loc_penalty_coeff = getattr(self, "RECENT_LOCATION_PENALTY", 2.0)
         for base_value, pos in candidates:
             if pos == start or pos not in distance:
                 continue
             dist = distance[pos]
-            score = base_value - self.DIST_PENALTY * dist - 0.25 * self.visit_count.get(pos, 0)
+            score = base_value - self.DIST_PENALTY * dist - visit_penalty_coeff * self.visit_count.get(pos, 0)
             if pos in self.recent_locations[-4:]:
-                score -= 2.0
+                score -= recent_loc_penalty_coeff
             # Threats: penalize paths that brush near recently-seen enemies,
             # but don't penalize when the *target itself* is the enemy (we want
             # to attack them) or an enemy base.
@@ -819,7 +871,9 @@ class AEManager:
                 if not self._edge_blocked(current, direction):
                     step_cost = 1.0
                 elif self._edge_destructible(current, direction):
-                    step_cost = 1.0 + self.dijkstra_bomb_cost
+                    bombs = getattr(self, "team_bombs", 0)
+                    bomb_cost = getattr(self, "dijkstra_no_bomb_cost", 99.0) if bombs <= 0 else self.dijkstra_bomb_cost
+                    step_cost = 1.0 + bomb_cost
                 else:
                     continue
                 
