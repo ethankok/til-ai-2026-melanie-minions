@@ -135,6 +135,11 @@ class AEManager:
     }
     ITEM_VALUES = {"mission": 50.0, "resource": 25.0, "recon": 10.0}
 
+    # Game phase boundaries (200-step game)
+    PHASE_COLLECT_END = 70    # Steps 0-70: prioritize collection
+    PHASE_ATTACK_END = 140    # Steps 70-140: balanced attack + collection
+    # Steps 140-200: cleanup / mop up remaining items, avoid risky plays
+
     GRID_SIZE = 16
     # Bomb timer matches til_environment/bomberman_config.yaml (entities.bomb.timer).
     # Phase order each round is: place → move → detonation → upkeep, so a bomb
@@ -462,6 +467,8 @@ class AEManager:
         self.is_fixed_novice_map = False
         self.fixed_team_idx = None
         self.dijkstra_bomb_cost = 5.0
+        # Track our item collection for respawn scheduling
+        self.items_collected_steps: dict[tuple[int, int], int] = {}
 
     def _update_memory(
         self,
@@ -560,10 +567,12 @@ class AEManager:
             # reconsider it as a target once the respawn timer elapses.
             if prev is not None:
                 self.collected_items[world] = (prev[0], step)
+                self.items_collected_steps[world] = step
         else:
             self.last_seen_items[world] = (visible_item, step)
             # If we see it again, it must have respawned; clear collected entry.
             self.collected_items.pop(world, None)
+            self.items_collected_steps.pop(world, None)
 
         if self._channel_on(cell, self.ENEMY_BASE):
             self.enemy_bases[world] = step
@@ -608,6 +617,15 @@ class AEManager:
     # ------------------------------------------------------------------
     # Planning
     # ------------------------------------------------------------------
+    def _game_phase(self) -> str:
+        """Return the current game phase based on step count."""
+        step = self.last_step if self.last_step is not None else 0
+        if step < self.PHASE_COLLECT_END:
+            return "collect"
+        if step < self.PHASE_ATTACK_END:
+            return "attack"
+        return "cleanup"
+
     def _choose_target(
         self,
         start: tuple[int, int],
@@ -616,21 +634,42 @@ class AEManager:
     ) -> tuple[tuple[int, int] | None, list[tuple[int, int]] | None]:
         threats = self._enemy_threat_cells()
         step = self.last_step if self.last_step is not None else 0
+        is_fixed = getattr(self, "is_fixed_novice_map", False)
+        phase = self._game_phase()
 
         # Single multi-source BFS gives distance to every reachable cell at
         # roughly the cost of one of the old per-target BFS calls.
-        if getattr(self, "is_fixed_novice_map", False):
+        if is_fixed:
             distance, parent = self._dijkstra_distance_map(start, danger)
         else:
             distance, parent = self._bfs_distance_map(start, danger)
 
         candidates: list[tuple[float, tuple[int, int]]] = []
-        # Defensive emergency logic (disabled on fixed novice map, optional on general maps)
+
+        # ── Base defense (critical priority) ──
+        # On fixed map: absolute defense when base is in danger
         defense_emergency = False
-        if not getattr(self, "is_fixed_novice_map", False):
-            if (
+        if self.base_location is not None:
+            if is_fixed:
+                # Absolute defense when base health is critical
+                if self.base_health < 40:
+                    for pos, last_seen in self.enemy_agents.items():
+                        if step - int(last_seen) > self.ENEMY_STALENESS:
+                            continue
+                        if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS + 2:
+                            defense_emergency = True
+                            candidates.append((200.0, pos))
+                # Normal defense: target enemies near base
+                elif self.base_damaged_this_step or self.base_health < 80:
+                    for pos, last_seen in self.enemy_agents.items():
+                        if step - int(last_seen) > self.ENEMY_STALENESS:
+                            continue
+                        dist_to_base = self._manhattan(pos, self.base_location)
+                        if dist_to_base <= 2 or (self.base_damaged_this_step and dist_to_base <= self.BASE_DEFENSE_RADIUS):
+                            defense_emergency = True
+                            candidates.append((150.0, pos))
+            elif (
                 self.tier1_defense_priority
-                and self.base_location is not None
                 and self.base_health < self.BASE_DEFENSE_HEALTH
             ):
                 for pos, last_seen in self.enemy_agents.items():
@@ -640,11 +679,17 @@ class AEManager:
                         defense_emergency = True
                         candidates.append((150.0, pos))
 
-        # When health is low, avoid aggressive targets and stick to items/exploration
+        # ── Combat targets (phase-aware) ──
         if not low_health and not defense_emergency:
             for pos in self.enemy_bases:
-                if getattr(self, "is_fixed_novice_map", False):
-                    value = 130.0
+                if is_fixed:
+                    # Phase-dependent enemy base value
+                    if phase == "collect":
+                        value = 80.0   # Lower priority during collection phase
+                    elif phase == "attack":
+                        value = 160.0  # High priority during attack phase
+                    else:
+                        value = 100.0  # Moderate in cleanup
                 else:
                     value = 35.0 if self.tier1_shared_credit else self.ENEMY_BASE_VALUE
                 candidates.append((value, pos))
@@ -663,25 +708,50 @@ class AEManager:
                     if self._manhattan(start, pos) <= self.ENEMY_CHASE_RADIUS:
                         candidates.append((self.ENEMY_CHASE_VALUE, pos))
 
+        # ── Items (phase-aware values on fixed map) ──
         for pos, (kind, _step) in self.last_seen_items.items():
-            candidates.append((self.ITEM_VALUES.get(kind, 1.0), pos))
+            if is_fixed:
+                if phase == "collect":
+                    # Boost mission value heavily during collection
+                    phase_values = {"mission": 65.0, "resource": 30.0, "recon": 12.0}
+                elif phase == "attack":
+                    phase_values = {"mission": 45.0, "resource": 25.0, "recon": 8.0}
+                else:
+                    # Cleanup: grab whatever is nearby
+                    phase_values = {"mission": 55.0, "resource": 30.0, "recon": 15.0}
+                candidates.append((phase_values.get(kind, 10.0), pos))
+            else:
+                candidates.append((self.ITEM_VALUES.get(kind, 1.0), pos))
 
         # Respawn awareness: items we saw get collected become candidates
-        # again once tile_respawn_steps have elapsed. Slight discount because
-        # the respawn is probabilistic, not guaranteed.
+        # again once tile_respawn_steps have elapsed.
         for pos, (kind, collected_step) in self.collected_items.items():
             if step - collected_step >= self.TILE_RESPAWN_STEPS:
-                candidates.append((0.5 * self.ITEM_VALUES.get(kind, 1.0), pos))
+                # On fixed map, respawned items are just as valuable as fresh ones
+                # (respawn is deterministic, same position, same type).
+                if is_fixed:
+                    discount = 0.85
+                else:
+                    discount = 0.5
+                candidates.append((discount * self.ITEM_VALUES.get(kind, 1.0), pos))
 
-        # Weight frontier cells by how much new area they likely reveal.
-        for pos in self._frontier_cells():
-            unseen_neighbors = sum(1 for n in self._raw_neighbors(pos) if n not in self.seen)
-            candidates.append((4.0 + 1.0 * unseen_neighbors, pos))
+        # ── Frontier and anti-stall (disabled on fixed map) ──
+        if not is_fixed:
+            # Weight frontier cells by how much new area they likely reveal.
+            for pos in self._frontier_cells():
+                unseen_neighbors = sum(1 for n in self._raw_neighbors(pos) if n not in self.seen)
+                candidates.append((4.0 + 1.0 * unseen_neighbors, pos))
 
-        # Anti-stall fallback: known safe low-visit cells.
-        for pos in self.seen:
-            if pos != start:
-                candidates.append((2.0 - 0.08 * self.visit_count.get(pos, 0), pos))
+            # Anti-stall fallback: known safe low-visit cells.
+            for pos in self.seen:
+                if pos != start:
+                    candidates.append((2.0 - 0.08 * self.visit_count.get(pos, 0), pos))
+        else:
+            # On fixed map, only add a very light anti-stall for truly stuck cases
+            if self._stuck_recently():
+                for pos in self.seen:
+                    if pos != start and self.visit_count.get(pos, 0) < 2:
+                        candidates.append((1.0, pos))
 
         best_target = None
         best_score = -inf
@@ -702,7 +772,12 @@ class AEManager:
                     if cursor in threats:
                         path_threat += 1
                     cursor = parent.get(cursor)
-                score -= self.PATH_THREAT_PENALTY * path_threat
+                # On fixed map in cleanup phase, reduce threat penalty
+                # (we need to be more aggressive about collecting remaining items)
+                threat_mult = 1.0
+                if is_fixed and phase == "cleanup":
+                    threat_mult = 0.5
+                score -= self.PATH_THREAT_PENALTY * path_threat * threat_mult
             if score > best_score:
                 best_score = score
                 best_target = pos
@@ -933,8 +1008,12 @@ class AEManager:
                                 self.recent_kills.append((pos, unfreeze))
                     return self.PLACE_BOMB
 
-        # Adjacent mission grab — purely a speed optimization, not a behavior
-        # change; the slow path would pick the same move.
+        # Adjacent high-value item grab — purely a speed optimization, not a
+        # behavior change; the slow path would pick the same move.
+        # On fixed map, also grab resources (2.0 reward + ammo) not just missions.
+        grab_kinds = {"mission"}
+        if getattr(self, "is_fixed_novice_map", False):
+            grab_kinds.add("resource")
         for d, (dx, dy) in self.DIR_DELTAS.items():
             nxt = (location[0] + dx, location[1] + dy)
             if nxt not in self.seen or nxt in danger:
@@ -942,7 +1021,7 @@ class AEManager:
             if self._edge_blocked(location, d):
                 continue
             item = self.last_seen_items.get(nxt)
-            if item is None or item[0] != "mission":
+            if item is None or item[0] not in grab_kinds:
                 continue
             preferred = self._action_for_path(location, direction, [location, nxt])
             if preferred is not None and self._legal(observation, preferred):
@@ -1689,10 +1768,20 @@ class AEManager:
                     break
 
         wall_to_open = False
+        # Bomb conservation: don't waste bombs on walls when we only have 1 left
+        # (save it for combat). On fixed map, also check phase.
+        bombs_available = self._as_int(observation.get("team_bombs"), default=0)
+        allow_wall_bomb = bombs_available >= 2
+        if getattr(self, "is_fixed_novice_map", False):
+            # In attack phase, be more conservative with wall bombs
+            phase = self._game_phase()
+            if phase == "attack" and bombs_available < 3:
+                allow_wall_bomb = False
+
         # Proactive wall break: if the target is high-value (enemy base or
         # mission) and a destructible wall sits between us and it, bomb
         # without waiting to be visibly stuck.
-        if target is not None:
+        if allow_wall_bomb and target is not None:
             target_dir = self._rough_direction(location, target)
             if target_dir is not None and (location[0], location[1], target_dir) in self.destructible:
                 target_kind = self.last_seen_items.get(target, (None, None))[0]
@@ -1702,7 +1791,7 @@ class AEManager:
                     wall_to_open = self._stuck_recently()
 
         # Novice fixed map custom wall opening:
-        if not wall_to_open and getattr(self, "is_fixed_novice_map", False) and getattr(self, "current_path", None) is not None:
+        if not wall_to_open and allow_wall_bomb and getattr(self, "is_fixed_novice_map", False) and getattr(self, "current_path", None) is not None:
             path = self.current_path
             if len(path) >= 2:
                 nxt = path[1]
