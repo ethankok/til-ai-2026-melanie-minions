@@ -66,6 +66,16 @@ ENV AE_ITEM_PRIOR_CONF=0.70
 ENV AE_ITEM_PRIOR_FLOOR=0.25
 ENV AE_ALLY_BOMB_SAFE=0
 ENV AE_TTD_DEFENSE=0
+# Deterministic pessimistic mini-search candidate. Unlike MCTS-light, this is
+# a tiny safety-only override: it runs only near live bombs / fresh enemy
+# pressure, searches our own movement for 3 plies, and requires a large safety
+# delta before overriding the normal fixed-map planner. Mac 24-round gate:
+# random 0.5613, library 0.5184, cloudsuite 0.3962 (vs reference ~0.3186).
+ENV AE_PESSIMISTIC_SEARCH=1
+ENV AE_PESSIMISTIC_DEPTH=3
+ENV AE_PESSIMISTIC_ENEMY_GATE=1
+ENV AE_PESSIMISTIC_FORCE_SCORE=-80
+ENV AE_PESSIMISTIC_MIN_DELTA=55
 # Opt-in via `-e AE_USE_PLAYBOOK=1 -e AE_PLAYBOOK_FILTER=bomb_only` for a
 # cloud-only A/B if local-cloud distribution gap turns out to favor the
 # playbook on real opponents.

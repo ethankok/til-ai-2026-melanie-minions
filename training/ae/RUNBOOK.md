@@ -453,6 +453,39 @@ pressure.
 The simulator now resets each round with `--seed + round_idx`, so A/Bs are more
 repeatable. Prefer comparing candidates on the same `--rounds` and `--seed`.
 
+Fixed-map route/strategy sweeps should use the local-only route harness before
+any source change is promoted into Docker defaults:
+
+```bash
+# Fast harness check; proves the runner works.
+.venv/bin/python training/ae/sweep_fixed_routes.py \
+  --profiles smoke \
+  --rounds 4 \
+  --suites cloudsuite \
+  --summary-out training/ae/data/fixed-route-suite-smoke.json
+
+# Main cloudsuite search. This is the first useful ranking pass.
+.venv/bin/python training/ae/sweep_fixed_routes.py \
+  --profiles core \
+  --rounds 8 \
+  --suites cloudsuite \
+  --summary-out training/ae/data/fixed-route-suite-core.json
+
+# Promotion gate before Workbench build/submit.
+.venv/bin/python training/ae/sweep_fixed_routes.py \
+  --profiles core \
+  --rounds 24 \
+  --suites random library cloudsuite \
+  --summary-out training/ae/data/fixed-route-suite-gate.json
+```
+
+The runner instantiates `AEManager` with fixed-Novice-map strategy profiles
+such as `attack_cells_close`, `center_then_attack`, `base_leash`, and
+`low_ammo_base_race`. It ranks profiles by `cloudsuite` by default and prints
+the same base-failure / reward-component diagnostics as the validator. Treat it
+as a search tool: if a profile only wins `cloudsuite` by noise, rerun with more
+rounds and the same seed before changing production defaults.
+
 For the current fixed-map candidate family, do **not** require the optional
 playbook/opponent-model artifacts. The shipping Dockerfile keeps both disabled;
 the extra pressure suite is mainly a regression screen before Docker build:
@@ -491,6 +524,26 @@ mean-of-means `0.5404`. The key diagnostic signal is `cloudsuite` final base
 health `0.0` with large base/own-base damage, while attack components remain
 positive. Next AE work should improve base survival under pressure without
 trading away attack tempo.
+
+Latest accepted pressure A/B, `pessimistic-mini-search-v1`:
+
+```bash
+AE_PESSIMISTIC_SEARCH=1 AE_PESSIMISTIC_ENEMY_GATE=1 \
+  .venv/bin/python training/ae/validate_cloud_suite.py \
+  --rounds 24 \
+  --suites random library cloudsuite \
+  --our heuristic \
+  --summary-out training/ae/data/ae-pessimistic-search-thresh-24.json
+```
+
+Scores: random `0.5613`, library `0.5184`, cloudsuite `0.3962`, aggregate
+mean-of-means `0.4920`. This is a pressure-specific win over the `0.3186`
+cloudsuite reference, not a broad local-suite win. The search is deterministic
+and safety-only: depth-3 own-movement search near live bombs / fresh enemy
+pressure, with `AE_PESSIMISTIC_FORCE_SCORE=-80` and
+`AE_PESSIMISTIC_MIN_DELTA=55` so it does not behave like the old MCTS planner.
+It reduced visible-bomb failures to `8` but traded away random/library farming
+tempo, so use it as an explicit cloud-pressure A/B.
 
 Latest rejected A/B reference, `ally-bomb-safe-v2`:
 

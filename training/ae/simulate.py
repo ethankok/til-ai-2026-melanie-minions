@@ -97,7 +97,7 @@ def unpack_state_key(key: int) -> tuple[int, int, int, int]:
 # Our-agent factory
 # ---------------------------------------------------------------------------
 
-def _make_our_agent(name: str):
+def _make_our_agent(name: str, kwargs: dict | None = None):
     """Construct the agent we control in slot 0.
 
     Currently supported:
@@ -107,11 +107,12 @@ def _make_our_agent(name: str):
     """
 
     name = name.lower().strip()
+    kwargs = kwargs or {}
     if name == "heuristic":
-        return AEManager()
+        return AEManager(**kwargs)
     if name == "hybrid":
         from hybrid_manager import HybridAEManager
-        return HybridAEManager()
+        return HybridAEManager(**kwargs)
     raise ValueError(f"unknown --our value {name!r}")
 
 
@@ -389,6 +390,7 @@ def run_simulation(
     log_traj: bool,
     seed_start: int,
     novice: bool = True,
+    our_kwargs: dict | None = None,
 ) -> dict:
     """Run ``rounds`` rounds and return the aggregated trajectory + stats.
 
@@ -406,7 +408,7 @@ def run_simulation(
     cfg = default_config()
     cfg.env.novice = novice
     env = bomberman_env.basic_env(env_wrappers=[], cfg=cfg)
-    our_agent = _make_our_agent(our_name)
+    our_agent = _make_our_agent(our_name, our_kwargs)
 
     # Resolve opponents spec to a list of 5 names.
     if opponents_spec == "random":

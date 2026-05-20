@@ -278,6 +278,11 @@ class AEManager:
         self.ttd_defense_immediate = _env_int("AE_TTD_DEFENSE_IMMEDIATE", 1)
         self.ttd_defense_damaged = _env_int("AE_TTD_DEFENSE_DAMAGED", 2)
         self.ttd_defense_max_tti = _env_int("AE_TTD_DEFENSE_MAX_TTI", 5)
+        self.pessimistic_search_enabled = _env_flag("AE_PESSIMISTIC_SEARCH", False)
+        self.pessimistic_depth = max(1, min(4, _env_int("AE_PESSIMISTIC_DEPTH", 3)))
+        self.pessimistic_enemy_gate = _env_flag("AE_PESSIMISTIC_ENEMY_GATE", False)
+        self.pessimistic_force_score = _env_float("AE_PESSIMISTIC_FORCE_SCORE", -80.0)
+        self.pessimistic_min_delta = _env_float("AE_PESSIMISTIC_MIN_DELTA", 55.0)
 
         # Store and apply kwargs overrides
         self.kwargs = kwargs
@@ -413,6 +418,9 @@ class AEManager:
             target, path = self.escape_target, escape_path
         else:
             # Fast path: an obviously-dominant action skips full candidate scoring.
+            pessimistic = self._pessimistic_escape_action(observation, location, direction)
+            if pessimistic is not None:
+                return pessimistic
             dominant = self._try_dominant_action(observation, location, direction, danger, low_health)
             if dominant is not None:
                 return dominant
@@ -1389,6 +1397,160 @@ class AEManager:
         if desired_dir == (direction + 1) % 4:
             return self.RIGHT
         return None
+
+    def _pessimistic_escape_action(
+        self,
+        observation: dict,
+        location: tuple[int, int],
+        direction: int,
+    ) -> int | None:
+        """Tiny deterministic safety search for live tactical danger.
+
+        Unlike MCTS-light, this does not plan attacks or simulate opponents.
+        It only compares our next few legal movements against already-known
+        bombs and fresh enemy threat zones, then returns an action when the
+        current/local future looks dangerous enough to justify an override.
+        """
+
+        if not self.pessimistic_search_enabled:
+            return None
+        if not self._should_run_pessimistic_search(location):
+            return None
+
+        root_actions = [
+            action for action in (self.FORWARD, self.BACKWARD, self.LEFT, self.RIGHT, self.STAY)
+            if self._legal(observation, action)
+        ]
+        if not root_actions:
+            return None
+
+        bombs = tuple(
+            (pos[0], pos[1], int(data.get("timer", self.BOMB_TIMER)), bool(data.get("own")))
+            for pos, data in self.known_bombs.items()
+        )
+        best_action: int | None = None
+        best_score = -inf
+        for action in root_actions:
+            pos, new_dir = self._simulate_action(location, direction, action)
+            if pos not in self.seen or pos in {(bx, by) for bx, by, _timer, _own in bombs}:
+                continue
+            score = self._pessimistic_line_score(
+                pos=pos,
+                direction=new_dir,
+                bombs=bombs,
+                depth=max(0, self.pessimistic_depth - 1),
+                root_action=action,
+            )
+            if score > best_score:
+                best_score = score
+                best_action = action
+
+        if best_action is None:
+            return None
+        # Only intervene for genuine safety wins; avoid route churn on normal
+        # exploration ticks where all legal actions are roughly equivalent.
+        if best_score < self.pessimistic_force_score:
+            return best_action
+
+        current_score = self._pessimistic_line_score(
+            pos=location,
+            direction=direction,
+            bombs=bombs,
+            depth=self.pessimistic_depth,
+            root_action=self.STAY,
+        )
+        if best_score - current_score >= self.pessimistic_min_delta:
+            return best_action
+        return None
+
+    def _should_run_pessimistic_search(self, location: tuple[int, int]) -> bool:
+        if not self.pessimistic_search_enabled:
+            return False
+        step = self.last_step if self.last_step is not None else 0
+        near_threat = False
+        for pos, data in self.known_bombs.items():
+            if self.ally_bomb_safe and data.get("own"):
+                continue
+            timer = int(data.get("timer", self.BOMB_TIMER))
+            if timer <= self.pessimistic_depth + 1 and (
+                location in self._blast_cells(pos)
+                or self._manhattan(location, pos) <= self.BOMB_RADIUS + self.pessimistic_depth
+                or (self.base_location is not None and self.base_location in self._blast_cells(pos))
+            ):
+                near_threat = True
+                break
+        if near_threat:
+            return True
+        if self.pessimistic_enemy_gate:
+            for enemy, last_seen in self.enemy_agents.items():
+                if step - int(last_seen) <= 1 and self._manhattan(location, enemy) <= 2:
+                    return True
+        return False
+
+    def _pessimistic_line_score(
+        self,
+        pos: tuple[int, int],
+        direction: int,
+        bombs: tuple[tuple[int, int, int, bool], ...],
+        depth: int,
+        root_action: int,
+    ) -> float:
+        score = self._pessimistic_position_score(pos, bombs)
+        if depth <= 0:
+            return score
+
+        next_bombs = tuple(
+            (bx, by, timer - 1, own)
+            for bx, by, timer, own in bombs
+            if timer > 1
+        )
+        best_future = -inf
+        for action in (self.FORWARD, self.BACKWARD, self.LEFT, self.RIGHT, self.STAY):
+            new_pos, new_dir = self._simulate_action(pos, direction, action)
+            if new_pos not in self.seen:
+                continue
+            if new_pos in {(bx, by) for bx, by, _timer, _own in next_bombs}:
+                continue
+            future = self._pessimistic_line_score(new_pos, new_dir, next_bombs, depth - 1, root_action)
+            if future > best_future:
+                best_future = future
+        if best_future == -inf:
+            best_future = -120.0
+        turn_cost = -1.5 if root_action in {self.LEFT, self.RIGHT} else 0.0
+        return score + 0.72 * best_future + turn_cost
+
+    def _pessimistic_position_score(
+        self,
+        pos: tuple[int, int],
+        bombs: tuple[tuple[int, int, int, bool], ...],
+    ) -> float:
+        score = 0.0
+        for bx, by, timer, own in bombs:
+            if own and self.ally_bomb_safe:
+                continue
+            blast = self._blast_cells((bx, by))
+            if pos == (bx, by):
+                score -= 140.0
+            if pos in blast:
+                score -= 95.0 if timer <= 1 else 34.0 / max(1, timer)
+            elif self._manhattan(pos, (bx, by)) <= self.BOMB_RADIUS + 1:
+                score -= 4.0 / max(1, timer)
+            if self.base_location is not None and self.base_location in blast and timer <= 2:
+                score -= 10.0
+
+        step = self.last_step if self.last_step is not None else 0
+        for enemy, last_seen in self.enemy_agents.items():
+            if step - int(last_seen) > self.ENEMY_STALENESS:
+                continue
+            dist = self._manhattan(pos, enemy)
+            if dist == 0:
+                score -= 70.0
+            elif dist == 1:
+                score -= 28.0
+            elif dist == 2:
+                score -= 7.0
+        score -= 0.4 * self.visit_count.get(pos, 0)
+        return score
 
     # ------------------------------------------------------------------
     # Tactical lookahead
