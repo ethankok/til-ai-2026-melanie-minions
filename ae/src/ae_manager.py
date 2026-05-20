@@ -272,7 +272,7 @@ class AEManager:
                 try:
                     from novice_map_data import BASE_LOCATIONS, STARTING_LOCATIONS, WALLS, DESTRUCTIBLE, STATIC_ENTITIES
                     for i in range(6):
-                        if tuple(base_loc) == tuple(BASE_LOCATIONS[i]) and tuple(location) == tuple(STARTING_LOCATIONS[i]):
+                        if tuple(base_loc) == tuple(BASE_LOCATIONS[i]):
                             self.is_fixed_novice_map = True
                             self.fixed_team_idx = i
                             self.dijkstra_bomb_cost = 5.0
