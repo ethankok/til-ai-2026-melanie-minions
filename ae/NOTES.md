@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 20 May 2026 ~19:35 SGT — **Attempted game-phasing and absolute base defense to push the fixed-map score >0.70. While it worked exceptionally well against local random agents (0.824), it performed worse than `fixed-map-v3` against smarter cloud bots (cloud score: 0.524). Aggressive phasing logic over-optimizes for weak opponents and gets punished in a competitive environment. Revert to `fixed-map-v3` (0.614) as the stable high score or use this as a tuning baseline.**
+Last updated: 20 May 2026 ~21:00 SGT — **Submitted parameter-swept optimized heuristics (`heuristic-tweaks` tag, cloud score: 0.538 / 0.851, local mixed score: 0.5373). While parameter-swept optimal_combo parameters (Dijkstra soft penalty, low-ammo scaling, base panic defense, enemy chase) beat the baseline locally, they underperformed against the cloud's hidden opponent distribution compared to the 0.614 all-time high set by `ae-fixed-map-v3` (baseline). Revert to `ae-fixed-map-v3` as our shipped candidate.**
 
 Prior update: 20 May 2026 ~18:25 SGT — **Submitted `ae-fixed-map-v3` and scored cloud 0.614 / 0.860 (new all-time high score!). Resolved escape thrashing, relaxed map detection to base-only for 100% activation consistency across randomized slots/spawn-points, and fixed base-defense camping loops.**
 **Architecture**: PPO policy (`ppo-v1` weights) wrapped by `HybridAEManager` (heuristic safety-veto + top-K policy cascade) + `AEManager`'s heuristic dominant-action shortcut firing on adjacent enemy *agents* (not just bases). Mode selection via `AE_MODE` env in `ae/Dockerfile` or `ae/src/.ae_mode` fallback (`hybrid` | `policy` | `heuristic`). Currently `hybrid`. MCTS-light is off by default again (`AE_MCTS=0`, `AE_HYBRID_TRUST_MCTS=0`) because v1 timed out and v2 regressed; opt in only for explicit A/Bs. Weights on Workbench: `ae/models/bc.pt` ← `~/ae-checkpoints-backup/deployed-bc-v1.pt`.
@@ -21,6 +21,8 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 
 | Tag | Cloud | Speed | Notes |
 |---|---:|---:|---|
+| **heuristic-tweaks** | **0.538** | **0.851** | **Swept optimal_combo parameters (Dijkstra soft penalty, low-ammo scaling, base panic defense, enemy chase).** |
+| **ae-fixed-map-v3** | **0.614** | **0.860** | **Fixed-map exploitation with Dijkstra pathfinding + relaxed map detection (current high score).** |
 | baseline | 0.051 | 0.856 | Periodic FORWARD + bomb-every-20 |
 | planner-v1 | 0.445 | 0.788 | First stateful planner |
 | planner-v2 | 0.501 | 0.771 | Bomb timer 4→3 + bounded escape + soft threat |
@@ -50,6 +52,8 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 
 | Submission | Local (apples-to-apples) | Cloud | Gap |
 |---|---:|---:|---:|
+| heuristic-tweaks | 0.5373 | 0.538 | -0.0007 |
+| ae-fixed-map-v3 | 0.5225 | 0.614 | -0.0915 |
 | planner-v1 | 0.732 | 0.445 | 0.287 |
 | planner-v2 | 0.669 | 0.501 | 0.168 |
 | planner-v3b | 0.681 | 0.499 | 0.182 |
