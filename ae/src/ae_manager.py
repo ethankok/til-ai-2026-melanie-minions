@@ -647,9 +647,12 @@ class AEManager:
         candidates: list[tuple[float, tuple[int, int]]] = []
 
         # ── Base defense (critical priority) ──
-        # On fixed map: absolute defense when base is in danger
+        # On fixed map: absolute defense when base is in danger, BUT ONLY if we are close enough to actually help
+        # (Running 20 steps across the map is useless and wastes time)
         defense_emergency = False
-        if self.base_location is not None:
+        dist_from_base = self._manhattan(start, self.base_location) if self.base_location else 999
+        
+        if self.base_location is not None and dist_from_base <= 12:
             if is_fixed:
                 # Absolute defense when base health is critical
                 if self.base_health < 40:
@@ -685,11 +688,11 @@ class AEManager:
                 if is_fixed:
                     # Phase-dependent enemy base value
                     if phase == "collect":
-                        value = 80.0   # Lower priority during collection phase
+                        value = 70.0   # Lower priority during collection phase
                     elif phase == "attack":
-                        value = 160.0  # High priority during attack phase
+                        value = 110.0  # High priority during attack phase
                     else:
-                        value = 100.0  # Moderate in cleanup
+                        value = 90.0   # Moderate in cleanup
                 else:
                     value = 35.0 if self.tier1_shared_credit else self.ENEMY_BASE_VALUE
                 candidates.append((value, pos))
@@ -713,12 +716,12 @@ class AEManager:
             if is_fixed:
                 if phase == "collect":
                     # Boost mission value heavily during collection
-                    phase_values = {"mission": 65.0, "resource": 30.0, "recon": 12.0}
+                    phase_values = {"mission": 75.0, "resource": 30.0, "recon": 12.0}
                 elif phase == "attack":
-                    phase_values = {"mission": 45.0, "resource": 25.0, "recon": 8.0}
+                    phase_values = {"mission": 50.0, "resource": 25.0, "recon": 8.0}
                 else:
                     # Cleanup: grab whatever is nearby
-                    phase_values = {"mission": 55.0, "resource": 30.0, "recon": 15.0}
+                    phase_values = {"mission": 60.0, "resource": 30.0, "recon": 15.0}
                 candidates.append((phase_values.get(kind, 10.0), pos))
             else:
                 candidates.append((self.ITEM_VALUES.get(kind, 1.0), pos))
@@ -1768,20 +1771,11 @@ class AEManager:
                     break
 
         wall_to_open = False
-        # Bomb conservation: don't waste bombs on walls when we only have 1 left
-        # (save it for combat). On fixed map, also check phase.
-        bombs_available = self._as_int(observation.get("team_bombs"), default=0)
-        allow_wall_bomb = bombs_available >= 2
-        if getattr(self, "is_fixed_novice_map", False):
-            # In attack phase, be more conservative with wall bombs
-            phase = self._game_phase()
-            if phase == "attack" and bombs_available < 3:
-                allow_wall_bomb = False
-
+        
         # Proactive wall break: if the target is high-value (enemy base or
         # mission) and a destructible wall sits between us and it, bomb
         # without waiting to be visibly stuck.
-        if allow_wall_bomb and target is not None:
+        if target is not None:
             target_dir = self._rough_direction(location, target)
             if target_dir is not None and (location[0], location[1], target_dir) in self.destructible:
                 target_kind = self.last_seen_items.get(target, (None, None))[0]
@@ -1791,7 +1785,7 @@ class AEManager:
                     wall_to_open = self._stuck_recently()
 
         # Novice fixed map custom wall opening:
-        if not wall_to_open and allow_wall_bomb and getattr(self, "is_fixed_novice_map", False) and getattr(self, "current_path", None) is not None:
+        if not wall_to_open and getattr(self, "is_fixed_novice_map", False) and getattr(self, "current_path", None) is not None:
             path = self.current_path
             if len(path) >= 2:
                 nxt = path[1]
