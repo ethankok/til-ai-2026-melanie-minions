@@ -15,6 +15,7 @@ Why this set:
   - bomber       : periodically places bombs, otherwise greedy.
   - defender     : rarely strays far from its own base; bombs intruders.
   - hunter       : chases the nearest sighted enemy and bombs adjacent.
+  - rusher       : fixed-map base pressure; stresses our defense/escape logic.
   - mixed        : per-game random switch among the above.
 
 Together they span the strategy space the hidden evaluator's NPCs
@@ -257,6 +258,48 @@ class Hunter(AEManager):
         return super()._choose_target(start, danger, low_health)
 
 
+class BaseRusher(AEManager):
+    """Pressure opponent that prioritizes enemy bases over item farming."""
+
+    name = "rusher"
+
+    def __init__(self) -> None:
+        super().__init__()
+        _strip_aimanager_smarts(self)
+        self.ENEMY_BASE_VALUE = 150.0
+        self.DIST_PENALTY = 0.85
+        self.item_mission_value = 12.0
+        self.item_resource_value = 5.0
+        self.item_recon_value = 2.0
+        self.ITEM_VALUES = {
+            "mission": self.item_mission_value,
+            "resource": self.item_resource_value,
+            "recon": self.item_recon_value,
+        }
+        self.ENEMY_CHASE_VALUE = 18.0
+        self.ENEMY_CHASE_RADIUS = 3
+
+    def __call__(self, obs: dict) -> int:
+        return self.ae(obs)
+
+    def _choose_target(self, start, danger, low_health=False):
+        if self.enemy_bases and not low_health:
+            distance, parent = self._dijkstra_distance_map(start, danger)
+            best = None
+            best_score = float("-inf")
+            for base in self.enemy_bases:
+                for cell in self._fixed_base_attack_cells(base):
+                    if cell not in distance:
+                        continue
+                    score = 170.0 - distance[cell] - 0.25 * self.visit_count.get(cell, 0)
+                    if score > best_score:
+                        best_score = score
+                        best = cell
+            if best is not None:
+                return best, self._reconstruct_path(parent, start, best)
+        return super()._choose_target(start, danger, low_health)
+
+
 class MixedOpponent:
     """Picks one of the above at the start of each game."""
 
@@ -268,7 +311,7 @@ class MixedOpponent:
         self._inner_name = "random"
 
     def reset_for_game(self) -> None:
-        choice = self.rng.choice(("random", "greedy", "bomber", "defender", "hunter"))
+        choice = self.rng.choice(("random", "greedy", "bomber", "defender", "hunter", "rusher"))
         self._inner_name = choice
         self._inner = make_opponent(choice, seed=self.rng.randint(0, 1 << 30))
 
@@ -282,7 +325,7 @@ class MixedOpponent:
 # Public factory
 # ---------------------------------------------------------------------------
 
-OPPONENT_NAMES = ("random", "greedy", "bomber", "defender", "hunter", "mixed")
+OPPONENT_NAMES = ("random", "greedy", "bomber", "defender", "hunter", "rusher", "mixed")
 
 
 def make_opponent(name: str, seed: int | None = None) -> OpponentFn:
@@ -300,6 +343,8 @@ def make_opponent(name: str, seed: int | None = None) -> OpponentFn:
         return Defender()
     if name == "hunter":
         return Hunter()
+    if name == "rusher":
+        return BaseRusher()
     if name == "mixed":
         return MixedOpponent(seed)
     raise ValueError(f"unknown opponent name: {name!r}")

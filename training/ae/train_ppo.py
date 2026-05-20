@@ -380,6 +380,9 @@ def _make_opponents(
     - scripted:    Tier 2 #9 — random + greedy + bomber + defender + hunter
                    from training/ae/opponents.py. No self-play. Trains a
                    policy robust to any of the cloud-likely behavior types.
+    - cloudsuite:  rusher + hunter + bomber + defender + mixed. This is the
+                   pressure-heavy proxy pool for tactical-helper experiments,
+                   not a default full-policy replacement path.
 
     Snapshot pool behavior:
     - When ``snapshot_pool`` is provided AND non-empty, frozen opponents
@@ -404,11 +407,12 @@ def _make_opponents(
         choices.append(AggressivePlannerOpponent())
     if mode in {"frozen", "mixed", "league", "selfplay"}:
         choices.append(FrozenPolicyOpponent(_frozen_opponent_actor(), device, n_frames))
-    if mode == "scripted":
+    if mode in {"scripted", "cloudsuite"}:
         # Tier 2 #9: train against the same scripted library we use in
         # training/ae/simulate.py so the policy learns to be robust across
-        # the strategy space cloud opponents likely occupy. Five distinct
-        # opponent types: random, greedy, bomber, defender, hunter.
+        # the strategy space cloud opponents likely occupy. ``cloudsuite``
+        # swaps in the pressure-heavy rusher/hunter mix used by local
+        # validation so tactical helpers can be trained against the same pool.
         #
         # Each enemy slot gets its OWN factory rather than sharing one
         # instance — AEManager-derived opponents track per-agent belief
@@ -421,7 +425,10 @@ def _make_opponents(
             print(f"[train_ppo] scripted opponents unavailable ({exc}); using random", flush=True)
             choices = [_random_opponent]
         else:
-            scripted_names = ["random", "greedy", "bomber", "defender", "hunter"]
+            if mode == "cloudsuite":
+                scripted_names = ["rusher", "hunter", "bomber", "defender", "mixed"]
+            else:
+                scripted_names = ["random", "greedy", "bomber", "defender", "hunter"]
 
             class _ScriptedAdapter:
                 """Wrap one scripted opponent for the (env, agent, obs_py)
@@ -864,8 +871,8 @@ def main() -> None:
                         help="Train with novice=False and a random seed per game (diversify the training distribution).")
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--eval-games", type=int, default=12)
-    parser.add_argument("--opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay", "scripted"], default="mixed")
-    parser.add_argument("--eval-opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay", "scripted"], default="mixed")
+    parser.add_argument("--opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay", "scripted", "cloudsuite"], default="mixed")
+    parser.add_argument("--eval-opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay", "scripted", "cloudsuite"], default="mixed")
     parser.add_argument("--snapshot-interval", type=int, default=10,
                         help="Add a frozen actor snapshot to the self-play pool every N PPO updates "
                              "(set to 0 to disable; falls back to live-actor frozen opponents).")

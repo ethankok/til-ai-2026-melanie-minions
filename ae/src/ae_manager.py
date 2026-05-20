@@ -183,6 +183,10 @@ class AEManager:
     # walking into our blast. Matches BOMB_TIMER + 1; one tick of slack for
     # detonation ordering.
     PREDICTIVE_WALK_HORIZON = 4
+    FIXED_CENTER_ANCHORS = (
+        (7, 7), (8, 8), (7, 8), (8, 7),
+        (6, 8), (8, 6), (9, 8), (8, 9),
+    )
 
     def __init__(self, **kwargs):
         self.grid_size = self.GRID_SIZE
@@ -254,6 +258,19 @@ class AEManager:
         self.base_defense_panic_radius = 8
         self.low_ammo_enemy_base_value = 110.0
         self.low_ammo_resource_value = 35.0
+        self.fixed_macro_enabled = _env_flag("AE_FIXED_MACRO", False)
+        self.fixed_center_enabled = _env_flag("AE_FIXED_CENTER", False)
+        self.fixed_attack_cells_enabled = _env_flag("AE_FIXED_ATTACK_CELLS", True)
+        self.fixed_center_value = _env_float("AE_FIXED_CENTER_VALUE", 72.0)
+        self.fixed_attack_cell_bonus = _env_float("AE_FIXED_ATTACK_CELL_BONUS", 26.0)
+        self.fixed_attack_cell_radius = _env_float("AE_FIXED_ATTACK_CELL_RADIUS", 7.0)
+        self.item_prior_confidence = _env_float("AE_ITEM_PRIOR_CONF", 0.58)
+        self.item_prior_floor = _env_float("AE_ITEM_PRIOR_FLOOR", 0.18)
+        self.item_prior_decay_steps = max(1.0, _env_float("AE_ITEM_PRIOR_DECAY", 150.0))
+        self.item_seen_floor = _env_float("AE_ITEM_SEEN_FLOOR", 0.42)
+        self.item_seen_decay_steps = max(1.0, _env_float("AE_ITEM_SEEN_DECAY", 80.0))
+        self.item_respawn_min_steps = _env_int("AE_ITEM_RESPAWN_MIN", 12)
+        self.item_respawn_full_steps = max(self.item_respawn_min_steps + 1, _env_int("AE_ITEM_RESPAWN_FULL", 44))
 
         # Store and apply kwargs overrides
         self.kwargs = kwargs
@@ -306,7 +323,10 @@ class AEManager:
                             self.walls = set(WALLS)
                             self.destructible = set(DESTRUCTIBLE)
                             self.enemy_bases = {tuple(BASE_LOCATIONS[j]): 0 for j in range(6) if j != i}
-                            self.last_seen_items = {tuple(pos): (kind, 0) for kind, pos in STATIC_ENTITIES}
+                            self.fixed_item_priors = {tuple(pos): kind for kind, pos in STATIC_ENTITIES}
+                            self.last_seen_items = {}
+                            self.collected_items = {}
+                            self.item_absent_steps = {}
                             
                             # Re-apply kwargs overrides so they take precedence over novice map defaults
                             for k, v in self.kwargs.items():
@@ -455,6 +475,10 @@ class AEManager:
         self.walls: set[tuple[int, int, int]] = set()
         self.destructible: set[tuple[int, int, int]] = set()
         self.last_seen_items: dict[tuple[int, int], tuple[str, int]] = {}
+        # Fixed Novice map priors: initial item scatter is deterministic, but
+        # live availability is uncertain because any team can collect/respawn it.
+        self.fixed_item_priors: dict[tuple[int, int], str] = {}
+        self.item_absent_steps: dict[tuple[int, int], int] = {}
         # Items observed disappearing (presumed collected); reconsider after respawn.
         self.collected_items: dict[tuple[int, int], tuple[str, int]] = {}
         self.enemy_bases: dict[tuple[int, int], int] = {}
@@ -574,15 +598,19 @@ class AEManager:
                 break
         if visible_item is None:
             prev = self.last_seen_items.pop(world, None)
+            prior_kind = self.fixed_item_priors.get(world)
             # If an item was here last time and is now gone, it was collected
             # (by us or another agent). Remember the kind + step so we can
             # reconsider it as a target once the respawn timer elapses.
-            if prev is not None:
-                self.collected_items[world] = (prev[0], step)
+            kind = prev[0] if prev is not None else prior_kind
+            if kind is not None:
+                self.collected_items[world] = (kind, step)
+                self.item_absent_steps[world] = step
         else:
             self.last_seen_items[world] = (visible_item, step)
             # If we see it again, it must have respawned; clear collected entry.
             self.collected_items.pop(world, None)
+            self.item_absent_steps.pop(world, None)
 
         if self._channel_on(cell, self.ENEMY_BASE):
             self.enemy_bases[world] = step
@@ -714,16 +742,20 @@ class AEManager:
                         continue
                     if self._manhattan(start, pos) <= self.ENEMY_CHASE_RADIUS:
                         candidates.append((self.ENEMY_CHASE_VALUE, pos))
+            if is_fixed:
+                candidates.extend(
+                    self._fixed_map_macro_candidates(
+                        start=start,
+                        distance=distance,
+                        danger=danger,
+                        enemy_base_value=enemy_base_val,
+                        step=step,
+                    )
+                )
 
         # ── Items ──
-        for pos, (kind, _step) in self.last_seen_items.items():
-            candidates.append((current_item_values.get(kind, 1.0), pos))
-
-        # Respawn awareness: items we saw get collected become candidates
-        # again once tile_respawn_steps have elapsed.
-        for pos, (kind, collected_step) in self.collected_items.items():
-            if step - collected_step >= self.TILE_RESPAWN_STEPS:
-                candidates.append((0.5 * current_item_values.get(kind, 1.0), pos))
+        for value, pos, _kind, _confidence in self._iter_item_candidates(current_item_values, step):
+            candidates.append((value, pos))
 
         # ── Frontier and anti-stall fallback ──
         # Weight frontier cells by how much new area they likely reveal.
@@ -768,6 +800,113 @@ class AEManager:
         path = self._reconstruct_path(parent, start, best_target)
         self.current_path = path
         return best_target, path
+
+    def _iter_item_candidates(
+        self,
+        current_item_values: dict[str, float],
+        step: int,
+    ) -> Iterable[tuple[float, tuple[int, int], str, float]]:
+        positions = set(self.fixed_item_priors)
+        positions.update(self.last_seen_items)
+        positions.update(self.collected_items)
+        for pos in positions:
+            kind = self._item_kind(pos)
+            if kind is None:
+                continue
+            confidence = self._item_confidence(pos, kind, step)
+            if confidence <= 0.05:
+                continue
+            yield current_item_values.get(kind, 1.0) * confidence, pos, kind, confidence
+
+    def _item_kind(self, pos: tuple[int, int]) -> str | None:
+        item = self.last_seen_items.get(pos)
+        if item is not None:
+            return item[0]
+        collected = self.collected_items.get(pos)
+        if collected is not None:
+            return collected[0]
+        return self.fixed_item_priors.get(pos)
+
+    def _item_confidence(self, pos: tuple[int, int], kind: str, step: int) -> float:
+        if pos in self.last_seen_items:
+            _kind, last_seen = self.last_seen_items[pos]
+            age = max(0, step - int(last_seen))
+            return max(self.item_seen_floor, 1.0 - age / self.item_seen_decay_steps)
+
+        collected = self.collected_items.get(pos)
+        if collected is not None:
+            _kind, collected_step = collected
+            age = max(0, step - int(collected_step))
+            if age < self.item_respawn_min_steps:
+                return 0.0
+            span = max(1, self.item_respawn_full_steps - self.item_respawn_min_steps)
+            return min(0.82, 0.18 + 0.64 * ((age - self.item_respawn_min_steps) / span))
+
+        if pos in self.fixed_item_priors:
+            absent_step = self.item_absent_steps.get(pos)
+            if absent_step is not None:
+                age = max(0, step - int(absent_step))
+                if age < self.item_respawn_min_steps:
+                    return 0.0
+            return max(self.item_prior_floor, self.item_prior_confidence - step / self.item_prior_decay_steps)
+
+        return 0.0
+
+    def _fixed_map_macro_candidates(
+        self,
+        start: tuple[int, int],
+        distance: dict[tuple[int, int], float],
+        danger: set[tuple[int, int]],
+        enemy_base_value: float,
+        step: int,
+    ) -> list[tuple[float, tuple[int, int]]]:
+        if not self.fixed_macro_enabled:
+            return []
+        candidates: list[tuple[float, tuple[int, int]]] = []
+
+        # Opening pressure: the center contains a dense reward cluster. Score it
+        # as a decaying macro prior, not a hard route, so live danger still wins.
+        center_phase = max(0.0, 1.0 - step / 90.0) if self.fixed_center_enabled else 0.0
+        if center_phase > 0.0:
+            for pos in self.FIXED_CENTER_ANCHORS:
+                if pos in distance and pos not in danger:
+                    item_kind = self._item_kind(pos)
+                    item_bonus = 0.0
+                    if item_kind is not None:
+                        item_bonus = self.ITEM_VALUES.get(item_kind, 1.0) * self._item_confidence(pos, item_kind, step)
+                    candidates.append((self.fixed_center_value * center_phase + item_bonus, pos))
+
+        # Enemy-base macro: target good bombing cells, not only the base tile.
+        # This gets us to a square that can actually place a base-hit bomb.
+        if self.fixed_attack_cells_enabled and self.team_bombs > 0:
+            for base in self.enemy_bases:
+                best_cells: list[tuple[float, tuple[int, int]]] = []
+                for cell in self._fixed_base_attack_cells(base):
+                    if cell in danger or cell not in distance:
+                        continue
+                    best_cells.append((distance[cell], cell))
+                best_cells.sort()
+                if not best_cells or best_cells[0][0] > self.fixed_attack_cell_radius:
+                    continue
+                for _cost, cell in best_cells[:2]:
+                    candidates.append((enemy_base_value + self.fixed_attack_cell_bonus, cell))
+        return candidates
+
+    def _fixed_base_attack_cells(self, base: tuple[int, int]) -> list[tuple[int, int]]:
+        cells: list[tuple[int, int]] = []
+        bx, by = base
+        for x in range(bx - self.BOMB_RADIUS, bx + self.BOMB_RADIUS + 1):
+            for y in range(by - self.BOMB_RADIUS, by + self.BOMB_RADIUS + 1):
+                cell = (x, y)
+                if cell == base or not self._in_bounds(cell):
+                    continue
+                if max(abs(x - bx), abs(y - by)) > self.BOMB_RADIUS:
+                    continue
+                if self.base_location is not None and cell == self.base_location:
+                    continue
+                if self._line_of_sight_clear(cell, base):
+                    cells.append(cell)
+        return cells
 
     def _bfs(
         self,
@@ -998,8 +1137,8 @@ class AEManager:
                 continue
             if self._edge_blocked(location, d):
                 continue
-            item = self.last_seen_items.get(nxt)
-            if item is None or item[0] != "mission":
+            kind = self._item_kind(nxt)
+            if kind != "mission" or self._item_confidence(nxt, kind, step) < 0.55:
                 continue
             preferred = self._action_for_path(location, direction, [location, nxt])
             if preferred is not None and self._legal(observation, preferred):
@@ -1039,8 +1178,9 @@ class AEManager:
             for pos in self.enemy_bases:
                 if distance.get(pos, max_distance + 1) <= max_distance:
                     return True
-            for pos, (kind, _step) in self.last_seen_items.items():
-                if kind == "mission" and distance.get(pos, max_distance + 1) <= max_distance:
+            step = self.last_step if self.last_step is not None else 0
+            for _value, pos, kind, confidence in self._iter_item_candidates(self.ITEM_VALUES, step):
+                if kind == "mission" and confidence >= 0.35 and distance.get(pos, max_distance + 1) <= max_distance:
                     return True
         finally:
             if had_a:
@@ -1298,13 +1438,16 @@ class AEManager:
                 dist = self._lookahead_distance(state.pos, enemy, limit=5)
                 if dist is not None:
                     value += max(0.0, 8.0 - 1.5 * dist)
-        for pos, (kind, _seen_step) in self.last_seen_items.items():
+        step = self.last_step if self.last_step is not None else 0
+        for item_value, pos, _kind, _confidence in self._iter_item_candidates(
+            {"mission": 5.0, "resource": 2.0, "recon": 1.0},
+            step,
+        ):
             if pos in state.collected:
                 continue
             dist = self._lookahead_distance(state.pos, pos, limit=4)
             if dist is not None:
-                reward = {"mission": 5.0, "resource": 2.0, "recon": 1.0}.get(kind, 0.0)
-                value += max(0.0, reward - 0.35 * dist)
+                value += max(0.0, item_value - 0.35 * dist)
         return value
 
     def _lookahead_legal_actions(
@@ -1368,9 +1511,10 @@ class AEManager:
             tactical = True
             score -= 0.25
 
-        item = self.last_seen_items.get(pos)
-        if item is not None and pos not in collected:
-            score += {"mission": 5.0, "resource": 2.0, "recon": 1.0}.get(item[0], 0.0)
+        item_kind = self._item_kind(pos)
+        if item_kind is not None and pos not in collected:
+            confidence = self._item_confidence(pos, item_kind, self.last_step if self.last_step is not None else 0)
+            score += {"mission": 5.0, "resource": 2.0, "recon": 1.0}.get(item_kind, 0.0) * confidence
             collected.add(pos)
 
         active_danger = set()
@@ -1753,7 +1897,7 @@ class AEManager:
         if target is not None:
             target_dir = self._rough_direction(location, target)
             if target_dir is not None and (location[0], location[1], target_dir) in self.destructible:
-                target_kind = self.last_seen_items.get(target, (None, None))[0]
+                target_kind = self._item_kind(target)
                 if target in self.enemy_bases or target_kind == "mission":
                     wall_to_open = True
                 elif target not in self.enemy_bases:
@@ -1849,9 +1993,10 @@ class AEManager:
                 score -= 100.0
             if new_pos in threats and new_pos not in self.enemy_bases:
                 score -= cell_threat_penalty
-            item = self.last_seen_items.get(new_pos)
-            if item:
-                score += self.ITEM_VALUES.get(item[0], 0.0)
+            item_kind = self._item_kind(new_pos)
+            if item_kind:
+                step = self.last_step if self.last_step is not None else 0
+                score += self.ITEM_VALUES.get(item_kind, 0.0) * self._item_confidence(new_pos, item_kind, step)
             score += 1.8 * sum(1 for n in self._raw_neighbors(new_pos) if n not in self.seen)
             score -= 0.35 * self.visit_count.get(new_pos, 0)
             if new_pos in self.recent_locations[-3:]:

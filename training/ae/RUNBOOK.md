@@ -422,6 +422,22 @@ local sim, ship the winner.
 
 ## 6. Local A/B before any submission (5 min)
 
+For current AE candidates, prefer the cloud-like validation suite over raw
+random-opponent `til test` as the first local judge:
+
+```bash
+.venv/bin/python training/ae/validate_cloud_suite.py \
+  --rounds 12 \
+  --suites random library cloudsuite \
+  --our heuristic \
+  --summary-out training/ae/data/ae-cloudsuite-candidate.json
+```
+
+`cloudsuite` means `rusher,hunter,bomber,defender,mixed`: it is intentionally
+pressure-heavy and should expose base-defense / escape weaknesses that random
+NPCs miss. The validator defaults to shipping Docker settings
+(`AE_USE_PLAYBOOK=0`, `AE_USE_OPPONENT_MODEL=0`) unless explicitly overridden.
+
 After steps 1-5 the manager has playbook + opponent_model loaded
 automatically (because the files exist in `ae/models/`). Verify the
 gain holds on a fresh sim run:

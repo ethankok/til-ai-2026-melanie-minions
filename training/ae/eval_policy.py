@@ -172,11 +172,12 @@ def main() -> None:
     parser.add_argument("--greedy", action="store_true", default=True)
     parser.add_argument(
         "--opponents",
-        choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay"],
+        choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay", "scripted", "cloudsuite"],
         default="random",
         help="Opponent distribution. 'random' (default) preserves legacy "
              "single-game-eval behavior; 'mixed' matches the ppo-v1-era "
-             "training distribution; 'league' is the hardest pool.",
+             "training distribution; 'league' is the hardest self-play pool; "
+             "'cloudsuite' is the pressure-heavy scripted proxy suite.",
     )
     evaluate(parser.parse_args())
 

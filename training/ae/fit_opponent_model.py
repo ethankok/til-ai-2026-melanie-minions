@@ -89,6 +89,8 @@ def fit_simple(rounds: int, opponents_spec: str, seed: int) -> dict:
         names = ["random"] * 5
     elif opponents_spec == "library":
         names = ["random", "greedy", "bomber", "defender", "hunter"]
+    elif opponents_spec == "cloudsuite":
+        names = ["rusher", "hunter", "bomber", "defender", "mixed"]
     elif opponents_spec == "mixed":
         names = ["mixed"] * 5
     else:

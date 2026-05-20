@@ -32,6 +32,7 @@ ENV AE_MCTS_LOG_TIMING=0
 ENV AE_MCTS_MIN_SCORE=12
 ENV AE_HYBRID_TRUST_MCTS=0
 ENV AE_HYBRID_MCTS_MIN_SCORE=12
+ENV AE_HYBRID_ALLOW_FIXED_POLICY=0
 
 # Tier-1 / Tier-2 toggles. Bisect on 100-200 round local sims (17 May 2026)
 # showed individual changes are net-positive, but the 5-toggle bundle has
@@ -55,6 +56,12 @@ ENV AE_TIER1_NO_STAY_PENALTY=1
 ENV AE_TIER1_PREDICTIVE_WALK=1
 ENV AE_USE_PLAYBOOK=0
 ENV AE_USE_OPPONENT_MODEL=0
+# Fixed-map macro routing is implemented but kept opt-in after local pressure
+# suite A/Bs: exact enemy-base attack cells can help a local library run, but
+# broad macro routing was unstable against rusher/hunter-style opponents.
+ENV AE_FIXED_MACRO=0
+ENV AE_FIXED_CENTER=0
+ENV AE_FIXED_ATTACK_CELLS=1
 # Opt-in via `-e AE_USE_PLAYBOOK=1 -e AE_PLAYBOOK_FILTER=bomb_only` for a
 # cloud-only A/B if local-cloud distribution gap turns out to favor the
 # playbook on real opponents.

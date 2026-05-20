@@ -256,6 +256,7 @@ def run_simulation(
       'random'    : all 5 enemies are random (matches `til test`)
       'mixed'     : 5 independent MixedOpponent instances
       'library'   : random,greedy,bomber,defender,hunter (5 enemies)
+      'cloudsuite': rusher,hunter,bomber,defender,mixed (pressure-heavy)
 
     Or any explicit list: 'greedy,greedy,bomber,defender,hunter'.
     """
@@ -272,6 +273,8 @@ def run_simulation(
         names = ["mixed"] * 5
     elif opponents_spec == "library":
         names = ["random", "greedy", "bomber", "defender", "hunter"]
+    elif opponents_spec == "cloudsuite":
+        names = ["rusher", "hunter", "bomber", "defender", "mixed"]
     else:
         names = [n.strip() for n in opponents_spec.split(",") if n.strip()]
         if len(names) == 1:
@@ -358,7 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         type=str,
         default="random",
         help=(
-            "opponent set: 'random', 'mixed', 'library', or 5 comma-separated "
+            "opponent set: 'random', 'mixed', 'library', 'cloudsuite', or 5 comma-separated "
             "names from " + ",".join(OPPONENT_NAMES)
         ),
     )
