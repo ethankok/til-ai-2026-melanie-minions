@@ -32,7 +32,6 @@ ENV AE_MCTS_LOG_TIMING=0
 ENV AE_MCTS_MIN_SCORE=12
 ENV AE_HYBRID_TRUST_MCTS=0
 ENV AE_HYBRID_MCTS_MIN_SCORE=12
-ENV AE_HYBRID_ALLOW_FIXED_POLICY=0
 
 # Tier-1 / Tier-2 toggles. Bisect on 100-200 round local sims (17 May 2026)
 # showed individual changes are net-positive, but the 5-toggle bundle has
@@ -56,26 +55,6 @@ ENV AE_TIER1_NO_STAY_PENALTY=1
 ENV AE_TIER1_PREDICTIVE_WALK=1
 ENV AE_USE_PLAYBOOK=0
 ENV AE_USE_OPPONENT_MODEL=0
-# Fixed-map macro routing is implemented but kept opt-in after local pressure
-# suite A/Bs: exact enemy-base attack cells can help a local library run, but
-# broad macro routing was unstable against rusher/hunter-style opponents.
-ENV AE_FIXED_MACRO=0
-ENV AE_FIXED_CENTER=0
-ENV AE_FIXED_ATTACK_CELLS=1
-ENV AE_ITEM_PRIOR_CONF=0.70
-ENV AE_ITEM_PRIOR_FLOOR=0.25
-ENV AE_ALLY_BOMB_SAFE=0
-ENV AE_TTD_DEFENSE=0
-# Deterministic pessimistic mini-search candidate. Unlike MCTS-light, this is
-# a tiny safety-only override: it runs only near live bombs / fresh enemy
-# pressure, searches our own movement for 3 plies, and requires a large safety
-# delta before overriding the normal fixed-map planner. Mac 24-round gate:
-# random 0.5613, library 0.5184, cloudsuite 0.3962 (vs reference ~0.3186).
-ENV AE_PESSIMISTIC_SEARCH=1
-ENV AE_PESSIMISTIC_DEPTH=3
-ENV AE_PESSIMISTIC_ENEMY_GATE=1
-ENV AE_PESSIMISTIC_FORCE_SCORE=-80
-ENV AE_PESSIMISTIC_MIN_DELTA=55
 # Opt-in via `-e AE_USE_PLAYBOOK=1 -e AE_PLAYBOOK_FILTER=bomb_only` for a
 # cloud-only A/B if local-cloud distribution gap turns out to favor the
 # playbook on real opponents.

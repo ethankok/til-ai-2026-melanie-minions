@@ -525,7 +525,7 @@ health `0.0` with large base/own-base damage, while attack components remain
 positive. Next AE work should improve base survival under pressure without
 trading away attack tempo.
 
-Latest accepted pressure A/B, `pessimistic-mini-search-v1`:
+Latest cloud-rejected pressure A/B, `pessimistic-mini-search-v1`:
 
 ```bash
 AE_PESSIMISTIC_SEARCH=1 AE_PESSIMISTIC_ENEMY_GATE=1 \
@@ -543,7 +543,16 @@ and safety-only: depth-3 own-movement search near live bombs / fresh enemy
 pressure, with `AE_PESSIMISTIC_FORCE_SCORE=-80` and
 `AE_PESSIMISTIC_MIN_DELTA=55` so it does not behave like the old MCTS planner.
 It reduced visible-bomb failures to `8` but traded away random/library farming
-tempo, so use it as an explicit cloud-pressure A/B.
+tempo. Workbench `til test` scored only `0.456`, and cloud returned
+`0.396 / 0.847` with 0/30 errors, effectively matching the Mac cloudsuite
+score but far below `ae-fixed-map-v3`. Keep `AE_PESSIMISTIC_SEARCH=0` in the
+Dockerfile if replaying that branch; in the restored best-model tree, the
+pessimistic-search Docker knobs are removed entirely.
+
+After this cloud result, the shipping AE runtime files were restored to the
+`ae-fixed-map-v3` source state (`4c00f92`): `ae/src/ae_manager.py`,
+`ae/src/hybrid_manager.py`, and `ae/Dockerfile`. Build from the current tree to
+preserve the best known AE model rather than a later diagnostic branch.
 
 Latest rejected A/B reference, `ally-bomb-safe-v2`:
 

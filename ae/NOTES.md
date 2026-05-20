@@ -1,6 +1,10 @@
 # AE — notes & history
 
-Last updated: 21 May 2026 04:05 SGT — **Added and baked `pessimistic-mini-search-v1`, a deterministic safety-only override behind `AE_PESSIMISTIC_SEARCH=1`, `AE_PESSIMISTIC_DEPTH=3`, `AE_PESSIMISTIC_ENEMY_GATE=1`, `AE_PESSIMISTIC_FORCE_SCORE=-80`, and `AE_PESSIMISTIC_MIN_DELTA=55`. It is not MCTS: it searches only our own 3-ply movement near live bombs / fresh enemy pressure and requires a large safety delta before overriding the fixed-map planner. Mac 24-round gate: random `0.5613`, library `0.5184`, cloudsuite `0.3962`, aggregate `0.4920`. This improves the pressure/cloudsuite target over the `0.3186` reference and cuts visible-bomb failures to `8`, but it sacrifices random/library farming tempo, so submit as an explicit pressure A/B rather than treating it as a guaranteed cloud high.**
+Last updated: 21 May 2026 05:15 SGT — **Restored the current AE runtime to the `ae-fixed-map-v3` best-model source state (`4c00f92`): `ae/src/ae_manager.py`, `ae/src/hybrid_manager.py`, and `ae/Dockerfile` now match the winning fixed-map-v3 code/config again. This removes later item-prior/macro/base-defense/pessimistic-search runtime changes from the shipping path. Use this state for the next Workbench build if the goal is to preserve the current high (`0.614 / 0.860`).**
+
+Prior update: 21 May 2026 05:05 SGT — **Cloud rejected `pessimistic-mini-search-v1`: Workbench `til test` scored only `0.456`, then cloud returned `0.396 / 0.847` with 0/30 errors. The local Mac gate had predicted pressure-suite `cloudsuite 0.3962` almost exactly, but that did not transfer upward and is far below `ae-fixed-map-v3` (`0.614 / 0.860`) and `ae-item-confidence-v1` (`0.593 / 0.844`). Remove/disable `AE_PESSIMISTIC_SEARCH` in the Docker runtime; keep the code only as evidence that deterministic safety search mostly trades away farming/attack tempo for base preservation.**
+
+Prior update: 21 May 2026 04:05 SGT — **Added and baked `pessimistic-mini-search-v1`, a deterministic safety-only override behind `AE_PESSIMISTIC_SEARCH=1`, `AE_PESSIMISTIC_DEPTH=3`, `AE_PESSIMISTIC_ENEMY_GATE=1`, `AE_PESSIMISTIC_FORCE_SCORE=-80`, and `AE_PESSIMISTIC_MIN_DELTA=55`. It is not MCTS: it searches only our own 3-ply movement near live bombs / fresh enemy pressure and requires a large safety delta before overriding the fixed-map planner. Mac 24-round gate: random `0.5613`, library `0.5184`, cloudsuite `0.3962`, aggregate `0.4920`. This improves the pressure/cloudsuite target over the `0.3186` reference and cuts visible-bomb failures to `8`, but it sacrifices random/library farming tempo, so submit as an explicit pressure A/B rather than treating it as a guaranteed cloud high.**
 
 Prior update: 21 May 2026 03:10 SGT — **Added a Mac-only fixed-route sweep harness at `training/ae/sweep_fixed_routes.py`. It instantiates `AEManager` with fixed-Novice-map strategy profiles (`attack_cells_close`, `center_then_attack`, `base_leash`, `low_ammo_base_race`, etc.), ranks them by `cloudsuite`, and writes JSON reports under ignored `training/ae/data/`. Smoke command verified end-to-end: `.venv/bin/python training/ae/sweep_fixed_routes.py --profiles smoke --rounds 1 --suites cloudsuite --summary-out training/ae/data/fixed-route-suite-smoke.json`. This is a search/gate tool only; no production behavior changed.**
 
@@ -45,6 +49,7 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 | Tag | Cloud | Speed | Notes |
 |---|---:|---:|---|
 | **ae-item-confidence-v1** | **0.593** | **0.844** | **Item-confidence/respawn priors; second-best AE cloud score, `-0.021` vs `ae-fixed-map-v3`.** |
+| pessimistic-mini-search-v1 | 0.396 | 0.847 | FAILED. Local Docker `0.456`; local cloudsuite `0.3962` predicted cloud almost exactly. Safety search preserved base better but lost too much attack/farming tempo. Disabled by default. |
 | ttd-defense-v1 | local rejected | — | Mac gate failed before Workbench: random `0.6446`, library `0.5475`, cloudsuite `0.2714`; disabled by default. |
 | ally-bomb-safe-v2 | 0.369 | 0.847 | FAILED. Local Docker rose to `0.6395`, but pressure gate regressed (`cloudsuite 0.2870`) and cloud collapsed. Removing own-bomb escape/base safety globally caused over-bombing and worse hidden-pressure positioning. |
 | candidate-b | 0.500 | 0.858 | Base-minefield-v1. Local Docker `0.538`; narrowest local-cloud gap so far, but lower absolute cloud than current high and second-best. |
@@ -81,6 +86,7 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 | Submission | Local (apples-to-apples) | Cloud | Gap |
 |---|---:|---:|---:|
 | ae-item-confidence-v1 | 0.7435 Docker / 0.5501 suite mean | 0.593 | 0.1505 vs Docker |
+| pessimistic-mini-search-v1 | 0.456 Docker / 0.3962 cloudsuite | 0.396 | 0.060 vs Docker; cloudsuite predicted cloud but absolute score was too low |
 | ttd-defense-v1 | 0.4878 suite mean / 0.2714 cloudsuite | not submitted | Mac gate failed; behavior disabled |
 | ally-bomb-safe-v2 | 0.6395 Docker / 0.4978 suite mean / 0.2870 cloudsuite | 0.369 | 0.2705 vs Docker; failed despite better random local |
 | candidate-b | 0.538 Docker / ~0.318 cloudsuite | 0.500 | 0.038 vs Docker; narrow gap but low ceiling |

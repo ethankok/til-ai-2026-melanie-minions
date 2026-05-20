@@ -100,7 +100,6 @@ class HybridAEManager:
         self.veto_frozen_stay = _env_flag("AE_HYBRID_VETO_FROZEN_STAY", True)
         self.trust_mcts = _env_flag("AE_HYBRID_TRUST_MCTS", True)
         self.trust_mcts_min_score = _env_float("AE_HYBRID_MCTS_MIN_SCORE", 12.0)
-        self.allow_fixed_policy = _env_flag("AE_HYBRID_ALLOW_FIXED_POLICY", False)
         # Optional confidence gate: if set, only use the policy when its
         # top-action probability exceeds this. Default 0 = always use
         # policy (subject to vetoes). Useful for A/B experiments.
@@ -111,7 +110,7 @@ class HybridAEManager:
         # blast, the policy's tactical action is likely to walk us into
         # the blast. Trust the heuristic here.
         heuristic_action = self.heuristic.ae(observation)
-        if getattr(self.heuristic, "is_fixed_novice_map", False) and not self.allow_fixed_policy:
+        if getattr(self.heuristic, "is_fixed_novice_map", False):
             return heuristic_action
         if self.heuristic.escape_target is not None:
             return heuristic_action
@@ -200,15 +199,13 @@ class HybridAEManager:
             return 0 <= action <= 5
 
     def _bomb_has_escape(self, observation: dict) -> bool:
-        """True if the heuristic believes bombing here is mechanically safe."""
+        """True if the heuristic believes bombing here has a safe exit."""
 
         location = self.heuristic._location(observation.get("location"))
         if location is None:
             return False
         if self.heuristic._as_int(observation.get("team_bombs"), default=0) <= 0:
             return False
-        if getattr(self.heuristic, "ally_bomb_safe", False):
-            return True
         blast = self.heuristic._blast_cells(location)
         base_location = self.heuristic.base_location or self.heuristic._location(
             observation.get("base_location")
