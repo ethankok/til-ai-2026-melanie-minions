@@ -64,6 +64,8 @@ ENV AE_FIXED_CENTER=0
 ENV AE_FIXED_ATTACK_CELLS=1
 ENV AE_ITEM_PRIOR_CONF=0.70
 ENV AE_ITEM_PRIOR_FLOOR=0.25
+ENV AE_ALLY_BOMB_SAFE=0
+ENV AE_TTD_DEFENSE=0
 # Opt-in via `-e AE_USE_PLAYBOOK=1 -e AE_PLAYBOOK_FILTER=bomb_only` for a
 # cloud-only A/B if local-cloud distribution gap turns out to favor the
 # playbook on real opponents.

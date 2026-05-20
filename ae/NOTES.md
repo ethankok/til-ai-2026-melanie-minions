@@ -1,6 +1,12 @@
 # AE — notes & history
 
-Last updated: 21 May 2026 early SGT — **Completed trial and finalized Candidate B ("base-minefield-v1"). Proactive defense triggers (base health < 100 or enemy in proximity) and close-quarters tactical bombing near own base improved local `cloudsuite` mean from `0.2643` to `0.3182` (final base health up from 0 to 30) without degrading attack metrics. Trialed Candidate C ("fixed-map defensive chokepoints") but it regressed `cloudsuite` to `0.2044` due to blocking/pathing conflicts, and was reverted. Code is locked to Candidate B baseline.**
+Last updated: 21 May 2026 02:20 SGT — **Mac-first gate rejected `ttd-defense-v1` before any Workbench build/submit. The candidate added a narrow base-threat TTD/TTI override plus failure-class counters, then ran `python training/ae/validate_cloud_suite.py --rounds 24 --suites random library cloudsuite --our heuristic --summary-out training/ae/data/ae-ttd-defense-v1.json` locally on the Mac. Results: random `0.6446`, library `0.5475`, cloudsuite `0.2714`, aggregate `0.4878`. Because cloudsuite regressed below Candidate B's `~0.318`, the behavior is disabled by default (`AE_TTD_DEFENSE=0`) and should not be pushed as a submit candidate. The useful keep is the diagnostic: base failures are mostly `visible_enemy_bomb`, so future work should react to already-visible bombs rather than broad enemy proximity or global own-bomb changes.**
+
+Prior update: 21 May 2026 02:05 SGT — **Workflow rule after the `ally-bomb-safe-v2` failure: for future AE changes, run `python training/ae/validate_cloud_suite.py --rounds 24 --suites random library cloudsuite --our heuristic --summary-out training/ae/data/ae-candidate-cloudsuite.json` locally on the Mac before pushing to Workbench, building, or submitting. If `cloudsuite` clearly regresses, stop locally. Workbench `til test` is only a packaging/random-NPC sanity check, not the behavioral gate.**
+
+Prior update: 21 May 2026 02:00 SGT — **Submitted the surgical `ally-bomb-safe-v2` A/B and it failed hard on cloud: local Docker `til test` improved to `0.6395`, but the 24-round pressure gate already warned against it (`cloudsuite 0.2870`, down from Candidate B's `~0.318`, with own-base destroyed still large), and cloud returned only `0.369 / 0.847` with 0/30 errors. Lesson: allied bombs are harmless for same-team damage in the public env, but treating them as strategically "free" is wrong. Bombs still consume the shared team bomb budget, occupy/reshape space, invite policy over-bombing, and remove useful flee/leash behavior; random `til test` rewarded extra bombing while hidden pressure punished the lost positioning. Do not continue this branch.**
+
+Prior update: 21 May 2026 early SGT — **Completed trial and finalized Candidate B ("base-minefield-v1"). Proactive defense triggers (base health < 100 or enemy in proximity) and close-quarters tactical bombing near own base improved local `cloudsuite` mean from `0.2643` to `0.3182` (final base health up from 0 to 30) without degrading attack metrics. Trialed Candidate C ("fixed-map defensive chokepoints") but it regressed `cloudsuite` to `0.2044` due to blocking/pathing conflicts, and was reverted. `candidate-b` was submitted after local Docker `0.538` and landed cloud `0.500 / 0.858`; it narrowed the local-cloud gap but did not beat `ae-fixed-map-v3` or `ae-item-confidence-v1`.**
 
 Prior update: 20 May 2026 late-night SGT — **Workbench pulled commit `725c097` and ran the new diagnostic gate for 24 rounds per suite. Current defaults scored random `0.7462`, library `0.5564`, cloudsuite `0.3186`, aggregate `0.5404`; report saved on Workbench at `training/ae/data/ae-diagnostic-check.json`. Diagnostics confirm the current failure mode: under `cloudsuite`, our attack output is decent (`attack_kill_or_multi=+4759.5`, `destroy_enemy_base=+4297`) but base survival is still broken (`base=0.0`, `base_damage=-2098`, `own_base_destroyed=-1680`). No submit candidate tonight; next AE work should target base survival under pressure without killing attack tempo.**
 
@@ -35,6 +41,9 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 | Tag | Cloud | Speed | Notes |
 |---|---:|---:|---|
 | **ae-item-confidence-v1** | **0.593** | **0.844** | **Item-confidence/respawn priors; second-best AE cloud score, `-0.021` vs `ae-fixed-map-v3`.** |
+| ttd-defense-v1 | local rejected | — | Mac gate failed before Workbench: random `0.6446`, library `0.5475`, cloudsuite `0.2714`; disabled by default. |
+| ally-bomb-safe-v2 | 0.369 | 0.847 | FAILED. Local Docker rose to `0.6395`, but pressure gate regressed (`cloudsuite 0.2870`) and cloud collapsed. Removing own-bomb escape/base safety globally caused over-bombing and worse hidden-pressure positioning. |
+| candidate-b | 0.500 | 0.858 | Base-minefield-v1. Local Docker `0.538`; narrowest local-cloud gap so far, but lower absolute cloud than current high and second-best. |
 | ae-item-prior-strong-v1 | local only | — | Built/tested; submit push canceled before cloud eval. Local suite aggregate `0.5190`, Docker `0.7245`; weaker than `ae-item-confidence-v1`, so do not blindly retry. |
 | **heuristic-tweaks** | **0.538** | **0.851** | **Swept optimal_combo parameters (Dijkstra soft penalty, low-ammo scaling, base panic defense, enemy chase).** |
 | **ae-fixed-map-v3** | **0.614** | **0.860** | **Fixed-map exploitation with Dijkstra pathfinding + relaxed map detection (current high score).** |
@@ -68,6 +77,9 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 | Submission | Local (apples-to-apples) | Cloud | Gap |
 |---|---:|---:|---:|
 | ae-item-confidence-v1 | 0.7435 Docker / 0.5501 suite mean | 0.593 | 0.1505 vs Docker |
+| ttd-defense-v1 | 0.4878 suite mean / 0.2714 cloudsuite | not submitted | Mac gate failed; behavior disabled |
+| ally-bomb-safe-v2 | 0.6395 Docker / 0.4978 suite mean / 0.2870 cloudsuite | 0.369 | 0.2705 vs Docker; failed despite better random local |
+| candidate-b | 0.538 Docker / ~0.318 cloudsuite | 0.500 | 0.038 vs Docker; narrow gap but low ceiling |
 | ae-item-prior-strong-v1 | 0.7245 Docker / 0.5190 suite mean | not evaluated | submit push canceled |
 | ae-diagnostic-check | random 0.7462 / library 0.5564 / cloudsuite 0.3186 | not submitted | Workbench 24-round diagnostic gate after `725c097`; confirms base survival failure under cloudsuite |
 | diagnostic-gated local A/Bs | 24-round cloudsuite probes | not submitted | behavior changes rejected; diagnostics-only accepted |
@@ -89,7 +101,7 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 | hybrid-v3-no-vetofrozen | 0.6866 | 0.454 | 0.233 |
 | ae-fixed-map-v1 | 0.7466 | — | — |
 
-Pattern: ~0.19-0.30 gap for everything. Wrapper changes the gap because they change the local floor more than the cloud floor; the underlying transfer problem is invariant.
+Pattern: ~0.19-0.30 gap for most optimistic random-local candidates, with two instructive exceptions. `candidate-b` had a tiny Docker-cloud gap because it lowered random-local performance toward the cloud floor, not because it beat the best cloud tags. `ally-bomb-safe-v2` looked better on random Docker but worse on the pressure gate and then collapsed on cloud, confirming that random `til test` can reward bomb tempo that hidden-pressure opponents exploit.
 
 ## 19 May handoff — paused state
 

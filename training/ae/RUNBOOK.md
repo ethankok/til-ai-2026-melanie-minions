@@ -420,18 +420,25 @@ local sim, ship the winner.
 
 ---
 
-## 6. Local A/B before any submission (5 min)
+## 6. Local A/B before any push/build/submission (Mac first)
 
-For current AE candidates, prefer the cloud-like validation suite over raw
-random-opponent `til test` as the first local judge:
+For future AE behavior changes, run the cloud-like validation suite locally on
+the Mac before pushing to Workbench, building an image, or submitting. This is
+the first gate, not an optional afterthought:
 
 ```bash
-.venv/bin/python training/ae/validate_cloud_suite.py \
-  --rounds 12 \
+python training/ae/validate_cloud_suite.py \
+  --rounds 24 \
   --suites random library cloudsuite \
   --our heuristic \
   --summary-out training/ae/data/ae-candidate-cloudsuite.json
 ```
+
+Use `.venv/bin/python` if that is the active Mac environment for the checkout.
+If this gate clearly fails, stop there: do not push the code, do not run
+`til build`, and do not spend a cloud submission. Workbench `til test` still
+matters as a packaging/sanity check, but it is too random-opponent-heavy to be
+the behavioral judge.
 
 `cloudsuite` means `rusher,hunter,bomber,defender,mixed`: it is intentionally
 pressure-heavy and should expose base-defense / escape weaknesses that random
@@ -460,9 +467,14 @@ For `ae-item-confidence-v1`, cloud beat the 0.5 recovery line despite a weak
 `cloudsuite` mean, so treat this as advisory rather than a hard gate. For
 `ae-item-prior-strong-v1`, stronger priors moved library up but random,
 cloudsuite, and Docker down; do not blindly retry that canceled submission.
-The 23:45 diagnostic pass rejected follow-up behavior probes, so keep the
-current runtime defaults unless a future candidate beats them on a longer
-`cloudsuite` gate.
+The 23:45 diagnostic pass rejected follow-up behavior probes, and the 21 May
+base-defense A/Bs reinforced the rule. `candidate-b` narrowed the Docker-cloud
+gap (`0.538` local Docker -> `0.500 / 0.858` cloud) but did not clear the best
+AE tags. `ally-bomb-safe-v2` was the sharper warning: random Docker rose to
+`0.6395`, but the pressure gate dropped to `cloudsuite 0.2870` and cloud scored
+only `0.369 / 0.847`. Do not submit from random `til test` alone; require the
+candidate to improve `cloudsuite` or have a very explicit reason to distrust the
+pressure gate.
 
 Latest Workbench reference run after commit `725c097`:
 
@@ -479,6 +491,43 @@ mean-of-means `0.5404`. The key diagnostic signal is `cloudsuite` final base
 health `0.0` with large base/own-base damage, while attack components remain
 positive. Next AE work should improve base survival under pressure without
 trading away attack tempo.
+
+Latest rejected A/B reference, `ally-bomb-safe-v2`:
+
+```bash
+python training/ae/validate_cloud_suite.py \
+  --rounds 24 \
+  --suites random library cloudsuite \
+  --our heuristic \
+  --summary-out training/ae/data/ae-ally-bomb-safe-v2.json
+```
+
+Scores: random `0.6650`, library `0.5415`, cloudsuite `0.2870`, aggregate
+mean-of-means `0.4978`; cloud `0.369 / 0.847`. The result explains why a
+simple mechanics correction can be a large behavioral regression: allied bombs
+do not damage same-team defenders, but bombs still consume scarce team bomb
+budget, occupy cells, change pathing, and can make the hybrid/policy layer place
+bombs in situations where the old escape/base guards were acting as useful
+positioning constraints.
+
+Latest Mac-stopped candidate, `ttd-defense-v1`:
+
+```bash
+AE_USE_PLAYBOOK=0 AE_USE_OPPONENT_MODEL=0 AE_ALLY_BOMB_SAFE=0 AE_TTD_DEFENSE=1 \
+  .venv/bin/python training/ae/validate_cloud_suite.py \
+  --rounds 24 \
+  --suites random library cloudsuite \
+  --our heuristic \
+  --summary-out training/ae/data/ae-ttd-defense-v1.json
+```
+
+Scores: random `0.6446`, library `0.5475`, cloudsuite `0.2714`, aggregate
+mean-of-means `0.4878`. This candidate added a narrow time-to-base-damage /
+time-to-intercept override, but it fired too often (`ttd≈22.6` on cloudsuite)
+and still did not stop visible enemy bombs (`base_failures={visible_enemy_bomb:75}`).
+Keep `AE_TTD_DEFENSE=0` by default. The useful takeaway is diagnostic, not
+behavioral: future base-defense work should react to visible enemy bombs that
+already threaten the base, not just to enemies near base-hit cells.
 
 ---
 

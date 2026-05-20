@@ -69,6 +69,8 @@ GRID_SIZE = 16
 NUM_DIRS = 4
 MAX_STEPS = 200
 ACTION_NAMES = ["FORWARD", "BACKWARD", "LEFT", "RIGHT", "STAY", "PLACE_BOMB"]
+ENEMY_AGENT_CHANNEL = 10
+ENEMY_BOMB_CHANNEL = 18
 
 
 def pack_state_key(location, direction: int, step: int) -> int:
@@ -158,6 +160,49 @@ def _classify_reward(prev: dict, cur: dict, reward_delta: float) -> dict[str, fl
     return components
 
 
+def _channel_on(cell: list, channel: int) -> bool:
+    try:
+        return float(cell[channel]) > 0.0
+    except Exception:
+        return False
+
+
+def _classify_base_failure(prev_obs: dict, action: int | None) -> str:
+    """Coarse cause bucket for a base-damage event seen on the next tick."""
+
+    base_health = _scalar(prev_obs, "base_health", 100.0)
+    view = prev_obs.get("base_viewcone") or []
+    height = len(view)
+    width = len(view[0]) if height else 0
+    center_row = height // 2
+    center_col = width // 2
+    enemy_near = False
+    bomb_near = False
+    for row in range(height):
+        for col in range(width):
+            cell = view[row][col]
+            radius = max(abs(row - center_row), abs(col - center_col))
+            if radius <= 2 and _channel_on(cell, ENEMY_BOMB_CHANNEL):
+                bomb_near = True
+            if radius <= 3 and _channel_on(cell, ENEMY_AGENT_CHANNEL):
+                enemy_near = True
+
+    if bomb_near:
+        return "visible_enemy_bomb"
+    if enemy_near and action == 5:
+        return "enemy_near_base_after_our_bomb"
+    if enemy_near:
+        return "visible_enemy_near_base"
+    if base_health <= 40.0:
+        return "low_base_followup"
+    return "unseen_or_stale_pressure"
+
+
+def _agent_attr(agent, name: str, default=0):
+    inner = getattr(agent, "heuristic", agent)
+    return getattr(inner, name, default)
+
+
 # ---------------------------------------------------------------------------
 # Single-round runner
 # ---------------------------------------------------------------------------
@@ -194,8 +239,10 @@ def run_one_round(
     cumulative_us = 0.0
     action_counter: Counter[int] = Counter()
     component_totals: Counter[str] = Counter()
+    base_failure_counter: Counter[str] = Counter()
     visited: set[tuple[int, int]] = set()
     prev_obs: dict | None = None
+    prev_action: int | None = None
     bombs_placed = 0
     frozen_ticks_seen = 0
     final_health = 0.0
@@ -239,10 +286,14 @@ def run_one_round(
             if int(_scalar(observation_native, "frozen_ticks")) > 0:
                 frozen_ticks_seen += 1
             if prev_obs is not None and abs(float(reward)) > 1e-6:
-                for component, value in _classify_reward(prev_obs, observation_native, float(reward)).items():
+                components = _classify_reward(prev_obs, observation_native, float(reward))
+                for component, value in components.items():
                     component_totals[component] += value
+                if "base_damage" in components or "own_base_destroyed" in components:
+                    base_failure_counter[_classify_base_failure(prev_obs, prev_action)] += 1
             action = int(our_agent.ae(observation_native))
             action_counter[action] += 1
+            prev_action = action
             if action == 5:
                 bombs_placed += 1
             if log_traj:
@@ -313,6 +364,7 @@ def run_one_round(
             "bombs_placed": bombs_placed,
             "unique_cells_visited": len(visited),
             "reward_components": dict(component_totals),
+            "base_failure_classes": dict(base_failure_counter),
             "final_health": final_health,
             "final_base_health": final_base_health,
             "final_team_bombs": final_team_bombs,
@@ -321,6 +373,7 @@ def run_one_round(
             "early_end": final_step < (MAX_STEPS - 1),
             "terminated_us": terminated_us,
             "freeze_ticks_seen": frozen_ticks_seen,
+            "base_pressure_overrides": _agent_attr(our_agent, "base_pressure_override_count", 0),
         },
     }
 
@@ -422,9 +475,11 @@ def run_simulation(
     env.close()
 
     component_sum: Counter[str] = Counter()
+    base_failure_sum: Counter[str] = Counter()
     action_sum: Counter[str] = Counter()
     for diag in diagnostics:
         component_sum.update(diag.get("reward_components", {}))
+        base_failure_sum.update(diag.get("base_failure_classes", {}))
         action_sum.update(diag.get("action_counts", {}))
 
     def _mean_diag(key: str) -> float:
@@ -451,9 +506,11 @@ def run_simulation(
             "mean_final_base_health": _mean_diag("final_base_health"),
             "mean_final_team_bombs": _mean_diag("final_team_bombs"),
             "mean_final_team_resources": _mean_diag("final_team_resources"),
+            "mean_base_pressure_overrides": _mean_diag("base_pressure_overrides"),
             "early_end_rate": sum(1 for d in diagnostics if d.get("early_end")) / max(1, len(diagnostics)),
             "terminated_rate": sum(1 for d in diagnostics if d.get("terminated_us")) / max(1, len(diagnostics)),
             "reward_component_sum": dict(component_sum),
+            "base_failure_classes": dict(base_failure_sum),
             "action_counts": dict(action_sum),
         },
     }

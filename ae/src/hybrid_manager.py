@@ -200,13 +200,15 @@ class HybridAEManager:
             return 0 <= action <= 5
 
     def _bomb_has_escape(self, observation: dict) -> bool:
-        """True if the heuristic believes bombing here has a safe exit."""
+        """True if the heuristic believes bombing here is mechanically safe."""
 
         location = self.heuristic._location(observation.get("location"))
         if location is None:
             return False
         if self.heuristic._as_int(observation.get("team_bombs"), default=0) <= 0:
             return False
+        if getattr(self.heuristic, "ally_bomb_safe", False):
+            return True
         blast = self.heuristic._blast_cells(location)
         base_location = self.heuristic.base_location or self.heuristic._location(
             observation.get("base_location")

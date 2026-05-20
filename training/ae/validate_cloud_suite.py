@@ -53,6 +53,15 @@ def _format_components(summary: dict) -> str:
     return "components={" + ", ".join(f"{k}:{float(v):+.1f}" for k, v in ordered[:5]) + "}"
 
 
+def _format_base_failures(summary: dict) -> str:
+    diagnostics = summary.get("diagnostics", {})
+    failures = diagnostics.get("base_failure_classes", {})
+    if not failures:
+        return "base_failures={}"
+    ordered = sorted(failures.items(), key=lambda kv: -int(kv[1]))
+    return "base_failures={" + ", ".join(f"{k}:{int(v)}" for k, v in ordered[:4]) + "}"
+
+
 def run_suite(args: argparse.Namespace) -> dict:
     started = time.monotonic()
     per_suite: list[dict] = []
@@ -81,8 +90,10 @@ def run_suite(args: argparse.Namespace) -> dict:
             f"cells={diagnostics.get('mean_unique_cells_visited', 0.0):.1f} "
             f"hp={diagnostics.get('mean_final_health', 0.0):.1f} "
             f"base={diagnostics.get('mean_final_base_health', 0.0):.1f} "
+            f"ttd={diagnostics.get('mean_base_pressure_overrides', 0.0):.1f} "
             f"early_end={diagnostics.get('early_end_rate', 0.0):.2f} "
-            f"{_format_components(summary)}",
+            f"{_format_components(summary)} "
+            f"{_format_base_failures(summary)}",
             flush=True,
         )
 

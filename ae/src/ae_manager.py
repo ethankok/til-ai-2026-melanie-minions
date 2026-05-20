@@ -271,6 +271,13 @@ class AEManager:
         self.item_seen_decay_steps = max(1.0, _env_float("AE_ITEM_SEEN_DECAY", 80.0))
         self.item_respawn_min_steps = _env_int("AE_ITEM_RESPAWN_MIN", 12)
         self.item_respawn_full_steps = max(self.item_respawn_min_steps + 1, _env_int("AE_ITEM_RESPAWN_FULL", 44))
+        # Public env mechanics skip same-team defenders during bomb damage.
+        # Candidate toggle: stop treating our own bomb blast as self/base danger.
+        self.ally_bomb_safe = _env_flag("AE_ALLY_BOMB_SAFE", False)
+        self.ttd_defense_enabled = _env_flag("AE_TTD_DEFENSE", False)
+        self.ttd_defense_immediate = _env_int("AE_TTD_DEFENSE_IMMEDIATE", 1)
+        self.ttd_defense_damaged = _env_int("AE_TTD_DEFENSE_DAMAGED", 2)
+        self.ttd_defense_max_tti = _env_int("AE_TTD_DEFENSE_MAX_TTI", 5)
 
         # Store and apply kwargs overrides
         self.kwargs = kwargs
@@ -371,8 +378,15 @@ class AEManager:
                     else:
                         bomb_blast = self._blast_cells(location)
                         base = self.base_location or self._location(observation.get("base_location"))
-                        if base is not None and base in bomb_blast:
+                        if base is not None and base in bomb_blast and not self.ally_bomb_safe:
                             pass
+                        elif self.ally_bomb_safe:
+                            self.known_bombs[location] = {
+                                "timer": self.BOMB_TIMER,
+                                "own": True,
+                                "last_step": step,
+                            }
+                            return self.PLACE_BOMB
                         else:
                             escape = self._safe_escape_within(
                                 location, bomb_blast, self.BOMB_TIMER
@@ -391,6 +405,8 @@ class AEManager:
 
         danger = self._danger_cells()
         low_health = self.health < self.LOW_HEALTH_THRESHOLD
+        self.defense_bomb_cells = set()
+        self.last_defense_reason = None
 
         escape_path = None
         if False:
@@ -493,6 +509,9 @@ class AEManager:
         self.base_health: int = 100
         self.last_lookahead_score = -inf
         self.last_lookahead_path = ()
+        self.defense_bomb_cells: set[tuple[int, int]] = set()
+        self.last_defense_reason: str | None = None
+        self.base_pressure_override_count = 0
         # Per-turn blast cell cache; cleared at the start of every ae() call.
         self._blast_cache: dict[tuple[int, int], frozenset[tuple[int, int]]] = {}
         # Tier-1 #3: track recent kills so we can plant a follow-up bomb
@@ -671,6 +690,12 @@ class AEManager:
             distance, parent = self._dijkstra_distance_map(start, danger)
         else:
             distance, parent = self._bfs_distance_map(start, danger)
+
+        base_pressure_plan = self._base_pressure_plan(start, distance, parent, danger, step)
+        if base_pressure_plan is not None:
+            target, path = base_pressure_plan
+            self.current_path = path
+            return target, path
 
         candidates: list[tuple[float, tuple[int, int]]] = []
 
@@ -917,6 +942,118 @@ class AEManager:
                     cells.append(cell)
         return cells
 
+    def _base_pressure_plan(
+        self,
+        start: tuple[int, int],
+        distance: dict[tuple[int, int], float],
+        parent: dict[tuple[int, int], tuple[int, int] | None],
+        danger: set[tuple[int, int]],
+        step: int,
+    ) -> tuple[tuple[int, int], list[tuple[int, int]] | None] | None:
+        """Hard override only for enemies about to create own-base damage.
+
+        This is intentionally narrower than the older "enemy near base" rule:
+        it fires only when a fresh enemy sighting is already on, or within one
+        step of, a cell where placing a bomb would hit our base. If the base is
+        already damaged, the lookahead expands to two steps.
+        """
+
+        if not self.ttd_defense_enabled or self.base_location is None:
+            return None
+        if not self.enemy_agents:
+            return None
+
+        base_hit_cells = [
+            cell for cell in self._fixed_base_attack_cells(self.base_location)
+            if cell in self.seen and cell not in danger
+        ]
+        if not base_hit_cells:
+            return None
+
+        trigger_ttd = (
+            self.ttd_defense_damaged
+            if self.base_health < 100
+            else self.ttd_defense_immediate
+        )
+        best: tuple[float, tuple[int, int], tuple[int, int], int] | None = None
+        for enemy, last_seen in self.enemy_agents.items():
+            if step - int(last_seen) > self.ENEMY_STALENESS:
+                continue
+            enemy_ttd = self._distance_to_any(enemy, base_hit_cells, limit=trigger_ttd)
+            if enemy_ttd is None or enemy_ttd > trigger_ttd:
+                continue
+
+            target = self._best_defense_target(start, enemy, base_hit_cells, distance)
+            if target is None:
+                continue
+            our_tti = distance.get(target)
+            if our_tti is None:
+                continue
+            if our_tti > self.ttd_defense_max_tti and self.base_health >= 100:
+                continue
+
+            score = (float(enemy_ttd), float(our_tti), self._manhattan(enemy, target))
+            if best is None or score < (best[0], best[3], self._manhattan(best[1], best[2])):
+                best = (float(enemy_ttd), enemy, target, int(our_tti))
+
+        if best is None:
+            return None
+
+        enemy_ttd, enemy, target, our_tti = best
+        self.defense_bomb_cells = {
+            enemy,
+            *(
+                cell for cell in base_hit_cells
+                if self._manhattan(cell, enemy) <= max(1, int(enemy_ttd) + 1)
+            ),
+        }
+        self.last_defense_reason = f"base_ttd enemy_ttd={int(enemy_ttd)} our_tti={our_tti}"
+        self.base_pressure_override_count += 1
+        return target, self._reconstruct_path(parent, start, target)
+
+    def _best_defense_target(
+        self,
+        start: tuple[int, int],
+        enemy: tuple[int, int],
+        base_hit_cells: list[tuple[int, int]],
+        distance: dict[tuple[int, int], float],
+    ) -> tuple[int, int] | None:
+        candidates: list[tuple[float, int, tuple[int, int]]] = []
+        if enemy in distance:
+            candidates.append((distance[enemy], 0, enemy))
+        for cell in base_hit_cells:
+            if cell not in distance:
+                continue
+            candidates.append((distance[cell], self._manhattan(cell, enemy), cell))
+        if not candidates:
+            return None
+        candidates.sort()
+        return candidates[0][2]
+
+    def _distance_to_any(
+        self,
+        start: tuple[int, int],
+        goals: Iterable[tuple[int, int]],
+        limit: int,
+    ) -> int | None:
+        goal_set = set(goals)
+        if start in goal_set:
+            return 0
+        queue = deque([(start, 0)])
+        seen = {start}
+        while queue:
+            pos, dist = queue.popleft()
+            if dist >= limit:
+                continue
+            for nxt in self._neighbors(pos):
+                if nxt in seen or nxt not in self.seen:
+                    continue
+                if nxt in goal_set:
+                    return dist + 1
+                seen.add(nxt)
+                queue.append((nxt, dist + 1))
+        return None
+
     def _bfs(
         self,
         start: tuple[int, int],
@@ -1103,7 +1240,7 @@ class AEManager:
                 and location not in danger):
             bomb_blast = self._blast_cells(location)
             base_loc = self.base_location
-            base_safe = base_loc is None or base_loc not in bomb_blast
+            base_safe = self.ally_bomb_safe or base_loc is None or base_loc not in bomb_blast
 
             enemy_base_hit = any(pos in bomb_blast for pos in self.enemy_bases)
             # Fresh enemy_agent in blast — only this-step sightings to avoid
@@ -1116,6 +1253,18 @@ class AEManager:
             )
 
             if base_safe and (enemy_base_hit or enemy_agent_hit):
+                if self.ally_bomb_safe:
+                    self.known_bombs[location] = {
+                        "timer": self.BOMB_TIMER,
+                        "own": True,
+                        "last_step": self.last_step or 0,
+                    }
+                    if self.tier1_repeat_kill and enemy_agent_hit:
+                        unfreeze = step + self.ENEMY_FREEZE_DURATION
+                        for pos, last_seen in self.enemy_agents.items():
+                            if int(last_seen) == step and pos in bomb_blast:
+                                self.recent_kills.append((pos, unfreeze))
+                    return self.PLACE_BOMB
                 escape = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER)
                 if escape is not None:
                     # Mirror the side effects of _should_place_bomb so escape
@@ -1483,9 +1632,9 @@ class AEManager:
                     continue
             if action == self.PLACE_BOMB:
                 blast = self._blast_cells(pos)
-                if self.base_location is not None and self.base_location in blast:
+                if self.base_location is not None and self.base_location in blast and not self.ally_bomb_safe:
                     continue
-                if self._lookahead_escape(pos, blast, self.BOMB_TIMER) is None:
+                if not self.ally_bomb_safe and self._lookahead_escape(pos, blast, self.BOMB_TIMER) is None:
                     continue
             legal.append(action)
         return legal
@@ -1510,9 +1659,9 @@ class AEManager:
             if any((bx, by) == state.pos for bx, by, _timer in bombs):
                 return None
             blast = self._blast_cells(state.pos)
-            if self.base_location is not None and self.base_location in blast:
+            if self.base_location is not None and self.base_location in blast and not self.ally_bomb_safe:
                 return None
-            if self._lookahead_escape(state.pos, blast, self.BOMB_TIMER) is None:
+            if not self.ally_bomb_safe and self._lookahead_escape(state.pos, blast, self.BOMB_TIMER) is None:
                 return None
             bombs.append((state.pos[0], state.pos[1], self.BOMB_TIMER))
             newly_placed = state.pos
@@ -1728,6 +1877,8 @@ class AEManager:
     def _danger_cells(self) -> set[tuple[int, int]]:
         danger: set[tuple[int, int]] = set()
         for bomb_pos, data in self.known_bombs.items():
+            if self.ally_bomb_safe and data.get("own"):
+                continue
             timer = int(data.get("timer", self.BOMB_TIMER))
             if timer > 2:
                 continue
@@ -1847,9 +1998,11 @@ class AEManager:
                 if pos in bomb_blast:
                     tactical_target = True
                     break
+        if not tactical_target and self.defense_bomb_cells:
+            tactical_target = any(pos in bomb_blast for pos in self.defense_bomb_cells)
 
         base_location = self.base_location or self._location(observation.get("base_location"))
-        if base_location is not None and base_location in bomb_blast and not tactical_target:
+        if base_location is not None and base_location in bomb_blast and not tactical_target and not self.ally_bomb_safe:
             return False
 
         # Predictive bombing: bomb when *multiple* enemies are immediately
@@ -1927,13 +2080,16 @@ class AEManager:
 
         if not tactical_target and not wall_to_open:
             return False
-        escape_target = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER, danger)
-        if escape_target is None:
-            return False
+        escape_target = None
+        if not self.ally_bomb_safe:
+            escape_target = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER, danger)
+            if escape_target is None:
+                return False
 
         self.known_bombs[location] = {"timer": self.BOMB_TIMER, "own": True, "last_step": self.last_step or 0}
-        self.escape_target = escape_target
-        self.escape_until_step = (self.last_step or 0) + self.BOMB_TIMER
+        if escape_target is not None:
+            self.escape_target = escape_target
+            self.escape_until_step = (self.last_step or 0) + self.BOMB_TIMER
         return True
 
     def _safe_escape_within(
