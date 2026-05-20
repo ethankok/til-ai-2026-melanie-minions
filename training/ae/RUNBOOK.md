@@ -464,6 +464,22 @@ The 23:45 diagnostic pass rejected follow-up behavior probes, so keep the
 current runtime defaults unless a future candidate beats them on a longer
 `cloudsuite` gate.
 
+Latest Workbench reference run after commit `725c097`:
+
+```bash
+python training/ae/validate_cloud_suite.py \
+  --rounds 24 \
+  --suites random library cloudsuite \
+  --our heuristic \
+  --summary-out training/ae/data/ae-diagnostic-check.json
+```
+
+Scores: random `0.7462`, library `0.5564`, cloudsuite `0.3186`, aggregate
+mean-of-means `0.5404`. The key diagnostic signal is `cloudsuite` final base
+health `0.0` with large base/own-base damage, while attack components remain
+positive. Next AE work should improve base survival under pressure without
+trading away attack tempo.
+
 ---
 
 ## 7. Cloud submission (Workbench)
