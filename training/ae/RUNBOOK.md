@@ -172,7 +172,7 @@ git; it should come from `~/ae-checkpoints-backup/deployed-bc-v1.pt` or from the
 original `ae-fixed-map-v3` Docker image. The helper copies it into both
 `ae/models/bc.pt` for deployment and
 `training/ae/checkpoints/fixed-map-v3-base.pt` for fine-tuning, then prints a
-seed-88 fine-tune command.
+seed-88 fine-tune command with the checkpoint's actual frame-stack size.
 
 ```bash
 cd /home/jupyter/til
@@ -196,7 +196,7 @@ python training/ae/train_ppo.py \
   --novice \
   --eval-every 5 \
   --eval-games 30 \
-  --n-frames 4 \
+  --n-frames 1 \
   --seed 42 \
   --eval-seed 42 \
   2>&1 | tee ~/novice-fixed-v1.log

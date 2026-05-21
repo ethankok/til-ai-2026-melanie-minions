@@ -14,6 +14,7 @@ SEED="${AE_FINETUNE_SEED:-88}"
 OUT_CKPT="${AE_FINETUNE_OUT:-training/ae/checkpoints/fixed-map-v3-finetune-v1.pt}"
 IMAGE_TAG="${AE_FIXED_MAP_IMAGE:-melanie-minions-ae:ae-fixed-map-v3}"
 REGISTRY_IMAGE="${AE_FIXED_MAP_REGISTRY_IMAGE:-asia-southeast1-docker.pkg.dev/til-ai-2026/repo-til-26-melanie-minions/melanie-minions-ae:ae-fixed-map-v3}"
+N_FRAMES="${AE_FINETUNE_N_FRAMES:-}"
 
 mkdir -p ae/models training/ae/checkpoints
 
@@ -96,13 +97,32 @@ except Exception as exc:
     print("torch metadata unavailable:", repr(exc))
 PY
 
+if [[ -z "${N_FRAMES}" ]]; then
+  N_FRAMES="$(
+    python - <<'PY'
+from pathlib import Path
+
+try:
+    import torch
+    ckpt = torch.load(
+        Path("training/ae/checkpoints/fixed-map-v3-base.pt"),
+        map_location="cpu",
+        weights_only=False,
+    )
+    print(int(ckpt.get("n_frames", 1) or 1))
+except Exception:
+    print(1)
+PY
+  )"
+fi
+
 cat <<EOF
 
 Fixed-map-v3 base is restored in both expected locations:
   ${DEPLOY_CKPT}
   ${TRAIN_CKPT}
 
-Fine-tune from this exact base with seed ${SEED}:
+Fine-tune from this exact base with seed ${SEED} and n_frames=${N_FRAMES}:
 
 python training/ae/train_ppo.py \\
   --bc-checkpoint ${TRAIN_CKPT} \\
@@ -114,7 +134,7 @@ python training/ae/train_ppo.py \\
   --novice \\
   --eval-every 5 \\
   --eval-games 30 \\
-  --n-frames 4 \\
+  --n-frames ${N_FRAMES} \\
   --seed ${SEED} \\
   --eval-seed ${SEED} \\
   2>&1 | tee fixed-map-v3-finetune-v1.log
