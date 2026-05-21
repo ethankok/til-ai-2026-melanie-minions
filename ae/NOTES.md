@@ -1,6 +1,8 @@
 # AE — notes & history
 
-Last updated: 21 May 2026 17:15 SGT — **Current AE high is `fixed-map-v5` (`0.630 / 0.858`). It used fixed-map-v3 source plus the restored `deployed-bc-v1.pt` artifact (`sha256 746bbe8198e77666d45ab9d9c6b4bb322a8f4de8faec1dab7343fc63ff4b73aa`), but the follow-up evidence says the reliable path is fixed-map heuristic behavior, not PPO fine-tuning. `fixed-map-v5-finetune-v1` reached local Docker `0.85025` and checkpoint eval `0.6678`, then cloud regressed to `0.587 / 0.848`. Dockerfile default is now `AE_MODE=heuristic` so future fixed-map builds explicitly preserve the v5-style behavior instead of depending on policy-load fallback.**
+Last updated: 21 May 2026 17:45 SGT — **Current AE high is `fixed-map-v5` (`0.630 / 0.858`). The repo runtime files are restored to the source shape that built that tag: fixed-map-v3-era `ae/src` runtime code with `AE_MODE=hybrid`, plus the restored `deployed-bc-v1.pt` artifact supplied locally on Workbench (`sha256 746bbe8198e77666d45ab9d9c6b4bb322a8f4de8faec1dab7343fc63ff4b73aa`). `ae/src/ae_manager.py` itself was already unchanged from the v5 build; the important restore was reverting later `model.py` / `policy_manager.py` legacy-checkpoint support and the temporary Dockerfile heuristic lock.**
+
+Prior update: 21 May 2026 17:15 SGT — **`fixed-map-v5-finetune-v1` reached local Docker `0.85025` and checkpoint eval `0.6678`, then cloud regressed to `0.587 / 0.848`. Treat this as local/scripted PPO overfit; do not continue PPO as the default path.**
 
 Prior update: 21 May 2026 05:15 SGT — **Restored the current AE runtime to the `ae-fixed-map-v3` best-model source state (`4c00f92`): `ae/src/ae_manager.py`, `ae/src/hybrid_manager.py`, and `ae/Dockerfile` now match the winning fixed-map-v3 code/config again. This removes later item-prior/macro/base-defense/pessimistic-search runtime changes from the shipping path. Use this state for the next Workbench build if the goal is to preserve the current high (`0.614 / 0.860`).**
 
@@ -50,7 +52,7 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 
 | Tag | Cloud | Speed | Notes |
 |---|---:|---:|---|
-| **fixed-map-v5** | **0.630** | **0.858** | **Current high. Fixed-map-v3 runtime plus restored `deployed-bc-v1.pt`; evidence points to fixed-map heuristic behavior as the transferable part.** |
+| **fixed-map-v5** | **0.630** | **0.858** | **Current high. Fixed-map-v3-era runtime source plus restored `deployed-bc-v1.pt`; current repo runtime restored to this source shape.** |
 | fixed-map-v5-finetune-v1 | 0.587 | 0.848 | FAILED. True legacy-policy fine-tune; local Docker `0.85025`, checkpoint eval `0.6678`, cloud regressed. Do not continue PPO as default. |
 | **ae-item-confidence-v1** | **0.593** | **0.844** | **Item-confidence/respawn priors; second-best AE cloud score, `-0.021` vs `ae-fixed-map-v3`.** |
 | pessimistic-mini-search-v1 | 0.396 | 0.847 | FAILED. Local Docker `0.456`; local cloudsuite `0.3962` predicted cloud almost exactly. Safety search preserved base better but lost too much attack/farming tempo. Disabled by default. |

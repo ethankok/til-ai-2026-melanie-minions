@@ -31,87 +31,6 @@ BELIEF_HW = (16, 16)
 ACTION_DIM = 6
 
 
-class LegacyPolicyNetwork(nn.Module):
-    """Original small single-frame policy used by the ppo-v1 checkpoint."""
-
-    model_arch = "legacy-small"
-
-    def __init__(self, n_frames: int = 1, action_dim: int = ACTION_DIM,
-                 use_belief: bool = False):
-        super().__init__()
-        if n_frames < 1:
-            raise ValueError("n_frames must be >= 1")
-        if use_belief:
-            raise ValueError("LegacyPolicyNetwork does not support belief maps")
-        self.n_frames = n_frames
-        self.use_belief = False
-
-        in_ch = VIEW_CHANNELS * n_frames
-        scalar_dim = SCALAR_DIM * n_frames
-
-        self.agent_conv = nn.Sequential(
-            nn.Conv2d(in_ch, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 16, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-        self.base_conv = nn.Sequential(
-            nn.Conv2d(in_ch, 16, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(16, 8, kernel_size=3, padding=1),
-            nn.ReLU(),
-        )
-        agent_flat = 16 * AGENT_VIEW_HW[0] * AGENT_VIEW_HW[1]
-        base_flat = 8 * BASE_VIEW_HW[0] * BASE_VIEW_HW[1]
-        head_in = agent_flat + base_flat + scalar_dim
-
-        self.head = nn.Sequential(
-            nn.Linear(head_in, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, action_dim),
-        )
-
-    def forward(
-        self,
-        agent_view: torch.Tensor,
-        base_view: torch.Tensor,
-        scalars: torch.Tensor,
-        belief_map: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        if belief_map is not None:
-            raise ValueError("LegacyPolicyNetwork does not support belief_map")
-        a = self.agent_conv(agent_view).flatten(start_dim=1)
-        b = self.base_conv(base_view).flatten(start_dim=1)
-        return self.head(torch.cat([a, b, scalars], dim=-1))
-
-    def select_action(
-        self,
-        agent_view: torch.Tensor,
-        base_view: torch.Tensor,
-        scalars: torch.Tensor,
-        action_mask: torch.Tensor | None = None,
-        greedy: bool = True,
-        belief_map: torch.Tensor | None = None,
-    ) -> int:
-        """Single-observation inference; pass un-batched tensors."""
-
-        with torch.no_grad():
-            logits = self.forward(
-                agent_view.unsqueeze(0),
-                base_view.unsqueeze(0),
-                scalars.unsqueeze(0),
-                belief_map=belief_map.unsqueeze(0) if belief_map is not None else None,
-            ).squeeze(0)
-            if action_mask is not None:
-                logits = logits + torch.log(action_mask.clamp(min=1e-9))
-            if greedy:
-                return int(logits.argmax().item())
-            probs = torch.softmax(logits, dim=-1)
-            return int(torch.multinomial(probs, num_samples=1).item())
-
-
 class PolicyNetwork(nn.Module):
     """Frame-stacked CNN policy. Outputs raw logits.
 
@@ -130,9 +49,8 @@ class PolicyNetwork(nn.Module):
     def __init__(self, n_frames: int = 4, action_dim: int = ACTION_DIM,
                  use_belief: bool = False):
         super().__init__()
-        self.model_arch = "default"
         if n_frames < 1:
-            raise ValueError("n_frames must be >= 1")
+            raise ValueError("n_frames must be ≥ 1")
         self.n_frames = n_frames
         self.use_belief = bool(use_belief)
 
@@ -229,36 +147,3 @@ class PolicyNetwork(nn.Module):
 
 def num_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
-
-
-def infer_policy_arch(state_dict: dict[str, torch.Tensor] | None) -> str:
-    """Infer policy architecture from a checkpoint state dict."""
-
-    if not state_dict:
-        return "default"
-    first = state_dict.get("agent_conv.0.weight")
-    if first is not None and first.shape[0] == 32:
-        return "legacy-small"
-    return "default"
-
-
-def build_policy_network(
-    n_frames: int = 4,
-    action_dim: int = ACTION_DIM,
-    use_belief: bool = False,
-    state_dict: dict[str, torch.Tensor] | None = None,
-) -> nn.Module:
-    """Build the policy architecture matching an optional checkpoint."""
-
-    arch = infer_policy_arch(state_dict)
-    if arch == "legacy-small":
-        return LegacyPolicyNetwork(
-            n_frames=n_frames,
-            action_dim=action_dim,
-            use_belief=use_belief,
-        )
-    return PolicyNetwork(
-        n_frames=n_frames,
-        action_dim=action_dim,
-        use_belief=use_belief,
-    )
