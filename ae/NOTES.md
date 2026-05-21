@@ -1,6 +1,8 @@
 # AE — notes & history
 
-Last updated: 21 May 2026 05:15 SGT — **Restored the current AE runtime to the `ae-fixed-map-v3` best-model source state (`4c00f92`): `ae/src/ae_manager.py`, `ae/src/hybrid_manager.py`, and `ae/Dockerfile` now match the winning fixed-map-v3 code/config again. This removes later item-prior/macro/base-defense/pessimistic-search runtime changes from the shipping path. Use this state for the next Workbench build if the goal is to preserve the current high (`0.614 / 0.860`).**
+Last updated: 21 May 2026 17:15 SGT — **Current AE high is `fixed-map-v5` (`0.630 / 0.858`). It used fixed-map-v3 source plus the restored `deployed-bc-v1.pt` artifact (`sha256 746bbe8198e77666d45ab9d9c6b4bb322a8f4de8faec1dab7343fc63ff4b73aa`), but the follow-up evidence says the reliable path is fixed-map heuristic behavior, not PPO fine-tuning. `fixed-map-v5-finetune-v1` reached local Docker `0.85025` and checkpoint eval `0.6678`, then cloud regressed to `0.587 / 0.848`. Dockerfile default is now `AE_MODE=heuristic` so future fixed-map builds explicitly preserve the v5-style behavior instead of depending on policy-load fallback.**
+
+Prior update: 21 May 2026 05:15 SGT — **Restored the current AE runtime to the `ae-fixed-map-v3` best-model source state (`4c00f92`): `ae/src/ae_manager.py`, `ae/src/hybrid_manager.py`, and `ae/Dockerfile` now match the winning fixed-map-v3 code/config again. This removes later item-prior/macro/base-defense/pessimistic-search runtime changes from the shipping path. Use this state for the next Workbench build if the goal is to preserve the current high (`0.614 / 0.860`).**
 
 Prior update: 21 May 2026 05:05 SGT — **Cloud rejected `pessimistic-mini-search-v1`: Workbench `til test` scored only `0.456`, then cloud returned `0.396 / 0.847` with 0/30 errors. The local Mac gate had predicted pressure-suite `cloudsuite 0.3962` almost exactly, but that did not transfer upward and is far below `ae-fixed-map-v3` (`0.614 / 0.860`) and `ae-item-confidence-v1` (`0.593 / 0.844`). Remove/disable `AE_PESSIMISTIC_SEARCH` in the Docker runtime; keep the code only as evidence that deterministic safety search mostly trades away farming/attack tempo for base preservation.**
 
@@ -48,6 +50,8 @@ Per-task working log for AE (Autonomous Exploration / Bomberman). For the author
 
 | Tag | Cloud | Speed | Notes |
 |---|---:|---:|---|
+| **fixed-map-v5** | **0.630** | **0.858** | **Current high. Fixed-map-v3 runtime plus restored `deployed-bc-v1.pt`; evidence points to fixed-map heuristic behavior as the transferable part.** |
+| fixed-map-v5-finetune-v1 | 0.587 | 0.848 | FAILED. True legacy-policy fine-tune; local Docker `0.85025`, checkpoint eval `0.6678`, cloud regressed. Do not continue PPO as default. |
 | **ae-item-confidence-v1** | **0.593** | **0.844** | **Item-confidence/respawn priors; second-best AE cloud score, `-0.021` vs `ae-fixed-map-v3`.** |
 | pessimistic-mini-search-v1 | 0.396 | 0.847 | FAILED. Local Docker `0.456`; local cloudsuite `0.3962` predicted cloud almost exactly. Safety search preserved base better but lost too much attack/farming tempo. Disabled by default. |
 | ttd-defense-v1 | local rejected | — | Mac gate failed before Workbench: random `0.6446`, library `0.5475`, cloudsuite `0.2714`; disabled by default. |

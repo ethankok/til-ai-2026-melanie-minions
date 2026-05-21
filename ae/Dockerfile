@@ -16,7 +16,7 @@ WORKDIR /workspace
 # uses the right mode. Edit this line before each `til build` to switch
 # modes, OR write the mode into `ae/src/.ae_mode` (the server reads that
 # file at startup if AE_MODE is unset in the container env).
-ENV AE_MODE=hybrid
+ENV AE_MODE=heuristic
 # MCTS-light is a known-regressed experiment, so keep it opt-in. See
 # ae/NOTES.md for the speed budget math and the v1/v2 cloud failures.
 # v1 used DEPTH=5 WIDTH=96 with no gate / no latency cap; cloud killed it after

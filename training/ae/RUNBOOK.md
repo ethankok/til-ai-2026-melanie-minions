@@ -87,16 +87,21 @@ If BC worked, score should land near the planner's local score (~0.65-0.70). If 
 
 The inference path in [../../ae/src/ae_server.py](../../ae/src/ae_server.py) supports three modes selected by `AE_MODE` (env var) or `ae/src/.ae_mode` (file fallback):
 
-- `hybrid` (default, **shipped at `hybrid-v3` 0.555/0.849**) — policy chooses, heuristic vetoes illegal / unsafe-bomb / step-into-blast / frozen-stay actions. See [../../ae/src/hybrid_manager.py](../../ae/src/hybrid_manager.py).
+- `hybrid` — policy chooses, heuristic vetoes illegal / unsafe-bomb / step-into-blast / frozen-stay actions. See [../../ae/src/hybrid_manager.py](../../ae/src/hybrid_manager.py).
 - `policy` — pure `PolicyAEManager`.
-- `heuristic` — pure rule-based `AEManager` (no torch needed in the image at all).
+- `heuristic` (current Dockerfile default after `fixed-map-v5`) — pure rule-based `AEManager` (no torch needed in the image at all).
+
+Current AE high: `fixed-map-v5` scored `0.630 / 0.858`. The follow-up
+`fixed-map-v5-finetune-v1` learned the local/scripted distribution (`til test`
+`0.85025`) but regressed on cloud to `0.587 / 0.848`, so the default path is now
+explicit fixed-map heuristic mode, not PPO continuation.
 
 Deploy a new policy checkpoint by copying it into the model slot:
 
 ```bash
 mkdir -p ae/models
 cp training/ae/checkpoints/<your>.pt ae/models/bc.pt
-echo hybrid > ae/src/.ae_mode        # or 'policy' / 'heuristic'
+echo heuristic > ae/src/.ae_mode     # or edit ae/Dockerfile; current default is heuristic
 til build ae <tag>                   # bakes AE_MODE into the image
 til test ae <tag>
 til submit ae <tag>

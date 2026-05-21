@@ -1,7 +1,9 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 21 May 2026 05:15 SGT — **AE runtime restored to the best known source state, `ae-fixed-map-v3` (`0.614 / 0.860`). After `pessimistic-mini-search-v1` failed cloud at `0.396 / 0.847`, `ae/src/ae_manager.py`, `ae/src/hybrid_manager.py`, and `ae/Dockerfile` were restored to commit `4c00f92`, the fixed-map-v3 runtime after base-location map detection was relaxed. Build from this state to preserve the current AE high.**
+Last updated: 21 May 2026 17:15 SGT — **AE current high is `fixed-map-v5` (`0.630 / 0.858`). It was built from the fixed-map-v3 runtime source plus the restored `deployed-bc-v1.pt` artifact, but subsequent evidence indicates the score likely came from the fixed-map heuristic path, not PPO improvement. The Dockerfile is now locked to `AE_MODE=heuristic` so future fixed-map builds reproduce that behavior deliberately instead of depending on policy-load fallback.**
+
+AE 21 May 17:15 SGT update: `fixed-map-v5` scored **0.630 / 0.858** with 0/30 errors, a new AE high. The restored checkpoint hash was `746bbe8198e77666d45ab9d9c6b4bb322a8f4de8faec1dab7343fc63ff4b73aa` (`epoch=75`, `ppo_eval_score=0.6055`). A real legacy-policy fine-tune (`fixed-map-v5-finetune-v1`) looked excellent locally (`til test 0.85025`, checkpoint eval `0.6678`) but cloud fell to **0.587 / 0.848**, confirming local/scripted PPO overfit. Current AE direction: preserve `fixed-map-v5`, force explicit heuristic mode, and only make small fixed-map heuristic changes from here.
 
 AE 21 May 05:15 SGT update: restored the working AE model to `ae-fixed-map-v3` source/config. This removes the later item-prior/macro/base-defense/pessimistic-search runtime changes from the shipping path while keeping their docs/results as historical evidence.
 
