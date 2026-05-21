@@ -6,10 +6,11 @@
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
 
-# NeMo ASR runtime. nemo_toolkit[asr] pulls in pytorch-lightning, hydra-core,
-# omegaconf, and a handful of audio libs. 2.7.3 is the current model-card
-# runtime for nvidia/parakeet-unified-en-0.6b.
-nemo_toolkit[asr]==2.7.3
+# NeMo ASR runtime. nvidia/parakeet-unified-en-0.6b needs
+# ConformerEncoder(att_chunk_context_size), which is present on NeMo main but
+# not in the latest PyPI/tagged release (2.7.3 as of 22 May 2026). Pin the
+# exact GitHub commit verified during the A/B so the image stays reproducible.
+nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@ccbbfbbdb3a4e4a4a8c06cedca6ca468e54112ac
 # NOTE: cuda-python (for the TDT decoder's CUDA-graph fast path) is NOT
 # pinned here. It used to be, but cuda-python 13.x has a package restructure
 # that breaks numba 0.65.x on import:
@@ -18,8 +19,8 @@ nemo_toolkit[asr]==2.7.3
 # resolver that downgraded torch 2.12.0 -> 2.9.1 on the Workbench host
 # (because <13 forces nvidia-*-cu12 libs, but torch 2.12.0 was built against
 # cu13). That broke torchvision and pytorch-lightning host-side.
-# cuda-python is now installed via a dedicated `RUN pip install` line in
-# Dockerfile.nemo with --no-deps, so the inference container still gets the
+# cuda-python is now installed via a dedicated `RUN pip install` line in the
+# ASR Dockerfiles with --no-deps, so the inference container still gets the
 # CUDA-graph fast path while the host env stays untouched.
 # NeMo expects a recent libsndfile and resampler. soundfile + librosa mirror
 # the whisper image so audio decode behavior matches.

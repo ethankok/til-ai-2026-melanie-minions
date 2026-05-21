@@ -1,7 +1,20 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 21 May 2026 17:45 SGT — **AE current high is `fixed-map-v5` (`0.630 / 0.858`). The repo runtime files are restored to the source shape that built that tag: fixed-map-v3-era source with `AE_MODE=hybrid` and the restored `deployed-bc-v1.pt` artifact supplied locally on Workbench. `ae/src/ae_manager.py` itself never drifted after `fixed-map-v5`; the important drift was later `model.py` / `policy_manager.py` legacy-checkpoint support and a temporary Dockerfile switch to heuristic mode, both now reverted for the AE runtime.**
+Last updated: 22 May 2026 06:15 SGT — **ASR `parakeet-unified-zs` first cloud probe was a container-startup failure, not an accuracy result. AE current high remains `fixed-map-v5` (`0.630 / 0.858`). The repo runtime files are restored to the source shape that built that tag: fixed-map-v3-era source with `AE_MODE=hybrid` and the restored `deployed-bc-v1.pt` artifact supplied locally on Workbench. `ae/src/ae_manager.py` itself never drifted after `fixed-map-v5`; the important drift was later `model.py` / `policy_manager.py` legacy-checkpoint support and a temporary Dockerfile switch to heuristic mode, both now reverted for the AE runtime.**
+
+ASR 22 May 05:46 SGT update: submitted `parakeet-unified-zs` after direct
+Hugging Face `.nemo` staging and a successful Docker build, but the container
+never became healthy and cloud returned **400/400 errors**, score **0.000**,
+speed **0.996**. Violet's triage and the local startup log point to the same
+cause: the checkpoint config contains `att_chunk_context_size`, while released
+`nemo_toolkit[asr]==2.7.3` does not expose that argument on
+`ConformerEncoder`. This result says nothing about unified model quality. The
+repo now pins the ASR image to NeMo GitHub main commit
+`ccbbfbbdb3a4e4a4a8c06cedca6ca468e54112ac` and adds a build-time guard for
+the required encoder argument. Do not resubmit this tag until
+`til build asr parakeet-unified-zs` passes that guard and
+`til test asr parakeet-unified-zs` reaches healthy inference.
 
 AE 21 May 17:15 SGT update: `fixed-map-v5` scored **0.630 / 0.858** with 0/30 errors, a new AE high. The restored checkpoint hash was `746bbe8198e77666d45ab9d9c6b4bb322a8f4de8faec1dab7343fc63ff4b73aa` (`epoch=75`, `ppo_eval_score=0.6055`). A real legacy-policy fine-tune (`fixed-map-v5-finetune-v1`) looked excellent locally (`til test 0.85025`, checkpoint eval `0.6678`) but cloud fell to **0.587 / 0.848**, confirming local/scripted PPO overfit. Current AE direction: preserve `fixed-map-v5` runtime source and only make small fixed-map changes from here.
 

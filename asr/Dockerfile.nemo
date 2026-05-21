@@ -24,6 +24,9 @@ ENV ASR_NEMO_MODEL=parakeet-unified-en-0.6b.nemo
 WORKDIR /workspace
 
 # Install dependencies. NeMo is a heavy install; this is the longest layer.
+# Git is required because requirements-nemo.txt pins NeMo to a GitHub commit
+# newer than the latest PyPI release.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 RUN pip install -U pip
 COPY requirements-nemo.txt .
 RUN pip install --no-cache-dir -r requirements-nemo.txt
@@ -33,6 +36,10 @@ RUN pip install --no-cache-dir -r requirements-nemo.txt
 # downgrade torch / torchvision / cuDNN to satisfy cuda-bindings's nvidia-*
 # requirements; the base image already ships a consistent CUDA 12 stack.
 RUN pip install --no-cache-dir --no-deps "cuda-python>=12.3,<13"
+
+# Fail during `til build`, before copying multi-GB model weights, if the NeMo
+# runtime cannot instantiate nvidia/parakeet-unified-en-0.6b.
+RUN python -c "import inspect, nemo; from nemo.collections.asr.modules.conformer_encoder import ConformerEncoder; params = inspect.signature(ConformerEncoder.__init__).parameters; print('NeMo runtime', getattr(nemo, '__version__', 'unknown'), nemo.__file__, flush=True); print('ConformerEncoder supports att_chunk_context_size:', 'att_chunk_context_size' in params, flush=True); assert 'att_chunk_context_size' in params, 'NeMo runtime cannot load parakeet-unified-en-0.6b: missing ConformerEncoder(att_chunk_context_size)'"
 
 # Copy source.
 COPY src .

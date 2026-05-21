@@ -1,11 +1,13 @@
 # ASR — notes & history
 
-Last updated: 22 May 2026 — **`parakeet-unified-zs` A/B staged.** Current
-shipped high remains `nemo-zs` (0.956 / 0.946). The repo ASR Dockerfile now
-defaults to `nvidia/parakeet-unified-en-0.6b` through the NeMo backend so a
-plain Workbench `til build asr parakeet-unified-zs` builds the intended image.
-Submit only if local English WER beats `nemo-zs`'s 0.0429 or the official
-blended score beats 0.9535.
+Last updated: 22 May 2026 — **`parakeet-unified-zs` A/B runtime fix staged.**
+Current shipped high remains `nemo-zs` (0.956 / 0.946). The first unified
+cloud probe returned 400/400 startup errors because released NeMo 2.7.3 cannot
+instantiate the checkpoint config (`ConformerEncoder(att_chunk_context_size)`).
+The ASR Dockerfile now pins NeMo to a GitHub main commit with that encoder
+support and hard-fails during `til build` if the support is missing. Submit
+only after `til test asr parakeet-unified-zs` becomes healthy and local English
+WER beats `nemo-zs`'s 0.0429, or if the official blended score can beat 0.9535.
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -24,9 +26,9 @@ high.
 
 ## Active A/B: Parakeet unified zero-shot
 
-**`parakeet-unified-zs` — staged 22 May 2026, not yet locally tested or
-submitted.** This is a zero-shot replacement for the current Parakeet-TDT-v2
-checkpoint, not a fine-tune.
+**`parakeet-unified-zs` — staged 22 May 2026; first cloud probe failed
+startup, runtime fix now staged.** This is a zero-shot replacement for the
+current Parakeet-TDT-v2 checkpoint, not a fine-tune.
 
 Why this candidate:
 
@@ -43,10 +45,25 @@ Code/build changes:
 ```text
 asr/Dockerfile                      now uses NeMo + ASR_NEMO_MODEL=parakeet-unified-en-0.6b.nemo
 asr/Dockerfile.nemo                 mirror explicit NeMo build path
-asr/requirements-nemo.txt           NeMo bump 2.0.0 -> 2.7.3 for unified-model support
+asr/requirements-nemo.txt           NeMo pinned to GitHub main commit ccbbfbb for unified-model support
 asr/src/asr_manager_nemo.py         default local model file -> parakeet-unified-en-0.6b.nemo
 training/asr/download_models_nemo.py default model -> nvidia/parakeet-unified-en-0.6b
 ```
+
+22 May startup diagnosis:
+
+- The direct Hugging Face `.nemo` download works; `ASRModel.from_pretrained`
+  was removed from the host download path so Workbench no longer needs to
+  instantiate the model just to stage weights.
+- The first built image still installed released `nemo_toolkit[asr]==2.7.3`.
+  That release's `ConformerEncoder` does not accept `att_chunk_context_size`,
+  but `nvidia/parakeet-unified-en-0.6b` includes that key in its config.
+- Result: the container never reached healthy state, cloud saw 400/400 error
+  exits, and the score was `0.000 / 0.996`. This is a startup/runtime mismatch,
+  not an ASR quality measurement.
+- The Docker build now checks for `att_chunk_context_size` immediately after
+  installing NeMo, before copying the multi-GB model directory. If this check
+  fails, do not submit; the build is intentionally stopping a bad image early.
 
 Workbench commands:
 
@@ -55,8 +72,9 @@ cd /home/jupyter/til
 git pull origin main
 export TIL_FOLDER=/home/jupyter/til
 
-# Host side only needs this to fetch the .nemo. The Docker image installs NeMo.
-python -m pip install -U huggingface_hub
+# Host side only needs this to fetch the .nemo. Keep <1.0 so transformers in
+# the Workbench env does not become dependency-conflicted.
+python -m pip install -U "huggingface_hub>=0.34,<1.0"
 
 python training/asr/extract_slang.py \
     --nlp-dir /home/jupyter/novice/nlp \

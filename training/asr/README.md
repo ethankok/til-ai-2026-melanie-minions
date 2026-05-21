@@ -19,7 +19,10 @@ official **0.956 / 0.946** (14 May 20:33 SGT). `nemo-zs-v2` re-exported with
 wall clock) but cloud speed is identical at 0.946 — the bottleneck is no
 longer the TDT decoder, it's HTTP / audio I/O / Python overhead. On 22 May,
 `parakeet-unified-zs` was staged as the next low-risk accuracy A/B before any
-fine-tune.
+fine-tune. The first unified cloud probe failed at container startup because
+released NeMo 2.7.3 lacks `ConformerEncoder(att_chunk_context_size)`; the image
+now pins a NeMo GitHub main commit with that support and checks for it during
+`til build`.
 
 ## Parakeet unified quick start: zero-shot A/B (Workbench)
 
@@ -30,8 +33,9 @@ from `nvidia/parakeet-tdt-0.6b-v2` to `nvidia/parakeet-unified-en-0.6b`.
 cd /home/jupyter/til
 export TIL_FOLDER=/home/jupyter/til
 
-# Host side only needs this to fetch the .nemo. The Docker image installs NeMo.
-python -m pip install -U huggingface_hub
+# Host side only needs this to fetch the .nemo. Keep <1.0 so transformers in
+# the Workbench env does not become dependency-conflicted.
+python -m pip install -U "huggingface_hub>=0.34,<1.0"
 
 python training/asr/extract_slang.py \
     --nlp-dir /home/jupyter/novice/nlp \
@@ -45,6 +49,11 @@ til build asr parakeet-unified-zs
 til test asr parakeet-unified-zs
 til submit asr parakeet-unified-zs   # only if local Eng-WER beats 0.0429, or for one protected cloud probe
 ```
+
+If `til build` fails at the `ConformerEncoder supports att_chunk_context_size`
+check, stop there. That means the NeMo runtime still cannot instantiate the
+unified checkpoint and the cloud result would be another 400/400 startup
+failure.
 
 The committed `asr/Dockerfile` now points at this model via
 `ASR_NEMO_MODEL=parakeet-unified-en-0.6b.nemo`, so `til build asr

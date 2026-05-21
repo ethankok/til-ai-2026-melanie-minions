@@ -27,6 +27,7 @@ Container expectations:
 from __future__ import annotations
 
 import io
+import inspect
 import os
 from typing import Any
 
@@ -102,7 +103,23 @@ class NemoASRManager:
         # `restore_from` is the offline loader; it does not phone home and
         # works inside the air-gapped eval container. `EncDecRNNTBPEModel`
         # covers Parakeet-TDT (TDT shares the RNNT decoding interface).
+        import nemo
+        from nemo.collections.asr.modules.conformer_encoder import ConformerEncoder
         from nemo.collections.asr.models import ASRModel
+
+        encoder_params = inspect.signature(ConformerEncoder.__init__).parameters
+        print(
+            "[NemoASRManager] nemo="
+            f"{getattr(nemo, '__version__', 'unknown')} path={getattr(nemo, '__file__', 'unknown')} "
+            f"unified_chunking={'att_chunk_context_size' in encoder_params}",
+            flush=True,
+        )
+        if self.MODEL_FILE.startswith("parakeet-unified") and "att_chunk_context_size" not in encoder_params:
+            raise RuntimeError(
+                "This NeMo runtime cannot load parakeet-unified-en-0.6b: "
+                "ConformerEncoder is missing att_chunk_context_size. Rebuild "
+                "with the pinned GitHub NeMo commit in requirements-nemo.txt."
+            )
 
         self.model = ASRModel.restore_from(restore_path=model_path)
 
