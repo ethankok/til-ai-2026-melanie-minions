@@ -1,17 +1,18 @@
-# Dependencies for the NeMo / Parakeet-TDT variant of the ASR container.
-# Used by Dockerfile.nemo. The shipped float16 distil-whisper image keeps
-# using requirements.txt; this file is a parallel build path for A/B testing.
+# Dependencies for the NeMo / Parakeet variant of the ASR container.
+# Used by the primary Dockerfile and Dockerfile.nemo for the staged NeMo A/B.
+# The legacy faster-whisper image used requirements.txt and remains recoverable
+# from git history.
 
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
 
 # NeMo ASR runtime. nemo_toolkit[asr] pulls in pytorch-lightning, hydra-core,
-# omegaconf, and a handful of audio libs. Pin a known-good 2.x release that
-# supports the Parakeet-TDT-0.6B-v2 checkpoint.
-nemo_toolkit[asr]==2.0.0
+# omegaconf, and a handful of audio libs. 2.7.3 is the current model-card
+# runtime for nvidia/parakeet-unified-en-0.6b.
+nemo_toolkit[asr]==2.7.3
 # NOTE: cuda-python (for the TDT decoder's CUDA-graph fast path) is NOT
-# pinned here. It used to be, but in November 2026 cuda-python 13.x landed
-# with a package restructure that breaks numba 0.65.x on import:
+# pinned here. It used to be, but cuda-python 13.x has a package restructure
+# that breaks numba 0.65.x on import:
 #   ImportError: cannot import name 'cuda' from 'cuda' (unknown location)
 # Pinning cuda-python<13 in this file then triggered a cascade through pip's
 # resolver that downgraded torch 2.12.0 -> 2.9.1 on the Workbench host

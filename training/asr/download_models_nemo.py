@@ -1,13 +1,13 @@
-"""Download Parakeet-TDT weights for offline use inside the eval container.
+"""Download NeMo ASR weights for offline use inside the eval container.
 
-Run this on the GCP Workbench instance once before `til build asr nemo-v1`.
+Run this on the GCP Workbench instance once before `til build asr <tag>`.
 The eval container has no internet access, so the `.nemo` file must be on
 local disk (baked into the image via `COPY models /workspace/models/asr`)
 before the build.
 
 Usage:
     python training/asr/download_models_nemo.py \
-        --model nvidia/parakeet-tdt-0.6b-v2 \
+        --model nvidia/parakeet-unified-en-0.6b \
         --out asr/models
 
 Idempotent: if the target file already exists and `--force` is not set, the
@@ -33,7 +33,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        default="nvidia/parakeet-tdt-0.6b-v2",
+        default="nvidia/parakeet-unified-en-0.6b",
         help="HuggingFace / NGC model id to download.",
     )
     parser.add_argument(
@@ -99,7 +99,7 @@ def main() -> int:
     if not slang_path.exists():
         print(
             f"WARN: {slang_path} not found. Run extract_slang.py before "
-            "`til build asr nemo-v1` so the slang word list is baked in.",
+            "`til build asr <tag>` so the slang word list is baked in.",
             file=sys.stderr,
         )
     return 0

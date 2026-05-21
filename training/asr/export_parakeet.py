@@ -54,8 +54,9 @@ def main() -> int:
         "--filename",
         type=str,
         default="parakeet-tdt-0.6b-v2.nemo",
-        help="Target filename inside --output-dir. Must match the value in "
-             "ASRManager (defaults to parakeet-tdt-0.6b-v2.nemo).",
+        help="Target filename inside --output-dir. For the TDT-v2 fine-tune "
+             "path this stays parakeet-tdt-0.6b-v2.nemo; for the unified "
+             "zero-shot A/B use download_models_nemo.py instead.",
     )
     ap.add_argument(
         "--slang-file",

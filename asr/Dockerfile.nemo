@@ -1,11 +1,12 @@
-# Dockerfile for building the ASR image on the NeMo / Parakeet-TDT backend.
+# Dockerfile for building the ASR image on the NeMo / Parakeet backend.
 #
 # Build with:
-#   docker build -f Dockerfile.nemo -t TEAM_ID-asr:nemo-v1 .
-# (or `til build asr nemo-v1` after copying this file to Dockerfile)
+#   docker build -f Dockerfile.nemo -t TEAM_ID-asr:parakeet-unified-zs .
+# `til build asr parakeet-unified-zs` uses the primary Dockerfile, which
+# mirrors this file.
 #
-# The shipped distil-whisper image still uses `Dockerfile`. This file is the
-# parallel build path used for A/B testing the Parakeet backend.
+# This mirrors the primary `Dockerfile` so explicit docker builds and `til build`
+# stay aligned for the staged ASR A/B.
 
 FROM nvcr.io/nvidia/pytorch:25.11-py3
 
@@ -13,11 +14,13 @@ FROM nvcr.io/nvidia/pytorch:25.11-py3
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
-# Keep model loaders fully offline at runtime — eval container has no internet.
+# Keep model loaders fully offline at runtime; eval container has no internet.
 ENV HF_HUB_OFFLINE=1
 ENV TRANSFORMERS_OFFLINE=1
 # Switch the server to the NeMo backend.
 ENV ASR_BACKEND=nemo
+# Default experiment: Parakeet unified English zero-shot A/B.
+ENV ASR_NEMO_MODEL=parakeet-unified-en-0.6b.nemo
 WORKDIR /workspace
 
 # Install dependencies. NeMo is a heavy install; this is the longest layer.
@@ -28,7 +31,7 @@ RUN pip install --no-cache-dir -r requirements-nemo.txt
 # 12.x because numba 0.65.x can't import cuda-python 13.x (package
 # restructure broke `from cuda import cuda`). Use --no-deps so pip cannot
 # downgrade torch / torchvision / cuDNN to satisfy cuda-bindings's nvidia-*
-# requirements — the base image already ships a consistent CUDA 12 stack.
+# requirements; the base image already ships a consistent CUDA 12 stack.
 RUN pip install --no-cache-dir --no-deps "cuda-python>=12.3,<13"
 
 # Copy source.
@@ -36,8 +39,8 @@ COPY src .
 
 # Bake in the Parakeet `.nemo` weights and the slang prompt. Populated on the
 # GCP Workbench instance via training/asr/download_models_nemo.py before
-# `til build asr nemo-v1`. Layout:
-#   models/parakeet-tdt-0.6b-v2.nemo
+# `til build asr parakeet-unified-zs`. Layout:
+#   models/parakeet-unified-en-0.6b.nemo
 #   models/slang_prompt.txt
 COPY models /workspace/models/asr
 

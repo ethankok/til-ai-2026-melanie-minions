@@ -1,9 +1,11 @@
 # ASR training pipeline (Workbench-only)
 
-Two parallel pipelines live here:
+Three practical ASR paths live here:
 
-* **Parakeet-TDT (NeMo)** — current shipped path. Fine-tunes
-  `nvidia/parakeet-tdt-0.6b-v2` and exports the `.nemo` directly.
+* **Parakeet unified (NeMo)** — current staged A/B. Downloads
+  `nvidia/parakeet-unified-en-0.6b` and bakes the `.nemo` into the ASR image.
+* **Parakeet-TDT (NeMo)** — current shipped cloud high. Fine-tunes
+  `nvidia/parakeet-tdt-0.6b-v2` and exports the `.nemo` directly when needed.
 * **distil-whisper LoRA** — legacy path, kept as fallback while Parakeet
   experiments run. Fine-tunes `distil-whisper/distil-large-v3` with PEFT
   LoRA, then exports to CTranslate2.
@@ -15,12 +17,45 @@ tooling.
 official **0.956 / 0.946** (14 May 20:33 SGT). `nemo-zs-v2` re-exported with
 `cuda-python>=12.3` enabled CUDA-graph fast path locally (37:28 → 34:42
 wall clock) but cloud speed is identical at 0.946 — the bottleneck is no
-longer the TDT decoder, it's HTTP / audio I/O / Python overhead. The next
-real lever is **accuracy**, which is what `train_parakeet.py` is for.
+longer the TDT decoder, it's HTTP / audio I/O / Python overhead. On 22 May,
+`parakeet-unified-zs` was staged as the next low-risk accuracy A/B before any
+fine-tune.
+
+## Parakeet unified quick start: zero-shot A/B (Workbench)
+
+This is the current recommended ASR action. It swaps only the NeMo checkpoint,
+from `nvidia/parakeet-tdt-0.6b-v2` to `nvidia/parakeet-unified-en-0.6b`.
+
+```bash
+cd /home/jupyter/til
+export TIL_FOLDER=/home/jupyter/til
+
+pip install -r asr/requirements-nemo.txt
+
+python training/asr/extract_slang.py \
+    --nlp-dir /home/jupyter/novice/nlp \
+    --out asr/models/slang_prompt.txt
+
+python training/asr/download_models_nemo.py \
+    --model nvidia/parakeet-unified-en-0.6b \
+    --out asr/models
+
+til build asr parakeet-unified-zs
+til test asr parakeet-unified-zs
+til submit asr parakeet-unified-zs   # only if local Eng-WER beats 0.0429, or for one protected cloud probe
+```
+
+The committed `asr/Dockerfile` now points at this model via
+`ASR_NEMO_MODEL=parakeet-unified-en-0.6b.nemo`, so `til build asr
+parakeet-unified-zs` is enough after the weights are downloaded. To rebuild
+the old TDT-v2 path, download `nvidia/parakeet-tdt-0.6b-v2` and override
+`ASR_NEMO_MODEL=parakeet-tdt-0.6b-v2.nemo`.
 
 ## Parakeet quick start: fine-tune on T4 (Workbench)
 
-The defaults in `train_parakeet.py` are tuned for T4 (16 GB) at fp16.
+The defaults in `train_parakeet.py` are tuned for T4 (16 GB) at fp16 and still
+point at the proven TDT-v2 checkpoint. Revisit this only if the unified
+zero-shot A/B is flat but ASR remains worth more time.
 
 ```bash
 cd /home/jupyter/til

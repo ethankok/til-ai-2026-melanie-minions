@@ -1,31 +1,46 @@
-# Dockerfile for building the ASR image.
+# Dockerfile for building the ASR image on the NeMo / Parakeet backend.
+#
+# Current A/B target:
+#   til build asr parakeet-unified-zs
+#
+# This stages nvidia/parakeet-unified-en-0.6b as the default ASR build. The
+# prior faster-whisper LoRA path remains recoverable from git history; the
+# parallel Dockerfile.nemo mirrors this NeMo build shape for explicit docker
+# builds.
 
-
-# The base image, an example deep learning VM.
-# For a full list, see https://us-docker.pkg.dev/deeplearning-platform-release/gcr.io/
-# For info, see https://cloud.google.com/deep-learning-vm/docs/images#supported-frameworks
 FROM nvcr.io/nvidia/pytorch:25.11-py3
 
 # Configures settings for the image.
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
-# Make pip-installed CUDA 12 libraries discoverable by CTranslate2.
-ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/dist-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/dist-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}
+# Keep model loaders fully offline at runtime; eval container has no internet.
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+# Switch the server to the NeMo backend and select the staged unified model.
+ENV ASR_BACKEND=nemo
+ENV ASR_NEMO_MODEL=parakeet-unified-en-0.6b.nemo
 WORKDIR /workspace
 
-# Installs your dependencies.
+# Install dependencies. NeMo is a heavy install; this is the longest layer.
 RUN pip install -U pip
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-nemo.txt .
+RUN pip install --no-cache-dir -r requirements-nemo.txt
+# cuda-python is needed for the TDT/RNNT CUDA-graph fast path where supported.
+# Pin to 12.x because numba 0.65.x can't import cuda-python 13.x (package
+# restructure broke `from cuda import cuda`). Use --no-deps so pip cannot
+# downgrade torch / torchvision / cuDNN to satisfy cuda-bindings's nvidia-*
+# requirements; the base image already ships a consistent CUDA stack.
+RUN pip install --no-cache-dir --no-deps "cuda-python>=12.3,<13"
 
-# Copies your source files.
+# Copy source.
 COPY src .
 
-# Bakes in CT2-converted model weights + slang prompt. Populated on the GCP
-# Workbench instance via `gsutil cp -r gs://<bucket>/asr-models models` before
-# `til build asr`. The bucket layout mirrors a faster-whisper model dir:
-#   models/{model.bin, config.json, tokenizer.json, ..., slang_prompt.txt}
+# Bake in the Parakeet `.nemo` weights and the slang prompt. Populated on the
+# GCP Workbench instance via training/asr/download_models_nemo.py before
+# `til build asr parakeet-unified-zs`. Layout:
+#   models/parakeet-unified-en-0.6b.nemo
+#   models/slang_prompt.txt
 COPY models /workspace/models/asr
 
 # Starts your model server.

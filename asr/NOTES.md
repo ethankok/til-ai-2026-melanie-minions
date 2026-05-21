@@ -1,10 +1,11 @@
 # ASR — notes & history
 
-Last updated: 17 May 2026 — **PARKED at `nemo-zs` (0.956 / 0.946).** No
-active iteration since 14 May; date bumped for hygiene. Speed bottleneck is
-HTTP / audio I/O / Python overhead (see `nemo-zs-v2` row in RESULTS.md), not
-the decoder, so next move would be accuracy (Parakeet FT) only if other
-tasks plateau.
+Last updated: 22 May 2026 — **`parakeet-unified-zs` A/B staged.** Current
+shipped high remains `nemo-zs` (0.956 / 0.946). The repo ASR Dockerfile now
+defaults to `nvidia/parakeet-unified-en-0.6b` through the NeMo backend so a
+plain Workbench `til build asr parakeet-unified-zs` builds the intended image.
+Submit only if local English WER beats `nemo-zs`'s 0.0429 or the official
+blended score beats 0.9535.
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -21,7 +22,68 @@ the higher raw score for either dimension, but blended-per-challenge is what
 feeds the qualifier total via the 75/25 weighting, so this is the new ASR
 high.
 
-## Active experiment: NeMo Parakeet-TDT backend
+## Active A/B: Parakeet unified zero-shot
+
+**`parakeet-unified-zs` — staged 22 May 2026, not yet locally tested or
+submitted.** This is a zero-shot replacement for the current Parakeet-TDT-v2
+checkpoint, not a fine-tune.
+
+Why this candidate:
+
+- Same practical size class as the current high: 600M parameters.
+- Same NeMo-style offline `.nemo` packaging, so it is much lower risk than
+switching to Cohere/Granite/Qwen runtimes.
+- Model-card OpenASR offline WER is slightly better than TDT-v2
+  (`5.91` vs `6.04/6.05`), while keeping a transducer-style architecture.
+- It supports punctuation/capitalization, but the official scorer strips
+  punctuation, so this should not hurt.
+
+Code/build changes:
+
+```text
+asr/Dockerfile                      now uses NeMo + ASR_NEMO_MODEL=parakeet-unified-en-0.6b.nemo
+asr/Dockerfile.nemo                 mirror explicit NeMo build path
+asr/requirements-nemo.txt           NeMo bump 2.0.0 -> 2.7.3 for unified-model support
+asr/src/asr_manager_nemo.py         default local model file -> parakeet-unified-en-0.6b.nemo
+training/asr/download_models_nemo.py default model -> nvidia/parakeet-unified-en-0.6b
+```
+
+Workbench commands:
+
+```bash
+cd /home/jupyter/til
+git pull origin main
+export TIL_FOLDER=/home/jupyter/til
+
+pip install -r asr/requirements-nemo.txt
+
+python training/asr/extract_slang.py \
+    --nlp-dir /home/jupyter/novice/nlp \
+    --out asr/models/slang_prompt.txt
+
+python training/asr/download_models_nemo.py \
+    --model nvidia/parakeet-unified-en-0.6b \
+    --out asr/models
+
+til build asr parakeet-unified-zs
+til test asr parakeet-unified-zs
+
+# Submit only if local english error rate beats 0.0429 or if we want one
+# cloud probe because leaderboard retention protects the current high.
+til submit asr parakeet-unified-zs
+```
+
+Decision gate:
+
+```text
+Promote if: local English WER < 0.0429, or official blended > 0.9535.
+Reject if: startup errors, wrong JSON shape, local English WER flat/worse with
+           slower wall clock, or cloud speed drops enough to lose blended score.
+Fallback:  `nemo-zs` remains the shipped high. To rebuild the old TDT-v2 path,
+           set ASR_NEMO_MODEL=parakeet-tdt-0.6b-v2.nemo and download that file.
+```
+
+## Historical experiment: NeMo Parakeet-TDT backend
 
 Leaderboard inspection on 14 May shows multiple Novice teams above
 `0.97 / 0.92` simultaneously (Overflow `0.991/0.925`, OpenLarp `0.986/0.940`,
@@ -49,11 +111,11 @@ Parallel build path (does not touch the shipped distil-whisper image):
 ```text
 asr/src/asr_postprocess.py          shared digits->words (extracted from manager)
 asr/src/asr_manager.py              UNCHANGED behavior; now imports postprocess
-asr/src/asr_manager_nemo.py         NEW: NemoASRManager (Parakeet-TDT)
+asr/src/asr_manager_nemo.py         NemoASRManager (generic local NeMo `.nemo`)
 asr/src/asr_server.py               picks backend via ASR_BACKEND env (default whisper)
-asr/requirements-nemo.txt           NEW: nemo_toolkit[asr]==2.0.0 + audio libs
-asr/Dockerfile.nemo                 NEW: parallel image, ENV ASR_BACKEND=nemo
-training/asr/download_models_nemo.py NEW: stage parakeet-tdt-0.6b-v2.nemo into asr/models/
+asr/requirements-nemo.txt           NeMo runtime + audio libs
+asr/Dockerfile.nemo                 explicit NeMo image, ENV ASR_BACKEND=nemo
+training/asr/download_models_nemo.py stage local `.nemo` files into asr/models/
 ```
 
 Phase plan with kill switches at each step:

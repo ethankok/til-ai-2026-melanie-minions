@@ -1,20 +1,22 @@
-"""ASR manager backed by NVIDIA Parakeet-TDT (NeMo).
+"""ASR manager backed by NVIDIA NeMo ASR models.
 
 Drop-in replacement for `asr_manager.ASRManager` for A/B testing against the
-shipped faster-whisper distil-large-v3 path. Expected to be on a strictly
-better speed/accuracy frontier for English-only Novice audio:
+legacy faster-whisper distil-large-v3 path. The default checkpoint is the
+Parakeet unified English model, staged as the next zero-shot A/B against the
+current `nemo-zs` Parakeet-TDT-v2 submission.
 
-* Parakeet-TDT decoder is non-autoregressive over cross-attention, so per-clip
-  decode latency is far below Whisper-family models.
-* Parakeet emits spelled-out numbers natively (matches the official transcript
-  style: "zero six hundred", "twenty third", "north-northeast"). The
-  `digits_to_words` post-processor stays as a safety net.
+NeMo/Parakeet models emit spelled-out numbers more often than Whisper-family
+models (matching the official transcript style: "zero six hundred",
+"twenty third", "north-northeast"). The `digits_to_words` post-processor stays
+as a safety net.
 
 Container expectations:
 
 * Weights baked into the image at build time. Default lookup path is
-  `/workspace/models/asr/parakeet-tdt-0.6b-v2.nemo`. Override via env
-  `ASR_NEMO_MODEL` (filename) or `ASR_MODELS_DIR` (parent directory).
+  `/workspace/models/asr/parakeet-unified-en-0.6b.nemo`. Override via env
+  `ASR_NEMO_MODEL` (filename) or `ASR_MODELS_DIR` (parent directory). To run
+  the previous TDT-v2 image shape, set
+  `ASR_NEMO_MODEL=parakeet-tdt-0.6b-v2.nemo`.
 * Slang prompt at `/workspace/models/asr/slang_prompt.txt` is reused as a
   word-boost list when the loaded NeMo model exposes a context-biasing
   decoding API. If the API is unavailable on this NeMo version, biasing is
@@ -46,10 +48,10 @@ except ImportError:
 
 
 class NemoASRManager:
-    """English ASR backed by NeMo Parakeet-TDT (or any NeMo ASR `.nemo`)."""
+    """English ASR backed by a local NeMo ASR `.nemo` checkpoint."""
 
     MODELS_DIR = os.environ.get("ASR_MODELS_DIR", "/workspace/models/asr")
-    MODEL_FILE = os.environ.get("ASR_NEMO_MODEL", "parakeet-tdt-0.6b-v2.nemo")
+    MODEL_FILE = os.environ.get("ASR_NEMO_MODEL", "parakeet-unified-en-0.6b.nemo")
     SLANG_PROMPT_PATH = os.environ.get(
         "ASR_SLANG_PROMPT_PATH", "/workspace/models/asr/slang_prompt.txt"
     )

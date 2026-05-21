@@ -2,7 +2,7 @@
 
 Backend selection is via the `ASR_BACKEND` env var:
   - `whisper` (default): faster-whisper distil-large-v3 from `asr_manager.py`
-  - `nemo`:              NVIDIA Parakeet-TDT from `asr_manager_nemo.py`
+  - `nemo`:              NVIDIA NeMo ASR checkpoint from `asr_manager_nemo.py`
 
 Defaulting to whisper keeps the shipped image bit-identical when this file is
 deployed without the env var set. The nemo path is opt-in so the existing
