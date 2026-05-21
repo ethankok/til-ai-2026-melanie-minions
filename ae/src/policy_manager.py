@@ -53,6 +53,7 @@ from model import (
     BELIEF_HW,
     PolicyNetwork,
     VIEW_CHANNELS,
+    build_policy_network,
 )
 
 
@@ -110,13 +111,19 @@ def _load_model(checkpoint_path: Path) -> tuple[PolicyNetwork, torch.device, int
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     n_frames = int(ckpt.get("n_frames", 1))
     use_belief = bool(ckpt.get("use_belief", False))
-    model = PolicyNetwork(n_frames=n_frames, use_belief=use_belief).to(device)
-    model.load_state_dict(ckpt["model_state_dict"])
+    state_dict = ckpt["model_state_dict"]
+    model = build_policy_network(
+        n_frames=n_frames,
+        use_belief=use_belief,
+        state_dict=state_dict,
+    ).to(device)
+    model.load_state_dict(state_dict)
     model.eval()
     _warmup(model, device, n_frames, use_belief)
     print(
         f"AE policy loaded from {checkpoint_path} "
-        f"(n_frames={n_frames}, use_belief={use_belief}, "
+        f"(arch={getattr(model, 'model_arch', 'default')}, "
+        f"n_frames={n_frames}, use_belief={use_belief}, "
         f"epoch={ckpt.get('epoch')}, val_acc={ckpt.get('val_acc')}, "
         f"ppo_eval={ckpt.get('ppo_eval_score')}, "
         f"device={device}, threads={torch.get_num_threads()})"

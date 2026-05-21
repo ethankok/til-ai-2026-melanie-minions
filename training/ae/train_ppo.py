@@ -58,6 +58,7 @@ from model import (  # noqa: E402
     BELIEF_HW,
     PolicyNetwork,
     VIEW_CHANNELS,
+    build_policy_network,
     num_parameters,
 )
 from ae_manager import AEManager  # noqa: E402
@@ -734,10 +735,19 @@ def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNe
                 "training from scratch instead of warm-starting."
             )
             ckpt = None  # will skip load_state_dict below
-    actor = PolicyNetwork(n_frames=args.n_frames, use_belief=use_belief).to(device)
+    state_dict = ckpt.get("model_state_dict") if ckpt is not None else None
+    actor = build_policy_network(
+        n_frames=args.n_frames,
+        use_belief=use_belief,
+        state_dict=state_dict,
+    ).to(device)
     if ckpt is not None:
-        actor.load_state_dict(ckpt["model_state_dict"])
-        print(f"warm-started actor from {ckpt_path} (n_frames={args.n_frames}, use_belief={use_belief})")
+        actor.load_state_dict(state_dict)
+        print(
+            f"warm-started actor from {ckpt_path} "
+            f"(arch={getattr(actor, 'model_arch', 'default')}, "
+            f"n_frames={args.n_frames}, use_belief={use_belief})"
+        )
     elif ckpt_path and not ckpt_path.exists():
         print(f"BC checkpoint not found at {ckpt_path}; training PPO from scratch (use_belief={use_belief})")
     return actor, use_belief
@@ -817,6 +827,7 @@ def train(args: argparse.Namespace) -> None:
                     "epoch": update,
                     "n_frames": args.n_frames,
                     "use_belief": bool(getattr(actor, "use_belief", False)),
+                    "model_arch": getattr(actor, "model_arch", "default"),
                     "ppo_eval_score": eval_score,
                     "rollout_score": rollout_score,
                     "args": vars(args),

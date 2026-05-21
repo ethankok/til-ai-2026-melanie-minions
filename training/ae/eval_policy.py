@@ -33,7 +33,7 @@ sys.path.insert(0, str(THIS_DIR))
 sys.path.insert(0, str(REPO_ROOT / "ae" / "src"))
 
 from encoder import FrameStacker, rasterize_belief  # noqa: E402
-from model import PolicyNetwork  # noqa: E402
+from model import PolicyNetwork, build_policy_network  # noqa: E402
 from ae_manager import AEManager  # noqa: E402
 
 from til_environment import bomberman_env  # noqa: E402
@@ -103,9 +103,15 @@ def evaluate(args: argparse.Namespace) -> None:
         f"val_acc={checkpoint.get('val_acc')}, n_frames={n_frames}, use_belief={use_belief}"
     )
 
-    model = PolicyNetwork(n_frames=n_frames, use_belief=use_belief).to(device)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    state_dict = checkpoint["model_state_dict"]
+    model = build_policy_network(
+        n_frames=n_frames,
+        use_belief=use_belief,
+        state_dict=state_dict,
+    ).to(device)
+    model.load_state_dict(state_dict)
     model.eval()
+    print(f"policy_arch={getattr(model, 'model_arch', 'default')}")
 
     config = default_config()
     config.env.novice = args.novice
