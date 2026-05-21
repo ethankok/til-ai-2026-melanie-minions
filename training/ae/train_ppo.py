@@ -43,7 +43,7 @@ from torch.distributions import Categorical
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parents[1]
 sys.path.insert(0, str(THIS_DIR))
-sys.path.insert(0, str(REPO_ROOT / "ae" / "src"))
+sys.path.insert(1, str(REPO_ROOT / "ae" / "src"))
 
 from encoder import (  # noqa: E402
     BELIEF_CHANNELS,
@@ -68,6 +68,38 @@ from til_environment.config import default_config  # noqa: E402
 
 MAX_SCORE = 1000.0
 ACTION_DIM = 6
+OPPONENT_MODES = (
+    "static",
+    "random",
+    "planner",
+    "frozen",
+    "aggressive",
+    "mixed",
+    "league",
+    "selfplay",
+    "scripted",
+    "cloudsuite",
+)
+
+CURRICULA = {
+    # Warm up on easy legal-action pressure, then move into the opponent
+    # families that have been most predictive of hidden-eval failure.
+    "pressure": (
+        (0.00, "scripted"),
+        (0.35, "cloudsuite"),
+        (0.75, "league"),
+    ),
+    # Broader Bomberman curriculum inspired by public Pommerman/TIL training
+    # recipes: learn bomb usage safely, then progressively add moving and
+    # adversarial opponents.
+    "bomberman": (
+        (0.00, "static"),
+        (0.12, "random"),
+        (0.30, "scripted"),
+        (0.55, "cloudsuite"),
+        (0.82, "league"),
+    ),
+}
 
 
 @dataclass
@@ -82,6 +114,90 @@ class Transition:
     belief_map: np.ndarray | None = None  # (BELIEF_CHANNELS, 16, 16) or None
     reward: float = 0.0
     done: bool = False
+
+
+class AdaptiveRewardShaper:
+    """Small training-only reward shaping layer.
+
+    Bomberman-style PPO has two recurring pathologies: timid policies stop
+    bombing because early bombs are dangerous, while over-aggressive policies
+    ignore base survival. This shaper keeps the raw environment reward as the
+    dominant signal and adds bounded nudges for exploration, bombing, and
+    health/base preservation. It is never used in the deployed manager.
+    """
+
+    def __init__(self, args: argparse.Namespace):
+        self.args = args
+        self.success_ema = 0.0
+        self.visit_counts = np.zeros((16, 16), dtype=np.int32)
+        self.last_health: float | None = None
+        self.last_base_health: float | None = None
+        self.episode_raw_reward = 0.0
+
+    def start_game(self) -> None:
+        self.visit_counts.fill(0)
+        self.last_health = None
+        self.last_base_health = None
+        self.episode_raw_reward = 0.0
+
+    @property
+    def explore_weight(self) -> float:
+        if self.args.explore_bonus <= 0.0:
+            return 0.0
+        anneal = 1.0 - math.tanh(self.args.explore_anneal_k * self.success_ema)
+        anneal = max(self.args.explore_min_scale, anneal)
+        return self.args.explore_bonus * anneal
+
+    def shape(self, raw_reward: float, obs_py: dict | None, action: int, done: bool) -> float:
+        shaped = float(raw_reward)
+        self.episode_raw_reward += float(raw_reward)
+
+        if obs_py is not None:
+            shaped += self._explore_bonus(obs_py)
+            shaped += self._health_delta_bonus(obs_py)
+
+        if action == ACTION_DIM - 1 and self.args.bomb_action_bonus:
+            shaped += self.args.bomb_action_bonus
+
+        if done:
+            success = 1.0 if self.episode_raw_reward >= self.args.explore_success_reward else 0.0
+            self.success_ema = 0.95 * self.success_ema + 0.05 * success
+
+        return shaped
+
+    def _explore_bonus(self, obs_py: dict) -> float:
+        weight = self.explore_weight
+        if weight <= 0.0:
+            return 0.0
+        loc = obs_py.get("location")
+        try:
+            if hasattr(loc, "tolist"):
+                loc = loc.tolist()
+            x, y = int(loc[0]), int(loc[1])
+        except Exception:
+            return 0.0
+        if not (0 <= x < self.visit_counts.shape[0] and 0 <= y < self.visit_counts.shape[1]):
+            return 0.0
+        visits = int(self.visit_counts[x, y])
+        self.visit_counts[x, y] += 1
+        return weight / (1.0 + visits)
+
+    def _health_delta_bonus(self, obs_py: dict) -> float:
+        bonus = 0.0
+
+        health = _safe_float(obs_py.get("health"))
+        if health is not None:
+            if self.last_health is not None:
+                bonus += self.args.health_delta_coef * (health - self.last_health)
+            self.last_health = health
+
+        base_health = _safe_float(obs_py.get("base_health"))
+        if base_health is not None:
+            if self.last_base_health is not None:
+                bonus += self.args.base_health_delta_coef * (base_health - self.last_base_health)
+            self.last_base_health = base_health
+
+        return bonus
 
 
 class ValueNetwork(nn.Module):
@@ -161,6 +277,21 @@ def _obs_to_python(obs) -> dict:
     return out
 
 
+def _safe_float(value) -> float | None:
+    try:
+        if value is None:
+            return None
+        if hasattr(value, "item"):
+            return float(value.item())
+        if isinstance(value, (list, tuple, np.ndarray)):
+            if len(value) == 0:
+                return None
+            return float(value[0])
+        return float(value)
+    except Exception:
+        return None
+
+
 def _masked_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return logits + torch.log(mask.clamp(min=1e-9))
 
@@ -229,6 +360,14 @@ def _select_action(
 
 def _random_opponent(env, agent: str, _obs_py: dict) -> int:
     return int(env.action_space(agent).sample())
+
+
+def _static_opponent(_env, _agent: str, obs_py: dict) -> int:
+    mask = np.asarray(obs_py.get("action_mask", [1, 1, 1, 1, 1, 1]), dtype=np.float32).reshape(-1)
+    if mask.size > 4 and bool(mask[4]):
+        return 4
+    legal = np.flatnonzero(mask[:ACTION_DIM] > 0)
+    return int(legal[0]) if legal.size else 4
 
 
 class PlannerOpponent:
@@ -368,6 +507,7 @@ def _make_opponents(
     """Build opponent dict.
 
     Modes:
+    - static:      always STAY when legal; easy bomb-usage curriculum
     - random:      uniform-random; fastest but unrealistic
     - planner:     frozen rule-based AEManager
     - frozen:      frozen copy of the trainee (live actor — your shadow)
@@ -400,6 +540,8 @@ def _make_opponents(
         return actor
 
     choices: list[Callable] = []
+    if mode == "static":
+        choices.append(_static_opponent)
     if mode in {"random", "mixed", "league"}:
         choices.extend([_random_opponent, _random_opponent])
     if mode in {"planner", "mixed", "league"}:
@@ -495,16 +637,20 @@ def collect_rollouts(
     device: torch.device,
     seed_offset: int,
     snapshot_pool: SnapshotPool | None = None,
+    opponent_mode: str | None = None,
 ) -> tuple[list[Transition], float]:
     env = _make_env(args)
     our_agent = env.possible_agents[0]
 
     transitions: list[Transition] = []
     total_reward = 0.0
+    reward_shaper = AdaptiveRewardShaper(args)
+    mode = opponent_mode or args.opponents
 
     use_belief = bool(getattr(actor, "use_belief", False))
 
     for game in range(args.games_per_update):
+        reward_shaper.start_game()
         if args.vary_maps:
             env.reset(seed=random.randint(0, 2**31 - 1))
         elif args.seed is not None:
@@ -515,7 +661,7 @@ def collect_rollouts(
         # Per-game belief-tracking planner for OUR agent. Cheap when use_belief=False.
         planner = AEManager()
         opponents = _make_opponents(
-            actor, device, args.opponents,
+            actor, device, mode,
             [a for a in env.possible_agents if a != our_agent],
             args.n_frames,
             snapshot_pool=snapshot_pool,
@@ -529,7 +675,16 @@ def collect_rollouts(
             obs, reward, termination, truncation, _info = env.last()
             done = bool(termination or truncation)
             if agent == our_agent and pending_idx is not None:
-                transitions[pending_idx].reward = float(reward)
+                try:
+                    current_obs_py = _obs_to_python(obs)
+                except Exception:
+                    current_obs_py = None
+                transitions[pending_idx].reward = reward_shaper.shape(
+                    float(reward),
+                    current_obs_py,
+                    transitions[pending_idx].action,
+                    done,
+                )
                 transitions[pending_idx].done = done
                 total_reward += float(reward)
                 pending_idx = None
@@ -600,6 +755,8 @@ def ppo_update(
     optimizer: optim.Optimizer,
     args: argparse.Namespace,
     device: torch.device,
+    clip_coef: float,
+    entropy_coef: float,
 ) -> dict[str, float]:
     use_belief = bool(getattr(actor, "use_belief", False))
     (agent_v, base_v, scalars, masks, actions, old_logprobs,
@@ -612,6 +769,10 @@ def ppo_update(
     n = actions.numel()
     idx = torch.arange(n, device=device)
     last_policy_loss = last_value_loss = last_entropy = 0.0
+    approx_kls: list[float] = []
+    clipfracs: list[float] = []
+    batches = 0
+    early_stop = False
 
     for _epoch in range(args.ppo_epochs):
         perm = idx[torch.randperm(n, device=device)]
@@ -626,19 +787,25 @@ def ppo_update(
             new_logprobs = dist.log_prob(actions[batch])
             entropy = dist.entropy().mean()
 
-            ratio = (new_logprobs - old_logprobs[batch]).exp()
+            logratio = new_logprobs - old_logprobs[batch]
+            ratio = logratio.exp()
+            with torch.no_grad():
+                approx_kl = ((ratio - 1.0) - logratio).mean()
+                clipfrac = ((ratio - 1.0).abs() > clip_coef).float().mean()
+                approx_kls.append(float(approx_kl.item()))
+                clipfracs.append(float(clipfrac.item()))
             unclipped = ratio * advantages[batch]
-            clipped = ratio.clamp(1.0 - args.clip_coef, 1.0 + args.clip_coef) * advantages[batch]
+            clipped = ratio.clamp(1.0 - clip_coef, 1.0 + clip_coef) * advantages[batch]
             policy_loss = -torch.min(unclipped, clipped).mean()
 
             new_values = critic(agent_v[batch], base_v[batch], scalars[batch], belief_map=b_belief)
             old_v = values[batch]
-            v_clipped = old_v + (new_values - old_v).clamp(-args.clip_coef, args.clip_coef)
+            v_clipped = old_v + (new_values - old_v).clamp(-clip_coef, clip_coef)
             v_loss_unclipped = (new_values - returns[batch]) ** 2
             v_loss_clipped = (v_clipped - returns[batch]) ** 2
             value_loss = 0.5 * torch.max(v_loss_unclipped, v_loss_clipped).mean()
 
-            loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy
+            loss = policy_loss + args.value_coef * value_loss - entropy_coef * entropy
 
             optimizer.zero_grad()
             loss.backward()
@@ -648,20 +815,38 @@ def ppo_update(
             last_policy_loss = float(policy_loss.item())
             last_value_loss = float(value_loss.item())
             last_entropy = float(entropy.item())
+            batches += 1
+
+            if args.target_kl > 0.0 and float(approx_kl.item()) > args.target_kl:
+                early_stop = True
+                break
+        if early_stop:
+            break
 
     return {
         "policy_loss": last_policy_loss,
         "value_loss": last_value_loss,
         "entropy": last_entropy,
         "mean_reward": float(rewards.mean().item()),
+        "approx_kl": float(np.mean(approx_kls)) if approx_kls else 0.0,
+        "clipfrac": float(np.mean(clipfracs)) if clipfracs else 0.0,
+        "batches": float(batches),
+        "early_stop": float(early_stop),
     }
 
 
-def evaluate(actor: PolicyNetwork, args: argparse.Namespace, device: torch.device, games: int) -> float:
+def evaluate(
+    actor: PolicyNetwork,
+    args: argparse.Namespace,
+    device: torch.device,
+    games: int,
+    opponent_mode: str | None = None,
+) -> float:
     env = _make_env(args)
     our_agent = env.possible_agents[0]
     total_reward = 0.0
     use_belief = bool(getattr(actor, "use_belief", False))
+    mode = opponent_mode or args.eval_opponents
 
     for game in range(games):
         if args.vary_maps:
@@ -673,7 +858,7 @@ def evaluate(actor: PolicyNetwork, args: argparse.Namespace, device: torch.devic
         stacker = FrameStacker(args.n_frames)
         planner = AEManager()
         opponents = _make_opponents(
-            actor, device, args.eval_opponents,
+            actor, device, mode,
             [a for a in env.possible_agents if a != our_agent],
             args.n_frames,
         )
@@ -710,7 +895,7 @@ def evaluate(actor: PolicyNetwork, args: argparse.Namespace, device: torch.devic
     return total_reward / max(games, 1) / MAX_SCORE
 
 
-def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNetwork, bool]:
+def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNetwork, bool, bool]:
     """Construct the actor and warm-start from BC if available.
 
     Returns (actor, use_belief). `use_belief` is taken from the BC
@@ -741,7 +926,8 @@ def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNe
         use_belief=use_belief,
         state_dict=state_dict,
     ).to(device)
-    if ckpt is not None:
+    warm_started = ckpt is not None
+    if warm_started:
         actor.load_state_dict(state_dict)
         print(
             f"warm-started actor from {ckpt_path} "
@@ -750,10 +936,103 @@ def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNe
         )
     elif ckpt_path and not ckpt_path.exists():
         print(f"BC checkpoint not found at {ckpt_path}; training PPO from scratch (use_belief={use_belief})")
-    return actor, use_belief
+    return actor, use_belief, warm_started
+
+
+def _linear(start: float, end: float, progress: float) -> float:
+    progress = min(1.0, max(0.0, progress))
+    return start + (end - start) * progress
+
+
+def _current_opponent_mode(args: argparse.Namespace, update: int) -> str:
+    if args.curriculum == "none":
+        return args.opponents
+    schedule = CURRICULA[args.curriculum]
+    progress = (update - 1) / max(args.updates - 1, 1)
+    mode = schedule[0][1]
+    for threshold, candidate in schedule:
+        if progress >= threshold:
+            mode = candidate
+    return mode
+
+
+def _parse_csv(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _parse_weights(value: str, n: int) -> list[float]:
+    if not value.strip():
+        return [1.0 / max(n, 1)] * n
+    weights = [float(part.strip()) for part in value.split(",") if part.strip()]
+    if len(weights) != n:
+        raise SystemExit(f"--selection-weights expected {n} values, got {len(weights)}")
+    total = sum(weights)
+    if total <= 0:
+        raise SystemExit("--selection-weights must sum to a positive value")
+    return [w / total for w in weights]
+
+
+def evaluate_selection(
+    actor: PolicyNetwork,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> tuple[float, dict[str, float]]:
+    suites = _parse_csv(args.selection_suites)
+    if not suites:
+        score = evaluate(actor, args, device, games=args.eval_games, opponent_mode=args.eval_opponents)
+        return score, {args.eval_opponents: score}
+    for suite in suites:
+        if suite not in OPPONENT_MODES:
+            raise SystemExit(f"Unknown selection suite {suite!r}; choices: {', '.join(OPPONENT_MODES)}")
+    weights = _parse_weights(args.selection_weights, len(suites))
+    scores: dict[str, float] = {}
+    weighted = 0.0
+    for suite, weight in zip(suites, weights):
+        score = evaluate(actor, args, device, games=args.selection_games, opponent_mode=suite)
+        scores[suite] = score
+        weighted += weight * score
+    return weighted, scores
+
+
+def _orthogonal_init(module: nn.Module, final_gain: float = 1.0) -> None:
+    if isinstance(module, (nn.Conv2d, nn.Linear)):
+        gain = math.sqrt(2.0)
+        if isinstance(module, nn.Linear) and module.out_features in {1, ACTION_DIM}:
+            gain = final_gain if module.out_features == 1 else 0.01
+        nn.init.orthogonal_(module.weight, gain=gain)
+        if module.bias is not None:
+            nn.init.constant_(module.bias, 0.0)
+
+
+def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
+    if args.preset != "qualifier-best":
+        return args
+
+    args.curriculum = "pressure"
+    args.opponents = "scripted"
+    args.eval_opponents = "cloudsuite"
+    args.selection_suites = "random,scripted,cloudsuite"
+    args.selection_weights = "0.20,0.30,0.50"
+    args.selection_games = max(args.selection_games, 12)
+    args.games_per_update = max(args.games_per_update, 16)
+    args.ppo_epochs = min(args.ppo_epochs, 4)
+    args.entropy_coef = max(args.entropy_coef, 0.02)
+    args.entropy_final_coef = 0.004 if args.entropy_final_coef is None else args.entropy_final_coef
+    args.clip_coef = min(args.clip_coef, 0.20)
+    args.clip_final_coef = 0.12 if args.clip_final_coef is None else args.clip_final_coef
+    args.target_kl = args.target_kl if args.target_kl > 0.0 else 0.03
+    args.explore_bonus = max(args.explore_bonus, 0.15)
+    args.explore_min_scale = max(args.explore_min_scale, 0.10)
+    args.explore_anneal_k = max(args.explore_anneal_k, 1.2)
+    args.health_delta_coef = max(args.health_delta_coef, 0.01)
+    args.base_health_delta_coef = max(args.base_health_delta_coef, 0.03)
+    args.bomb_action_bonus = max(args.bomb_action_bonus, 0.02)
+    args.orthogonal_init = True
+    return args
 
 
 def train(args: argparse.Namespace) -> None:
+    args = apply_preset(args)
     random.seed(args.seed or 0)
     np.random.seed(args.seed or 0)
     torch.manual_seed(args.seed or 0)
@@ -763,12 +1042,18 @@ def train(args: argparse.Namespace) -> None:
         else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
     )
     print(f"device: {device}")
-    print(f"config: n_frames={args.n_frames} reward_scale={args.reward_scale} "
-          f"return_clip={args.return_clip} vary_maps={args.vary_maps} "
-          f"opponents={args.opponents} eval_opponents={args.eval_opponents}")
+    print(f"config: preset={args.preset} n_frames={args.n_frames} "
+          f"reward_scale={args.reward_scale} return_clip={args.return_clip} "
+          f"vary_maps={args.vary_maps} opponents={args.opponents} "
+          f"eval_opponents={args.eval_opponents} curriculum={args.curriculum} "
+          f"selection={args.selection_suites or args.eval_opponents}")
 
-    actor, use_belief = load_actor(args, device)
+    actor, use_belief, warm_started = load_actor(args, device)
+    if args.orthogonal_init and not warm_started:
+        actor.apply(lambda m: _orthogonal_init(m, final_gain=0.01))
     critic = ValueNetwork(n_frames=args.n_frames, use_belief=use_belief).to(device)
+    if args.orthogonal_init:
+        critic.apply(lambda m: _orthogonal_init(m, final_gain=1.0))
     print(f"actor params: {num_parameters(actor):,}; critic params: {num_parameters(critic):,} "
           f"(use_belief={use_belief})")
 
@@ -802,23 +1087,33 @@ def train(args: argparse.Namespace) -> None:
         )
 
     for update in range(1, args.updates + 1):
+        progress = (update - 1) / max(args.updates - 1, 1)
+        opponent_mode = _current_opponent_mode(args, update)
+        clip_coef = _linear(args.clip_coef, args.clip_final_coef or args.clip_coef, progress)
+        entropy_coef = _linear(
+            args.entropy_coef,
+            args.entropy_final_coef if args.entropy_final_coef is not None else args.entropy_coef,
+            progress,
+        )
         actor.train()
         critic.train()
         transitions, rollout_score = collect_rollouts(
             actor, critic, args, device,
             seed_offset=update * args.games_per_update,
             snapshot_pool=snapshot_pool,
+            opponent_mode=opponent_mode,
         )
         if not transitions:
             raise SystemExit("No PPO transitions collected; environment likely terminated before our agent acted.")
-        stats = ppo_update(actor, critic, transitions, optimizer, args, device)
+        stats = ppo_update(actor, critic, transitions, optimizer, args, device, clip_coef, entropy_coef)
         scheduler.step()
 
         eval_score = float("nan")
+        eval_parts: dict[str, float] = {}
         if update == 1 or update % args.eval_every == 0:
             actor.eval()
             critic.eval()
-            eval_score = evaluate(actor, args, device, games=args.eval_games)
+            eval_score, eval_parts = evaluate_selection(actor, args, device)
             if eval_score > best_eval:
                 best_eval = eval_score
                 torch.save({
@@ -829,6 +1124,7 @@ def train(args: argparse.Namespace) -> None:
                     "use_belief": bool(getattr(actor, "use_belief", False)),
                     "model_arch": getattr(actor, "model_arch", "default"),
                     "ppo_eval_score": eval_score,
+                    "ppo_eval_parts": eval_parts,
                     "rollout_score": rollout_score,
                     "args": vars(args),
                 }, out_path)
@@ -843,12 +1139,17 @@ def train(args: argparse.Namespace) -> None:
         elapsed = time.time() - start_time
         current_lr = optimizer.param_groups[0]["lr"]
         pool_tag = f" pool={len(snapshot_pool)}" if snapshot_pool is not None else ""
+        eval_tag = ""
+        if eval_parts:
+            eval_tag = " " + " ".join(f"{k}={v:.4f}" for k, v in eval_parts.items())
         print(
             f"update {update:>4}/{args.updates}  "
-            f"samples={len(transitions):>5}  rollout={rollout_score:.4f}  "
-            f"eval={eval_score:.4f}  best={best_eval:.4f}  "
+            f"mode={opponent_mode:<10} samples={len(transitions):>5}  rollout={rollout_score:.4f}  "
+            f"eval={eval_score:.4f}{eval_tag}  best={best_eval:.4f}  "
             f"pi_loss={stats['policy_loss']:.4f}  v_loss={stats['value_loss']:.4f}  "
-            f"entropy={stats['entropy']:.3f}  lr={current_lr:.2e}{pool_tag}  elapsed={elapsed/60:.1f}m"
+            f"entropy={stats['entropy']:.3f}  kl={stats['approx_kl']:.4f} "
+            f"clipfrac={stats['clipfrac']:.2f}  clip={clip_coef:.2f} "
+            f"entcoef={entropy_coef:.3f}  lr={current_lr:.2e}{pool_tag}  elapsed={elapsed/60:.1f}m"
         )
 
     print(f"\nBest eval score: {best_eval:.4f}")
@@ -858,6 +1159,9 @@ def train(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--preset", choices=["default", "qualifier-best"], default="default",
+                        help="Training recipe overlay. qualifier-best enables pressure curriculum, "
+                             "adaptive shaping, KL stop, and weighted validation-suite selection.")
     parser.add_argument("--bc-checkpoint", default="training/ae/checkpoints/bc.pt")
     parser.add_argument("--out", default="training/ae/checkpoints/ppo.pt")
     parser.add_argument("--updates", type=int, default=200)
@@ -869,9 +1173,15 @@ def main() -> None:
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-coef", type=float, default=0.20)
+    parser.add_argument("--clip-final-coef", type=float, default=None,
+                        help="Optional linear schedule target for PPO clip coefficient.")
     parser.add_argument("--entropy-coef", type=float, default=0.01)
+    parser.add_argument("--entropy-final-coef", type=float, default=None,
+                        help="Optional linear schedule target for entropy coefficient.")
     parser.add_argument("--value-coef", type=float, default=0.50)
     parser.add_argument("--max-grad-norm", type=float, default=0.50)
+    parser.add_argument("--target-kl", type=float, default=0.0,
+                        help="Stop PPO minibatch epochs early when approximate KL exceeds this value.")
     parser.add_argument("--reward-scale", type=float, default=50.0,
                         help="Divide raw rewards by this before returns (max event reward ~50).")
     parser.add_argument("--return-clip", type=float, default=10.0,
@@ -882,8 +1192,17 @@ def main() -> None:
                         help="Train with novice=False and a random seed per game (diversify the training distribution).")
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--eval-games", type=int, default=12)
-    parser.add_argument("--opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay", "scripted", "cloudsuite"], default="mixed")
-    parser.add_argument("--eval-opponents", choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay", "scripted", "cloudsuite"], default="mixed")
+    parser.add_argument("--opponents", choices=OPPONENT_MODES, default="mixed")
+    parser.add_argument("--eval-opponents", choices=OPPONENT_MODES, default="mixed")
+    parser.add_argument("--curriculum", choices=["none", "pressure", "bomberman"], default="none",
+                        help="Progressively changes rollout opponent pool across updates.")
+    parser.add_argument("--selection-suites", default="",
+                        help="Comma-separated opponent pools used for checkpoint selection. "
+                             "If empty, eval-opponents is used.")
+    parser.add_argument("--selection-weights", default="",
+                        help="Comma-separated weights for --selection-suites; defaults to uniform.")
+    parser.add_argument("--selection-games", type=int, default=6,
+                        help="Games per selection suite when --selection-suites is set.")
     parser.add_argument("--snapshot-interval", type=int, default=10,
                         help="Add a frozen actor snapshot to the self-play pool every N PPO updates "
                              "(set to 0 to disable; falls back to live-actor frozen opponents).")
@@ -892,6 +1211,22 @@ def main() -> None:
     parser.add_argument("--use-belief", action="store_true",
                         help="Train with the belief-map architecture (16x16xK extra CNN branch). "
                              "Overridden by the BC checkpoint's use_belief flag if loading one.")
+    parser.add_argument("--orthogonal-init", action="store_true",
+                        help="Use PPO-style orthogonal init for scratch actor and critic.")
+    parser.add_argument("--explore-bonus", type=float, default=0.0,
+                        help="Training-only visit-count exploration bonus weight.")
+    parser.add_argument("--explore-min-scale", type=float, default=0.1,
+                        help="Minimum fraction of exploration bonus after adaptive annealing.")
+    parser.add_argument("--explore-anneal-k", type=float, default=1.2,
+                        help="Controls how quickly exploration bonus decays after high-reward episodes.")
+    parser.add_argument("--explore-success-reward", type=float, default=20.0,
+                        help="Raw episode reward threshold counted as success for exploration annealing.")
+    parser.add_argument("--health-delta-coef", type=float, default=0.0,
+                        help="Training-only coefficient for health delta shaping.")
+    parser.add_argument("--base-health-delta-coef", type=float, default=0.0,
+                        help="Training-only coefficient for base-health delta shaping.")
+    parser.add_argument("--bomb-action-bonus", type=float, default=0.0,
+                        help="Small training-only bonus for PLACE_BOMB to fight bomb timidity.")
     parser.add_argument("--novice", action="store_true", default=True)
     parser.add_argument("--no-novice", dest="novice", action="store_false")
     parser.add_argument("--seed", type=int, default=0)

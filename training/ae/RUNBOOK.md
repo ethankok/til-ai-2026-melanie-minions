@@ -209,6 +209,45 @@ python training/ae/train_ppo.py \
   2>&1 | tee ~/novice-fixed-v1.log
 ```
 
+### PPO retry path: `qualifier-best` preset
+
+If we intentionally retry PPO despite the older negative results, use the new
+`qualifier-best` preset rather than the plain scripted rerun. It keeps the
+lightweight in-repo PyTorch policy/deployment path, but borrows the useful
+parts of public MaskablePPO/Pommerman recipes: action masking, progressive
+opponent curriculum, adaptive exploration shaping, KL early stop, and
+checkpoint selection on a pressure-weighted validation suite.
+
+```bash
+cd /home/jupyter/til
+git pull origin main
+
+tmux new -s ae-ppo-best
+
+python training/ae/train_ppo.py \
+  --preset qualifier-best \
+  --bc-checkpoint ~/ae-checkpoints-backup/deployed-bc-v1.pt \
+  --out ~/ae-checkpoints-backup/ppo-qualifier-best-v1.pt \
+  --updates 300 \
+  --n-frames 1 \
+  --eval-every 5 \
+  --seed 88 \
+  --eval-seed 8800 \
+  2>&1 | tee ~/ppo-qualifier-best-v1.log
+```
+
+The saved checkpoint is selected by weighted validation:
+
+```text
+0.20 * random + 0.30 * scripted + 0.50 * cloudsuite
+```
+
+Do **not** submit only because the trainer's eval rises. First deploy to
+`ae/models/bc.pt`, build a tag, run `til test ae <tag>`, and then run the
+Mac/Workbench pressure gate before spending a cloud submission. The current
+smoke-tested status is code-only: it proves rollout/update/checkpoint plumbing,
+not quality.
+
 Do **not** use `--total-steps`, `--warm-start`, or `--out-dir`; those flags do
 not exist here. Detach tmux with `Ctrl-b`, then `d`; reattach with
 `tmux attach -t ae-train`.

@@ -30,7 +30,7 @@ from tqdm import trange
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parents[1]
 sys.path.insert(0, str(THIS_DIR))
-sys.path.insert(0, str(REPO_ROOT / "ae" / "src"))
+sys.path.insert(1, str(REPO_ROOT / "ae" / "src"))
 
 from encoder import FrameStacker, rasterize_belief  # noqa: E402
 from model import PolicyNetwork, build_policy_network  # noqa: E402
@@ -42,7 +42,7 @@ from til_environment.config import default_config  # noqa: E402
 # Reuse train_ppo's opponent factories so the eval-time opponent
 # distribution matches the train-time one exactly (no opponent-impl
 # drift between scripts).
-from train_ppo import _make_opponents, _random_opponent  # noqa: E402
+from train_ppo import OPPONENT_MODES, _make_opponents, _random_opponent  # noqa: E402
 
 
 NUM_ROUNDS_DEFAULT = 6
@@ -178,7 +178,7 @@ def main() -> None:
     parser.add_argument("--greedy", action="store_true", default=True)
     parser.add_argument(
         "--opponents",
-        choices=["random", "planner", "frozen", "aggressive", "mixed", "league", "selfplay", "scripted", "cloudsuite"],
+        choices=OPPONENT_MODES,
         default="random",
         help="Opponent distribution. 'random' (default) preserves legacy "
              "single-game-eval behavior; 'mixed' matches the ppo-v1-era "
