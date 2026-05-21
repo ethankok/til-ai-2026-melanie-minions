@@ -17,7 +17,6 @@ script exits without re-downloading.
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -47,6 +46,12 @@ def main() -> int:
         help="Override the on-disk filename. Defaults to <model-shortname>.nemo.",
     )
     parser.add_argument(
+        "--hf-filename",
+        default=None,
+        help="Filename to fetch from the Hugging Face repo. Defaults to "
+             "<model-shortname>.nemo, independent of --filename.",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Re-download even if the target file already exists.",
@@ -56,38 +61,51 @@ def main() -> int:
     out_dir = Path(args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    target_filename = args.filename or _resolve_default_filename(args.model)
+    source_filename = args.hf_filename or _resolve_default_filename(args.model)
+    target_filename = args.filename or source_filename
     target_path = out_dir / target_filename
     if target_path.exists() and not args.force:
         print(f"{target_path} already exists. Pass --force to re-download.")
         return 0
 
-    # Late import so `--help` works without NeMo installed.
+    print(f"Downloading {args.model}/{source_filename} ...", flush=True)
+    tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
+    if tmp_path.exists():
+        tmp_path.unlink()
+
     try:
-        from nemo.collections.asr.models import ASRModel
+        from huggingface_hub import hf_hub_download
     except ImportError as exc:
         print(
-            "nemo_toolkit[asr] is required. Install via:\n"
-            "    pip install -r asr/requirements-nemo.txt",
+            "huggingface_hub is required for direct .nemo download. Install via:\n"
+            "    python -m pip install -U huggingface_hub",
             file=sys.stderr,
         )
         raise SystemExit(1) from exc
 
-    print(f"Downloading {args.model} ...", flush=True)
-    # `from_pretrained` downloads to NeMo's cache, which lives under
-    # ~/.cache/torch/NeMo or NEMO_CACHE_DIR. We then copy/save into our target
-    # path so the docker build COPY picks it up deterministically.
-    model = ASRModel.from_pretrained(model_name=args.model)
+    try:
+        cached_path = hf_hub_download(
+            repo_id=args.model,
+            filename=source_filename,
+            force_download=args.force,
+        )
+    except Exception as exc:
+        print(
+            f"Direct download failed for {args.model}/{source_filename}: {exc}",
+            file=sys.stderr,
+        )
+        print(
+            "If the repo uses a different .nemo filename, rerun with "
+            "--hf-filename <name>.nemo.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
 
-    # Easiest reliable path: ask the model to save itself to our target.
     print(f"Saving to {target_path} ...", flush=True)
-    tmp_path = target_path.with_suffix(target_path.suffix + ".tmp")
-    if tmp_path.exists():
-        tmp_path.unlink()
-    model.save_to(str(tmp_path))
+    shutil.copyfile(cached_path, tmp_path)
     # Atomic-ish replace so a crashed download doesn't leave a partial file
     # that subsequent runs would skip.
-    os.replace(tmp_path, target_path)
+    tmp_path.replace(target_path)
 
     size_mb = target_path.stat().st_size / (1024 * 1024)
     print(f"OK: {target_path} ({size_mb:.1f} MB)")

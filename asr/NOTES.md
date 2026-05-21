@@ -55,7 +55,8 @@ cd /home/jupyter/til
 git pull origin main
 export TIL_FOLDER=/home/jupyter/til
 
-pip install -r asr/requirements-nemo.txt
+# Host side only needs this to fetch the .nemo. The Docker image installs NeMo.
+python -m pip install -U huggingface_hub
 
 python training/asr/extract_slang.py \
     --nlp-dir /home/jupyter/novice/nlp \
