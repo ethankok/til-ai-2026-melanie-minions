@@ -1,6 +1,6 @@
 # ASR — notes & history
 
-Last updated: 22 May 2026 — **`nemo-zs-v3` (22/05) with phonetic post-corrections on the fast `parakeet-tdt-0.6b-v2.nemo` backend achieved a new overall ASR blended high of `0.95625` (Accuracy: `0.960`, Speed: `0.945`). Currently validating `nemo-zs-v4` locally with slang prompter fixes and refined post-processing.** `nemo-zs-v2 (22/05)` remains our raw accuracy peak (`0.962` / `0.911`). Keep `nemo-zs-v3` as the live candidate.
+Last updated: 23 May 2026 — **`nemo-zs-v4` with slang prompter fixes, space-eating bugfix, and Zonnon/Caulfield rules achieved a new overall ASR blended high of `0.957` (Accuracy: `0.962`, Speed: `0.942`). Currently validating `nemo-zs-v5` with refined v5 proper noun and context-specific Phi rules.** `nemo-zs-v4` is the live candidate.
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -10,9 +10,9 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`nemo-zs-v3` — official 0.960 / 0.945 (22 May 21:46 SGT, 0/400 errors).**
-Blended score `0.75*0.960 + 0.25*0.945 = 0.95625`, +0.00275 over `nemo-zs` (blended 0.9535).
-Retains casing-preserving spelling/phonetic post-corrections on the fast Parakeet-TDT-v2 backend. `nemo-zs-v2` remains the accuracy peak (`0.962`) but was slow (`0.911`). Currently working on `nemo-zs-v4` to address slang prompter pollution and post-processing space-eating.
+**`nemo-zs-v4` — official 0.962 / 0.942 (23 May 02:37 SGT, 0/400 errors).**
+Blended score `0.75*0.962 + 0.25*0.942 = 0.957` (+0.00075 over `nemo-zs-v3`).
+Retains slang prompter fallback wordlist extraction fix, post-processing space-eating bugfix, and Zonnon/Caulfield rules on the fast Parakeet-TDT-v2 backend. Currently prepared `nemo-zs-v5` with further refined rules.
 
 
 ## nemo-zs-v2 (22/05) — phonetic post-corrections accuracy peak
@@ -55,15 +55,45 @@ Results:
 - Local 1 - MER: 0.9905
 - Blended score (75/25): 0.95625 (new overall blended high score!)
 
-## nemo-zs-v4 (22/05) — slang prompter & post-processing refinement (Current)
+## nemo-zs-v4 (23/05) — slang prompter & post-processing refinement
 
-Currently preparing for GCP evaluation.
+Results:
+- Errors: 0/400
+- Score (Accuracy): 0.962 (tied our raw accuracy peak, verifying the slang and Zonnon/Caulfield corrections work!)
+- Speed: 0.942
+- Blended score (75/25): 0.957 (new overall blended high score!)
 
 Why this candidate:
 - Fixed slang prompter extraction pollution in `training/asr/extract_slang.py` by embedding a `FALLBACK_WORDS` list (1500 common English words) to prevent silent fallback failures from filling the bias prompt with common words when download dependencies fail.
 - Refined the proper noun rules in `asr/src/asr_postprocess.py` (specifically `Ashcastle` rules) by splitting them into a prefix-required rule and a standalone rule. This successfully resolves the space-eating bug where preceding spaces were collapsed when the prefix was absent (e.g., converting `is Ashcastle` to `isAshcastle`).
 - Added case-preserving phonetic/spelling post-corrections for `Zonnon` (e.g., Zonan, zonon, Zonanun, Zonal, zondun's -> Zonnon) and `Caulfield` (e.g., Coalfields, callfields, Coffield's -> Caulfield) to capture common mistakes.
 - Local validation on `asr_results.json` shows 335/4110 lines modified, successfully fixing boundary collapsing, word merging, and phonetically close proper nouns without affecting correct substitutions.
+
+## nemo-zs-v5 (23/05) — v5 post-processing & refined Phi rules (Current)
+
+Currently preparing for GCP evaluation.
+
+Why this candidate:
+- Added refined proper noun rules in `asr/src/asr_postprocess.py` to capture remaining phonetic and spacing mismatches against gold transcript patterns:
+  - Canian (e.g. kanyan, canaanian, Canadian -> Canian)
+  - Hegemony (e.g. hegemoni, Hegmoni -> Hegemony)
+  - Sharpsea Bloc / routes (e.g. sharp sea, SHARP C BLOCK -> Sharpsea Bloc)
+  - Nyari (e.g. niari, niyari -> Nyari)
+  - Dreamer (e.g. streamer -> Dreamer)
+  - Fullwalker (e.g. full walker, pull walkers -> Fullwalker)
+  - Edgedancer (updated to match both `c` and `s` spelling variations `d[ae]n[cs]ers?`)
+  - Floodwall (e.g. flood wall -> Floodwall)
+  - TEC (e.g. tech command -> TEC command, for tech -> for TEC)
+  - CYPHER (e.g. cipher requires -> Cypher requires, give cipher -> give Cypher)
+  - Bloc (e.g. block tensions -> bloc tensions, Accommodationist block -> Accommodationist bloc)
+- Refined Phi currency / metric context-specific replacements:
+  - Standalone pi/fi/fai -> Phi
+  - Preceded by scale words (million/thousand/hundred/billion five/fai) checked against currency contexts (bribes, credits, somatic clinic, somatic enhancement, biodealers, cost/price/prices, funds transfer, etc.) and explicitly excluded in telemetry contexts (bearing/vector/heading degrees, wind knots, coordinates, latitude/longitude).
+  - Followed by currency suffixes (five ledger, file credits, fi movements).
+  - Matches context phrases (got five to drop, sold file for, bleeding/funneling/saving up five, throwing five around, five in bribes/at blackjack/for/minimum).
+- Validated locally on `asr_results.json` showing 195 repaired mismatches and 0 regressions against gold data.
+- Corrected unit test assertions in `test/test_asr_postprocess.py` to enforce strict casing preservation behavior (e.g., lowercased input to lowercased output like "tech command" -> "tec command", and capitalized input to capitalized/uppercase output like "Tech command" -> "TEC command").
+
 
 
 ## Completed A/B: Parakeet unified zero-shot
