@@ -135,6 +135,63 @@ def test_digits_to_words():
     assert digits_to_words("callfields") == "caulfields"
     assert digits_to_words("Coffield's") == "Caulfield's"
 
+    # 23. Canian
+    assert digits_to_words("kanyan") == "canian"
+    assert digits_to_words("canaanian") == "canian"
+    assert digits_to_words("Canadian") == "Canian"
+
+    # 24. Hegemony
+    assert digits_to_words("hegemoni") == "hegemony"
+    assert digits_to_words("Hegmoni") == "Hegemony"
+
+    # 25. Sharpsea
+    assert digits_to_words("sharp sea") == "sharpsea"
+    assert digits_to_words("SHARP C BLOCK") == "SHARPSEA BLOC"
+    assert digits_to_words("sharp-c routes") == "sharpsea routes"
+
+    # 26. Nyari
+    assert digits_to_words("niari") == "nyari"
+    assert digits_to_words("niyari") == "nyari"
+    assert digits_to_words("Niari") == "Nyari"
+
+    # 27. Dreamer
+    assert digits_to_words("streamer") == "dreamer"
+    assert digits_to_words("Streamers") == "Dreamers"
+
+    # 28. Fullwalker
+    assert digits_to_words("full walker") == "fullwalker"
+    assert digits_to_words("pull walkers") == "fullwalkers"
+
+    # 29. Edgedancer
+    assert digits_to_words("edge dancer") == "edgedancer"
+    assert digits_to_words("edgedenser") == "edgedancer"
+    assert digits_to_words("Adjudancers") == "Edgedancers"
+
+    # 30. Floodwall
+    assert digits_to_words("flood wall") == "floodwall"
+    assert digits_to_words("flood walls") == "floodwalls"
+
+    # 31. TEC / tech
+    assert digits_to_words("tech command") == "tec command"
+    assert digits_to_words("Tech command") == "TEC command"
+    assert digits_to_words("for tech") == "for tec"
+    assert digits_to_words("for Tech") == "for TEC"
+    assert digits_to_words("tech team") == "tech team"
+
+    # 32. CYPHER / cipher
+    assert digits_to_words("cipher requires") == "cypher requires"
+    assert digits_to_words("Cipher requires") == "Cypher requires"
+    assert digits_to_words("give cipher") == "give cypher"
+    assert digits_to_words("give Cipher") == "give Cypher"
+    assert digits_to_words("cascade cipher") == "cascade cipher"
+
+    # 33. Bloc / block
+    assert digits_to_words("block tensions") == "bloc tensions"
+    assert digits_to_words("Block tensions") == "Bloc tensions"
+    assert digits_to_words("Accommodationist block") == "Accommodationist bloc"
+    assert digits_to_words("Accommodationist Block") == "Accommodationist Bloc"
+    assert digits_to_words("road block") == "road block"
+
     print("All unit tests passed successfully!")
 
 if __name__ == "__main__":

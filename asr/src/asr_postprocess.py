@@ -316,6 +316,101 @@ def repl_caulfield(match: re.Match[str]) -> str:
     return base + suffix
 
 
+# NEW proper noun replacers
+def repl_canian(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Canian", match.group(1))
+    return base + suffix
+
+
+def repl_hegemony(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Hegemony", match.group(1))
+    return base + suffix
+
+
+def repl_sharpsea(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    suffix = match.group(2)
+    if suffix:
+        suf_lower = suffix.lower()
+        if suf_lower in ("block", "bloc"):
+            target_suffix = "Bloc"
+        else:
+            target_suffix = suf_lower
+        
+        sharpsea_part = _preserve_case("Sharpsea", match.group(1))
+        if matched.isupper():
+            return f"SHARPSEA {target_suffix.upper()}"
+        elif matched.islower():
+            return f"sharpsea {target_suffix.lower()}"
+        else:
+            if target_suffix.lower() == "bloc":
+                return f"{sharpsea_part} Bloc"
+            else:
+                return f"{sharpsea_part} {target_suffix}"
+    else:
+        return _preserve_case("Sharpsea", matched)
+
+
+def repl_nyari(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Nyari", match.group(1))
+    return base + suffix
+
+
+def repl_dreamer(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Dreamer", match.group(1))
+    return base + suffix
+
+
+def repl_fullwalker(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Fullwalker", match.group(1))
+    return base + suffix
+
+
+def repl_edgedancer(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    plural = "s" if matched.lower().endswith("s") else ""
+    if match.group(1):
+        ref = match.group(1)
+    else:
+        ref = match.group(2)
+    return _preserve_case("Edgedancer", ref) + plural
+
+
+def repl_floodwall(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Floodwall", match.group(1))
+    return base + suffix
+
+
+def repl_tec(match: re.Match[str]) -> str:
+    matched = match.group(1) if match.group(1) else match.group(0)
+    if match.group(1):
+        prefix = match.group(0)[:-len(matched)]
+        return prefix + _preserve_case("TEC", matched)
+    return _preserve_case("TEC", matched)
+
+
+def repl_cypher(match: re.Match[str]) -> str:
+    matched = match.group(1) if match.group(1) else match.group(0)
+    if match.group(1):
+        prefix = match.group(0)[:-len(matched)]
+        return prefix + _preserve_case("Cypher", matched)
+    return _preserve_case("Cypher", matched)
+
+
+def repl_bloc(match: re.Match[str]) -> str:
+    matched = match.group(1) if match.group(1) else match.group(0)
+    if match.group(1):
+        prefix = match.group(0)[:-len(matched)]
+        return prefix + _preserve_case("Bloc", matched)
+    return _preserve_case("Bloc", matched)
+
+
 _PROPER_NOUN_RULES = [
     # 1. Complex/Combined Names (to avoid parts getting replaced by standalone rules)
     (re.compile(r"\b(takeshi|ada)\s+(oilaran|olrn|oyelaran)(s?|['s]*)\b", re.I), repl_takeshi_ada_oyelaran),
@@ -329,7 +424,7 @@ _PROPER_NOUN_RULES = [
     (re.compile(r"\b(suyan|suyon|sujan|suhyan|soohyan|suhyun|suhyon|soohyun|shohyan|suzanne)(s?|['s]*)\b", re.I), repl_suyan_standalone),
     
     # 3. New Mewan
-    (re.compile(r"\b(new|nu|noo|u)\s*(mewan|miwan|muvan|muon|muan|mi1|mu1|mi\s*1|mu\s*1|mi\s*one|mu\s*one|muons?|muvans?|miwans?|muans?)(s?|['s]*)\b", re.I), repl_new_mewan),
+    (re.compile(r"\b(new|nu|noo|u)\s*(mewan|mevan|miwan|muvan|muon|muan|mi1|mu1|mi\s*1|mu\s*1|mi\s*one|mu\s*one|muons?|muvans?|miwans?|muans?|mevans?)(s?|['s]*)\b", re.I), repl_new_mewan),
     (re.compile(r"\b(numiwan|numuan|mumuan|umiwan)(s?|['s]*)\b", re.I), repl_standalone_mewan),
     
     # 4. Sim Jiahong
@@ -337,19 +432,19 @@ _PROPER_NOUN_RULES = [
     (re.compile(r"\bjahong(s?|['s]*)\b", re.I), repl_jiahong_standalone),
     
     # 5. Phyrexis
-    (re.compile(r"\b(perex|perexis|pyrex|pyrexis|firex|firexes|fedex)('s)?\b", re.I), repl_phyrexis),
+    (re.compile(r"\b(perex|perexis|pyrex|pyrexis|firex|firexes|firexis|phyrexiss|fedex)('s)?\b", re.I), repl_phyrexis),
     
     # 6. Kestrelian
     (re.compile(r"\b(castralian|castrillian|kestralian|kestrillian|castrelian|kastrillian|kesrelian)(s?)\b", re.I), repl_kestrelian),
     
     # 7. Sarento / Sorrento
-    (re.compile(r"\b(s[oae]r+ento)(s?)\b", re.I), repl_sarento),
+    (re.compile(r"\b(s[oae]r+[ea]nto)(s?)\b", re.I), repl_sarento),
     
     # 8. Cyanite
-    (re.compile(r"\b(cyanide|syanite|sanite|sinide)(s?)\b", re.I), repl_cyanite),
+    (re.compile(r"\b(cyanide|syanite|sanite|sinide|sinite|sinai)(s?)\b", re.I), repl_cyanite),
     
     # 9. Renhwa
-    (re.compile(r"\b(renwa|renva|renhua|renhoa|renha|ren\s+ha)(s?)\b", re.I), repl_renhwa),
+    (re.compile(r"\b(renwa|renva|renhua|renhoa|renha|ren\s+ha|renoir)(s?)\b", re.I), repl_renhwa),
     
     # 10. Standalone Last Names / Names
     (re.compile(r"\b(oilaran|olrn)(s?|['s]*)\b", re.I), repl_oyelaran_standalone),
@@ -362,7 +457,7 @@ _PROPER_NOUN_RULES = [
     (re.compile(r"\b(delash|delashcastle|del[- ]?ash[- ]?castle|ash[- ]?castle|ash\s+castle|ashcastle)(s?|['s]*)\b", re.I), repl_ashcastle_standalone),
     
     # 11. Tidak
-    (re.compile(r"\b(tedak|taidak|sidak|tiduck)\b", re.I), repl_tidak_standalone),
+    (re.compile(r"\b(tedak|taidak|sidak|tiduck|deduct)\b", re.I), repl_tidak_standalone),
     (re.compile(r"\btidakran\b", re.I), repl_tidakran),
     
     # 12. Blackshore
@@ -373,12 +468,143 @@ _PROPER_NOUN_RULES = [
     
     # 14. Caulfield
     (re.compile(r"\b(coalfield|colfield|callfield|coffield|cofield|colefield)(s?|['s]*)\b", re.I), repl_caulfield),
+    
+    # 15. Canian (NEW)
+    (re.compile(r"\b(k[ae]nyan|kanyean|canaanian|canadian|khan[yi]an|canyon|kanyan)(s?|['s]*)\b", re.I), repl_canian),
+    
+    # 16. Hegemony (NEW)
+    (re.compile(r"\b(hegel|hegemoni|hegmoni|hegemony)(s?|['s]*)\b", re.I), repl_hegemony),
+    
+    # 17. Sharpsea (NEW)
+    (re.compile(r"\b(sharp\s+c|sharp-c|sharp\s+sea)(?:\s+(block|bloc|territories|node|routes|background))?\b", re.I), repl_sharpsea),
+
+    # 18. Nyari (NEW)
+    (re.compile(r"\b(nyari|niari|niyari)(s?|['s]*)\b", re.I), repl_nyari),
+
+    # 19. Dreamer (NEW)
+    (re.compile(r"\b(streamer)(s?|['s]*)\b", re.I), repl_dreamer),
+
+    # 20. Fullwalker (NEW)
+    (re.compile(r"\b(full|pull|fool)\s+walker(s?|['s]*)\b", re.I), repl_fullwalker),
+
+    # 21. Edgedancer (NEW)
+    (re.compile(r"\b(edge|adju|agi)\s*d[ae]n[cs]ers?\b|\b(edgeden[cs]er|adjudan[cs]er|agidan[cs]er)s?\b", re.I), repl_edgedancer),
+
+    # 22. Floodwall (NEW)
+    (re.compile(r"\b(flood)\s+wall(s?|['s]*)\b", re.I), repl_floodwall),
+
+    # 23. TEC / tech (NEW)
+    (re.compile(r"\btech\b(?=\s+(?:command|signature|signatures|side|surveillance|nanoswarm|personnel|releases|succession|ties|handlers|response|deployment|sponsoring|integration|fundamentally|infrastructure|security|wants|lately|making|situation|probably|operates|Renhwa|Renoir|Renoa|operational|politics|implodes|liaison|liaisons|execs|backing|grade|distributed|bleed|throwing|partnership|gets|Cube|has|is|out|sometime|and|quietly|does|doesn|even|for|benefit)\b)|\b(?:for|benefit|and)\s+(tech)\b", re.I), repl_tec),
+
+    # 24. CYPHER / cipher (NEW)
+    (re.compile(r"\bciphers?\b(?=\s+(?:calculates|estimates|acknowledged|acknowledges|requires|sees|has|is|was|satellite|constellation|power|bandwidth|vision|conduit|out|counting|flagged|timeline|speaks|watches|hears|emphasizes|wants|confirms|demands|resupply|supply)\b)|\b(?:give|to|from|heard|references|admitting|targeting|reached|serve|about|with|for|believe|starve|starves|starving)\s+(ciphers?)\b", re.I), repl_cypher),
+
+    # 25. Bloc / block (NEW)
+    (re.compile(r"\bblock\b(?=\s+(?:tensions|maritime|coordinates|operational|signature|consensus|territories|operations|seaside|security|sector|operation|territorial|customs|freight|coordinator|observers|registry|waters|coordination|surveillance|research|unity|intelligence|ports|joint|counterintelligence|farming|infrastructure|merchant|logistics|counter|shipping|naval|vessel|database)\b)|\b(?:Accommodationist)\s+(block)\b", re.I), repl_bloc),
 ]
 
 
 def correct_proper_nouns(text: str) -> str:
     for rx, repl in _PROPER_NOUN_RULES:
         text = rx.sub(repl, text)
+    return text
+
+
+# refined Phi rules setup
+_SCALES = r"million|thousand|hundred|billion"
+_CURR_SUFX = r"ledger|ledgers|transfer|transfers|movement|movements|flow|flows|credit|credits|exchange|exchanges|transaction|transactions|wire|wires|conversion|conversions"
+_CANDIDATES = r"five|file|files|fi|pi|fee|fight|fire|pie|fai"
+
+_CURRENCY_CONTEXTS = {
+    "genesis", "clinic", "appointment", "consultation", "somatic", "enhancement",
+    "reinforcement", "vial", "vials", "biodealer", "biodealers", "dealer", "dealers",
+    "saved", "costs", "cost", "price", "prices", "rate", "rates", "rent", "bribes",
+    "cleared", "credits", "account", "accounts", "payment", "payments", "tables",
+    "roulette", "blackjack", "short", "bribe", "funds", "transfer", "transfers",
+    "wire", "wires", "moving", "dropped", "spent", "spending", "lost", "won"
+}
+
+_EXCLUDE_CONTEXTS = {
+    "hours", "bearing", "vector", "heading", "degrees", "channel", "outpost",
+    "relay", "station", "installation", "grid", "coordinate", "coordinates",
+    "latitude", "longitude", "wind", "winds", "knots", "altitude"
+}
+
+
+def repl_phi_refined(match: re.Match[str], sentence: str) -> str:
+    matched = match.group(0)
+    cand_match = re.search(rf"\b({_CANDIDATES})\b", matched, re.I)
+    if not cand_match:
+        return matched
+    cand = cand_match.group(1)
+    
+    if cand.lower() == "five":
+        scale_word = match.group(1).lower()
+        if scale_word in ("hundred", "thousand"):
+            words_in_sentence = set(re.findall(r"\b\w+\b", sentence.lower()))
+            if words_in_sentence.intersection(_EXCLUDE_CONTEXTS):
+                return matched
+            if not words_in_sentence.intersection(_CURRENCY_CONTEXTS):
+                return matched
+                
+    phi_str = _preserve_case("Phi", cand)
+    replaced = re.sub(rf"\b{cand}\b", phi_str, matched)
+    return replaced
+
+
+def repl_phi_simple(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    cand_match = re.search(rf"\b({_CANDIDATES})\b", matched, re.I)
+    if not cand_match:
+        return matched
+    cand = cand_match.group(1)
+    phi_str = _preserve_case("Phi", cand)
+    replaced = re.sub(rf"\b{cand}\b", phi_str, matched)
+    return replaced
+
+
+def repl_phi_context(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    cand_match = re.search(rf"\b({_CANDIDATES})\b", matched, re.I)
+    if not cand_match:
+        return matched
+    cand = cand_match.group(1)
+    following = match.group(2).lower()
+    
+    if cand.lower() in ("five", "file", "files") and following == "for":
+        return matched
+        
+    phi_str = _preserve_case("Phi", cand)
+    replaced = re.sub(rf"\b{cand}\b", phi_str, matched)
+    return replaced
+
+
+def run_phi_rules(text: str) -> str:
+    # 1. Standalone pi/fi/fai
+    text = re.sub(r"\b(pi|fi|fai)(s?)\b", lambda m: _preserve_case("Phi", m.group(1)) + m.group(2), text, flags=re.I)
+    
+    # 2. Preceded by scale words
+    scale_rx = re.compile(rf"\b({_SCALES})\s+({_CANDIDATES})(s?)\b(?!\s+(?:hundred|thousand|million|billion|ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|one|two|three|four|five|six|seven|eight|nine|point)\b)", re.I)
+    text = scale_rx.sub(lambda m: repl_phi_refined(m, text), text)
+    
+    # 3. Followed by currency suffixes
+    text = re.sub(rf"\b({_CANDIDATES})\s+({_CURR_SUFX})\b", repl_phi_simple, text, flags=re.I)
+    
+    # 4. Context phrases: got/have/had ... to drop
+    text = re.sub(rf"\b(got|have|had)\s+({_CANDIDATES})\s+to\s+drop\b", repl_phi_simple, text, flags=re.I)
+    
+    # 5. Context phrases: sold/sell/selling ... for ...
+    text = re.sub(rf"\b(sold|sell|selling)\s+(?:[a-z0-9'-]+\s+){{0,2}}for\s+({_CANDIDATES})\b", repl_phi_simple, text, flags=re.I)
+    
+    # 6. Context phrases: bleeding/funneling/saving up ...
+    text = re.sub(rf"\b(bleeding|funneling|funneled|funnels?|saving\s+up)\s+({_CANDIDATES})\b", repl_phi_simple, text, flags=re.I)
+    
+    # 7. Context phrases: throwing ... around
+    text = re.sub(rf"\b(throwing|throw|threw)\s+({_CANDIDATES})\s+around\b", repl_phi_simple, text, flags=re.I)
+    
+    # 8. Followed by currency contexts (for, minimum, saved, short, in bribes, at blackjack)
+    text = re.sub(rf"\b({_CANDIDATES})\s+(for|minimum|on\s+a|at\s+blackjack|saved|short|in\s+bribes)\b", repl_phi_context, text, flags=re.I)
+    
     return text
 
 
@@ -460,6 +686,8 @@ def digits_to_words(text: str) -> str:
 
     text = re.sub(r"\b\d{1,3}(?:,\d{3})+\b", repl_int, text)
     text = re.sub(r"\b\d+\b", repl_int, text)
+    
     text = correct_proper_nouns(text)
+    text = run_phi_rules(text)
     return text
 
