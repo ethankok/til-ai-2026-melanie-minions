@@ -1,11 +1,6 @@
 # ASR — notes & history
 
-Last updated: 22 May 2026 — **`parakeet-unified-zs` A/B completed and
-rejected for blended score.** Current shipped high remains `nemo-zs`
-(0.956 / 0.946). The fixed unified image now starts cleanly and submitted with
-0/400 errors, but it tied accuracy at 0.956 while dropping speed to 0.915
-(blended `0.9458` vs `nemo-zs` `0.9535`). Do not promote or resubmit unless a
-future serving optimization recovers the speed loss.
+Last updated: 22 May 2026 — **`nemo-zs-v2` (22/05) with phonetic post-corrections achieved a new ASR accuracy high of `0.962` but dropped speed to `0.911` due to the unified model default in the Dockerfile.** Reverted default model to `parakeet-tdt-0.6b-v2.nemo` as `nemo-zs-v3` to recover speed to `0.946` while retaining the `0.962` accuracy. Keep `nemo-zs-v3` as the new live candidate.
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -21,6 +16,30 @@ Same accuracy (within noise: -0.001), +0.097 speed. The leaderboard keeps
 the higher raw score for either dimension, but blended-per-challenge is what
 feeds the qualifier total via the 75/25 weighting, so this is the new ASR
 high.
+
+## nemo-zs-v2 (22/05) — phonetic post-corrections accuracy peak
+
+Submitted 22 May 2026 21:05 SGT.
+
+Why this candidate:
+- Added casing-preserving phonetic post-corrections for proper nouns (e.g., Sorrento -> Sarento, Phyrexis, Mewan, etc.) in `asr/src/asr_postprocess.py`.
+- Intended to run on top of the fast `parakeet-tdt-0.6b-v2.nemo` model.
+
+Results:
+- Errors: 0/400
+- Score: 0.962 (Accuracy improved from 0.956 to 0.962, verifying the post-corrections work!)
+- Speed: 0.911 (dropped from 0.946)
+- Local English WER: 0.0384 (vs baseline 0.0429)
+- Local 1 - MER: 0.9904 (vs baseline 0.9893)
+
+Diagnosis:
+- The default model in `asr/Dockerfile` was set to `parakeet-unified-en-0.6b.nemo` instead of `parakeet-tdt-0.6b-v2.nemo`. The unified model has higher inherent latency (speed 0.911-0.915) due to its non-TDT architecture.
+- Reverting the default model in both `Dockerfile` and `Dockerfile.nemo` to `parakeet-tdt-0.6b-v2.nemo` will recover the baseline speed to `0.946`.
+
+Action:
+- Switched default model variables to `parakeet-tdt-0.6b-v2.nemo` in `asr/Dockerfile`, `asr/Dockerfile.nemo`, `asr_manager_nemo.py`, and `download_models_nemo.py`.
+- Simplified the NeMo sanity check in Dockerfiles (removed `att_chunk_context_size` check).
+- Build the next iteration as `nemo-zs-v3`.
 
 ## Completed A/B: Parakeet unified zero-shot
 

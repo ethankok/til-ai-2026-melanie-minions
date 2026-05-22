@@ -2,8 +2,7 @@
 
 Drop-in replacement for `asr_manager.ASRManager` for A/B testing against the
 legacy faster-whisper distil-large-v3 path. The default checkpoint is the
-Parakeet unified English model, staged as the next zero-shot A/B against the
-current `nemo-zs` Parakeet-TDT-v2 submission.
+Parakeet-TDT-v2 English model, staged as the default zero-shot ASR model.
 
 NeMo/Parakeet models emit spelled-out numbers more often than Whisper-family
 models (matching the official transcript style: "zero six hundred",
@@ -52,7 +51,7 @@ class NemoASRManager:
     """English ASR backed by a local NeMo ASR `.nemo` checkpoint."""
 
     MODELS_DIR = os.environ.get("ASR_MODELS_DIR", "/workspace/models/asr")
-    MODEL_FILE = os.environ.get("ASR_NEMO_MODEL", "parakeet-unified-en-0.6b.nemo")
+    MODEL_FILE = os.environ.get("ASR_NEMO_MODEL", "parakeet-tdt-0.6b-v2.nemo")
     SLANG_PROMPT_PATH = os.environ.get(
         "ASR_SLANG_PROMPT_PATH", "/workspace/models/asr/slang_prompt.txt"
     )

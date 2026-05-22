@@ -32,7 +32,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--model",
-        default="nvidia/parakeet-unified-en-0.6b",
+        default="nvidia/parakeet-tdt-0.6b-v2",
         help="HuggingFace / NGC model id to download.",
     )
     parser.add_argument(

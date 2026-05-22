@@ -1,12 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 22 May 2026 15:40 SGT — **AE PPO retry suite documented and
-patched full-RL runner now active on the Mac. `fixed-map-v5` remains the AE high (`0.630 / 0.858`).
-The best local PPO continuation, `ppo-qualifier-best-v4-balanced`, reached
-weighted eval `0.6881` and Docker `0.7507`, but duplicate cloud submissions
-landed only `0.602 / 0.846` and `0.578 / 0.845`. ASR `parakeet-unified-zs`
-was fixed, tested, and rejected for blended score; `nemo-zs` remains ASR high.**
+Last updated: 22 May 2026 21:34 SGT — **ASR `nemo-zs-v2` (22/05) with phonetic post-corrections reached a new accuracy high of `0.962` but dropped speed to `0.911` due to the unified model default in the Dockerfile. Reverting to `parakeet-tdt-0.6b-v2.nemo` to recover speed to `0.946`. AE `fixed-map-v5` remains the AE high (`0.630 / 0.858`).**
 
 AE 22 May 14:20 SGT update: the `qualifier-best` PPO retry path produced
 several clean checkpoints but did not beat `fixed-map-v5` on hidden eval.
@@ -257,7 +252,8 @@ NLP (v9 first) melanie-minions-nlp v9-doc-ensemble 15/05/2026 19:25:50 0 / 700 0
 NLP (prior v8b) melanie-minions-nlp v8b-chunked-context 15/05/2026 18:35:19 0 / 700 0.679 0.872
 NLP (prior v7) melanie-minions-nlp v7-finetuned-v1 15/05/2026 11:39:09 0 / 700 0.517 0.880
 NLP (prior v5c) melanie-minions-nlp v5c-no-para 14/05/2026 19:44:08 0 / 700     0.483   0.912
-ASR    melanie-minions-asr      nemo-zs     14/05/2026 20:33:36   0 / 400       0.956   0.946  ← NEW BLENDED HIGH; Parakeet-TDT-0.6B-v2 zero-shot, +0.097 speed vs ft-lora32-v1
+ASR (accuracy high) melanie-minions-asr nemo-zs-v2 (22/05) 22/05/2026 21:05:42 0 / 400 0.962 0.911  ← NEW ACCURACY HIGH; Parakeet-unified-en-0.6b + phonetic post-corrections. Reached 0.962 accuracy but dropped speed to 0.911 due to unified model latency. Reverting to TDT-v2 next to recover speed.
+ASR (blended high)  melanie-minions-asr nemo-zs     14/05/2026 20:33:36   0 / 400       0.956   0.946  ← CURRENT SHIPPED BLENDED HIGH; Parakeet-TDT-0.6B-v2 zero-shot. Blended 0.9535.
 CV     melanie-minions-cv       ry-v2 19/05/2026 18:37:07 0 / 500 0.608 0.961  ← NEW CV HIGH. Same weights as `ruiyang-v1`; serving row `conf=0.15 iou=0.55 imgsz=896 aug=0 cross_nms=0.97`. Local hard held-out 0.9234; til test 0.9076.
 CV (prior high) melanie-minions-cv ruiyang-v1 19/05/2026 13:15:19 0 / 500 0.588 0.955  ← First 19 May unpark; local hard held-out 0.9125 with real-score HTTP eval.
 CV (regressed) melanie-minions-cv ry_v3_adaptive 19/05/2026 22:08:35 0 / 500 0.571 0.958  <- Low-conf + adaptive TTA rescue overfit saved JSON; til test fell to 0.8513. Do not ship.
@@ -377,6 +373,7 @@ vad-off-v1    12/05 20:00        0.938   0.859   0.0554          + VAD off + hal
 ft-lora32-v1  13/05 11:22        0.957   0.849   0.0299*         + LoRA rank-32 decoder fine-tune (3 epochs, lr 1e-4)
 nemo-zs       14/05 20:33        0.956   0.946   0.0429          BACKBONE SWITCH: Parakeet-TDT-0.6B-v2 zero-shot. Accuracy flat (-0.001), speed +0.097, blended +0.025
 nemo-zs-v2    14/05 22:07        0.956   0.946   0.0429          + cuda-python CUDA-graph fast path. Local wall clock -7% (37:28→34:42), cloud unchanged. Cloud speed bottleneck is now HTTP / audio I/O / Python overhead, NOT the TDT decoder. Speed parked at 0.946; next lever is accuracy (Parakeet FT).
+nemo-zs-v2 (22/05) 22/05 21:05   0.962   0.911   0.0384          + Casing-preserving phonetic post-corrections. Reached 0.962 accuracy (+0.006) but dropped speed to 0.911 because of the unified model default in the Dockerfile. Reverting to TDT-v2 next to recover speed.
 ```
 
 ## CV submission history
