@@ -329,7 +329,7 @@ _PROPER_NOUN_RULES = [
     (re.compile(r"\b(perex|perexis|pyrex|pyrexis|firex|firexes|fedex)('s)?\b", re.I), repl_phyrexis),
     
     # 6. Kestrelian
-    (re.compile(r"\b(castralian|castrillian|kestralian|kestrillian|castrelian|kastrillian)(s?)\b", re.I), repl_kestrelian),
+    (re.compile(r"\b(castralian|castrillian|kestralian|kestrillian|castrelian|kastrillian|kesrelian)(s?)\b", re.I), repl_kestrelian),
     
     # 7. Sarento / Sorrento
     (re.compile(r"\b(s[oae]r+ento)(s?)\b", re.I), repl_sarento),
