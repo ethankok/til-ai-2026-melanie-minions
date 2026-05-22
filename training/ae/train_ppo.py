@@ -1028,9 +1028,19 @@ def evaluate(
         if use_hybrid:
             from hybrid_manager import HybridAEManager  # noqa: WPS433
 
-            hybrid_manager = HybridAEManager(
-                policy=LivePolicyAdapter(actor, device, args.n_frames)
-            )
+            fixed_map_shortcut = getattr(args, "selection_fixed_map_shortcut", "on")
+            previous_shortcut = os.environ.get("AE_HYBRID_FIXED_MAP_SHORTCUT")
+            if fixed_map_shortcut == "off":
+                os.environ["AE_HYBRID_FIXED_MAP_SHORTCUT"] = "0"
+            try:
+                hybrid_manager = HybridAEManager(
+                    policy=LivePolicyAdapter(actor, device, args.n_frames)
+                )
+            finally:
+                if previous_shortcut is None:
+                    os.environ.pop("AE_HYBRID_FIXED_MAP_SHORTCUT", None)
+                else:
+                    os.environ["AE_HYBRID_FIXED_MAP_SHORTCUT"] = previous_shortcut
         opponents = _make_opponents(
             actor, device, mode,
             [a for a in env.possible_agents if a != our_agent],
@@ -1255,7 +1265,7 @@ def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
         args.opponent_mix_preset = "full-rl"
         args.opponents = "scripted"
         args.eval_opponents = "cloudsuite"
-        args.selection_manager = "hybrid"
+        args.selection_manager = "policy"
         args.selection_device = "cpu"
         args.selection_suites = "random,scripted,cloudsuite"
         args.selection_weights = "0.20,0.40,0.40"
@@ -1298,13 +1308,19 @@ def train(args: argparse.Namespace) -> None:
             "small validation suites differ across Python processes. "
             "Use training/ae/run_full_rl_v1.py or run with PYTHONHASHSEED=0."
         )
+    shortcut_tag = (
+        args.selection_fixed_map_shortcut
+        if args.selection_manager == "hybrid"
+        else "n/a"
+    )
     print(f"config: preset={args.preset} n_frames={args.n_frames} "
           f"reward_scale={args.reward_scale} return_clip={args.return_clip} "
           f"vary_maps={args.vary_maps} opponents={args.opponents} "
           f"eval_opponents={args.eval_opponents} curriculum={args.curriculum} "
           f"opponent_mix={args.opponent_mix_preset if args.opponent_mix_preset != 'none' else (args.opponent_mix or 'none')} "
           f"selection={args.selection_suites or args.eval_opponents} "
-          f"selection_manager={args.selection_manager} selection_device={args.selection_device}")
+          f"selection_manager={args.selection_manager} selection_device={args.selection_device} "
+          f"selection_fixed_map_shortcut={shortcut_tag}")
 
     actor, use_belief, warm_started, actor_ckpt = load_actor(args, device)
     if args.orthogonal_init and not warm_started:
@@ -1541,6 +1557,10 @@ def main() -> None:
                         help="Score checkpoints as pure policy or through the deployed hybrid wrapper.")
     parser.add_argument("--selection-device", choices=["train", "cpu"], default="train",
                         help="Run checkpoint selection on the training device or CPU. CPU better matches Docker.")
+    parser.add_argument("--selection-fixed-map-shortcut", choices=["on", "off"], default="on",
+                        help="For hybrid checkpoint selection, keep or disable the fixed-Novice-map "
+                             "heuristic shortcut. Disable it when training/evaluating a candidate "
+                             "whose policy must be allowed to affect fixed-map games.")
     parser.add_argument("--selection-weights", default="",
                         help="Comma-separated weights for --selection-suites; defaults to uniform.")
     parser.add_argument("--selection-games", type=int, default=6,

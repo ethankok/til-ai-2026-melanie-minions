@@ -1,8 +1,8 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 22 May 2026 14:20 SGT — **AE PPO retry suite documented and
-full-RL runner staged. `fixed-map-v5` remains the AE high (`0.630 / 0.858`).
+Last updated: 22 May 2026 15:40 SGT — **AE PPO retry suite documented and
+patched full-RL runner now active on the Mac. `fixed-map-v5` remains the AE high (`0.630 / 0.858`).
 The best local PPO continuation, `ppo-qualifier-best-v4-balanced`, reached
 weighted eval `0.6881` and Docker `0.7507`, but duplicate cloud submissions
 landed only `0.602 / 0.846` and `0.578 / 0.845`. ASR `parakeet-unified-zs`
@@ -24,15 +24,21 @@ same image/tag produced duplicate cloud results **0.602 / 0.846** and
 **0.578 / 0.845**. Interpretation: PPO is improving the local proxy, but the
 hidden-eval transfer gap is still the limiting problem.
 
-AE full-RL next step: `training/ae/train_ppo.py` now supports a `full-rl`
+AE full-RL live handoff: `training/ae/train_ppo.py` now supports a `full-rl`
 preset with fixed-Novice geometry, rotating rollout seeds, per-game stratified
 opponent mixing (`random,scripted,cloudsuite,planner,aggressive,league`), KL
 early stopping, schedules/shaping, weighted validation, and optional critic
-warm-start. `training/ae/run_full_rl_v1.py` is the Mac-first launcher and writes
-`training/ae/checkpoints/ppo-full-rl-v1.{pt,log}`. Mac benchmarking was faster
-than Workbench for this rollout-heavy trainer (`~3:52` vs `~7:51` for the same
-3-update v1 checkpoint benchmark), so train on Mac and only use Workbench for
-Docker build/test/submit.
+warm-start. The first live launch was stopped because hybrid selection still
+used the fixed-map shortcut, causing `scripted` and `cloudsuite` scores to stay
+effectively pinned to the heuristic. The restarted Mac run uses
+`selection_fixed_map_shortcut=off` / `AE_HYBRID_FIXED_MAP_SHORTCUT=0` during
+selection, so PPO affects fixed-Novice evals. Current restarted-run baseline:
+`0.5707` weighted (`random 0.7336`, `scripted 0.5196`, `cloudsuite 0.5404`);
+reference `ppo-qualifier-best-v4-balanced` scored `0.5765`; save floor is
+`0.5915`. `training/ae/run_full_rl_v1.py` writes
+`training/ae/checkpoints/ppo-full-rl-v1.pt` only if the gate clears, plus
+`ppo-full-rl-v1-latest.pt` for recovery/inspection. Train on Mac and only use
+Workbench for Docker build/test/submit.
 
 ASR 22 May 06:26 SGT update: runtime-fixed `parakeet-unified-zs` ran cleanly.
 Workbench `til test` completed 1028/1028 in 54:12 with English WER **0.0453**

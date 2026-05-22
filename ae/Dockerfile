@@ -17,6 +17,9 @@ WORKDIR /workspace
 # modes, OR write the mode into `ae/src/.ae_mode` (the server reads that
 # file at startup if AE_MODE is unset in the container env).
 ENV AE_MODE=hybrid
+# Preserve the current fixed-map-v5 behavior by default. Flip to 0 only for a
+# PPO candidate that has been trained/evaluated with the fixed-map shortcut off.
+ENV AE_HYBRID_FIXED_MAP_SHORTCUT=1
 # MCTS-light is a known-regressed experiment, so keep it opt-in. See
 # ae/NOTES.md for the speed budget math and the v1/v2 cloud failures.
 # v1 used DEPTH=5 WIDTH=96 with no gate / no latency cap; cloud killed it after

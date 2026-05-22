@@ -291,13 +291,42 @@ training/ae/checkpoints/ppo-full-rl-v1.log
 
 Checkpoint files are gitignored; do not commit them. The main candidate file is
 now save-gated: checkpoint selection runs on CPU through the deployed `hybrid`
-wrapper, pins `PYTHONHASHSEED=0` in the trainer subprocess, uses held-out
-`random,scripted,cloudsuite` seeds, compares against the starting
+wrapper with `AE_HYBRID_FIXED_MAP_SHORTCUT=0`, pins `PYTHONHASHSEED=0` in the
+trainer subprocess, uses held-out `random,scripted,cloudsuite` seeds, compares
+against the starting
 `ppo-qualifier-best-v1.pt`, and also compares against
 `ppo-qualifier-best-v4-balanced.pt` when that reference checkpoint is present.
 It only writes `ppo-full-rl-v1.pt` if the trained model beats the strongest
 baseline/reference by at least `0.015` on the same selection suite. The
 `latest` file is for inspection/recovery, not automatic deployment.
+
+This shortcut setting matters. The shipping hybrid keeps
+`AE_HYBRID_FIXED_MAP_SHORTCUT=1` to preserve the current `fixed-map-v5` behavior,
+which returns the heuristic directly on detected Novice maps. Full-RL selection
+turns that shortcut off so the learned policy can affect fixed-map games during
+the gate. If a gated PPO candidate is promoted, flip the Docker env to
+`AE_HYBRID_FIXED_MAP_SHORTCUT=0` for that build too; otherwise the cloud image
+will mostly run the heuristic and ignore the trained policy on fixed maps.
+
+Current 22 May handoff state: the first live launch was stopped because
+`scripted` and `cloudsuite` were effectively frozen by the fixed-map shortcut.
+The restarted Mac run is active with
+`selection_manager=hybrid selection_device=cpu selection_fixed_map_shortcut=off`.
+Its baseline is `0.5707`, the `ppo-qualifier-best-v4-balanced` reference is
+`0.5765`, and the gated candidate save floor is `0.5915`. At update 20/240,
+eval was `0.5870`, so no candidate had cleared the floor yet. Continue from the
+log, not from memory:
+
+```bash
+cd /Users/ethankok/projects/TIL
+tail -n 80 training/ae/checkpoints/ppo-full-rl-v1.log
+ls -lh training/ae/checkpoints/ppo-full-rl-v1.pt \
+       training/ae/checkpoints/ppo-full-rl-v1-latest.pt
+```
+
+If `ppo-full-rl-v1.pt` does not exist after training completes, the run did not
+produce a deployable candidate. Do not copy `ppo-full-rl-v1-latest.pt` into
+`ae/models/bc.pt` except for explicit analysis.
 
 If the gated candidate exists and the run is promising, copy
 `ppo-full-rl-v1.pt` to Workbench manually or through the browser/download path,
@@ -308,6 +337,7 @@ cd /home/jupyter/til
 mkdir -p ae/models
 cp /path/to/ppo-full-rl-v1.pt ae/models/bc.pt
 echo hybrid > ae/src/.ae_mode
+# Edit ae/Dockerfile for this candidate: ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0
 til build ae ppo-full-rl-v1
 til test ae ppo-full-rl-v1
 til submit ae ppo-full-rl-v1
