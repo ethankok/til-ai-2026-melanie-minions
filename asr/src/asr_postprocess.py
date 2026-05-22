@@ -67,6 +67,270 @@ def _int_to_words(n: int) -> str:
         q, r = divmod(n, 1000)
         return f"{_int_to_words(q)} thousand" if r == 0 else f"{_int_to_words(q)} thousand {_int_to_words(r)}"
     return " ".join(_DIGIT_WORDS[d] for d in str(n))
+def _preserve_case(target: str, match_text: str) -> str:
+    if match_text.isupper():
+        return target.upper()
+    if match_text.islower():
+        return target.lower()
+    if match_text and match_text[0].isupper():
+        return target
+    return target
+
+
+def repl_new_mewan(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    suffix = match.group(3) if match.group(3) else ""
+    if matched.isupper():
+        base = "NEW MEWAN"
+    elif matched.islower():
+        base = "new mewan"
+    else:
+        base = "New Mewan"
+    return base + suffix
+
+
+def repl_standalone_mewan(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    suffix = match.group(2) if match.group(2) else ""
+    if matched.isupper():
+        base = "NEW MEWAN"
+    elif matched.islower():
+        base = "new mewan"
+    else:
+        base = "New Mewan"
+    return base + suffix
+
+
+def repl_phyrexis(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    suffix = match.group(2) if match.group(2) else ""
+    if matched.isupper():
+        base = "PHYREXIS"
+    elif matched.islower():
+        base = "phyrexis"
+    else:
+        base = "Phyrexis"
+    return base + suffix
+
+
+def repl_kestrelian(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Kestrelian", match.group(1))
+    return base + suffix
+
+
+def repl_sarento(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Sarento", match.group(1))
+    return base + suffix
+
+
+def repl_cyanite(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Cyanite", match.group(1))
+    return base + suffix
+
+
+def repl_renhwa(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Renhwa", match.group(1))
+    return base + suffix
+
+
+def repl_takeshi_ada_oyelaran(match: re.Match[str]) -> str:
+    first_name = match.group(1)
+    last_name = match.group(2)
+    suffix = match.group(3) if match.group(3) else ""
+    last_target = _preserve_case("Oyelaran", last_name)
+    return f"{first_name} {last_target}{suffix}"
+
+
+def repl_devika_oranyan(match: re.Match[str]) -> str:
+    first_name = match.group(1)
+    last_name = match.group(2)
+    suffix = match.group(3) if match.group(3) else ""
+    first_target = _preserve_case("Devika", first_name)
+    last_target = _preserve_case("Oranyan", last_name)
+    return f"{first_target} {last_target}{suffix}"
+
+
+def repl_divikauranyan(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    suffix = match.group(1) if match.group(1) else ""
+    if matched.isupper():
+        base = "DEVIKA ORANYAN"
+    elif matched.islower():
+        base = "devika oranyan"
+    else:
+        base = "Devika Oranyan"
+    return base + suffix
+
+
+def repl_devi_kauranyan(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    suffix = match.group(1) if match.group(1) else ""
+    if matched.isupper():
+        base = "DEVIKA ORANYAN"
+    elif matched.islower():
+        base = "devika oranyan"
+    else:
+        base = "Devika Oranyan"
+    return base + suffix
+
+
+def repl_park_soo_hyun(match: re.Match[str]) -> str:
+    first = match.group(1)
+    second = match.group(2)
+    suffix = match.group(3) if match.group(3) else ""
+    first_target = _preserve_case("Park", first)
+    second_target = _preserve_case("Soo-Hyun", second)
+    return f"{first_target} {second_target}{suffix}"
+
+
+def repl_soo_hyun_standalone(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Soo-Hyun", match.group(1))
+    return base + suffix
+
+
+def repl_suyan_standalone(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Soo-Hyun", match.group(1))
+    return base + suffix
+
+
+def repl_sim_jiahong(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    suffix = match.group(1) if match.group(1) else ""
+    if matched.isupper():
+        base = "SIM JIAHONG"
+    elif matched.islower():
+        base = "sim jiahong"
+    else:
+        base = "Sim Jiahong"
+    return base + suffix
+
+
+def repl_jiahong_standalone(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    suffix = match.group(1) if match.group(1) else ""
+    base = _preserve_case("Jiahong", matched[:-len(suffix)] if suffix else matched)
+    return base + suffix
+
+
+def repl_blackshore(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    suffix = match.group(1) if match.group(1) else ""
+    if matched.isupper():
+        base = "BLACKSHORE"
+    elif matched.islower():
+        base = "blackshore"
+    else:
+        base = "Blackshore"
+    return base + suffix
+
+
+def repl_tidak_standalone(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    base = _preserve_case("Tidak", matched)
+    return base
+
+
+def repl_tidakran(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    if matched.isupper():
+        return "TIDAK RUN"
+    elif matched.islower():
+        return "tidak run"
+    else:
+        return "Tidak run"
+
+
+def repl_kashikari_standalone(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    base = _preserve_case("Kashikari", matched)
+    return base
+
+
+def repl_devika_standalone(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    base = _preserve_case("Devika", matched)
+    return base
+
+
+def repl_tavenport_standalone(match: re.Match[str]) -> str:
+    matched = match.group(0)
+    base = _preserve_case("Tavenport", matched)
+    return base
+
+
+def repl_oyelaran_standalone(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Oyelaran", match.group(1))
+    return base + suffix
+
+
+def repl_oranyan_standalone(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Oranyan", match.group(1))
+    return base + suffix
+
+
+_PROPER_NOUN_RULES = [
+    # 1. Complex/Combined Names (to avoid parts getting replaced by standalone rules)
+    (re.compile(r"\b(takeshi|ada)\s+(oilaran|olrn|oyelaran)(s?|['s]*)\b", re.I), repl_takeshi_ada_oyelaran),
+    (re.compile(r"\b(devika|divika)\s+(aranyan|oranyan)(s?|['s]*)\b", re.I), repl_devika_oranyan),
+    (re.compile(r"\bdivikauranyan(s?|['s]*)\b", re.I), repl_divikauranyan),
+    (re.compile(r"\bdevi\s+kauranyan(s?|['s]*)\b", re.I), repl_devi_kauranyan),
+    
+    # 2. Park Soo-Hyun
+    (re.compile(r"\b(park|pak|pack)\s+(su\s+hyun|soo\s+hyun)(s?|['s]*)\b", re.I), repl_park_soo_hyun),
+    (re.compile(r"\b(su|soo)\s+hyun(s?|['s]*)\b", re.I), repl_soo_hyun_standalone),
+    (re.compile(r"\b(suyan|suyon|sujan|suhyan|soohyan)(s?|['s]*)\b", re.I), repl_suyan_standalone),
+    
+    # 3. New Mewan
+    (re.compile(r"\b(new|nu|noo|u)\s*(mewan|miwan|muvan|muon|muan|mi1|mu1|mi\s*1|mu\s*1|mi\s*one|mu\s*one|muons?|muvans?|miwans?|muans?)(s?|['s]*)\b", re.I), repl_new_mewan),
+    (re.compile(r"\b(numiwan|numuan|mumuan|umiwan)(s?|['s]*)\b", re.I), repl_standalone_mewan),
+    
+    # 4. Sim Jiahong
+    (re.compile(r"\bsim\s+jahong(s?|['s]*)\b", re.I), repl_sim_jiahong),
+    (re.compile(r"\bjahong(s?|['s]*)\b", re.I), repl_jiahong_standalone),
+    
+    # 5. Phyrexis
+    (re.compile(r"\b(perex|perexis|pyrex|pyrexis|firex|firexes|fedex)('s)?\b", re.I), repl_phyrexis),
+    
+    # 6. Kestrelian
+    (re.compile(r"\b(castralian|castrillian|kestralian|kestrillian|castrelian|kastrillian)(s?)\b", re.I), repl_kestrelian),
+    
+    # 7. Sarento / Sorrento
+    (re.compile(r"\b(sor[r]+ento)(s?)\b", re.I), repl_sarento),
+    
+    # 8. Cyanite
+    (re.compile(r"\b(cyanide|syanite|sanite|sinide)(s?)\b", re.I), repl_cyanite),
+    
+    # 9. Renhwa
+    (re.compile(r"\b(renwa|renva|renhua|renhoa|renha|ren\s+ha)(s?)\b", re.I), repl_renhwa),
+    
+    # 10. Standalone Last Names / Names
+    (re.compile(r"\b(oilaran|olrn)(s?|['s]*)\b", re.I), repl_oyelaran_standalone),
+    (re.compile(r"\b(aranyan)(s?|['s]*)\b", re.I), repl_oranyan_standalone),
+    (re.compile(r"\b(kashikarikari|kashkari)\b", re.I), repl_kashikari_standalone),
+    (re.compile(r"\bdivika\b", re.I), repl_devika_standalone),
+    (re.compile(r"\bdavenport\b", re.I), repl_tavenport_standalone),
+    
+    # 11. Tidak
+    (re.compile(r"\b(tedak|taidak|sidak|tiduck)\b", re.I), repl_tidak_standalone),
+    (re.compile(r"\btidakran\b", re.I), repl_tidakran),
+    
+    # 12. Blackshore
+    (re.compile(r"\bblack\s+shore(s?|['s]*)\b", re.I), repl_blackshore),
+]
+
+
+def correct_proper_nouns(text: str) -> str:
+    for rx, repl in _PROPER_NOUN_RULES:
+        text = rx.sub(repl, text)
+    return text
 
 
 def digits_to_words(text: str) -> str:
@@ -147,4 +411,6 @@ def digits_to_words(text: str) -> str:
 
     text = re.sub(r"\b\d{1,3}(?:,\d{3})+\b", repl_int, text)
     text = re.sub(r"\b\d+\b", repl_int, text)
+    text = correct_proper_nouns(text)
     return text
+
