@@ -1,14 +1,38 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 22 May 2026 06:26 SGT — **ASR `parakeet-unified-zs` was fixed,
-tested, and rejected for blended score. AE current high remains `fixed-map-v5`
-(`0.630 / 0.858`). The repo runtime files are restored to the source shape that
-built that tag: fixed-map-v3-era source with `AE_MODE=hybrid` and the restored
-`deployed-bc-v1.pt` artifact supplied locally on Workbench. `ae/src/ae_manager.py`
-itself never drifted after `fixed-map-v5`; the important drift was later
-`model.py` / `policy_manager.py` legacy-checkpoint support and a temporary
-Dockerfile switch to heuristic mode, both now reverted for the AE runtime.**
+Last updated: 22 May 2026 14:20 SGT — **AE PPO retry suite documented and
+full-RL runner staged. `fixed-map-v5` remains the AE high (`0.630 / 0.858`).
+The best local PPO continuation, `ppo-qualifier-best-v4-balanced`, reached
+weighted eval `0.6881` and Docker `0.7507`, but duplicate cloud submissions
+landed only `0.602 / 0.846` and `0.578 / 0.845`. ASR `parakeet-unified-zs`
+was fixed, tested, and rejected for blended score; `nemo-zs` remains ASR high.**
+
+AE 22 May 14:20 SGT update: the `qualifier-best` PPO retry path produced
+several clean checkpoints but did not beat `fixed-map-v5` on hidden eval.
+`ppo-qualifier-best-v1` saved best checkpoint at `epoch=65` with weighted eval
+`0.6547` (random `0.7659`, scripted `0.6440`, cloudsuite `0.6167`) and cloud
+returned **0.610 / 0.857**. `ppo-qualifier-best-v2` continued from v1 with a
+cloudsuite-heavy setup; local eval reached `0.6576`, but cloud returned
+**0.598 / 0.845**. `ppo-qualifier-best-v3` was a scripted/balanced continuation
+and stayed local-only with best eval `0.6199`. `ppo-qualifier-best-v4-balanced`
+was the strongest local proxy (`epoch=75`, eval `0.68808125`, parts random
+`0.82228125`, scripted `0.6648125`, cloudsuite `0.64425`, local Docker
+`0.7506667`, checkpoint sha256
+`3e123b65cd5f2baae06197c4ab05055061b7b17aef96083744445891b9ecb047`), but the
+same image/tag produced duplicate cloud results **0.602 / 0.846** and
+**0.578 / 0.845**. Interpretation: PPO is improving the local proxy, but the
+hidden-eval transfer gap is still the limiting problem.
+
+AE full-RL next step: `training/ae/train_ppo.py` now supports a `full-rl`
+preset with fixed-Novice geometry, rotating rollout seeds, per-game stratified
+opponent mixing (`random,scripted,cloudsuite,planner,aggressive,league`), KL
+early stopping, schedules/shaping, weighted validation, and optional critic
+warm-start. `training/ae/run_full_rl_v1.py` is the Mac-first launcher and writes
+`training/ae/checkpoints/ppo-full-rl-v1.{pt,log}`. Mac benchmarking was faster
+than Workbench for this rollout-heavy trainer (`~3:52` vs `~7:51` for the same
+3-update v1 checkpoint benchmark), so train on Mac and only use Workbench for
+Docker build/test/submit.
 
 ASR 22 May 06:26 SGT update: runtime-fixed `parakeet-unified-zs` ran cleanly.
 Workbench `til test` completed 1028/1028 in 54:12 with English WER **0.0453**
@@ -237,6 +261,11 @@ CV (v11m-1280-noaug-v1) melanie-minions-cv  v11m-1280-noaug-v1 16/05/2026 04:04:
 CV (cv-augc1-v4) melanie-minions-cv  cv-augc1-v4  16/05/2026 15:28:35 0 / 500 0.553 0.962  ← Phase C.1 augmented training (JPEG aug + 1024×1024 native-res tile crops, v8s @ imgsz=1024 scale=0.80), shipped with mismatched Dockerfile config (CV_IMGSZ=768 default). Essentially tied with tier1; informative only as a config-mismatch demonstration.
 CV (cv-augc1-v4-1280) melanie-minions-cv  cv-augc1-v4-1280 16/05/2026 18:28:27 0 / 500 0.553 0.959  ← Same model rebuilt with matched Dockerfile config (CV_IMGSZ=1280 CV_CONF=0.001 CV_IOU=0.7 CV_AUGMENT=0). Hard held-out lifted +0.04 to 0.948 / small AP 0.779. Cloud flat at 0.553 — gap WIDENED 0.349 → 0.395. Phase C confirmed dead as a path to 0.7; v8s/v11m family at-ceiling. Tier1 stays on leaderboard.
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
+AE (current high) melanie-minions-ae fixed-map-v5 21/05/2026 17:08:00 0 / 30 0.630 0.858 ← CURRENT AE HIGH. Restored fixed-map-v3-era hybrid source plus `deployed-bc-v1.pt`; keep this as the protected shipping baseline.
+AE (PPO retry best local, duplicate 1) melanie-minions-ae ppo-qualifier-best-v4-balanced 22/05/2026 12:14:59 0 / 30 0.602 0.846 ← Best local PPO continuation: checkpoint epoch 75, weighted eval 0.6881, local Docker 0.7507. Did not beat fixed-map-v5.
+AE (PPO retry best local, duplicate 2) melanie-minions-ae ppo-qualifier-best-v4-balanced 22/05/2026 12:44:55 0 / 30 0.578 0.845 ← Same tag accidentally submitted again; variance confirmed, still not promotable.
+AE (PPO retry cloudsuite) melanie-minions-ae ppo-qualifier-best-v2 22/05/2026 00:27:19 0 / 30 0.598 0.845 ← Cloudsuite-focused continuation from v1; local eval/cloudsuite looked strong but hidden eval regressed below v1 and fixed-map-v5.
+AE (PPO retry v1) melanie-minions-ae ppo-qualifier-best-v1 21/05/2026 21:36:57 0 / 30 0.610 0.857 ← First qualifier-best PPO retry; best checkpoint epoch 65, weighted eval 0.6547. Good base checkpoint, not the AE high.
 AE     melanie-minions-ae       ae-item-confidence-v1 20/05/2026 21:47:52 0 / 30 0.593 0.844  ← SECOND-BEST AE SCORE. Item-confidence/respawn priors transferred above 0.5, but local Docker 0.7435 still overestimated cloud by ~0.150; next A/B strengthens fixed item priors.
 AE (regressed) melanie-minions-ae pessimistic-mini-search-v1 21/05/2026 04:54:51 0 / 30 0.396 0.847 ← FAILED pressure A/B. Local Docker `0.456`; Mac cloudsuite `0.3962` predicted cloud almost exactly, but absolute score is below `ae-fixed-map-v3`, `ae-item-confidence-v1`, `heuristic-tweaks`, and `candidate-b`. Disabled by default.
 AE (local rejected) melanie-minions-ae ttd-defense-v1 21/05/2026 LOCAL ONLY — — 0.2714 cloudsuite ← Mac-first gate stopped this before Workbench. TTD override fired often but cloudsuite regressed; useful diagnostic says base failures are mostly visible enemy bombs.

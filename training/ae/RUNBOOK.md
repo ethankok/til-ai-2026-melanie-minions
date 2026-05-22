@@ -19,6 +19,7 @@ ae/models/playbook.npz                   state→action lookup            Tier-1
 ae/models/opponent_model.json            walk-distance scalar           Tier-2 #8
 ae/models/oracle_table.npz               oracle BC table                Tier-2 #10
 training/ae/checkpoints/ppo-scripted.pt  PPO trained vs scripted pool   Tier-2 #9
+training/ae/checkpoints/ppo-full-rl-v1.pt Full-RL PPO candidate         current next experiment
 ```
 
 ---
@@ -32,7 +33,8 @@ training/ae/checkpoints/ppo-scripted.pt  PPO trained vs scripted pool   Tier-2 #
 - `collect_bc.py` — rolls out the planner in `til_environment.bomberman_env`, logs every `(obs, action)` pair to a compressed `.npz`.
 - `train_bc.py` — supervised cross-entropy training of `PolicyNetwork` on the BC dataset. Masks illegal actions in both loss and argmax.
 - `eval_policy.py` — runs a checkpoint against the env for N games, reports the same `score = total_reward / games / 1000` as `test/test_ae.py`.
-- `train_ppo.py` — pure-PyTorch PPO fine-tune. Warm-starts from `bc.pt`, trains agent 0 against a mixed opponent pool, saves a deployment-compatible actor checkpoint.
+- `train_ppo.py` — pure-PyTorch PPO fine-tune. Warm-starts from `bc.pt`/PPO checkpoints, trains agent 0 against scripted/cloudsuite/league/per-game mixed pools, saves a deployment-compatible actor checkpoint.
+- `run_full_rl_v1.py` — Mac-first launcher for the current full-RL attempt. Wraps `train_ppo.py --preset full-rl` and streams logs to `training/ae/checkpoints/ppo-full-rl-v1.log`.
 - `simulate.py`, `opponents.py` — Tier 1+2 simulation harness with the 5-archetype scripted opponent library (random / greedy / bomber / defender / hunter).
 - `build_playbook.py`, `fit_opponent_model.py`, `oracle_bc.py` — Tier 1+2 artifact builders.
 
@@ -47,7 +49,7 @@ training/ae/checkpoints/ppo-scripted.pt  PPO trained vs scripted pool   Tier-2 #
 | Behavior-cloning collector| implemented |
 | Behavior-cloning trainer  | implemented |
 | Local policy evaluator    | implemented |
-| PPO fine-tune             | implemented; `ppo-scripted-v1` shipped, REGRESSED cloud |
+| PPO fine-tune             | implemented; old scripted/self-play runs regressed cloud; `qualifier-best` improved local proxy but did not beat `fixed-map-v5`; `full-rl` launcher staged |
 | Tier 1+2 artifact builders| implemented |
 | Deployment into `ae/src/` | implemented; shipped tag = `hybrid-v3` |
 
@@ -93,10 +95,12 @@ The inference path in [../../ae/src/ae_server.py](../../ae/src/ae_server.py) sup
 
 Current AE high: `fixed-map-v5` scored `0.630 / 0.858`. The repo runtime is
 restored to that build's source shape (`AE_MODE=hybrid`, fixed-map-v3-era
-runtime code, restored `deployed-bc-v1.pt` supplied locally on Workbench). The
-follow-up `fixed-map-v5-finetune-v1` learned the local/scripted distribution
-(`til test` `0.85025`) but regressed on cloud to `0.587 / 0.848`, so do not
-treat PPO continuation as the default path.
+runtime code, restored `deployed-bc-v1.pt` supplied locally on Workbench).
+Follow-up PPO attempts improved local proxies but did not transfer: the best
+retry, `ppo-qualifier-best-v4-balanced`, reached weighted eval `0.6881` and
+Docker `0.7507`, then landed cloud `0.602 / 0.846` and `0.578 / 0.845` on
+duplicate submits. Treat PPO continuation as experimental until it clears
+hidden eval, not as the default shipping path.
 
 Deploy a new policy checkpoint by copying it into the model slot:
 
@@ -242,11 +246,67 @@ The saved checkpoint is selected by weighted validation:
 0.20 * random + 0.30 * scripted + 0.50 * cloudsuite
 ```
 
-Do **not** submit only because the trainer's eval rises. First deploy to
-`ae/models/bc.pt`, build a tag, run `til test ae <tag>`, and then run the
-Mac/Workbench pressure gate before spending a cloud submission. The current
-smoke-tested status is code-only: it proves rollout/update/checkpoint plumbing,
-not quality.
+Observed 22 May results:
+
+| Tag | Local evidence | Cloud |
+|---|---|---|
+| `ppo-qualifier-best-v1` | best `epoch=65`, weighted eval `0.6547`, local Docker around `0.7345` | `0.610 / 0.857` |
+| `ppo-qualifier-best-v2` | cloudsuite-focused continuation, weighted eval `0.6576`, local Docker `0.7185` | `0.598 / 0.845` |
+| `ppo-qualifier-best-v3` | scripted/balanced continuation, weighted eval `0.6199` | not submitted |
+| `ppo-qualifier-best-v4-balanced` | best `epoch=75`, weighted eval `0.68808125`, local Docker `0.7506667` | `0.602 / 0.846`, then duplicate `0.578 / 0.845` |
+
+Do **not** submit only because the trainer's eval rises. These runs prove the
+local proxy can climb while hidden eval stays below `fixed-map-v5`. First deploy
+to `ae/models/bc.pt`, build a tag, run `til test ae <tag>`, and require a large
+margin over the v1/v4 local profiles before spending another cloud submission.
+
+### Full fixed-Novice RL launcher
+
+For the next serious RL attempt, use the `full-rl` preset through the launcher
+instead of hand-copying a long command. This keeps fixed Novice geometry but
+rotates rollout seeds and stratifies each PPO update across a wider opponent
+mix:
+
+```text
+10% random, 35% scripted, 35% cloudsuite,
+5% planner, 5% aggressive, 10% league/self-play snapshots
+```
+
+Run it on the Mac, which benchmarked faster than Workbench for this rollout
+loop (`~3:52` vs `~7:51` for the same 3-update v1 checkpoint benchmark):
+
+```bash
+cd /Users/ethankok/projects/TIL
+.venv/bin/python -u training/ae/run_full_rl_v1.py
+```
+
+The launcher expects `training/ae/checkpoints/ppo-qualifier-best-v1.pt` and
+writes:
+
+```text
+training/ae/checkpoints/ppo-full-rl-v1.pt
+training/ae/checkpoints/ppo-full-rl-v1.log
+```
+
+Checkpoint files are gitignored; do not commit them. If the run is promising,
+copy `ppo-full-rl-v1.pt` to Workbench manually or through the browser/download
+path, then deploy:
+
+```bash
+cd /home/jupyter/til
+mkdir -p ae/models
+cp /path/to/ppo-full-rl-v1.pt ae/models/bc.pt
+echo hybrid > ae/src/.ae_mode
+til build ae ppo-full-rl-v1
+til test ae ppo-full-rl-v1
+til submit ae ppo-full-rl-v1
+```
+
+Deployment risk here means mismatch risk: wrong checkpoint architecture or
+`n_frames`, wrong mode baked into `.ae_mode`/Docker, missing Docker dependency,
+or local proxy overfit. The code can train correctly and still deploy a weaker
+hybrid if any of those pieces are off, so always inspect checkpoint metadata and
+run `til test` before submit.
 
 Do **not** use `--total-steps`, `--warm-start`, or `--out-dir`; those flags do
 not exist here. Detach tmux with `Ctrl-b`, then `d`; reattach with
@@ -674,10 +734,14 @@ is still worth spending a submission on.
 
 ---
 
-## 8. Tier 2 #9 (PPO retrain, optional, 4-6 hr GPU)
+## 8. Tier 2 #9 (PPO retrain, legacy scripted recipe)
 
-Workbench-only — local Mac CPU is too slow for 200 PPO updates. Trains
-PPO with our agent in slot 0 and the 5-opponent scripted library
+This section is the older scripted-PPO recipe. Keep it for provenance, but use
+the full-RL launcher above for new work. Contrary to the original assumption,
+the rollout-heavy PPO loop benchmarked faster on the Mac than on Workbench for
+the current lightweight policy.
+
+The legacy recipe trains PPO with our agent in slot 0 and the 5-opponent scripted library
 (random / greedy / bomber / defender / hunter, one per slot) in slots
 1-5. BC-warm-start from `bc.pt` is the recommended base.
 

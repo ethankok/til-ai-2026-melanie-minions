@@ -81,6 +81,13 @@ OPPONENT_MODES = (
     "cloudsuite",
 )
 
+OPPONENT_MIX_PRESETS = {
+    # Full fixed-Novice RL blend. The core mass is scripted+cloudsuite because
+    # local random is known-misleading, while small planner/aggressive/league
+    # slices keep the policy from overfitting one handcrafted proxy.
+    "full-rl": "random:0.10,scripted:0.35,cloudsuite:0.35,planner:0.05,aggressive:0.05,league:0.10",
+}
+
 CURRICULA = {
     # Warm up on easy legal-action pressure, then move into the opponent
     # families that have been most predictive of hidden-eval failure.
@@ -630,6 +637,84 @@ def _make_env(args: argparse.Namespace):
     return bomberman_env.basic_env(env_wrappers=[], cfg=config)
 
 
+def _parse_opponent_mix(args: argparse.Namespace) -> list[tuple[str, float]]:
+    raw = (args.opponent_mix or "").strip()
+    preset = getattr(args, "opponent_mix_preset", "none")
+    if preset != "none":
+        raw = OPPONENT_MIX_PRESETS[preset]
+    if not raw:
+        return []
+
+    mix: list[tuple[str, float]] = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        if ":" not in entry:
+            raise SystemExit(
+                f"Invalid --opponent-mix entry {entry!r}; expected mode:weight"
+            )
+        mode, weight_s = entry.split(":", 1)
+        mode = mode.strip()
+        if mode not in OPPONENT_MODES:
+            raise SystemExit(f"Unknown opponent mix mode {mode!r}; choices: {', '.join(OPPONENT_MODES)}")
+        try:
+            weight = float(weight_s)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid opponent mix weight in {entry!r}") from exc
+        if weight <= 0.0:
+            raise SystemExit(f"Opponent mix weight must be positive in {entry!r}")
+        mix.append((mode, weight))
+
+    total = sum(weight for _mode, weight in mix)
+    if total <= 0.0:
+        return []
+    return [(mode, weight / total) for mode, weight in mix]
+
+
+def _opponent_plan_for_update(args: argparse.Namespace) -> list[str]:
+    """Return a shuffled, stratified per-game opponent-mode plan.
+
+    For small update batches like 16 games, pure random sampling can easily
+    omit a low-probability but important family. Stratifying keeps the intended
+    full-RL mix present in every update while still shuffling order.
+    """
+
+    mix = _parse_opponent_mix(args)
+    if not mix:
+        return []
+
+    n = int(args.games_per_update)
+    exact = [(mode, weight * n) for mode, weight in mix]
+    counts = {mode: int(math.floor(value)) for mode, value in exact}
+    remaining = n - sum(counts.values())
+    by_fraction = sorted(
+        exact,
+        key=lambda item: item[1] - math.floor(item[1]),
+        reverse=True,
+    )
+    for mode, _value in by_fraction[:remaining]:
+        counts[mode] += 1
+
+    plan: list[str] = []
+    for mode, count in counts.items():
+        plan.extend([mode] * count)
+    # Guard against roundoff/edge cases.
+    if len(plan) < n:
+        plan.extend([mix[0][0]] * (n - len(plan)))
+    elif len(plan) > n:
+        plan = plan[:n]
+    random.shuffle(plan)
+    return plan
+
+
+def _format_mode_counts(mode_counts: dict[str, int]) -> str:
+    if not mode_counts:
+        return ""
+    ordered = sorted(mode_counts.items(), key=lambda item: (-item[1], item[0]))
+    return ",".join(f"{mode}:{count}" for mode, count in ordered)
+
+
 def collect_rollouts(
     actor: PolicyNetwork,
     critic: ValueNetwork,
@@ -638,7 +723,7 @@ def collect_rollouts(
     seed_offset: int,
     snapshot_pool: SnapshotPool | None = None,
     opponent_mode: str | None = None,
-) -> tuple[list[Transition], float]:
+) -> tuple[list[Transition], float, dict[str, int]]:
     env = _make_env(args)
     our_agent = env.possible_agents[0]
 
@@ -646,10 +731,14 @@ def collect_rollouts(
     total_reward = 0.0
     reward_shaper = AdaptiveRewardShaper(args)
     mode = opponent_mode or args.opponents
+    opponent_plan = _opponent_plan_for_update(args)
+    mode_counts: dict[str, int] = {}
 
     use_belief = bool(getattr(actor, "use_belief", False))
 
     for game in range(args.games_per_update):
+        game_mode = opponent_plan[game] if opponent_plan else mode
+        mode_counts[game_mode] = mode_counts.get(game_mode, 0) + 1
         reward_shaper.start_game()
         if args.vary_maps:
             env.reset(seed=random.randint(0, 2**31 - 1))
@@ -661,7 +750,7 @@ def collect_rollouts(
         # Per-game belief-tracking planner for OUR agent. Cheap when use_belief=False.
         planner = AEManager()
         opponents = _make_opponents(
-            actor, device, mode,
+            actor, device, game_mode,
             [a for a in env.possible_agents if a != our_agent],
             args.n_frames,
             snapshot_pool=snapshot_pool,
@@ -717,7 +806,7 @@ def collect_rollouts(
             env.step(action)
 
     env.close()
-    return transitions, total_reward / max(args.games_per_update, 1) / MAX_SCORE
+    return transitions, total_reward / max(args.games_per_update, 1) / MAX_SCORE, mode_counts
 
 
 def _random_legal_action(mask: np.ndarray, env, agent: str) -> int:
@@ -895,7 +984,7 @@ def evaluate(
     return total_reward / max(games, 1) / MAX_SCORE
 
 
-def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNetwork, bool, bool]:
+def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNetwork, bool, bool, dict | None]:
     """Construct the actor and warm-start from BC if available.
 
     Returns (actor, use_belief). `use_belief` is taken from the BC
@@ -936,7 +1025,7 @@ def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNe
         )
     elif ckpt_path and not ckpt_path.exists():
         print(f"BC checkpoint not found at {ckpt_path}; training PPO from scratch (use_belief={use_belief})")
-    return actor, use_belief, warm_started
+    return actor, use_belief, warm_started, ckpt
 
 
 def _linear(start: float, end: float, progress: float) -> float:
@@ -1004,30 +1093,63 @@ def _orthogonal_init(module: nn.Module, final_gain: float = 1.0) -> None:
             nn.init.constant_(module.bias, 0.0)
 
 
+def _uses_snapshot_opponents(args: argparse.Namespace) -> bool:
+    snapshot_modes = {"frozen", "mixed", "league", "selfplay"}
+    if args.opponents in snapshot_modes:
+        return True
+    return any(mode in snapshot_modes for mode, _weight in _parse_opponent_mix(args))
+
+
 def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
-    if args.preset != "qualifier-best":
+    if args.preset == "default":
         return args
 
-    args.curriculum = "pressure"
-    args.opponents = "scripted"
-    args.eval_opponents = "cloudsuite"
-    args.selection_suites = "random,scripted,cloudsuite"
-    args.selection_weights = "0.20,0.30,0.50"
-    args.selection_games = max(args.selection_games, 12)
-    args.games_per_update = max(args.games_per_update, 16)
-    args.ppo_epochs = min(args.ppo_epochs, 4)
-    args.entropy_coef = max(args.entropy_coef, 0.02)
-    args.entropy_final_coef = 0.004 if args.entropy_final_coef is None else args.entropy_final_coef
-    args.clip_coef = min(args.clip_coef, 0.20)
-    args.clip_final_coef = 0.12 if args.clip_final_coef is None else args.clip_final_coef
-    args.target_kl = args.target_kl if args.target_kl > 0.0 else 0.03
-    args.explore_bonus = max(args.explore_bonus, 0.15)
-    args.explore_min_scale = max(args.explore_min_scale, 0.10)
-    args.explore_anneal_k = max(args.explore_anneal_k, 1.2)
-    args.health_delta_coef = max(args.health_delta_coef, 0.01)
-    args.base_health_delta_coef = max(args.base_health_delta_coef, 0.03)
-    args.bomb_action_bonus = max(args.bomb_action_bonus, 0.02)
-    args.orthogonal_init = True
+    if args.preset == "qualifier-best":
+        args.curriculum = "pressure"
+        args.opponents = "scripted"
+        args.eval_opponents = "cloudsuite"
+        args.selection_suites = "random,scripted,cloudsuite"
+        args.selection_weights = "0.20,0.30,0.50"
+        args.selection_games = max(args.selection_games, 12)
+        args.games_per_update = max(args.games_per_update, 16)
+        args.ppo_epochs = min(args.ppo_epochs, 4)
+        args.entropy_coef = max(args.entropy_coef, 0.02)
+        args.entropy_final_coef = 0.004 if args.entropy_final_coef is None else args.entropy_final_coef
+        args.clip_coef = min(args.clip_coef, 0.20)
+        args.clip_final_coef = 0.12 if args.clip_final_coef is None else args.clip_final_coef
+        args.target_kl = args.target_kl if args.target_kl > 0.0 else 0.03
+        args.explore_bonus = max(args.explore_bonus, 0.15)
+        args.explore_min_scale = max(args.explore_min_scale, 0.10)
+        args.explore_anneal_k = max(args.explore_anneal_k, 1.2)
+        args.health_delta_coef = max(args.health_delta_coef, 0.01)
+        args.base_health_delta_coef = max(args.base_health_delta_coef, 0.03)
+        args.bomb_action_bonus = max(args.bomb_action_bonus, 0.02)
+        args.orthogonal_init = True
+        return args
+
+    if args.preset == "full-rl":
+        args.curriculum = "none"
+        args.opponent_mix_preset = "full-rl"
+        args.opponents = "scripted"
+        args.eval_opponents = "cloudsuite"
+        args.selection_suites = "random,scripted,cloudsuite"
+        args.selection_weights = "0.20,0.40,0.40"
+        args.selection_games = max(args.selection_games, 16)
+        args.games_per_update = max(args.games_per_update, 16)
+        args.ppo_epochs = min(args.ppo_epochs, 3)
+        args.entropy_coef = max(args.entropy_coef, 0.008)
+        args.entropy_final_coef = 0.003 if args.entropy_final_coef is None else args.entropy_final_coef
+        args.clip_coef = min(args.clip_coef, 0.14)
+        args.clip_final_coef = 0.08 if args.clip_final_coef is None else args.clip_final_coef
+        args.target_kl = args.target_kl if args.target_kl > 0.0 else 0.015
+        args.explore_bonus = max(args.explore_bonus, 0.04)
+        args.explore_min_scale = max(args.explore_min_scale, 0.10)
+        args.health_delta_coef = max(args.health_delta_coef, 0.005)
+        args.base_health_delta_coef = max(args.base_health_delta_coef, 0.025)
+        args.bomb_action_bonus = max(args.bomb_action_bonus, 0.006)
+        args.load_critic = True
+        return args
+
     return args
 
 
@@ -1046,13 +1168,22 @@ def train(args: argparse.Namespace) -> None:
           f"reward_scale={args.reward_scale} return_clip={args.return_clip} "
           f"vary_maps={args.vary_maps} opponents={args.opponents} "
           f"eval_opponents={args.eval_opponents} curriculum={args.curriculum} "
+          f"opponent_mix={args.opponent_mix_preset if args.opponent_mix_preset != 'none' else (args.opponent_mix or 'none')} "
           f"selection={args.selection_suites or args.eval_opponents}")
 
-    actor, use_belief, warm_started = load_actor(args, device)
+    actor, use_belief, warm_started, actor_ckpt = load_actor(args, device)
     if args.orthogonal_init and not warm_started:
         actor.apply(lambda m: _orthogonal_init(m, final_gain=0.01))
     critic = ValueNetwork(n_frames=args.n_frames, use_belief=use_belief).to(device)
-    if args.orthogonal_init:
+    critic_loaded = False
+    if args.load_critic and actor_ckpt is not None and actor_ckpt.get("critic_state_dict") is not None:
+        try:
+            critic.load_state_dict(actor_ckpt["critic_state_dict"])
+            critic_loaded = True
+            print("warm-started critic from checkpoint")
+        except Exception as exc:
+            print(f"WARN: critic warm-start skipped ({exc})")
+    if args.orthogonal_init and not critic_loaded:
         critic.apply(lambda m: _orthogonal_init(m, final_gain=1.0))
     print(f"actor params: {num_parameters(actor):,}; critic params: {num_parameters(critic):,} "
           f"(use_belief={use_belief})")
@@ -1076,8 +1207,7 @@ def train(args: argparse.Namespace) -> None:
     # a fixed interval. We seed the pool with the actor's initial weights so
     # the first few intervals don't fall back to live-actor frozen opponents.
     snapshot_pool: SnapshotPool | None = None
-    snapshot_modes = {"frozen", "mixed", "league", "selfplay"}
-    if args.opponents in snapshot_modes and args.snapshot_interval > 0:
+    if _uses_snapshot_opponents(args) and args.snapshot_interval > 0:
         snapshot_pool = SnapshotPool(max_size=args.snapshot_pool_size)
         snapshot_pool.add(actor)
         print(
@@ -1097,7 +1227,7 @@ def train(args: argparse.Namespace) -> None:
         )
         actor.train()
         critic.train()
-        transitions, rollout_score = collect_rollouts(
+        transitions, rollout_score, mode_counts = collect_rollouts(
             actor, critic, args, device,
             seed_offset=update * args.games_per_update,
             snapshot_pool=snapshot_pool,
@@ -1139,12 +1269,13 @@ def train(args: argparse.Namespace) -> None:
         elapsed = time.time() - start_time
         current_lr = optimizer.param_groups[0]["lr"]
         pool_tag = f" pool={len(snapshot_pool)}" if snapshot_pool is not None else ""
+        mode_tag = _format_mode_counts(mode_counts) if mode_counts else opponent_mode
         eval_tag = ""
         if eval_parts:
             eval_tag = " " + " ".join(f"{k}={v:.4f}" for k, v in eval_parts.items())
         print(
             f"update {update:>4}/{args.updates}  "
-            f"mode={opponent_mode:<10} samples={len(transitions):>5}  rollout={rollout_score:.4f}  "
+            f"mode={mode_tag} samples={len(transitions):>5}  rollout={rollout_score:.4f}  "
             f"eval={eval_score:.4f}{eval_tag}  best={best_eval:.4f}  "
             f"pi_loss={stats['policy_loss']:.4f}  v_loss={stats['value_loss']:.4f}  "
             f"entropy={stats['entropy']:.3f}  kl={stats['approx_kl']:.4f} "
@@ -1159,9 +1290,9 @@ def train(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--preset", choices=["default", "qualifier-best"], default="default",
-                        help="Training recipe overlay. qualifier-best enables pressure curriculum, "
-                             "adaptive shaping, KL stop, and weighted validation-suite selection.")
+    parser.add_argument("--preset", choices=["default", "qualifier-best", "full-rl"], default="default",
+                        help="Training recipe overlay. qualifier-best enables pressure curriculum; "
+                             "full-rl enables per-game opponent mixing on fixed Novice geometry.")
     parser.add_argument("--bc-checkpoint", default="training/ae/checkpoints/bc.pt")
     parser.add_argument("--out", default="training/ae/checkpoints/ppo.pt")
     parser.add_argument("--updates", type=int, default=200)
@@ -1196,6 +1327,14 @@ def main() -> None:
     parser.add_argument("--eval-opponents", choices=OPPONENT_MODES, default="mixed")
     parser.add_argument("--curriculum", choices=["none", "pressure", "bomberman"], default="none",
                         help="Progressively changes rollout opponent pool across updates.")
+    parser.add_argument("--opponent-mix", default="",
+                        help="Per-game opponent mix as mode:weight CSV, e.g. "
+                             "random:0.1,scripted:0.35,cloudsuite:0.35,league:0.2. "
+                             "When set, this overrides --opponents/--curriculum for rollouts.")
+    parser.add_argument("--opponent-mix-preset", choices=["none", *OPPONENT_MIX_PRESETS], default="none",
+                        help="Named per-game opponent mix. full-rl keeps fixed Novice geometry but "
+                             "stratifies each PPO update across random/scripted/cloudsuite/planner/"
+                             "aggressive/league opponents.")
     parser.add_argument("--selection-suites", default="",
                         help="Comma-separated opponent pools used for checkpoint selection. "
                              "If empty, eval-opponents is used.")
@@ -1211,6 +1350,8 @@ def main() -> None:
     parser.add_argument("--use-belief", action="store_true",
                         help="Train with the belief-map architecture (16x16xK extra CNN branch). "
                              "Overridden by the BC checkpoint's use_belief flag if loading one.")
+    parser.add_argument("--load-critic", action="store_true",
+                        help="When the checkpoint contains critic_state_dict, warm-start the value network too.")
     parser.add_argument("--orthogonal-init", action="store_true",
                         help="Use PPO-style orthogonal init for scratch actor and critic.")
     parser.add_argument("--explore-bonus", type=float, default=0.0,
