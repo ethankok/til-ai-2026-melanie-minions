@@ -16,11 +16,10 @@ WORKDIR /workspace
 # uses the right mode. Edit this line before each `til build` to switch
 # modes, OR write the mode into `ae/src/.ae_mode` (the server reads that
 # file at startup if AE_MODE is unset in the container env).
-ENV AE_MODE=policy
-# Hybrid-only shortcut. Irrelevant in AE_MODE=policy; keep at 1 unless testing
-# the trained checkpoint inside the hybrid wrapper, where it must be flipped to
-# 0 so the policy is not bypassed on detected Novice maps.
-ENV AE_HYBRID_FIXED_MAP_SHORTCUT=1
+ENV AE_MODE=hybrid
+# Full-RL hybrid A/B: keep the wrapper safety vetoes, but do not bypass the
+# trained PPO policy on detected Novice maps.
+ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0
 # MCTS-light is a known-regressed experiment, so keep it opt-in. See
 # ae/NOTES.md for the speed budget math and the v1/v2 cloud failures.
 # v1 used DEPTH=5 WIDTH=96 with no gate / no latency cap; cloud killed it after

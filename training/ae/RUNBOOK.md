@@ -314,11 +314,14 @@ cloudsuite: 0.752
 The final/latest epoch 240 checkpoint regressed to weighted eval `0.7096958333`,
 so do not deploy `ppo-full-rl-v1-latest.pt`.
 
-For the first Workbench candidate, test the checkpoint in pure `policy` mode.
-The repo now bakes `ENV AE_MODE=policy` in `ae/Dockerfile`. If testing a later
-hybrid wrapper variant with this checkpoint, set `AE_MODE=hybrid` and
-`AE_HYBRID_FIXED_MAP_SHORTCUT=0`; otherwise hybrid will mostly return the
-heuristic on detected Novice maps.
+The first Workbench A/B tested the checkpoint in pure `policy` mode as
+`ppo-full-rl-v1-policy`. It submitted cleanly three times but landed below the
+protected fixed-map high: `0.550 / 0.847`, `0.579 / 0.848`, then
+`0.625 / 0.848`. The next A/B is the same checkpoint inside the hybrid wrapper.
+The repo now bakes `ENV AE_MODE=hybrid` and
+`ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0` in `ae/Dockerfile`, so the wrapper can
+apply safety vetoes without bypassing the learned policy on detected Novice
+maps.
 
 Continue from the log, not from memory:
 
@@ -335,19 +338,21 @@ produce a deployable candidate. Do not copy `ppo-full-rl-v1-latest.pt` into
 
 If the gated candidate exists and the run is promising, copy
 `ppo-full-rl-v1.pt` to Workbench manually or through the browser/download path,
-then deploy as pure policy:
+then deploy the hybrid A/B:
 
 ```bash
 cd /home/jupyter/til
 git pull --ff-only
 mkdir -p ae/models
+# Skip this copy if the gated epoch-230 checkpoint is already present there.
 cp /path/to/ppo-full-rl-v1.pt ae/models/bc.pt
 rm -f ae/src/.ae_mode
-grep -n "ENV AE_MODE" ae/Dockerfile        # must print: ENV AE_MODE=policy
-sha256sum ae/models/bc.pt                  # must start with 1f30da4e...
-til build ae ppo-full-rl-v1-policy
-til test ae ppo-full-rl-v1-policy
-til submit ae ppo-full-rl-v1-policy
+grep -n "ENV AE_MODE" ae/Dockerfile                    # must print: ENV AE_MODE=hybrid
+grep -n "ENV AE_HYBRID_FIXED_MAP_SHORTCUT" ae/Dockerfile # must print: ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0
+sha256sum ae/models/bc.pt                              # must start with 1f30da4e...
+til build ae ppo-full-rl-v1-hybrid
+til test ae ppo-full-rl-v1-hybrid
+til submit ae ppo-full-rl-v1-hybrid
 ```
 
 Deployment risk here means mismatch risk: wrong checkpoint architecture or
