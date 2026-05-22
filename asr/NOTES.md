@@ -1,6 +1,6 @@
 # ASR — notes & history
 
-Last updated: 23 May 2026 — **`nemo-zs-v4` with slang prompter fixes, space-eating bugfix, and Zonnon/Caulfield rules achieved a new overall ASR blended high of `0.957` (Accuracy: `0.962`, Speed: `0.942`). Currently validating `nemo-zs-v5` with refined v5 proper noun and context-specific Phi rules.** `nemo-zs-v4` is the live candidate.
+Last updated: 23 May 2026 — **`nemo-zs-v5` with refined v5 proper noun and context-specific Phi rules achieved a new overall ASR blended high of `0.9605` (Accuracy: `0.966`, Speed: `0.944`).** `nemo-zs-v5` is the live candidate.
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -10,9 +10,9 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`nemo-zs-v4` — official 0.962 / 0.942 (23 May 02:37 SGT, 0/400 errors).**
-Blended score `0.75*0.962 + 0.25*0.942 = 0.957` (+0.00075 over `nemo-zs-v3`).
-Retains slang prompter fallback wordlist extraction fix, post-processing space-eating bugfix, and Zonnon/Caulfield rules on the fast Parakeet-TDT-v2 backend. Currently prepared `nemo-zs-v5` with further refined rules.
+**`nemo-zs-v5` — official 0.966 / 0.944 (23 May 03:38 SGT, 0/400 errors).**
+Blended score `0.75*0.966 + 0.25*0.944 = 0.9605` (+0.0035 over `nemo-zs-v4`).
+Retains slang prompter fallback wordlist extraction fix, post-processing space-eating bugfix, and Zonnon/Caulfield rules, plus refined v5 proper noun and context-specific Phi rules on the fast Parakeet-TDT-v2 backend.
 
 
 ## nemo-zs-v2 (22/05) — phonetic post-corrections accuracy peak
@@ -71,7 +71,11 @@ Why this candidate:
 
 ## nemo-zs-v5 (23/05) — v5 post-processing & refined Phi rules (Current)
 
-Currently preparing for GCP evaluation.
+Results:
+- Errors: 0/400
+- Score (Accuracy): 0.966 (Accuracy improved from 0.962 to 0.966, a new high!)
+- Speed: 0.944
+- Blended score (75/25): 0.9605 (new overall blended high score!)
 
 Why this candidate:
 - Added refined proper noun rules in `asr/src/asr_postprocess.py` to capture remaining phonetic and spacing mismatches against gold transcript patterns:

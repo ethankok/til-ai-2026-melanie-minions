@@ -1,7 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 23 May 2026 02:51 SGT — **AE `ppo-full-rl-v1-hybrid` is the current AE max-score high at `0.638 / 0.847`, but the latest A/Bs are variance-dominated: pure policy mean `0.585`, hybrid shortcut-off mean `0.588`, and hybrid shortcut-on mean `0.580`. `ppo-full-rl-v1-hybrid-shortcut` nearly tied the high at `0.637 / 0.845`, so protect the `0.638` result while treating wrapper/RL/shortcut conclusions as unresolved. ASR `nemo-zs-v4` is the new overall blended high at `0.957` (Accuracy: `0.962`, Speed: `0.942`).**
+Last updated: 23 May 2026 03:50 SGT — **AE `ppo-full-rl-v1-hybrid` is the current AE max-score high at `0.638 / 0.847`, but the latest A/Bs are variance-dominated: pure policy mean `0.585`, hybrid shortcut-off mean `0.588`, and hybrid shortcut-on mean `0.580`. `ppo-full-rl-v1-hybrid-shortcut` nearly tied the high at `0.637 / 0.845`, so protect the `0.638` result while treating wrapper/RL/shortcut conclusions as unresolved. ASR `nemo-zs-v5` is the new overall blended high at `0.9605` (Accuracy: `0.966`, Speed: `0.944`).**
 
 AE 23 May 01:55 SGT update: full-RL deployment A/Bs are now documented and
 the honest interpretation is cloud variance, not a clean winner. The gated
@@ -273,9 +273,9 @@ NLP (v9 first) melanie-minions-nlp v9-doc-ensemble 15/05/2026 19:25:50 0 / 700 0
 NLP (prior v8b) melanie-minions-nlp v8b-chunked-context 15/05/2026 18:35:19 0 / 700 0.679 0.872
 NLP (prior v7) melanie-minions-nlp v7-finetuned-v1 15/05/2026 11:39:09 0 / 700 0.517 0.880
 NLP (prior v5c) melanie-minions-nlp v5c-no-para 14/05/2026 19:44:08 0 / 700     0.483   0.912
-ASR (blended & acc high) melanie-minions-asr nemo-zs-v4 23/05/2026 02:37:18 0 / 400 0.962 0.942  ← NEW BLENDED & ACCURACY HIGH (0.957); Parakeet-TDT-v2 + slang prompter fallback wordlist extraction fix + space-eating bugfix + Zonnon/Caulfield rules.
-ASR (prior blended high)  melanie-minions-asr nemo-zs-v3 (22/05) 22/05/2026 21:46:36 0 / 400 0.960 0.945  ← Prior blended high (0.95625); Parakeet-TDT-v2 + initial phonetic post-corrections.
-ASR (pending)       melanie-minions-asr nemo-zs-v5        LOCAL ONLY          0 / 400 —     —      ← v5 post-processing: added Canian, Hegemony, Sharpsea, Nyari, Dreamer, Fullwalker, Edgedancer, Floodwall, TEC, CYPHER, Bloc proper noun rules, and refined context-specific Phi rules.
+ASR (blended & acc high) melanie-minions-asr nemo-zs-v5 23/05/2026 03:38:55 0 / 400 0.966 0.944  ← NEW BLENDED & ACCURACY HIGH (0.9605); Parakeet-TDT-v2 + slang prompter fallback wordlist extraction fix + space-eating bugfix + Zonnon/Caulfield rules, refined v5 proper nouns (Canian, Hegemony, Sharpsea, Nyari, Dreamer, Fullwalker, Edgedancer, Floodwall, TEC, CYPHER, Bloc), and context-specific Phi currency rules.
+ASR (prior blended & acc high) melanie-minions-asr nemo-zs-v4 23/05/2026 02:37:18 0 / 400 0.962 0.942  ← Prior blended & acc high (0.957); Parakeet-TDT-v2 + slang prompter fallback wordlist extraction fix + space-eating bugfix + Zonnon/Caulfield rules.
+ASR (prior)              melanie-minions-asr nemo-zs-v3 (22/05) 22/05/2026 21:46:36 0 / 400 0.960 0.945  ← Prior blended high (0.95625); Parakeet-TDT-v2 + initial phonetic post-corrections.
 CV     melanie-minions-cv       ry-v2 19/05/2026 18:37:07 0 / 500 0.608 0.961  ← NEW CV HIGH. Same weights as `ruiyang-v1`; serving row `conf=0.15 iou=0.55 imgsz=896 aug=0 cross_nms=0.97`. Local hard held-out 0.9234; til test 0.9076.
 CV (prior high) melanie-minions-cv ruiyang-v1 19/05/2026 13:15:19 0 / 500 0.588 0.955  ← First 19 May unpark; local hard held-out 0.9125 with real-score HTTP eval.
 CV (regressed) melanie-minions-cv ry_v3_adaptive 19/05/2026 22:08:35 0 / 500 0.571 0.958  <- Low-conf + adaptive TTA rescue overfit saved JSON; til test fell to 0.8513. Do not ship.
