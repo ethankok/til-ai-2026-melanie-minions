@@ -2,7 +2,7 @@
 
 Three practical ASR paths live here:
 
-* **Parakeet unified (NeMo)** — current staged A/B. Downloads
+* **Parakeet unified (NeMo)** — completed/rejected A/B. Downloads
   `nvidia/parakeet-unified-en-0.6b` and bakes the `.nemo` into the ASR image.
 * **Parakeet-TDT (NeMo)** — current shipped cloud high. Fine-tunes
   `nvidia/parakeet-tdt-0.6b-v2` and exports the `.nemo` directly when needed.
@@ -22,12 +22,15 @@ longer the TDT decoder, it's HTTP / audio I/O / Python overhead. On 22 May,
 fine-tune. The first unified cloud probe failed at container startup because
 released NeMo 2.7.3 lacks `ConformerEncoder(att_chunk_context_size)`; the image
 now pins a NeMo GitHub main commit with that support and checks for it during
-`til build`.
+`til build`. After the runtime fix, unified ran cleanly but was rejected:
+local English WER `0.0453`, cloud `0.956 / 0.915`, blended `0.9458` versus
+`nemo-zs` blended `0.9535`.
 
-## Parakeet unified quick start: zero-shot A/B (Workbench)
+## Parakeet unified quick start: rejected zero-shot A/B (Workbench)
 
-This is the current recommended ASR action. It swaps only the NeMo checkpoint,
-from `nvidia/parakeet-tdt-0.6b-v2` to `nvidia/parakeet-unified-en-0.6b`.
+This is now a reproducibility path, not the current recommended ASR action. It
+swaps only the NeMo checkpoint, from `nvidia/parakeet-tdt-0.6b-v2` to
+`nvidia/parakeet-unified-en-0.6b`.
 
 ```bash
 cd /home/jupyter/til
@@ -47,13 +50,17 @@ python training/asr/download_models_nemo.py \
 
 til build asr parakeet-unified-zs
 til test asr parakeet-unified-zs
-til submit asr parakeet-unified-zs   # only if local Eng-WER beats 0.0429, or for one protected cloud probe
+til submit asr parakeet-unified-zs   # reproduce only; final cloud result lost speed
 ```
 
 If `til build` fails at the `ConformerEncoder supports att_chunk_context_size`
 check, stop there. That means the NeMo runtime still cannot instantiate the
 unified checkpoint and the cloud result would be another 400/400 startup
 failure.
+
+Final gate result: reject. `parakeet-unified-zs` tied cloud accuracy at `0.956`
+but dropped speed to `0.915`, while local English WER was `0.0453` versus the
+`nemo-zs` gate of `0.0429`.
 
 The committed `asr/Dockerfile` now points at this model via
 `ASR_NEMO_MODEL=parakeet-unified-en-0.6b.nemo`, so `til build asr

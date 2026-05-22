@@ -1,7 +1,21 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 22 May 2026 06:15 SGT — **ASR `parakeet-unified-zs` first cloud probe was a container-startup failure, not an accuracy result. AE current high remains `fixed-map-v5` (`0.630 / 0.858`). The repo runtime files are restored to the source shape that built that tag: fixed-map-v3-era source with `AE_MODE=hybrid` and the restored `deployed-bc-v1.pt` artifact supplied locally on Workbench. `ae/src/ae_manager.py` itself never drifted after `fixed-map-v5`; the important drift was later `model.py` / `policy_manager.py` legacy-checkpoint support and a temporary Dockerfile switch to heuristic mode, both now reverted for the AE runtime.**
+Last updated: 22 May 2026 06:26 SGT — **ASR `parakeet-unified-zs` was fixed,
+tested, and rejected for blended score. AE current high remains `fixed-map-v5`
+(`0.630 / 0.858`). The repo runtime files are restored to the source shape that
+built that tag: fixed-map-v3-era source with `AE_MODE=hybrid` and the restored
+`deployed-bc-v1.pt` artifact supplied locally on Workbench. `ae/src/ae_manager.py`
+itself never drifted after `fixed-map-v5`; the important drift was later
+`model.py` / `policy_manager.py` legacy-checkpoint support and a temporary
+Dockerfile switch to heuristic mode, both now reverted for the AE runtime.**
+
+ASR 22 May 06:26 SGT update: runtime-fixed `parakeet-unified-zs` ran cleanly.
+Workbench `til test` completed 1028/1028 in 54:12 with English WER **0.0453**
+and `1 - MER = 0.9886804088933244`. Cloud returned **0/400 errors**,
+score **0.956**, speed **0.915**. Decision: **reject / do not promote**.
+It tied `nemo-zs` accuracy (`0.956`) but lost speed (`0.915` vs `0.946`), so
+blended is `0.9458` versus `nemo-zs` `0.9535`.
 
 ASR 22 May 05:46 SGT update: submitted `parakeet-unified-zs` after direct
 Hugging Face `.nemo` staging and a successful Docker build, but the container

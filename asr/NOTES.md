@@ -1,13 +1,11 @@
 # ASR — notes & history
 
-Last updated: 22 May 2026 — **`parakeet-unified-zs` A/B runtime fix staged.**
-Current shipped high remains `nemo-zs` (0.956 / 0.946). The first unified
-cloud probe returned 400/400 startup errors because released NeMo 2.7.3 cannot
-instantiate the checkpoint config (`ConformerEncoder(att_chunk_context_size)`).
-The ASR Dockerfile now pins NeMo to a GitHub main commit with that encoder
-support and hard-fails during `til build` if the support is missing. Submit
-only after `til test asr parakeet-unified-zs` becomes healthy and local English
-WER beats `nemo-zs`'s 0.0429, or if the official blended score can beat 0.9535.
+Last updated: 22 May 2026 — **`parakeet-unified-zs` A/B completed and
+rejected for blended score.** Current shipped high remains `nemo-zs`
+(0.956 / 0.946). The fixed unified image now starts cleanly and submitted with
+0/400 errors, but it tied accuracy at 0.956 while dropping speed to 0.915
+(blended `0.9458` vs `nemo-zs` `0.9535`). Do not promote or resubmit unless a
+future serving optimization recovers the speed loss.
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -24,11 +22,10 @@ the higher raw score for either dimension, but blended-per-challenge is what
 feeds the qualifier total via the 75/25 weighting, so this is the new ASR
 high.
 
-## Active A/B: Parakeet unified zero-shot
+## Completed A/B: Parakeet unified zero-shot
 
-**`parakeet-unified-zs` — staged 22 May 2026; first cloud probe failed
-startup, runtime fix now staged.** This is a zero-shot replacement for the
-current Parakeet-TDT-v2 checkpoint, not a fine-tune.
+**`parakeet-unified-zs` — rejected 22 May 2026.** This was a zero-shot
+replacement for the current Parakeet-TDT-v2 checkpoint, not a fine-tune.
 
 Why this candidate:
 
@@ -65,6 +62,26 @@ training/asr/download_models_nemo.py default model -> nvidia/parakeet-unified-en
   installing NeMo, before copying the multi-GB model directory. If this check
   fails, do not submit; the build is intentionally stopping a bad image early.
 
+Final result after runtime fix:
+
+```text
+Workbench til test:
+  1028/1028 complete in 54:12
+  English WER: 0.0453
+  1 - MER:     0.9886804088933244
+
+Cloud:
+  tag:    parakeet-unified-zs
+  errors: 0/400
+  score:  0.956
+  speed:  0.915
+```
+
+Decision: **reject**. Unified tied the current high's accuracy but lost speed
+(`0.915` vs `0.946`) and local English WER was worse than the `nemo-zs` gate
+(`0.0453` vs `0.0429`). Blended score is `0.75*0.956 + 0.25*0.915 = 0.9458`,
+below `nemo-zs` at `0.9535`.
+
 Workbench commands:
 
 ```bash
@@ -87,17 +104,16 @@ python training/asr/download_models_nemo.py \
 til build asr parakeet-unified-zs
 til test asr parakeet-unified-zs
 
-# Submit only if local english error rate beats 0.0429 or if we want one
-# cloud probe because leaderboard retention protects the current high.
+# Reproduce only. The final cloud probe tied accuracy but lost speed, so this
+# tag is not the ASR high.
 til submit asr parakeet-unified-zs
 ```
 
 Decision gate:
 
 ```text
-Promote if: local English WER < 0.0429, or official blended > 0.9535.
-Reject if: startup errors, wrong JSON shape, local English WER flat/worse with
-           slower wall clock, or cloud speed drops enough to lose blended score.
+Promote if: no longer applicable; final result did not clear the gate.
+Rejected:  local English WER 0.0453, cloud 0.956 / 0.915, blended 0.9458.
 Fallback:  `nemo-zs` remains the shipped high. To rebuild the old TDT-v2 path,
            set ASR_NEMO_MODEL=parakeet-tdt-0.6b-v2.nemo and download that file.
 ```
