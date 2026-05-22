@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 22 May 2026 15:40 SGT — **Full-RL training is now restarted on the Mac with the shortcut fix active. The new PPO plumbing is real now: `training/ae/train_ppo.py` has `qualifier-best` and `full-rl` presets, per-game stratified opponent mixing, target-KL/clip/entropy schedules, reward shaping, weighted validation across `random,scripted,cloudsuite`, and optional critic warm-start. The best local PPO proxy so far was `ppo-qualifier-best-v4-balanced` (`epoch=75`, weighted eval `0.6881`, local Docker `0.7507`), but duplicate cloud submissions landed only `0.602 / 0.846` and `0.578 / 0.845`. Current AE high remains `fixed-map-v5` (`0.630 / 0.858`). The live run prints `selection_fixed_map_shortcut=off`, meaning PPO is actually allowed to affect fixed-Novice selection; do not deploy anything unless the gated candidate file appears.**
+Last updated: 22 May 2026 22:05 SGT — **Full-RL training finished and produced the first credible pure-policy AE candidate. The gated checkpoint is `training/ae/checkpoints/ppo-full-rl-v1.pt` (`epoch=230`, weighted eval `0.742858`, random `0.916625`, scripted `0.646833`, cloudsuite `0.752000`, sha256 `1f30da4ebbfa7bd8d6fd131df5d5dcb9ee9a103fb57b1092d77c9beb3c827b43`). The later `ppo-full-rl-v1-latest.pt` at epoch 240 regressed to `0.709696`, so deploy only the gated checkpoint. `ae/Dockerfile` is now set to `AE_MODE=policy` for the first Workbench build/test. Current official AE high remains `fixed-map-v5` (`0.630 / 0.858`) until this policy candidate is cloud-tested.**
 
 Prior update: 21 May 2026 — **Code-only PPO retry path added. `training/ae/train_ppo.py` got a `--preset qualifier-best` recipe for a stronger PPO attempt: pressure curriculum (`scripted -> cloudsuite -> league`), action-masked PPO with target-KL early stopping, clip/entropy schedules, adaptive visit-count exploration shaping, health/base-health shaping, small bomb-use shaping, and weighted checkpoint selection across `random,scripted,cloudsuite` instead of one friendly local eval. At that point it had only passed a 1-update smoke test on the Mac.**
 
@@ -62,7 +62,7 @@ We retried PPO from the restored `deployed-bc-v1.pt` / `ppo-qualifier-best-v1.pt
 | `ppo-qualifier-best-v2` | Cloudsuite-focused continuation from v1; best weighted eval `0.6576`, cloudsuite `0.6575`; local Docker `0.7185`. | `0.598 / 0.845`, 0/30 errors | Overfit the cloudsuite proxy; do not promote. |
 | `ppo-qualifier-best-v3` | Scripted/balanced continuation from v1; best weighted eval `0.6199`; parts random `0.7982`, scripted `0.6295`, cloudsuite `0.5423`. | Not submitted | Below v1/v2/v4; do not promote. |
 | `ppo-qualifier-best-v4-balanced` | Best checkpoint `epoch=75`, weighted eval `0.68808125`; parts random `0.82228125`, scripted `0.6648125`, cloudsuite `0.64425`; local Docker `0.7506667`; checkpoint sha256 `3e123b65cd5f2baae06197c4ab05055061b7b17aef96083744445891b9ecb047`. | Same tag submitted twice: `0.602 / 0.846` and `0.578 / 0.845`, 0/30 errors | Best local PPO yet, but hidden eval did not transfer; duplicate submit shows meaningful cloud variance. |
-| `ppo-full-rl-v1` | Runner at [../training/ae/run_full_rl_v1.py](../training/ae/run_full_rl_v1.py). It keeps fixed Novice geometry, rotates rollout seeds, and stratifies each PPO update across random/scripted/cloudsuite/planner/aggressive/league opponents. Pre-run audit tightened it so the launcher pins `PYTHONHASHSEED=0`, checkpoint selection uses held-out seeds, scores on CPU through the deployed `hybrid` wrapper, and only writes the candidate file if it beats the starting checkpoint / `ppo-qualifier-best-v4-balanced` reference by at least `0.015`. First live run showed `scripted` and `cloudsuite` frozen because the hybrid fixed-map shortcut returned the heuristic before consulting the policy; the restarted run has `selection_fixed_map_shortcut=off` / `AE_HYBRID_FIXED_MAP_SHORTCUT=0` during selection. Restarted-run baseline `0.5707`; v4 reference `0.5765`; save floor `0.5915`. At update 20, eval was `0.5870`, still below floor. | Running on Mac; not submitted | When training finishes, deploy only if `ppo-full-rl-v1.pt` exists. Ignore `ppo-full-rl-v1-latest.pt` unless doing analysis. If promoted, flip the Docker shortcut env to `0` for that candidate build too. |
+| `ppo-full-rl-v1-policy` | Runner at [../training/ae/run_full_rl_v1.py](../training/ae/run_full_rl_v1.py). It keeps fixed Novice geometry, rotates rollout seeds, and stratifies each PPO update across random/scripted/cloudsuite/planner/aggressive/league opponents. After the hybrid-selection bug, selection was switched to pure policy on CPU so PPO had to improve the learned policy itself. Final gated checkpoint: `epoch=230`, weighted eval `0.742858`, random `0.916625`, scripted `0.646833`, cloudsuite `0.752000`, sha256 `1f30da4ebbfa7bd8d6fd131df5d5dcb9ee9a103fb57b1092d77c9beb3c827b43`. Latest/final epoch 240 regressed to `0.709696`, proving the save gate mattered. | Not submitted yet | First Workbench deployment should be pure `policy` mode, with `ppo-full-rl-v1.pt` copied to `ae/models/bc.pt` and `ae/Dockerfile` baked as `ENV AE_MODE=policy`. Build/test as `ppo-full-rl-v1-policy`; submit only after `til test` starts cleanly and score/speed are sane. |
 
 Mac vs Workbench benchmark changed the operating plan. With the same v1 checkpoint and 3-update cloudsuite benchmark, Mac MPS finished in about `3:52`, while Workbench CUDA took about `7:51`. The rollout loop is CPU/Python-heavy enough that the Mac is currently the faster full-RL training box. Workbench is still required for `til build`, `til test`, and `til submit`.
 
@@ -73,7 +73,7 @@ cd /Users/ethankok/projects/TIL
 .venv/bin/python -u training/ae/run_full_rl_v1.py
 ```
 
-The runner writes `training/ae/checkpoints/ppo-full-rl-v1.pt` and `training/ae/checkpoints/ppo-full-rl-v1.log`. Do not commit the checkpoint. If it looks genuinely better, copy the `.pt` to Workbench, put it at `ae/models/bc.pt`, write `hybrid` to `ae/src/.ae_mode`, set `ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0` for that candidate build, then build/test/submit a fresh tag.
+The runner writes `training/ae/checkpoints/ppo-full-rl-v1.pt` and `training/ae/checkpoints/ppo-full-rl-v1.log`. Do not commit the checkpoint. For the first deployment, copy the gated `.pt` to Workbench, put it at `ae/models/bc.pt`, keep `ae/Dockerfile` on `ENV AE_MODE=policy`, then build/test/submit a fresh policy tag if the local Workbench gate is healthy.
 
 When continuing in a new session after training finishes, start here:
 
@@ -92,9 +92,11 @@ Interpretation:
 - Only `ppo-full-rl-v1-latest.pt` exists: the run trained, but no checkpoint
   beat the baseline/reference by the required margin. Do not deploy it by
   default.
-- For any promoted PPO build, Docker must also use
-  `ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0`; the default Dockerfile keeps it at `1`
-  to preserve `fixed-map-v5`.
+- The first promoted PPO build is pure policy mode, so the hybrid fixed-map
+  shortcut is irrelevant. If testing a later hybrid wrapper variant with this
+  checkpoint, Docker must use `ENV AE_MODE=hybrid` and
+  `ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0`; otherwise the wrapper will mostly run
+  the heuristic on detected Novice maps.
 
 ## Full AE submission ledger (cloud scores)
 
@@ -106,7 +108,7 @@ Interpretation:
 | ppo-qualifier-best-v2 | 0.598 | 0.845 | Cloudsuite-focused continuation; best local weighted eval `0.6576`, cloudsuite `0.6575`, Docker `0.7185`; proxy overfit. |
 | ppo-qualifier-best-v1 | 0.610 | 0.857 | First `qualifier-best` PPO retry from restored BC; best checkpoint `epoch=65`, weighted eval `0.6547`; useful as a base, not promoted. |
 | ppo-qualifier-best-v3 | local only | — | Scripted/balanced continuation; best weighted eval `0.6199`, no cloud submit. |
-| ppo-full-rl-v1 | running on Mac | — | Restarted with `selection_fixed_map_shortcut=off`; current gate floor is `0.5915`, no promoted checkpoint observed yet. |
+| ppo-full-rl-v1-policy | local only | — | Full-RL pure-policy checkpoint, epoch 230, weighted eval `0.742858` with cloudsuite `0.752000`; Dockerfile now bakes `AE_MODE=policy` for first Workbench build/test. |
 | **ae-item-confidence-v1** | **0.593** | **0.844** | **Item-confidence/respawn priors; second-best AE cloud score, `-0.021` vs `ae-fixed-map-v3`.** |
 | pessimistic-mini-search-v1 | 0.396 | 0.847 | FAILED. Local Docker `0.456`; local cloudsuite `0.3962` predicted cloud almost exactly. Safety search preserved base better but lost too much attack/farming tempo. Disabled by default. |
 | ttd-defense-v1 | local rejected | — | Mac gate failed before Workbench: random `0.6446`, library `0.5475`, cloudsuite `0.2714`; disabled by default. |

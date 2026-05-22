@@ -290,32 +290,37 @@ training/ae/checkpoints/ppo-full-rl-v1.log
 ```
 
 Checkpoint files are gitignored; do not commit them. The main candidate file is
-now save-gated: checkpoint selection runs on CPU through the deployed `hybrid`
-wrapper with `AE_HYBRID_FIXED_MAP_SHORTCUT=0`, pins `PYTHONHASHSEED=0` in the
-trainer subprocess, uses held-out `random,scripted,cloudsuite` seeds, compares
-against the starting
+save-gated: checkpoint selection runs on CPU in pure `policy` mode, pins
+`PYTHONHASHSEED=0` in the trainer subprocess, uses held-out
+`random,scripted,cloudsuite` seeds, compares against the starting
 `ppo-qualifier-best-v1.pt`, and also compares against
 `ppo-qualifier-best-v4-balanced.pt` when that reference checkpoint is present.
 It only writes `ppo-full-rl-v1.pt` if the trained model beats the strongest
 baseline/reference by at least `0.015` on the same selection suite. The
 `latest` file is for inspection/recovery, not automatic deployment.
 
-This shortcut setting matters. The shipping hybrid keeps
-`AE_HYBRID_FIXED_MAP_SHORTCUT=1` to preserve the current `fixed-map-v5` behavior,
-which returns the heuristic directly on detected Novice maps. Full-RL selection
-turns that shortcut off so the learned policy can affect fixed-map games during
-the gate. If a gated PPO candidate is promoted, flip the Docker env to
-`AE_HYBRID_FIXED_MAP_SHORTCUT=0` for that build too; otherwise the cloud image
-will mostly run the heuristic and ignore the trained policy on fixed maps.
+Final 22 May result: the pure-policy run finished and saved the gated candidate
+at epoch 230:
 
-Current 22 May handoff state: the first live launch was stopped because
-`scripted` and `cloudsuite` were effectively frozen by the fixed-map shortcut.
-The restarted Mac run is active with
-`selection_manager=hybrid selection_device=cpu selection_fixed_map_shortcut=off`.
-Its baseline is `0.5707`, the `ppo-qualifier-best-v4-balanced` reference is
-`0.5765`, and the gated candidate save floor is `0.5915`. At update 20/240,
-eval was `0.5870`, so no candidate had cleared the floor yet. Continue from the
-log, not from memory:
+```text
+training/ae/checkpoints/ppo-full-rl-v1.pt
+sha256: 1f30da4ebbfa7bd8d6fd131df5d5dcb9ee9a103fb57b1092d77c9beb3c827b43
+weighted eval: 0.7428583333333334
+random: 0.916625
+scripted: 0.6468333333333334
+cloudsuite: 0.752
+```
+
+The final/latest epoch 240 checkpoint regressed to weighted eval `0.7096958333`,
+so do not deploy `ppo-full-rl-v1-latest.pt`.
+
+For the first Workbench candidate, test the checkpoint in pure `policy` mode.
+The repo now bakes `ENV AE_MODE=policy` in `ae/Dockerfile`. If testing a later
+hybrid wrapper variant with this checkpoint, set `AE_MODE=hybrid` and
+`AE_HYBRID_FIXED_MAP_SHORTCUT=0`; otherwise hybrid will mostly return the
+heuristic on detected Novice maps.
+
+Continue from the log, not from memory:
 
 ```bash
 cd /Users/ethankok/projects/TIL
@@ -330,17 +335,19 @@ produce a deployable candidate. Do not copy `ppo-full-rl-v1-latest.pt` into
 
 If the gated candidate exists and the run is promising, copy
 `ppo-full-rl-v1.pt` to Workbench manually or through the browser/download path,
-then deploy:
+then deploy as pure policy:
 
 ```bash
 cd /home/jupyter/til
+git pull --ff-only
 mkdir -p ae/models
 cp /path/to/ppo-full-rl-v1.pt ae/models/bc.pt
-echo hybrid > ae/src/.ae_mode
-# Edit ae/Dockerfile for this candidate: ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0
-til build ae ppo-full-rl-v1
-til test ae ppo-full-rl-v1
-til submit ae ppo-full-rl-v1
+rm -f ae/src/.ae_mode
+grep -n "ENV AE_MODE" ae/Dockerfile        # must print: ENV AE_MODE=policy
+sha256sum ae/models/bc.pt                  # must start with 1f30da4e...
+til build ae ppo-full-rl-v1-policy
+til test ae ppo-full-rl-v1-policy
+til submit ae ppo-full-rl-v1-policy
 ```
 
 Deployment risk here means mismatch risk: wrong checkpoint architecture or
