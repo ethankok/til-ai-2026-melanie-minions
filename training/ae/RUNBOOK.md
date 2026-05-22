@@ -93,14 +93,15 @@ The inference path in [../../ae/src/ae_server.py](../../ae/src/ae_server.py) sup
 - `policy` — pure `PolicyAEManager`.
 - `heuristic` — pure rule-based `AEManager` (no torch needed in the image at all).
 
-Current AE high: `fixed-map-v5` scored `0.630 / 0.858`. The repo runtime is
-restored to that build's source shape (`AE_MODE=hybrid`, fixed-map-v3-era
-runtime code, restored `deployed-bc-v1.pt` supplied locally on Workbench).
-Follow-up PPO attempts improved local proxies but did not transfer: the best
-retry, `ppo-qualifier-best-v4-balanced`, reached weighted eval `0.6881` and
-Docker `0.7507`, then landed cloud `0.602 / 0.846` and `0.578 / 0.845` on
-duplicate submits. Treat PPO continuation as experimental until it clears
-hidden eval, not as the default shipping path.
+Current AE max-score high: `ppo-full-rl-v1-hybrid` scored `0.638 / 0.847`.
+That is only barely ahead of `ppo-full-rl-v1-hybrid-shortcut` at
+`0.637 / 0.845` and the former `fixed-map-v5` high at `0.630 / 0.858`.
+Follow-up PPO attempts improved local proxies, but repeated cloud submits show
+the current deployment variants are hard to distinguish by mean score: pure
+policy mean `0.585`, hybrid shortcut-off mean `0.588`, and hybrid shortcut-on
+mean `0.580`. Treat the `0.638` result as the protected leaderboard artifact,
+not proof that the shortcut-off wrapper is materially better than the shortcut
+heuristic under hidden eval.
 
 Deploy a new policy checkpoint by copying it into the model slot:
 
@@ -315,13 +316,19 @@ The final/latest epoch 240 checkpoint regressed to weighted eval `0.7096958333`,
 so do not deploy `ppo-full-rl-v1-latest.pt`.
 
 The first Workbench A/B tested the checkpoint in pure `policy` mode as
-`ppo-full-rl-v1-policy`. It submitted cleanly three times but landed below the
-protected fixed-map high: `0.550 / 0.847`, `0.579 / 0.848`, then
-`0.625 / 0.848`. The next A/B is the same checkpoint inside the hybrid wrapper.
-The repo now bakes `ENV AE_MODE=hybrid` and
-`ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0` in `ae/Dockerfile`, so the wrapper can
-apply safety vetoes without bypassing the learned policy on detected Novice
-maps.
+`ppo-full-rl-v1-policy`. It submitted cleanly three times: `0.550 / 0.847`,
+`0.579 / 0.848`, then `0.625 / 0.848`. The next A/B used the same checkpoint
+inside the hybrid wrapper with `AE_HYBRID_FIXED_MAP_SHORTCUT=0`, so PPO stayed
+active on detected Novice maps; duplicate submits landed `0.564 / 0.843`,
+`0.638 / 0.847`, `0.599 / 0.848`, and `0.552 / 0.841`. A final shortcut-on
+A/B used `AE_HYBRID_FIXED_MAP_SHORTCUT=1`, which mostly returns the heuristic
+before querying PPO on detected Novice maps; it landed `0.521 / 0.849`,
+`0.637 / 0.845`, and `0.582 / 0.845`.
+
+Conclusion: protect `ppo-full-rl-v1-hybrid` as the max-score high, but do not
+read too much into the architecture comparison. The cloud variance within one
+config is larger than the mean difference between pure policy, shortcut-off
+hybrid, and shortcut-on hybrid.
 
 Continue from the log, not from memory:
 
@@ -338,7 +345,8 @@ produce a deployable candidate. Do not copy `ppo-full-rl-v1-latest.pt` into
 
 If the gated candidate exists and the run is promising, copy
 `ppo-full-rl-v1.pt` to Workbench manually or through the browser/download path,
-then deploy the hybrid A/B:
+then deploy a clearly tagged A/B. The default protected code path remains
+shortcut-off hybrid:
 
 ```bash
 cd /home/jupyter/til
@@ -354,6 +362,11 @@ til build ae ppo-full-rl-v1-hybrid
 til test ae ppo-full-rl-v1-hybrid
 til submit ae ppo-full-rl-v1-hybrid
 ```
+
+For an explicit shortcut-on variance A/B, flip only
+`ENV AE_HYBRID_FIXED_MAP_SHORTCUT=1`, use a separate tag such as
+`ppo-full-rl-v1-hybrid-shortcut`, and remember that PPO is mostly bypassed on
+detected Novice maps in that mode.
 
 Deployment risk here means mismatch risk: wrong checkpoint architecture or
 `n_frames`, wrong mode baked into `.ae_mode`/Docker, copying the `latest` file

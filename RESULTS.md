@@ -1,7 +1,28 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 22 May 2026 22:00 SGT — **ASR `nemo-zs-v3` (22/05) with phonetic post-corrections and `parakeet-tdt-0.6b-v2.nemo` recovered speed to `0.945` with `0.960` accuracy, reaching a new overall blended high of `0.95625`. `nemo-zs-v2 (22/05)` remains the accuracy high of `0.962` (speed `0.911`). Currently validating `nemo-zs-v4` (proper noun / slang prompter fixes) locally. AE `fixed-map-v5` remains the AE high (`0.630 / 0.858`).**
+Last updated: 23 May 2026 01:55 SGT — **AE `ppo-full-rl-v1-hybrid` is the current AE max-score high at `0.638 / 0.847`, but the latest A/Bs are variance-dominated: pure policy mean `0.585`, hybrid shortcut-off mean `0.588`, and hybrid shortcut-on mean `0.580`. `ppo-full-rl-v1-hybrid-shortcut` nearly tied the high at `0.637 / 0.845`, so protect the `0.638` result while treating wrapper/RL/shortcut conclusions as unresolved. ASR `nemo-zs-v3` remains the overall blended high at `0.95625`.**
+
+AE 23 May 01:55 SGT update: full-RL deployment A/Bs are now documented and
+the honest interpretation is cloud variance, not a clean winner. The gated
+epoch-230 checkpoint (`ppo-full-rl-v1.pt`, sha256
+`1f30da4ebbfa7bd8d6fd131df5d5dcb9ee9a103fb57b1092d77c9beb3c827b43`) produced
+three deployment families:
+
+```text
+pure policy                  0.550, 0.579, 0.625        mean 0.585
+hybrid shortcut off (PPO on)  0.564, 0.638, 0.599, 0.552 mean 0.588
+hybrid shortcut on           0.521, 0.637, 0.582        mean 0.580
+```
+
+`ppo-full-rl-v1-hybrid` is the current AE high by max cloud score
+(`0.638 / 0.847`, 0/30 errors), narrowly beating `fixed-map-v5`
+(`0.630 / 0.858`). However, `ppo-full-rl-v1-hybrid-shortcut` hit
+`0.637 / 0.845` while mostly bypassing PPO on detected Novice maps, so the
+single-run high does not prove the shortcut-off wrapper is materially better.
+Operational stance: protect the `0.638` submission; only continue AE if
+deliberately variance-farming identical/near-identical tags or revising RL
+selection/gating enough to beat this noisy band.
 
 AE 22 May 14:20 SGT update: the `qualifier-best` PPO retry path produced
 several clean checkpoints but did not beat `fixed-map-v5` on hidden eval.
@@ -59,7 +80,7 @@ AE 21 May 17:15 SGT update: `fixed-map-v5` scored **0.630 / 0.858** with 0/30 er
 
 AE 21 May 05:15 SGT update: restored the working AE model to `ae-fixed-map-v3` source/config. This removes the later item-prior/macro/base-defense/pessimistic-search runtime changes from the shipping path while keeping their docs/results as historical evidence.
 
-AE 21 May 05:05 SGT update: `pessimistic-mini-search-v1` was submitted after a Mac 24-round gate improved cloudsuite to `0.3962` and reduced visible-bomb failures, but it did not transfer into a competitive cloud result. Workbench `til test` scored only `0.456`; cloud returned `0.396 / 0.847` with 0/30 errors. Interpretation: cloudsuite was a good predictor here, but the candidate's safety bias traded away too much attack/farming tempo. Keep `ae-fixed-map-v3` as AE high, keep `ae-item-confidence-v1` as second-best, and keep pessimistic search out of the default Docker runtime.
+AE 21 May 05:05 SGT update: `pessimistic-mini-search-v1` was submitted after a Mac 24-round gate improved cloudsuite to `0.3962` and reduced visible-bomb failures, but it did not transfer into a competitive cloud result. Workbench `til test` scored only `0.456`; cloud returned `0.396 / 0.847` with 0/30 errors. Interpretation: cloudsuite was a good predictor here, but the candidate's safety bias traded away too much attack/farming tempo. At the time, this kept `ae-fixed-map-v3` as the AE high and `ae-item-confidence-v1` as second-best; keep pessimistic search out of the default Docker runtime.
 
 AE 21 May 02:20 SGT update: `ttd-defense-v1` added a hard override for enemies on/near own-base-hitting bomb cells and added base-failure class counters to `training/ae/simulate.py` / `validate_cloud_suite.py`. Mac validation stopped it locally: random `0.6446` (base `62.5`), library `0.5475` (base `67.5`), cloudsuite `0.2714` (base `25.8`, `base_damage=-1125`, `own_base_destroyed=-1178`), aggregate `0.4878`. The override fired often (`ttd≈22.6` in cloudsuite) but did not prevent enough visible enemy bomb damage and likely pulled too much tempo. Do not build or submit this behavior.
 
@@ -264,16 +285,19 @@ CV (v11m-1280-noaug-v1) melanie-minions-cv  v11m-1280-noaug-v1 16/05/2026 04:04:
 CV (cv-augc1-v4) melanie-minions-cv  cv-augc1-v4  16/05/2026 15:28:35 0 / 500 0.553 0.962  ← Phase C.1 augmented training (JPEG aug + 1024×1024 native-res tile crops, v8s @ imgsz=1024 scale=0.80), shipped with mismatched Dockerfile config (CV_IMGSZ=768 default). Essentially tied with tier1; informative only as a config-mismatch demonstration.
 CV (cv-augc1-v4-1280) melanie-minions-cv  cv-augc1-v4-1280 16/05/2026 18:28:27 0 / 500 0.553 0.959  ← Same model rebuilt with matched Dockerfile config (CV_IMGSZ=1280 CV_CONF=0.001 CV_IOU=0.7 CV_AUGMENT=0). Hard held-out lifted +0.04 to 0.948 / small AP 0.779. Cloud flat at 0.553 — gap WIDENED 0.349 → 0.395. Phase C confirmed dead as a path to 0.7; v8s/v11m family at-ceiling. Tier1 stays on leaderboard.
 Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
-AE (current high) melanie-minions-ae fixed-map-v5 21/05/2026 17:08:00 0 / 30 0.630 0.858 ← CURRENT AE HIGH. Restored fixed-map-v3-era hybrid source plus `deployed-bc-v1.pt`; keep this as the protected shipping baseline.
+AE (current high) melanie-minions-ae ppo-full-rl-v1-hybrid 22/05/2026 23:40:11 0 / 30 0.638 0.847 ← CURRENT AE HIGH BY MAX SCORE. Full-RL epoch-230 checkpoint, `AE_MODE=hybrid`, `AE_HYBRID_FIXED_MAP_SHORTCUT=0`; duplicate submits were 0.564/0.843, 0.599/0.848, and 0.552/0.841, so the mean is only ~0.588.
+AE (near-tie / shortcut) melanie-minions-ae ppo-full-rl-v1-hybrid-shortcut 23/05/2026 01:27:37 0 / 30 0.637 0.845 ← Shortcut-on A/B. `AE_HYBRID_FIXED_MAP_SHORTCUT=1` mostly bypasses PPO on detected Novice maps; duplicate submits were 0.521/0.849 and 0.582/0.845. Nearly tying the high shows cloud variance dominates the wrapper/shortcut distinction.
+AE (policy A/B) melanie-minions-ae ppo-full-rl-v1-policy 22/05/2026 22:48:06 0 / 30 0.625 0.848 ← Pure-policy full-RL checkpoint best of 3; other submits were 0.550/0.847 and 0.579/0.848. Same noisy performance band as hybrid variants, just lower max so far.
+AE (former high) melanie-minions-ae fixed-map-v5 21/05/2026 17:08:00 0 / 30 0.630 0.858 ← Former AE high and still fastest competitive AE tag. Restored fixed-map-v3-era hybrid source plus `deployed-bc-v1.pt`; keep as a fallback/provenance anchor.
 AE (PPO retry best local, duplicate 1) melanie-minions-ae ppo-qualifier-best-v4-balanced 22/05/2026 12:14:59 0 / 30 0.602 0.846 ← Best local PPO continuation: checkpoint epoch 75, weighted eval 0.6881, local Docker 0.7507. Did not beat fixed-map-v5.
 AE (PPO retry best local, duplicate 2) melanie-minions-ae ppo-qualifier-best-v4-balanced 22/05/2026 12:44:55 0 / 30 0.578 0.845 ← Same tag accidentally submitted again; variance confirmed, still not promotable.
 AE (PPO retry cloudsuite) melanie-minions-ae ppo-qualifier-best-v2 22/05/2026 00:27:19 0 / 30 0.598 0.845 ← Cloudsuite-focused continuation from v1; local eval/cloudsuite looked strong but hidden eval regressed below v1 and fixed-map-v5.
 AE (PPO retry v1) melanie-minions-ae ppo-qualifier-best-v1 21/05/2026 21:36:57 0 / 30 0.610 0.857 ← First qualifier-best PPO retry; best checkpoint epoch 65, weighted eval 0.6547. Good base checkpoint, not the AE high.
-AE     melanie-minions-ae       ae-item-confidence-v1 20/05/2026 21:47:52 0 / 30 0.593 0.844  ← SECOND-BEST AE SCORE. Item-confidence/respawn priors transferred above 0.5, but local Docker 0.7435 still overestimated cloud by ~0.150; next A/B strengthens fixed item priors.
+AE     melanie-minions-ae       ae-item-confidence-v1 20/05/2026 21:47:52 0 / 30 0.593 0.844  ← Former second-best before the fixed-map-v5/full-RL sequence. Item-confidence/respawn priors transferred above 0.5, but local Docker 0.7435 still overestimated cloud by ~0.150.
 AE (regressed) melanie-minions-ae pessimistic-mini-search-v1 21/05/2026 04:54:51 0 / 30 0.396 0.847 ← FAILED pressure A/B. Local Docker `0.456`; Mac cloudsuite `0.3962` predicted cloud almost exactly, but absolute score is below `ae-fixed-map-v3`, `ae-item-confidence-v1`, `heuristic-tweaks`, and `candidate-b`. Disabled by default.
 AE (local rejected) melanie-minions-ae ttd-defense-v1 21/05/2026 LOCAL ONLY — — 0.2714 cloudsuite ← Mac-first gate stopped this before Workbench. TTD override fired often but cloudsuite regressed; useful diagnostic says base failures are mostly visible enemy bombs.
 AE (regressed) melanie-minions-ae ally-bomb-safe-v2 21/05/2026 01:38:12 0 / 30 0.369 0.847 ← FAILED A/B. Local Docker `0.6395` was misleading; pressure gate had already regressed (`cloudsuite 0.2870`). Same-team bomb damage is harmless, but globally removing own-bomb danger/escape/base guards caused over-bombing and worse hidden-pressure positioning.
-AE (regressed) melanie-minions-ae candidate-b 21/05/2026 01:03:06 0 / 30 0.500 0.858 ← Base-minefield-v1. Local Docker `0.538`, so gap was tiny, but absolute cloud score was below the current high and second-best AE tags.
+AE (regressed) melanie-minions-ae candidate-b 21/05/2026 01:03:06 0 / 30 0.500 0.858 ← Base-minefield-v1. Local Docker `0.538`, so gap was tiny, but absolute cloud score stayed below the competitive AE tags.
 AE (local only) melanie-minions-ae ae-item-prior-strong-v1 20/05/2026 LOCAL ONLY — — 0.7245 local ← Built/tested; submit push canceled before cloud eval. Validation aggregate 0.5190 vs ae-item-confidence-v1 0.5501, so do not blindly retry.
 AE     melanie-minions-ae       heuristic-tweaks 20/05/2026 20:46:48 0 / 30        0.538   0.851  ← Swapped heuristics (optimal_combo parameters: dijkstra_no_bomb_cost=25.0, low_ammo scaling, base panic defense, enemy chase). Underperformed vs v3 baseline on cloud.
 AE     melanie-minions-ae       ae-fixed-map-v3 20/05/2026 18:25:00 0 / 30        0.614   0.860  ← CURRENT ALL-TIME AE HIGH SCORE. Fixed-map exploitation with Dijkstra pathfinding + relaxed map detection.
