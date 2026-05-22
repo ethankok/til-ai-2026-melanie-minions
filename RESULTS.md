@@ -275,7 +275,7 @@ NLP (prior v7) melanie-minions-nlp v7-finetuned-v1 15/05/2026 11:39:09 0 / 700 0
 NLP (prior v5c) melanie-minions-nlp v5c-no-para 14/05/2026 19:44:08 0 / 700     0.483   0.912
 ASR (accuracy high) melanie-minions-asr nemo-zs-v2 (22/05) 22/05/2026 21:05:42 0 / 400 0.962 0.911  ← NEW ACCURACY HIGH; Parakeet-unified-en-0.6b + phonetic post-corrections. Reached 0.962 accuracy but dropped speed to 0.911 due to unified model latency.
 ASR (blended high)  melanie-minions-asr nemo-zs-v3 (22/05) 22/05/2026 21:46:36 0 / 400 0.960 0.945  ← NEW BLENDED HIGH (0.95625); Parakeet-TDT-v2 + phonetic post-corrections. Reverted default model to TDT-v2 to recover speed.
-ASR (pending)       melanie-minions-asr nemo-zs-v4        LOCAL ONLY          0 / 400 —     —      ← Proper-noun post-processing space-eating bugfix + slang prompter fallback wordlist extraction fix. Local validation shows 255/4110 lines corrected with no collapsed boundaries.
+ASR (pending)       melanie-minions-asr nemo-zs-v4        LOCAL ONLY          0 / 400 —     —      ← Proper-noun post-processing space-eating bugfix, slang prompter fallback wordlist extraction fix, and Zonnon/Caulfield rules. Local validation shows 335/4110 lines corrected with no collapsed boundaries.
 CV     melanie-minions-cv       ry-v2 19/05/2026 18:37:07 0 / 500 0.608 0.961  ← NEW CV HIGH. Same weights as `ruiyang-v1`; serving row `conf=0.15 iou=0.55 imgsz=896 aug=0 cross_nms=0.97`. Local hard held-out 0.9234; til test 0.9076.
 CV (prior high) melanie-minions-cv ruiyang-v1 19/05/2026 13:15:19 0 / 500 0.588 0.955  ← First 19 May unpark; local hard held-out 0.9125 with real-score HTTP eval.
 CV (regressed) melanie-minions-cv ry_v3_adaptive 19/05/2026 22:08:35 0 / 500 0.571 0.958  <- Low-conf + adaptive TTA rescue overfit saved JSON; til test fell to 0.8513. Do not ship.
@@ -400,6 +400,7 @@ nemo-zs       14/05 20:33        0.956   0.946   0.0429          BACKBONE SWITCH
 nemo-zs-v2    14/05 22:07        0.956   0.946   0.0429          + cuda-python CUDA-graph fast path. Local wall clock -7% (37:28→34:42), cloud unchanged. Cloud speed bottleneck is now HTTP / audio I/O / Python overhead, NOT the TDT decoder. Speed parked at 0.946; next lever is accuracy (Parakeet FT).
 nemo-zs-v2 (22/05) 22/05 21:05   0.962   0.911   0.0384          + Casing-preserving phonetic post-corrections. Reached 0.962 accuracy (+0.006) but dropped speed to 0.911 because of the unified model default in the Dockerfile. Reverting to TDT-v2 next to recover speed.
 nemo-zs-v3 (22/05) 22/05 21:46   0.960   0.945   0.0378          + Casing-preserving phonetic post-corrections. Reverted default model to TDT-v2 to recover speed. New blended high of 0.95625.
+nemo-zs-v4 (22/05) LOCAL ONLY    —       —       —               + slang prompter fix + Ashcastle space-eating fix + Zonnon/Caulfield rules. Local validation shows 335/4110 lines corrected with no collapsed boundaries.
 ```
 
 ## CV submission history

@@ -119,6 +119,22 @@ def test_digits_to_words():
     assert digits_to_words("uranyan") == "oranyan"
     assert digits_to_words("auranyan") == "oranyan"
 
+    # 21. Zonnon
+    assert digits_to_words("Zonan") == "Zonnon"
+    assert digits_to_words("zonon") == "zonnon"
+    assert digits_to_words("ZONON") == "ZONNON"
+    assert digits_to_words("Zonanun") == "Zonnon"
+    assert digits_to_words("Zonal") == "Zonnon"
+    assert digits_to_words("Zonon's") == "Zonnon's"
+    assert digits_to_words("zondun's") == "zonnon's"
+
+    # 22. Caulfield
+    assert digits_to_words("Coalfield") == "Caulfield"
+    assert digits_to_words("callfield") == "caulfield"
+    assert digits_to_words("Coalfield's") == "Caulfield's"
+    assert digits_to_words("callfields") == "caulfields"
+    assert digits_to_words("Coffield's") == "Caulfield's"
+
     print("All unit tests passed successfully!")
 
 if __name__ == "__main__":

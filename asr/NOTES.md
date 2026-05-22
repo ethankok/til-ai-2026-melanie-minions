@@ -62,7 +62,8 @@ Currently preparing for GCP evaluation.
 Why this candidate:
 - Fixed slang prompter extraction pollution in `training/asr/extract_slang.py` by embedding a `FALLBACK_WORDS` list (1500 common English words) to prevent silent fallback failures from filling the bias prompt with common words when download dependencies fail.
 - Refined the proper noun rules in `asr/src/asr_postprocess.py` (specifically `Ashcastle` rules) by splitting them into a prefix-required rule and a standalone rule. This successfully resolves the space-eating bug where preceding spaces were collapsed when the prefix was absent (e.g., converting `is Ashcastle` to `isAshcastle`).
-- Local validation on `asr_results.json` shows 255/4110 lines modified, successfully fixing boundary collapsing and word merging without affecting correct proper-noun casing-preserving substitutions.
+- Added case-preserving phonetic/spelling post-corrections for `Zonnon` (e.g., Zonan, zonon, Zonanun, Zonal, zondun's -> Zonnon) and `Caulfield` (e.g., Coalfields, callfields, Coffield's -> Caulfield) to capture common mistakes.
+- Local validation on `asr_results.json` shows 335/4110 lines modified, successfully fixing boundary collapsing, word merging, and phonetically close proper nouns without affecting correct substitutions.
 
 
 ## Completed A/B: Parakeet unified zero-shot

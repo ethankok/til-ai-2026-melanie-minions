@@ -304,6 +304,17 @@ def repl_ashcastle_standalone(match: re.Match[str]) -> str:
         return f"{target_base}{suffix}"
 
 
+def repl_zonnon(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Zonnon", match.group(1))
+    return base + suffix
+
+
+def repl_caulfield(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Caulfield", match.group(1))
+    return base + suffix
+
 
 _PROPER_NOUN_RULES = [
     # 1. Complex/Combined Names (to avoid parts getting replaced by standalone rules)
@@ -356,6 +367,12 @@ _PROPER_NOUN_RULES = [
     
     # 12. Blackshore
     (re.compile(r"\bblack\s+shore(s?|['s]*)\b", re.I), repl_blackshore),
+    
+    # 13. Zonnon
+    (re.compile(r"\b(zonon|zonan|zonun|zondon|zondun|zonkon|zonnan|zonnal|zonone|zono|zonom|zonanun|zonal)(s?|['s]*)\b", re.I), repl_zonnon),
+    
+    # 14. Caulfield
+    (re.compile(r"\b(coalfield|colfield|callfield|coffield|cofield|colefield)(s?|['s]*)\b", re.I), repl_caulfield),
 ]
 
 
