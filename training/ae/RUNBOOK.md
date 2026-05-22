@@ -284,13 +284,24 @@ The launcher expects `training/ae/checkpoints/ppo-qualifier-best-v1.pt` and
 writes:
 
 ```text
-training/ae/checkpoints/ppo-full-rl-v1.pt
+training/ae/checkpoints/ppo-full-rl-v1.pt         gated candidate only
+training/ae/checkpoints/ppo-full-rl-v1-latest.pt  latest evaluated checkpoint
 training/ae/checkpoints/ppo-full-rl-v1.log
 ```
 
-Checkpoint files are gitignored; do not commit them. If the run is promising,
-copy `ppo-full-rl-v1.pt` to Workbench manually or through the browser/download
-path, then deploy:
+Checkpoint files are gitignored; do not commit them. The main candidate file is
+now save-gated: checkpoint selection runs on CPU through the deployed `hybrid`
+wrapper, pins `PYTHONHASHSEED=0` in the trainer subprocess, uses held-out
+`random,scripted,cloudsuite` seeds, compares against the starting
+`ppo-qualifier-best-v1.pt`, and also compares against
+`ppo-qualifier-best-v4-balanced.pt` when that reference checkpoint is present.
+It only writes `ppo-full-rl-v1.pt` if the trained model beats the strongest
+baseline/reference by at least `0.015` on the same selection suite. The
+`latest` file is for inspection/recovery, not automatic deployment.
+
+If the gated candidate exists and the run is promising, copy
+`ppo-full-rl-v1.pt` to Workbench manually or through the browser/download path,
+then deploy:
 
 ```bash
 cd /home/jupyter/til
@@ -303,10 +314,11 @@ til submit ae ppo-full-rl-v1
 ```
 
 Deployment risk here means mismatch risk: wrong checkpoint architecture or
-`n_frames`, wrong mode baked into `.ae_mode`/Docker, missing Docker dependency,
-or local proxy overfit. The code can train correctly and still deploy a weaker
-hybrid if any of those pieces are off, so always inspect checkpoint metadata and
-run `til test` before submit.
+`n_frames`, wrong mode baked into `.ae_mode`/Docker, copying the `latest` file
+instead of the gated candidate, missing Docker dependency, or local proxy
+overfit. The code can train correctly and still deploy a weaker hybrid if any of
+those pieces are off, so always inspect checkpoint metadata and run `til test`
+before submit.
 
 Do **not** use `--total-steps`, `--warm-start`, or `--out-dir`; those flags do
 not exist here. Detach tmux with `Ctrl-b`, then `d`; reattach with

@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import copy
 import math
+import os
 import random
 import sys
 import time
@@ -369,6 +370,23 @@ def _random_opponent(env, agent: str, _obs_py: dict) -> int:
     return int(env.action_space(agent).sample())
 
 
+def _seed_eval_rngs(seed: int | None) -> None:
+    """Pin all local RNGs for held-out evaluation games.
+
+    The AE env and scripted opponents are mostly seedable through `env.reset`
+    and their factories, but a few fallback paths still touch module-global RNGs.
+    Seeding them during evaluation makes checkpoint selection repeatable without
+    changing the stochastic PPO rollout sampler.
+    """
+
+    if seed is None:
+        return
+    seed = int(seed) % (2**31 - 1)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+
 def _static_opponent(_env, _agent: str, obs_py: dict) -> int:
     mask = np.asarray(obs_py.get("action_mask", [1, 1, 1, 1, 1, 1]), dtype=np.float32).reshape(-1)
     if mask.size > 4 and bool(mask[4]):
@@ -437,6 +455,54 @@ class SnapshotPool:
 
     def __len__(self) -> int:
         return len(self._snapshots)
+
+
+class LivePolicyAdapter:
+    """Expose the in-training actor through the deployed policy interface.
+
+    `HybridAEManager` expects an object with `ae_logits(observation)`. Using
+    this adapter lets checkpoint selection score the live actor through the same
+    hybrid veto wrapper we will deploy, instead of selecting on pure-policy
+    behavior that may never be used in the Docker image.
+    """
+
+    def __init__(self, actor: PolicyNetwork, device: torch.device, n_frames: int):
+        self.model = actor
+        self.device = device
+        self.n_frames = n_frames
+        self.use_belief = bool(getattr(actor, "use_belief", False))
+        self.stacker = FrameStacker(n_frames)
+        self.belief_manager = AEManager()
+        self._last_step: int | None = None
+
+    def _maybe_reset(self, observation: dict) -> None:
+        try:
+            step = int(observation.get("step", 0))
+        except Exception:
+            step = None
+        if step == 0 or (
+            self._last_step is not None and step is not None and step < self._last_step
+        ):
+            self.stacker.reset()
+            self.belief_manager = AEManager()
+        self._last_step = step
+
+    def ae_logits(self, observation: dict) -> tuple[int, torch.Tensor]:
+        self._maybe_reset(observation)
+        belief = _belief_for(self.belief_manager, observation, self.use_belief)
+        _stacked, agent_v, base_v, scalars, mask, belief_t = _stacked_tensors(
+            self.stacker, observation, belief, self.device,
+        )
+        belief_b = belief_t.unsqueeze(0) if belief_t is not None else None
+        with torch.inference_mode():
+            logits = self.model(
+                agent_v.unsqueeze(0),
+                base_v.unsqueeze(0),
+                scalars.unsqueeze(0),
+                belief_map=belief_b,
+            ).squeeze(0)
+            masked = _masked_logits(logits, mask)
+            return int(masked.argmax().item()), masked.detach().clone()
 
 
 class FrozenPolicyOpponent:
@@ -510,6 +576,7 @@ def _make_opponents(
     opponent_agents: list[str],
     n_frames: int,
     snapshot_pool: SnapshotPool | None = None,
+    seed_base: int | None = None,
 ) -> dict[str, Callable]:
     """Build opponent dict.
 
@@ -617,7 +684,8 @@ def _make_opponents(
 
             # Assign each opponent_agent its own dedicated adapter so they
             # all run in parallel without sharing state.
-            seed_base = int(time.time()) & 0xFFFF
+            if seed_base is None:
+                seed_base = random.randint(0, 2**31 - 1)
             scripted_assignment: dict[str, Callable] = {}
             for i, agent in enumerate(opponent_agents):
                 # Cycle through the 5 scripted types so a 5-enemy game has
@@ -740,10 +808,13 @@ def collect_rollouts(
         game_mode = opponent_plan[game] if opponent_plan else mode
         mode_counts[game_mode] = mode_counts.get(game_mode, 0) + 1
         reward_shaper.start_game()
+        reset_seed = None
         if args.vary_maps:
-            env.reset(seed=random.randint(0, 2**31 - 1))
+            reset_seed = random.randint(0, 2**31 - 1)
+            env.reset(seed=reset_seed)
         elif args.seed is not None:
-            env.reset(seed=args.seed + seed_offset + game)
+            reset_seed = args.seed + seed_offset + game
+            env.reset(seed=reset_seed)
         else:
             env.reset()
         stacker = FrameStacker(args.n_frames)
@@ -754,6 +825,7 @@ def collect_rollouts(
             [a for a in env.possible_agents if a != our_agent],
             args.n_frames,
             snapshot_pool=snapshot_pool,
+            seed_base=None if reset_seed is None else reset_seed + 100_000,
         )
         for op in opponents.values():
             if hasattr(op, "reset"):
@@ -936,20 +1008,34 @@ def evaluate(
     total_reward = 0.0
     use_belief = bool(getattr(actor, "use_belief", False))
     mode = opponent_mode or args.eval_opponents
+    use_hybrid = getattr(args, "selection_manager", "policy") == "hybrid"
 
     for game in range(games):
+        reset_seed = None
         if args.vary_maps:
-            env.reset(seed=args.eval_seed + game * 7919 if args.eval_seed is not None else None)
+            reset_seed = args.eval_seed + game * 7919 if args.eval_seed is not None else None
+            _seed_eval_rngs(None if reset_seed is None else reset_seed + 200_000)
+            env.reset(seed=reset_seed)
         elif args.eval_seed is not None:
-            env.reset(seed=args.eval_seed + game)
+            reset_seed = args.eval_seed + game
+            _seed_eval_rngs(reset_seed + 200_000)
+            env.reset(seed=reset_seed)
         else:
             env.reset()
         stacker = FrameStacker(args.n_frames)
         planner = AEManager()
+        hybrid_manager = None
+        if use_hybrid:
+            from hybrid_manager import HybridAEManager  # noqa: WPS433
+
+            hybrid_manager = HybridAEManager(
+                policy=LivePolicyAdapter(actor, device, args.n_frames)
+            )
         opponents = _make_opponents(
             actor, device, mode,
             [a for a in env.possible_agents if a != our_agent],
             args.n_frames,
+            seed_base=None if reset_seed is None else reset_seed + 100_000,
         )
         for op in opponents.values():
             if hasattr(op, "reset"):
@@ -963,16 +1049,19 @@ def evaluate(
                 continue
             obs_py = _obs_to_python(obs)
             if agent == our_agent:
-                belief = _belief_for(planner, obs_py, use_belief)
-                stacked = stacker.observe(obs_py, belief_map=belief)
-                agent_v = torch.from_numpy(stacked["agent_view"]).float().to(device)
-                base_v = torch.from_numpy(stacked["base_view"]).float().to(device)
-                scalars = torch.from_numpy(stacked["scalars"]).float().to(device)
-                mask = torch.from_numpy(stacked["action_mask"]).float().to(device)
-                belief_t = torch.from_numpy(belief).float().to(device) if belief is not None else None
-                action = actor.select_action(
-                    agent_v, base_v, scalars, action_mask=mask, greedy=True, belief_map=belief_t,
-                )
+                if hybrid_manager is not None:
+                    action = int(hybrid_manager.ae(obs_py))
+                else:
+                    belief = _belief_for(planner, obs_py, use_belief)
+                    stacked = stacker.observe(obs_py, belief_map=belief)
+                    agent_v = torch.from_numpy(stacked["agent_view"]).float().to(device)
+                    base_v = torch.from_numpy(stacked["base_view"]).float().to(device)
+                    scalars = torch.from_numpy(stacked["scalars"]).float().to(device)
+                    mask = torch.from_numpy(stacked["action_mask"]).float().to(device)
+                    belief_t = torch.from_numpy(belief).float().to(device) if belief is not None else None
+                    action = actor.select_action(
+                        agent_v, base_v, scalars, action_mask=mask, greedy=True, belief_map=belief_t,
+                    )
             else:
                 action = int(opponents.get(agent, _random_opponent)(env, agent, obs_py))
                 mask = np.asarray(obs_py.get("action_mask", [1, 1, 1, 1, 1, 1]), dtype=np.float32).reshape(-1)
@@ -1028,6 +1117,35 @@ def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNe
     return actor, use_belief, warm_started, ckpt
 
 
+def save_policy_checkpoint(
+    actor: PolicyNetwork,
+    critic: ValueNetwork,
+    args: argparse.Namespace,
+    out_path: Path,
+    update: int,
+    eval_score: float,
+    eval_parts: dict[str, float],
+    rollout_score: float,
+    metadata: dict | None = None,
+) -> None:
+    payload = {
+        "model_state_dict": actor.state_dict(),
+        "critic_state_dict": critic.state_dict(),
+        "epoch": update,
+        "n_frames": args.n_frames,
+        "use_belief": bool(getattr(actor, "use_belief", False)),
+        "model_arch": getattr(actor, "model_arch", "default"),
+        "ppo_eval_score": eval_score,
+        "ppo_eval_parts": eval_parts,
+        "rollout_score": rollout_score,
+        "selection_manager": getattr(args, "selection_manager", "policy"),
+        "args": vars(args),
+    }
+    if metadata:
+        payload.update(metadata)
+    torch.save(payload, out_path)
+
+
 def _linear(start: float, end: float, progress: float) -> float:
     progress = min(1.0, max(0.0, progress))
     return start + (end - start) * progress
@@ -1066,9 +1184,14 @@ def evaluate_selection(
     args: argparse.Namespace,
     device: torch.device,
 ) -> tuple[float, dict[str, float]]:
+    eval_actor = actor
+    eval_device = device
+    if getattr(args, "selection_device", "train") == "cpu" and device.type != "cpu":
+        eval_actor = copy.deepcopy(actor).cpu().eval()
+        eval_device = torch.device("cpu")
     suites = _parse_csv(args.selection_suites)
     if not suites:
-        score = evaluate(actor, args, device, games=args.eval_games, opponent_mode=args.eval_opponents)
+        score = evaluate(eval_actor, args, eval_device, games=args.eval_games, opponent_mode=args.eval_opponents)
         return score, {args.eval_opponents: score}
     for suite in suites:
         if suite not in OPPONENT_MODES:
@@ -1077,7 +1200,7 @@ def evaluate_selection(
     scores: dict[str, float] = {}
     weighted = 0.0
     for suite, weight in zip(suites, weights):
-        score = evaluate(actor, args, device, games=args.selection_games, opponent_mode=suite)
+        score = evaluate(eval_actor, args, eval_device, games=args.selection_games, opponent_mode=suite)
         scores[suite] = score
         weighted += weight * score
     return weighted, scores
@@ -1132,10 +1255,13 @@ def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
         args.opponent_mix_preset = "full-rl"
         args.opponents = "scripted"
         args.eval_opponents = "cloudsuite"
+        args.selection_manager = "hybrid"
+        args.selection_device = "cpu"
         args.selection_suites = "random,scripted,cloudsuite"
         args.selection_weights = "0.20,0.40,0.40"
-        args.selection_games = max(args.selection_games, 16)
+        args.selection_games = max(args.selection_games, 24)
         args.games_per_update = max(args.games_per_update, 16)
+        args.eval_every = max(args.eval_every, 10)
         args.ppo_epochs = min(args.ppo_epochs, 3)
         args.entropy_coef = max(args.entropy_coef, 0.008)
         args.entropy_final_coef = 0.003 if args.entropy_final_coef is None else args.entropy_final_coef
@@ -1148,6 +1274,8 @@ def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
         args.base_health_delta_coef = max(args.base_health_delta_coef, 0.025)
         args.bomb_action_bonus = max(args.bomb_action_bonus, 0.006)
         args.load_critic = True
+        args.baseline_eval = True
+        args.min_save_improvement = max(args.min_save_improvement, 0.015)
         return args
 
     return args
@@ -1164,12 +1292,19 @@ def train(args: argparse.Namespace) -> None:
         else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
     )
     print(f"device: {device}")
+    if os.environ.get("PYTHONHASHSEED") in {None, "", "random"}:
+        print(
+            "WARN: PYTHONHASHSEED is not fixed; AEManager set iteration can make "
+            "small validation suites differ across Python processes. "
+            "Use training/ae/run_full_rl_v1.py or run with PYTHONHASHSEED=0."
+        )
     print(f"config: preset={args.preset} n_frames={args.n_frames} "
           f"reward_scale={args.reward_scale} return_clip={args.return_clip} "
           f"vary_maps={args.vary_maps} opponents={args.opponents} "
           f"eval_opponents={args.eval_opponents} curriculum={args.curriculum} "
           f"opponent_mix={args.opponent_mix_preset if args.opponent_mix_preset != 'none' else (args.opponent_mix or 'none')} "
-          f"selection={args.selection_suites or args.eval_opponents}")
+          f"selection={args.selection_suites or args.eval_opponents} "
+          f"selection_manager={args.selection_manager} selection_device={args.selection_device}")
 
     actor, use_belief, warm_started, actor_ckpt = load_actor(args, device)
     if args.orthogonal_init and not warm_started:
@@ -1199,6 +1334,60 @@ def train(args: argparse.Namespace) -> None:
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    latest_out_path: Path | None = Path(args.latest_out) if args.latest_out else None
+    if latest_out_path is None and args.preset == "full-rl":
+        latest_out_path = out_path.with_name(f"{out_path.stem}-latest{out_path.suffix}")
+    if latest_out_path is not None:
+        latest_out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    gate_metadata: dict = {}
+    save_floor = float(args.selection_min_score)
+    if args.baseline_eval:
+        actor.eval()
+        critic.eval()
+        baseline_score, baseline_parts = evaluate_selection(actor, args, device)
+        gate_metadata["selection_baseline_score"] = baseline_score
+        gate_metadata["selection_baseline_parts"] = baseline_parts
+        if args.min_save_improvement > 0.0:
+            save_floor = max(save_floor, baseline_score + args.min_save_improvement)
+        print(
+            f"selection baseline ({args.selection_manager})={baseline_score:.4f} "
+            + " ".join(f"{k}={v:.4f}" for k, v in baseline_parts.items())
+        )
+
+    reference_results: list[dict] = []
+    for ref in args.reference_checkpoint:
+        ref_path = Path(ref)
+        if not ref_path.exists():
+            print(f"WARN: reference checkpoint missing, skipped: {ref_path}")
+            continue
+        ref_ckpt = torch.load(ref_path, map_location=device, weights_only=False)
+        ref_args = copy.copy(args)
+        ref_args.bc_checkpoint = str(ref_path)
+        ref_args.n_frames = int(ref_ckpt.get("n_frames", args.n_frames))
+        ref_actor, _ref_use_belief, _ref_warm_started, _ref_ckpt = load_actor(ref_args, device)
+        ref_actor.eval()
+        ref_score, ref_parts = evaluate_selection(ref_actor, ref_args, device)
+        reference_results.append({
+            "path": str(ref_path),
+            "score": ref_score,
+            "parts": ref_parts,
+        })
+        if args.min_save_improvement > 0.0:
+            save_floor = max(save_floor, ref_score + args.min_save_improvement)
+        print(
+            f"selection reference {ref_path.name} ({args.selection_manager})={ref_score:.4f} "
+            + " ".join(f"{k}={v:.4f}" for k, v in ref_parts.items())
+        )
+    if reference_results:
+        gate_metadata["selection_references"] = reference_results
+    gate_metadata["selection_save_floor"] = save_floor
+    gate_metadata["min_save_improvement"] = args.min_save_improvement
+    print(f"candidate save floor: {save_floor:.4f}")
+    random.seed(args.seed or 0)
+    np.random.seed(args.seed or 0)
+    torch.manual_seed(args.seed or 0)
+
     best_eval = -float("inf")
     start_time = time.time()
 
@@ -1244,21 +1433,23 @@ def train(args: argparse.Namespace) -> None:
             actor.eval()
             critic.eval()
             eval_score, eval_parts = evaluate_selection(actor, args, device)
-            if eval_score > best_eval:
+            if latest_out_path is not None:
+                save_policy_checkpoint(
+                    actor, critic, args, latest_out_path, update,
+                    eval_score, eval_parts, rollout_score, gate_metadata,
+                )
+            if eval_score >= save_floor and eval_score > best_eval:
                 best_eval = eval_score
-                torch.save({
-                    "model_state_dict": actor.state_dict(),
-                    "critic_state_dict": critic.state_dict(),
-                    "epoch": update,
-                    "n_frames": args.n_frames,
-                    "use_belief": bool(getattr(actor, "use_belief", False)),
-                    "model_arch": getattr(actor, "model_arch", "default"),
-                    "ppo_eval_score": eval_score,
-                    "ppo_eval_parts": eval_parts,
-                    "rollout_score": rollout_score,
-                    "args": vars(args),
-                }, out_path)
+                save_policy_checkpoint(
+                    actor, critic, args, out_path, update,
+                    eval_score, eval_parts, rollout_score, gate_metadata,
+                )
                 print(f"  ✓ best PPO eval {best_eval:.4f} → saved {out_path}")
+            elif eval_score > -float("inf"):
+                print(
+                    f"  candidate gate not met: eval {eval_score:.4f} "
+                    f"< save_floor {save_floor:.4f}"
+                )
 
         # Self-play: snapshot the actor at the configured cadence so future
         # rollouts can face this state from the pool. Done AFTER the PPO
@@ -1283,9 +1474,14 @@ def train(args: argparse.Namespace) -> None:
             f"entcoef={entropy_coef:.3f}  lr={current_lr:.2e}{pool_tag}  elapsed={elapsed/60:.1f}m"
         )
 
-    print(f"\nBest eval score: {best_eval:.4f}")
-    print(f"Checkpoint: {out_path}")
-    print("Deploy by copying it to ae/models/bc.pt, then build/test as ppo-v2.")
+    print(f"\nBest saved eval score: {best_eval:.4f}")
+    if best_eval == -float("inf"):
+        print(f"No candidate checkpoint cleared save floor {save_floor:.4f}; leaving {out_path} untouched.")
+    else:
+        print(f"Checkpoint: {out_path}")
+    if latest_out_path is not None:
+        print(f"Latest evaluated checkpoint: {latest_out_path}")
+    print("Deploy by copying a gated checkpoint to ae/models/bc.pt, then build/test.")
 
 
 def main() -> None:
@@ -1295,6 +1491,9 @@ def main() -> None:
                              "full-rl enables per-game opponent mixing on fixed Novice geometry.")
     parser.add_argument("--bc-checkpoint", default="training/ae/checkpoints/bc.pt")
     parser.add_argument("--out", default="training/ae/checkpoints/ppo.pt")
+    parser.add_argument("--latest-out", default="",
+                        help="Optional checkpoint path for the latest evaluated model. "
+                             "The main --out remains gated by selection quality.")
     parser.add_argument("--updates", type=int, default=200)
     parser.add_argument("--games-per-update", type=int, default=12)
     parser.add_argument("--ppo-epochs", type=int, default=4)
@@ -1337,11 +1536,25 @@ def main() -> None:
                              "aggressive/league opponents.")
     parser.add_argument("--selection-suites", default="",
                         help="Comma-separated opponent pools used for checkpoint selection. "
-                             "If empty, eval-opponents is used.")
+                        "If empty, eval-opponents is used.")
+    parser.add_argument("--selection-manager", choices=["policy", "hybrid"], default="policy",
+                        help="Score checkpoints as pure policy or through the deployed hybrid wrapper.")
+    parser.add_argument("--selection-device", choices=["train", "cpu"], default="train",
+                        help="Run checkpoint selection on the training device or CPU. CPU better matches Docker.")
     parser.add_argument("--selection-weights", default="",
                         help="Comma-separated weights for --selection-suites; defaults to uniform.")
     parser.add_argument("--selection-games", type=int, default=6,
                         help="Games per selection suite when --selection-suites is set.")
+    parser.add_argument("--baseline-eval", action="store_true",
+                        help="Evaluate the starting actor before training and use it as a save gate.")
+    parser.add_argument("--reference-checkpoint", action="append", default=[],
+                        help="Optional checkpoint to evaluate as an additional save-floor reference. "
+                             "May be repeated.")
+    parser.add_argument("--min-save-improvement", type=float, default=0.0,
+                        help="Require candidate eval to beat baseline/reference evals by this margin "
+                             "before writing --out.")
+    parser.add_argument("--selection-min-score", type=float, default=-float("inf"),
+                        help="Absolute minimum selection score required before writing --out.")
     parser.add_argument("--snapshot-interval", type=int, default=10,
                         help="Add a frozen actor snapshot to the self-play pool every N PPO updates "
                              "(set to 0 to disable; falls back to live-actor frozen opponents).")

@@ -18,6 +18,7 @@ stratified opponent mix every PPO update:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -26,7 +27,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKPOINT_DIR = REPO_ROOT / "training" / "ae" / "checkpoints"
 BASE_CHECKPOINT = CHECKPOINT_DIR / "ppo-qualifier-best-v1.pt"
+REFERENCE_CHECKPOINT = CHECKPOINT_DIR / "ppo-qualifier-best-v4-balanced.pt"
 OUT_CHECKPOINT = CHECKPOINT_DIR / "ppo-full-rl-v1.pt"
+LATEST_CHECKPOINT = CHECKPOINT_DIR / "ppo-full-rl-v1-latest.pt"
 LOG_PATH = CHECKPOINT_DIR / "ppo-full-rl-v1.log"
 
 
@@ -48,27 +51,50 @@ def main() -> int:
         str(BASE_CHECKPOINT),
         "--out",
         str(OUT_CHECKPOINT),
+        "--latest-out",
+        str(LATEST_CHECKPOINT),
         "--updates",
         "240",
         "--n-frames",
         "1",
         "--eval-every",
-        "5",
+        "10",
+        "--selection-manager",
+        "hybrid",
+        "--selection-device",
+        "cpu",
+        "--baseline-eval",
+        "--min-save-improvement",
+        "0.015",
+        "--selection-games",
+        "24",
         "--seed",
         "488",
         "--eval-seed",
         "48800",
     ]
+    if REFERENCE_CHECKPOINT.exists():
+        cmd.extend(["--reference-checkpoint", str(REFERENCE_CHECKPOINT)])
+    else:
+        print(
+            f"Reference checkpoint not found: {REFERENCE_CHECKPOINT}\n"
+            "The run will gate only against the starting checkpoint.",
+            file=sys.stderr,
+        )
 
     print("Running full RL PPO training:")
     print(" ".join(cmd))
     print(f"\nCheckpoint: {OUT_CHECKPOINT}")
+    print(f"Latest:     {LATEST_CHECKPOINT}")
     print(f"Log:        {LOG_PATH}\n")
 
     with LOG_PATH.open("w", encoding="utf-8") as log_file:
+        env = os.environ.copy()
+        env.setdefault("PYTHONHASHSEED", "0")
         proc = subprocess.Popen(
             cmd,
             cwd=REPO_ROOT,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
