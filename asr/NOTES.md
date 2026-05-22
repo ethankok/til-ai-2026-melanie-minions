@@ -1,6 +1,6 @@
 # ASR — notes & history
 
-Last updated: 22 May 2026 — **`nemo-zs-v2` (22/05) with phonetic post-corrections achieved a new ASR accuracy high of `0.962` but dropped speed to `0.911` due to the unified model default in the Dockerfile.** Reverted default model to `parakeet-tdt-0.6b-v2.nemo` as `nemo-zs-v3` to recover speed to `0.946` while retaining the `0.962` accuracy. Keep `nemo-zs-v3` as the new live candidate.
+Last updated: 22 May 2026 — **`nemo-zs-v3` (22/05) with phonetic post-corrections on the fast `parakeet-tdt-0.6b-v2.nemo` backend achieved a new overall ASR blended high of `0.95625` (Accuracy: `0.960`, Speed: `0.945`). Currently validating `nemo-zs-v4` locally with slang prompter fixes and refined post-processing.** `nemo-zs-v2 (22/05)` remains our raw accuracy peak (`0.962` / `0.911`). Keep `nemo-zs-v3` as the live candidate.
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -10,12 +10,10 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`nemo-zs` — official 0.956 / 0.946 (14 May 20:33 SGT, 0/400 errors).**
-Blended score `0.75*0.956 + 0.25*0.946 = 0.9535`, +0.025 over `ft-lora32-v1`.
-Same accuracy (within noise: -0.001), +0.097 speed. The leaderboard keeps
-the higher raw score for either dimension, but blended-per-challenge is what
-feeds the qualifier total via the 75/25 weighting, so this is the new ASR
-high.
+**`nemo-zs-v3` — official 0.960 / 0.945 (22 May 21:46 SGT, 0/400 errors).**
+Blended score `0.75*0.960 + 0.25*0.945 = 0.95625`, +0.00275 over `nemo-zs` (blended 0.9535).
+Retains casing-preserving spelling/phonetic post-corrections on the fast Parakeet-TDT-v2 backend. `nemo-zs-v2` remains the accuracy peak (`0.962`) but was slow (`0.911`). Currently working on `nemo-zs-v4` to address slang prompter pollution and post-processing space-eating.
+
 
 ## nemo-zs-v2 (22/05) — phonetic post-corrections accuracy peak
 
@@ -39,7 +37,33 @@ Diagnosis:
 Action:
 - Switched default model variables to `parakeet-tdt-0.6b-v2.nemo` in `asr/Dockerfile`, `asr/Dockerfile.nemo`, `asr_manager_nemo.py`, and `download_models_nemo.py`.
 - Simplified the NeMo sanity check in Dockerfiles (removed `att_chunk_context_size` check).
-- Build the next iteration as `nemo-zs-v3`.
+- Built and submitted the next iteration as `nemo-zs-v3`.
+
+## nemo-zs-v3 (22/05) — blended score high SGT
+
+Submitted 22 May 2026 21:46 SGT.
+
+Why this candidate:
+- Reverted the default model to `parakeet-tdt-0.6b-v2.nemo` to recover from `nemo-zs-v2`'s latency.
+- Retained all the casing-preserving phonetic post-corrections from `nemo-zs-v2`.
+
+Results:
+- Errors: 0/400
+- Score (Accuracy): 0.960 (slightly below unified model's 0.962, but significantly above original zero-shot 0.956)
+- Speed: 0.945 (recovers the speed score from 0.911 back to baseline levels)
+- Local English WER: 0.0378
+- Local 1 - MER: 0.9905
+- Blended score (75/25): 0.95625 (new overall blended high score!)
+
+## nemo-zs-v4 (22/05) — slang prompter & post-processing refinement (Current)
+
+Currently preparing for GCP evaluation.
+
+Why this candidate:
+- Fixed slang prompter extraction pollution in `training/asr/extract_slang.py` by embedding a `FALLBACK_WORDS` list (1500 common English words) to prevent silent fallback failures from filling the bias prompt with common words when download dependencies fail.
+- Refined the proper noun rules in `asr/src/asr_postprocess.py` (specifically `Ashcastle` rules) by splitting them into a prefix-required rule and a standalone rule. This successfully resolves the space-eating bug where preceding spaces were collapsed when the prefix was absent (e.g., converting `is Ashcastle` to `isAshcastle`).
+- Local validation on `asr_results.json` shows 255/4110 lines modified, successfully fixing boundary collapsing and word merging without affecting correct proper-noun casing-preserving substitutions.
+
 
 ## Completed A/B: Parakeet unified zero-shot
 

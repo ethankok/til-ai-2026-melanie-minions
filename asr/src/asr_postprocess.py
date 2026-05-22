@@ -247,9 +247,9 @@ def repl_tidakran(match: re.Match[str]) -> str:
 
 
 def repl_kashikari_standalone(match: re.Match[str]) -> str:
-    matched = match.group(0)
-    base = _preserve_case("Kashikari", matched)
-    return base
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Kashikari", match.group(1))
+    return base + suffix
 
 
 def repl_devika_standalone(match: re.Match[str]) -> str:
@@ -259,9 +259,9 @@ def repl_devika_standalone(match: re.Match[str]) -> str:
 
 
 def repl_tavenport_standalone(match: re.Match[str]) -> str:
-    matched = match.group(0)
-    base = _preserve_case("Tavenport", matched)
-    return base
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Tavenport", match.group(1))
+    return base + suffix
 
 
 def repl_oyelaran_standalone(match: re.Match[str]) -> str:
@@ -276,17 +276,46 @@ def repl_oranyan_standalone(match: re.Match[str]) -> str:
     return base + suffix
 
 
+def repl_veyanova(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Veyanova", match.group(1))
+    return base + suffix
+
+
+def repl_ashcastle_prefix(match: re.Match[str]) -> str:
+    prefix = match.group(1)
+    base_name = match.group(2)
+    suffix = match.group(3) if match.group(3) else ""
+    pref_str = _preserve_case("Tell", prefix)
+    target_base = _preserve_case("Ashcastle", base_name)
+    return f"{pref_str} {target_base}{suffix}"
+
+
+def repl_ashcastle_standalone(match: re.Match[str]) -> str:
+    matched = match.group(1)
+    suffix = match.group(2) if match.group(2) else ""
+    if matched.lower().startswith("del"):
+        pref_str = _preserve_case("Tell", matched[:3])
+        base_part = re.sub(r"^del[- ]?", "", matched, flags=re.I)
+        target_base = _preserve_case("Ashcastle", base_part)
+        return f"{pref_str} {target_base}{suffix}"
+    else:
+        target_base = _preserve_case("Ashcastle", matched)
+        return f"{target_base}{suffix}"
+
+
+
 _PROPER_NOUN_RULES = [
     # 1. Complex/Combined Names (to avoid parts getting replaced by standalone rules)
     (re.compile(r"\b(takeshi|ada)\s+(oilaran|olrn|oyelaran)(s?|['s]*)\b", re.I), repl_takeshi_ada_oyelaran),
-    (re.compile(r"\b(devika|divika)\s+(aranyan|oranyan)(s?|['s]*)\b", re.I), repl_devika_oranyan),
+    (re.compile(r"\b(devika|divika|davika|de\s+vika|devi\s+ka)\s+(oranyan|uranyan|auranyan|aranyan|origins)(s?|['s]*)\b", re.I), repl_devika_oranyan),
     (re.compile(r"\bdivikauranyan(s?|['s]*)\b", re.I), repl_divikauranyan),
     (re.compile(r"\bdevi\s+kauranyan(s?|['s]*)\b", re.I), repl_devi_kauranyan),
     
     # 2. Park Soo-Hyun
-    (re.compile(r"\b(park|pak|pack)\s+(su\s+hyun|soo\s+hyun)(s?|['s]*)\b", re.I), repl_park_soo_hyun),
+    (re.compile(r"\b(park|pak|pack)\s+(su\s+hyun|soo\s+hyun|suzanne|suhyon|suhyun|shohyan|sho\s+hyan|su\s+hyon)(s?|['s]*)\b", re.I), repl_park_soo_hyun),
     (re.compile(r"\b(su|soo)\s+hyun(s?|['s]*)\b", re.I), repl_soo_hyun_standalone),
-    (re.compile(r"\b(suyan|suyon|sujan|suhyan|soohyan)(s?|['s]*)\b", re.I), repl_suyan_standalone),
+    (re.compile(r"\b(suyan|suyon|sujan|suhyan|soohyan|suhyun|suhyon|soohyun|shohyan|suzanne)(s?|['s]*)\b", re.I), repl_suyan_standalone),
     
     # 3. New Mewan
     (re.compile(r"\b(new|nu|noo|u)\s*(mewan|miwan|muvan|muon|muan|mi1|mu1|mi\s*1|mu\s*1|mi\s*one|mu\s*one|muons?|muvans?|miwans?|muans?)(s?|['s]*)\b", re.I), repl_new_mewan),
@@ -303,7 +332,7 @@ _PROPER_NOUN_RULES = [
     (re.compile(r"\b(castralian|castrillian|kestralian|kestrillian|castrelian|kastrillian)(s?)\b", re.I), repl_kestrelian),
     
     # 7. Sarento / Sorrento
-    (re.compile(r"\b(sor[r]+ento)(s?)\b", re.I), repl_sarento),
+    (re.compile(r"\b(s[oae]r+ento)(s?)\b", re.I), repl_sarento),
     
     # 8. Cyanite
     (re.compile(r"\b(cyanide|syanite|sanite|sinide)(s?)\b", re.I), repl_cyanite),
@@ -313,10 +342,13 @@ _PROPER_NOUN_RULES = [
     
     # 10. Standalone Last Names / Names
     (re.compile(r"\b(oilaran|olrn)(s?|['s]*)\b", re.I), repl_oyelaran_standalone),
-    (re.compile(r"\b(aranyan)(s?|['s]*)\b", re.I), repl_oranyan_standalone),
-    (re.compile(r"\b(kashikarikari|kashkari)\b", re.I), repl_kashikari_standalone),
-    (re.compile(r"\bdivika\b", re.I), repl_devika_standalone),
-    (re.compile(r"\bdavenport\b", re.I), repl_tavenport_standalone),
+    (re.compile(r"\b(oranyan|uranyan|auranyan)(s?|['s]*)\b", re.I), repl_oranyan_standalone),
+    (re.compile(r"\b(kashikarikari|kashkari|kashigari)(s?|['s]*)\b", re.I), repl_kashikari_standalone),
+    (re.compile(r"\b(devika|divika|davika|de\s+vika)\b", re.I), repl_devika_standalone),
+    (re.compile(r"\b(davenport|tavernport)(s?|['s]*)\b", re.I), repl_tavenport_standalone),
+    (re.compile(r"\b(vayanova|vyanova|vianova|vaianova)(s?|['s]*)\b", re.I), repl_veyanova),
+    (re.compile(r"\b(del|skel|tell)\s+(del[- ]?ash[- ]?castle|ash[- ]?castle|ash\s+castle|ashcastle)(s?|['s]*)\b", re.I), repl_ashcastle_prefix),
+    (re.compile(r"\b(delash|delashcastle|del[- ]?ash[- ]?castle|ash[- ]?castle|ash\s+castle|ashcastle)(s?|['s]*)\b", re.I), repl_ashcastle_standalone),
     
     # 11. Tidak
     (re.compile(r"\b(tedak|taidak|sidak|tiduck)\b", re.I), repl_tidak_standalone),
