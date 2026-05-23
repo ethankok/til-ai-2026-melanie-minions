@@ -91,22 +91,12 @@ def get_candidate_passages_pool(manager, question: str, max_k: int = 45):
         
     return list(union_set), doc_idxs
 
-def custom_retrieve(manager, question: str, k: int, doc_prior_weight: float, bm25_weight: float, dense_weight: float, top_k_doc_retrieve: int, top_k_doc_seed: int):
-    q_tokens = _bm25_tokenize(question) or [question.lower()]
-    bm25_scores = np.asarray(manager.bm25.get_scores(q_tokens), dtype=np.float32)
-
-    q_embed = manager._embed_query(question)
-    dense_scores = (manager.passage_embeds @ q_embed).numpy().astype(np.float32)
-
+def custom_retrieve(manager, bm25_scores, dense_scores, doc_bm25_scores, doc_dense_scores, k: int, doc_prior_weight: float, bm25_weight: float, dense_weight: float, top_k_doc_retrieve: int, top_k_doc_seed: int):
     passage_hybrid = bm25_weight * _zscore(bm25_scores) + dense_weight * _zscore(dense_scores)
 
     doc_idxs: list[int] = []
     doc_hybrid = np.empty(0, dtype=np.float32)
-    if manager.doc_bm25 is not None and manager.doc_embeds is not None and manager.documents:
-        doc_bm25_scores = np.asarray(
-            manager.doc_bm25.get_scores(q_tokens), dtype=np.float32
-        )
-        doc_dense_scores = (manager.doc_embeds @ q_embed).numpy().astype(np.float32)
+    if doc_bm25_scores is not None and doc_dense_scores is not None:
         doc_hybrid = bm25_weight * _zscore(doc_bm25_scores) + dense_weight * _zscore(doc_dense_scores)
         doc_idxs = manager._top_indices(doc_hybrid, top_k_doc_retrieve)
 
@@ -199,19 +189,46 @@ def main():
                 rerank_cache[(q_idx, pidx)] = score
                 
     print("Cached reranker scores.")
+
+    # Step 2: Pre-compute retrieval scores for all questions
+    print("Pre-computing retrieval scores...")
+    questions = [inst["question"] for inst in instances]
+    q_tokens_list = [_bm25_tokenize(q) or [q.lower()] for q in questions]
     
-    # Step 2: Evaluation function using cache
+    print("Calculating BM25 passage scores...")
+    bm25_scores_matrix = np.array([manager.bm25.get_scores(q_toks) for q_toks in q_tokens_list], dtype=np.float32)
+    
+    print("Batch embedding all queries...")
+    q_embeds = manager._embed_queries(questions) # Shape: (883, 384)
+    print("Calculating Dense passage scores...")
+    dense_scores_matrix = (q_embeds @ manager.passage_embeds.T).numpy().astype(np.float32)
+    
+    doc_bm25_scores_matrix = None
+    doc_dense_scores_matrix = None
+    if manager.doc_bm25 is not None and manager.doc_embeds is not None and manager.documents:
+        print("Calculating BM25 and Dense document scores...")
+        doc_bm25_scores_matrix = np.array([manager.doc_bm25.get_scores(q_toks) for q_toks in q_tokens_list], dtype=np.float32)
+        doc_dense_scores_matrix = (q_embeds @ manager.doc_embeds.T).numpy().astype(np.float32)
+    
+    print("Pre-computation of retrieval scores complete.")
+    
+    # Step 3: Evaluation function using cache
     def evaluate_with_cache(doc_prior_weight, top_k_retrieve, bm25_weight=1.0, dense_weight=1.0, top_k_doc_retrieve=8, top_k_doc_seed=4):
         hits = 0
         total = len(instances)
         
         for q_idx, instance in enumerate(instances):
-            q = instance["question"]
             gt_docs = set(instance["source_docs"])
             
-            # Retrieve using custom settings
+            # Retrieve using custom settings from pre-computed scores
+            bm_scores = bm25_scores_matrix[q_idx]
+            de_scores = dense_scores_matrix[q_idx]
+            doc_bm_scores = doc_bm25_scores_matrix[q_idx] if doc_bm25_scores_matrix is not None else None
+            doc_de_scores = doc_dense_scores_matrix[q_idx] if doc_dense_scores_matrix is not None else None
+            
             retrieved, doc_candidates = custom_retrieve(
-                manager, q, top_k_retrieve, doc_prior_weight, bm25_weight, dense_weight, top_k_doc_retrieve, top_k_doc_seed
+                manager, bm_scores, de_scores, doc_bm_scores, doc_de_scores,
+                top_k_retrieve, doc_prior_weight, bm25_weight, dense_weight, top_k_doc_retrieve, top_k_doc_seed
             )
             
             # Rerank retrieved passages using cached scores
