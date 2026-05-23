@@ -66,6 +66,12 @@ ENV AE_TIER1_REPEAT_KILL=1
 ENV AE_TIER1_SHARED_CREDIT=0
 ENV AE_TIER1_NO_STAY_PENALTY=1
 ENV AE_TIER1_PREDICTIVE_WALK=1
+# AE_ENEMY_BASE_VALUE is intentionally not baked here: AEManager defaults to
+# 80 on generic maps, but auto-promotes to 130 on detected fixed Novice maps
+# unless explicitly overridden for an A/B.
+ENV AE_BASE_DEFENSE_VALUE=60
+ENV AE_BASE_DEFENSE_EMERGENCY_VALUE=150
+ENV AE_CELL_THREAT_PENALTY=5
 ENV AE_USE_PLAYBOOK=0
 ENV AE_USE_OPPONENT_MODEL=0
 # Opt-in via `-e AE_USE_PLAYBOOK=1 -e AE_PLAYBOOK_FILTER=bomb_only` for a

@@ -231,9 +231,12 @@ class AEManager:
         self.opponent_walk_scale = self._load_opponent_walk_scale()
         self.BASE_DEFENSE_HEALTH = _env_float("AE_BASE_DEFENSE_HEALTH", 60.0)
         self.BASE_DEFENSE_RADIUS = _env_int("AE_BASE_DEFENSE_RADIUS", 4)
+        self.BASE_DEFENSE_VALUE = _env_float("AE_BASE_DEFENSE_VALUE", 60.0)
+        self.BASE_DEFENSE_EMERGENCY_VALUE = _env_float("AE_BASE_DEFENSE_EMERGENCY_VALUE", 150.0)
         self.ENEMY_BASE_VALUE = _env_float("AE_ENEMY_BASE_VALUE", 80.0)
         self.DIST_PENALTY = _env_float("AE_DIST_PENALTY", 1.15)
         self.PATH_THREAT_PENALTY = _env_float("AE_PATH_THREAT_PENALTY", 2.0)
+        self.CELL_THREAT_PENALTY = _env_float("AE_CELL_THREAT_PENALTY", 5.0)
         self.ENEMY_CHASE_VALUE = _env_float("AE_ENEMY_CHASE_VALUE", 0.0)
         self.ENEMY_CHASE_RADIUS = _env_int("AE_ENEMY_CHASE_RADIUS", 4)
         self.item_mission_value = _env_float("AE_ITEM_MISSION_VALUE", 50.0)
@@ -643,15 +646,12 @@ class AEManager:
                         continue
                     if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
                         defense_emergency = True
-                        candidates.append((150.0, pos))
+                        candidates.append((self.BASE_DEFENSE_EMERGENCY_VALUE, pos))
 
         # When health is low, avoid aggressive targets and stick to items/exploration
         if not low_health and not defense_emergency:
             for pos in self.enemy_bases:
-                if getattr(self, "is_fixed_novice_map", False):
-                    value = 130.0
-                else:
-                    value = 35.0 if self.tier1_shared_credit else self.ENEMY_BASE_VALUE
+                value = 35.0 if self.tier1_shared_credit else self.ENEMY_BASE_VALUE
                 candidates.append((value, pos))
             # Base defense: target enemies near our base (active attack/defense)
             if self.base_location is not None:
@@ -659,7 +659,7 @@ class AEManager:
                     if step - int(last_seen) > self.ENEMY_STALENESS:
                         continue
                     if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
-                        candidates.append((60.0, pos))
+                        candidates.append((self.BASE_DEFENSE_VALUE, pos))
             # Target nearby enemy agents aggressively (chase & kill) if enabled
             if self.ENEMY_CHASE_VALUE > 0.0:
                 for pos, last_seen in self.enemy_agents.items():
