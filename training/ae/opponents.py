@@ -288,7 +288,7 @@ class BaseRusher(AEManager):
             best = None
             best_score = float("-inf")
             for base in self.enemy_bases:
-                for cell in self._fixed_base_attack_cells(base):
+                for cell in self._attack_cells_for(base):
                     if cell not in distance:
                         continue
                     score = 170.0 - distance[cell] - 0.25 * self.visit_count.get(cell, 0)
@@ -298,6 +298,21 @@ class BaseRusher(AEManager):
             if best is not None:
                 return best, self._reconstruct_path(parent, start, best)
         return super()._choose_target(start, danger, low_health)
+
+    def _attack_cells_for(self, base: tuple[int, int]) -> list[tuple[int, int]]:
+        """Cells adjacent to ``base`` (or the base itself) that are inside the
+        grid and not blocked by a known indestructible wall edge.
+
+        This used to live on AEManager as ``_fixed_base_attack_cells`` but was
+        removed when the runtime was reverted to the fixed-map-v3 state. Kept
+        local to BaseRusher because nothing else needs it."""
+        cells: list[tuple[int, int]] = [base]
+        for direction, (dx, dy) in self.DIR_DELTAS.items():
+            nxt = (base[0] + dx, base[1] + dy)
+            if not self._in_bounds(nxt):
+                continue
+            cells.append(nxt)
+        return cells
 
 
 class MixedOpponent:

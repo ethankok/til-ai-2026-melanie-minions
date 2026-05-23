@@ -1,6 +1,39 @@
 # AE — notes & history
 
-Last updated: 23 May 2026 01:55 SGT — **AE high is now `ppo-full-rl-v1-hybrid` at `0.638 / 0.847` with 0/30 errors, barely ahead of `ppo-full-rl-v1-hybrid-shortcut` at `0.637 / 0.845` and `fixed-map-v5` at `0.630 / 0.858`. The honest read is variance-dominated: pure policy mean `0.585`, hybrid shortcut-off mean `0.588`, and hybrid shortcut-on mean `0.580`, with per-config spread larger than the difference between configs. Protect the `0.638` submission, but do not claim the wrapper/RL/shortcut distinction is proven by cloud scores alone.**
+Last updated: 23 May 2026 12:30 SGT — **Belief-aware PPO experiment (`ppo-full-rl-belief-v1`) is a falsified hypothesis on the available training budget.** Three new pieces of work this session:
+
+1. **1B variance-farm of `ppo-full-rl-v1-policy`**: 5 fresh submits using identical artefact (`ppo-full-rl-v1.pt`, sha256 `1f30da4e...`) in pure-policy mode. Tags `ppo-full-rl-v1-policy-vf2..vf7`. Results `0.594, 0.565, 0.567, 0.557, 0.577`; combined with the 3 earlier policy submits gives n=8, mean ~`0.577`, max still `0.625`. The right tail did not repeat. `ppo-full-rl-v1-hybrid` at `0.638 / 0.847` remains the AE high.
+
+2. **Dijkstra bomb cost is now env-tunable** via `AE_DIJKSTRA_BOMB_COST` (default `5.0`, preserves shipped behavior). Plumbed into both `AEManager.__init__` and the fixed-Novice detection block. Mac sweep at 24 rounds × {random, library, cloudsuite}: cost `5.0 -> 0.821/0.567/0.319` (mean-of-means `0.569`); `4.0 -> 0.783/0.544/0.335` (mean-of-means `0.554`); `3.0 -> 0.742/0.535/0.354` (mean-of-means `0.544`). Direction is monotonic and clean — lower cost trades random tempo for cloudsuite pressure score — but the random regression dominates the cloudsuite gain, so aggregate falls. **Did not ship**; keeps the lever available behind one env var. Diagnostics confirm the mechanism: at cost `3.0` in cloudsuite, `collect_mission` rises +24%, `destroy_enemy_base` rises +10%, `final_base_health` recovers from 0.0 to 6.7. The shipped behavior is unchanged.
+
+3. **Fixed a pre-existing bug** in `training/ae/opponents.py`: `BaseRusher._choose_target` called `self._fixed_base_attack_cells`, which was removed during the May-21 fixed-map-v3 restore commit. The caller was never updated, so the `cloudsuite` validator pool has been crashing on `BaseRusher` since May 21. Replaced with a local `_attack_cells_for(base)` helper inside `BaseRusher`. Without this, no cloudsuite-side validation runs at all.
+
+**Belief experiment summary.** Built a full belief-aware training pipeline:
+
+- `training/ae/collect_bc.py` got an `--opponents` flag (vocabulary mirrors `simulate.py`: `random` / `mixed` / `library` / `cloudsuite` / explicit comma list). Default `random` is unchanged for backwards compatibility. Fixes the root cause flagged in the original `bc-belief-hybrid` post-mortem ("BC overfit planner-vs-random").
+- `training/ae/run_full_rl_belief_v1.py` is a new three-stage launcher (collect -> BC -> PPO) with `--skip-collect`, `--skip-bc`, `--skip-ppo` flags and streamed log capture to `training/ae/checkpoints/ppo-full-rl-belief-v1.log`.
+- BC stage: 600 mixed-opponent (`library`) games × 200 ticks = 120K samples; 12 epochs on Mac MPS. Best val_acc `0.9527` — better than the original `bc-belief`'s `0.897`. The belief feature does help the BC reader fit the planner, as expected.
+- PPO stage: `--preset full-rl --use-belief`, 240 updates planned, 200 actually completed before stopping. Save floor `0.6236` (reference `ppo-full-rl-v1.pt` selection score `0.6086` plus the `0.015` improvement margin). Final state at update 200: weighted eval `0.4925`, parts `random=0.7909, scripted=0.5553, cloudsuite=0.2805`. Trajectory plateaued at `0.49-0.50` for the last 30 updates with cloudsuite drifting *down*. Stopped early; no candidate cleared the gate; deployable artefact `ppo-full-rl-belief-v1.pt` was never written. Latest checkpoint (`ppo-full-rl-belief-v1-latest.pt`) still on disk for analysis.
+
+**Honest read.** Did not beat the no-belief baseline on any of the three suites:
+
+| Suite | belief-v1 (200 ep) | full-rl-v1 (230 ep) | Δ |
+|---|---:|---:|---:|
+| random | `0.791` | `0.917` | `-0.13` |
+| scripted | `0.555` | `0.647` | `-0.09` |
+| cloudsuite | `0.280` | `0.752` | `-0.47` |
+| weighted | `0.493` | `0.743` | `-0.25` |
+
+Three reasons the comparison is biased against belief, so I would not generalise this to "memory is dead":
+- Different starting points: no-belief PPO warm-started from `ppo-qualifier-best-v1` at selection `~0.60`. Belief PPO started from BC at `~0.13`. PPO had to catch up before it could improve.
+- Belief overhead added ~20-30% per-update wall-clock on Mac MPS, so 200 belief updates ≈ ~165 no-belief-equivalent updates of compute.
+- BC distribution shift: BC was trained on `library`, PPO rolls out the full-rl mix (random/scripted/cloudsuite/planner/aggressive/league). The policy oscillated between library-optimal and cloudsuite-optimal; you can see cloudsuite climb then drift back down to `0.28` by update 200.
+
+A clean ablation needs a belief-aware warm-start checkpoint at parity selection score, equal wall-clock budget, and matched BC-vs-PPO distributions. We do not have time to do that before the 24 May deadline. **Conclusion for this submission: belief is off the table.** The hypothesis is not conclusively dead, but it is not validatable in the time left.
+
+Operational stance unchanged: `ppo-full-rl-v1-hybrid` at `0.638 / 0.847` is the protected AE high. Remaining time is best spent on (a) more variance-farm submits of `ppo-full-rl-v1-hybrid` and `ppo-full-rl-v1-policy` (zero code, free lottery tickets), (b) a heuristic-mode `AE_DIJKSTRA_BOMB_COST=4.0` A/B against the `fixed-map-v5` lineage (one Dockerfile change), and (c) leaving belief work documented as a negative result for next year.
+
+Prior update: 23 May 2026 01:55 SGT — **AE high is now `ppo-full-rl-v1-hybrid` at `0.638 / 0.847` with 0/30 errors, barely ahead of `ppo-full-rl-v1-hybrid-shortcut` at `0.637 / 0.845` and `fixed-map-v5` at `0.630 / 0.858`. The honest read is variance-dominated: pure policy mean `0.585`, hybrid shortcut-off mean `0.588`, and hybrid shortcut-on mean `0.580`, with per-config spread larger than the difference between configs. Protect the `0.638` submission, but do not claim the wrapper/RL/shortcut distinction is proven by cloud scores alone.**
 
 Prior update: 21 May 2026 — **Code-only PPO retry path added. `training/ae/train_ppo.py` got a `--preset qualifier-best` recipe for a stronger PPO attempt: pressure curriculum (`scripted -> cloudsuite -> league`), action-masked PPO with target-KL early stopping, clip/entropy schedules, adaptive visit-count exploration shaping, health/base-health shaping, small bomb-use shaping, and weighted checkpoint selection across `random,scripted,cloudsuite` instead of one friendly local eval. At that point it had only passed a 1-update smoke test on the Mac.**
 
@@ -62,7 +95,7 @@ We retried PPO from the restored `deployed-bc-v1.pt` / `ppo-qualifier-best-v1.pt
 | `ppo-qualifier-best-v2` | Cloudsuite-focused continuation from v1; best weighted eval `0.6576`, cloudsuite `0.6575`; local Docker `0.7185`. | `0.598 / 0.845`, 0/30 errors | Overfit the cloudsuite proxy; do not promote. |
 | `ppo-qualifier-best-v3` | Scripted/balanced continuation from v1; best weighted eval `0.6199`; parts random `0.7982`, scripted `0.6295`, cloudsuite `0.5423`. | Not submitted | Below v1/v2/v4; do not promote. |
 | `ppo-qualifier-best-v4-balanced` | Best checkpoint `epoch=75`, weighted eval `0.68808125`; parts random `0.82228125`, scripted `0.6648125`, cloudsuite `0.64425`; local Docker `0.7506667`; checkpoint sha256 `3e123b65cd5f2baae06197c4ab05055061b7b17aef96083744445891b9ecb047`. | Same tag submitted twice: `0.602 / 0.846` and `0.578 / 0.845`, 0/30 errors | Best local PPO yet, but hidden eval did not transfer; duplicate submit shows meaningful cloud variance. |
-| `ppo-full-rl-v1-policy` | Runner at [../training/ae/run_full_rl_v1.py](../training/ae/run_full_rl_v1.py). It keeps fixed Novice geometry, rotates rollout seeds, and stratifies each PPO update across random/scripted/cloudsuite/planner/aggressive/league opponents. After the hybrid-selection bug, selection was switched to pure policy on CPU so PPO had to improve the learned policy itself. Final gated checkpoint: `epoch=230`, weighted eval `0.742858`, random `0.916625`, scripted `0.646833`, cloudsuite `0.752000`, sha256 `1f30da4ebbfa7bd8d6fd131df5d5dcb9ee9a103fb57b1092d77c9beb3c827b43`. Latest/final epoch 240 regressed to `0.709696`, proving the save gate mattered. | `0.550 / 0.847`, `0.579 / 0.848`, `0.625 / 0.848`, all 0/30 errors | Pure policy is close but still below `fixed-map-v5`; try the same checkpoint inside hybrid wrapper next. |
+| `ppo-full-rl-v1-policy` | Runner at [../training/ae/run_full_rl_v1.py](../training/ae/run_full_rl_v1.py). It keeps fixed Novice geometry, rotates rollout seeds, and stratifies each PPO update across random/scripted/cloudsuite/planner/aggressive/league opponents. After the hybrid-selection bug, selection was switched to pure policy on CPU so PPO had to improve the learned policy itself. Final gated checkpoint: `epoch=230`, weighted eval `0.742858`, random `0.916625`, scripted `0.646833`, cloudsuite `0.752000`, sha256 `1f30da4ebbfa7bd8d6fd131df5d5dcb9ee9a103fb57b1092d77c9beb3c827b43`. Latest/final epoch 240 regressed to `0.709696`, proving the save gate mattered. | First three submits `0.550 / 0.847`, `0.579 / 0.848`, `0.625 / 0.848`, all 0/30 errors. Five additional variance-farm submits (`vf2..vf7`, 23 May) drew `0.594, 0.565, 0.567, 0.557, 0.577`, all 0/30 errors. Combined n=8, mean `~0.577`, max `0.625` (still from the original run). | Pure policy is close but still below `fixed-map-v5`; the right tail did not repeat across 5 fresh variance draws. Treat further policy-mode submits as variance farming only. |
 | `ppo-full-rl-v1-hybrid` | Same epoch-230 checkpoint as above, but baked as `AE_MODE=hybrid` with `AE_HYBRID_FIXED_MAP_SHORTCUT=0`. In this mode PPO is active on detected Novice maps and the heuristic acts as fallback/veto. | `0.564 / 0.843`, `0.638 / 0.847`, `0.599 / 0.848`, `0.552 / 0.841`, all 0/30 errors | Current AE high by max score, but mean `0.588` is basically tied with policy and shortcut-on. Protect the high; treat further submits as variance farming, not proof of a clean model-quality lift. |
 | `ppo-full-rl-v1-hybrid-shortcut` | Same checkpoint, `AE_MODE=hybrid`, but with `AE_HYBRID_FIXED_MAP_SHORTCUT=1`. On detected Novice maps this returns the heuristic action before calling PPO, so it is effectively fixed-map heuristic variance-farming with the new checkpoint mostly bypassed. | `0.521 / 0.849`, `0.637 / 0.845`, `0.582 / 0.845`, all 0/30 errors | Nearly tied the current high. This undercuts any strong claim that shortcut-off hybrid is truly better; all three deployment styles are in the same noisy cloud band. |
 
@@ -100,6 +133,79 @@ Interpretation:
   `ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0`; otherwise the wrapper will mostly run
   the heuristic on detected Novice maps.
 
+## 23 May session: variance farm + bomb-cost lever + belief experiment
+
+This is the 23 May 2026 work that produced no new high but did produce three lasting artefacts.
+
+### 1. Variance farm of `ppo-full-rl-v1-policy`
+
+Same artefact submitted 5 more times to add variance samples to the existing 3:
+
+| Tag | Cloud | Speed |
+|---|---:|---:|
+| `ppo-full-rl-v1-policy-vf2` | 0.594 | 0.852 |
+| `ppo-full-rl-v1-policy-vf3` | 0.565 | 0.857 |
+| `ppo-full-rl-v1-policy-vf4` | 0.567 | 0.855 |
+| `ppo-full-rl-v1-policy-vf6` | 0.557 | 0.847 |
+| `ppo-full-rl-v1-policy-vf7` | 0.577 | 0.844 |
+
+Combined with the 3 earlier policy submits: n=8, mean `~0.577`, max still `0.625` from the original run. The right tail did not repeat. Useful as a calibration of cloud variance for future variance farming: pure-policy std across 8 samples is `~0.024`.
+
+### 2. `AE_DIJKSTRA_BOMB_COST` is now a tunable lever
+
+Plumbed as an env var read once in `AEManager.__init__`, propagated into the fixed-Novice detection block. Default `5.0` preserves shipped behavior. Edit in `ae/Dockerfile` to ship a different value without code changes.
+
+Mac sweep at 24 rounds × {random, library, cloudsuite}, deterministic seed=42:
+
+| Cost | random | library | cloudsuite | mean-of-means |
+|---|---:|---:|---:|---:|
+| 5.0 (shipped) | 0.821 | 0.567 | **0.319** | **0.569** |
+| 4.0 | 0.783 | 0.544 | 0.335 | 0.554 |
+| 3.0 | 0.742 | 0.535 | **0.354** | 0.544 |
+
+Direction is monotonic and clean: lower cost trades random tempo for cloudsuite pressure score. Diagnostics confirm the mechanism — at cost `3.0` in cloudsuite, `collect_mission` rises +24%, `destroy_enemy_base` rises +10%, `final_base_health` recovers from 0.0 to 6.7. Aggregate falls because the random regression dominates the cloudsuite gain.
+
+Did not ship as the default. The lever stays available for cloud A/B work — a heuristic-mode `AE_DIJKSTRA_BOMB_COST=4.0` build would be a one-flag comparison to the `fixed-map-v5` lineage (cloud `0.630 / 0.858`).
+
+### 3. Pre-existing `BaseRusher` bug fixed in `training/ae/opponents.py`
+
+The `cloudsuite` opponent pool used by `validate_cloud_suite.py` had been crashing on every run since the May-21 fixed-map-v3 restore commit. `BaseRusher._choose_target` referenced `self._fixed_base_attack_cells`, which was removed when the runtime was rolled back. Replaced with a local `_attack_cells_for(base)` helper that returns adjacent cells inside the grid. With this fix the cloudsuite gate runs cleanly again. Without it, no cloudsuite-side validation has been runnable on `main` for the past two days.
+
+### 4. Belief-aware PPO experiment (`ppo-full-rl-belief-v1`)
+
+**Hypothesis.** The current `ppo-full-rl-v1.pt` (the source of `ppo-full-rl-v1-hybrid` at cloud `0.638`) inherits a no-belief warm-start lineage from `deployed-bc-v1.pt -> ppo-qualifier-best-v1 -> ppo-full-rl-v1`. The agent has zero memory of where it has been, where bombs were placed, or where items have been collected unless the heuristic exposes it externally. The belief branch in `model.py` and `encoder.py` was already wired up but never trained end-to-end at the full-RL scale.
+
+**Rebuilt the pipeline.**
+
+- `training/ae/collect_bc.py` got an `--opponents` flag mirroring `simulate.py` vocabulary (`random` / `mixed` / `library` / `cloudsuite` / explicit comma list). Default `random` is unchanged for backwards compat. Properly resets `MixedOpponent` between games and falls back to legal action on opponent exception. This addresses the original `bc-belief-hybrid` post-mortem: the previous BC dataset was planner-vs-random, which made the policy overfit a weak local distribution.
+- `training/ae/run_full_rl_belief_v1.py` is a new three-stage launcher: collect mixed-opponent BC dataset -> train belief BC -> run PPO with `--preset full-rl --use-belief`. Streams logs to `training/ae/checkpoints/ppo-full-rl-belief-v1.log`. Stages skippable via `--skip-collect`, `--skip-bc`, `--skip-ppo`. Save floor inherits from `ppo-full-rl-v1.pt` selection score plus the standard `0.015` margin; the gated `ppo-full-rl-belief-v1.pt` is only written if it clears that floor.
+
+**Stage results.**
+
+- BC stage: 600 mixed-opponent (`library`) games × 200 ticks = 120K samples; 12 epochs on Mac MPS. Best val_acc `0.9527`. The original `bc-belief-hybrid` topped out at `0.897` on planner-vs-random data; mixed-opponent data lifts val_acc by `+0.056`. The belief feature does help the BC reader fit the planner.
+- PPO stage: stopped early at update 200/240 once the trajectory plateaued. Final state weighted eval `0.4925`, parts `random=0.7909, scripted=0.5553, cloudsuite=0.2805`. Save floor was `0.6236` (reference `ppo-full-rl-v1.pt` selection score `0.6086` + `0.015` margin). No candidate cleared the gate; the deployable file `ppo-full-rl-belief-v1.pt` was never written. The latest checkpoint `ppo-full-rl-belief-v1-latest.pt` is on disk for analysis (3.5 MB, gitignored).
+
+Per-suite vs reference at the same selection seed:
+
+| Suite | belief-v1 (200 ep) | full-rl-v1 (230 ep) | Δ |
+|---|---:|---:|---:|
+| random | `0.791` | `0.917` | `-0.13` |
+| scripted | `0.555` | `0.647` | `-0.09` |
+| cloudsuite | `0.280` | `0.752` | `-0.47` |
+| weighted | `0.493` | `0.743` | `-0.25` |
+
+**Why this does not generalise to "memory is dead".** Three confounds matter:
+
+1. **Different starting points.** No-belief PPO warm-started from `ppo-qualifier-best-v1` at selection `~0.60`. Belief PPO started from BC at selection `0.13`. PPO had to catch up before improving.
+2. **Belief overhead.** Per-update wall-clock on Mac MPS was `~1.7 min` for belief vs `~1.4 min` for the no-belief reference. 200 belief updates ≈ 165 no-belief-equivalent updates of compute. The reference run was still climbing materially in its last 80 updates.
+3. **BC-vs-PPO distribution shift.** BC was trained on `library`; PPO rolls out the full-rl mix (random/scripted/cloudsuite/planner/aggressive/league). Cloudsuite climbed early then drifted back down to `0.28` by update 200, suggesting the policy oscillated between library-optimal and cloudsuite-optimal rather than converging.
+
+A clean ablation would need a belief-aware warm-start checkpoint at parity selection score, equal wall-clock budget, and matched BC-vs-PPO distributions. That is several days of work, not viable before the 24 May deadline.
+
+**Conclusion for this submission cycle: belief is off the table.** Hypothesis not conclusively dead, but not validatable in time. The infrastructure is permanent: future work can use `--opponents` in `collect_bc.py`, the launcher template in `run_full_rl_belief_v1.py`, and the existing belief plumbing in `model.py`/`encoder.py`/`policy_manager.py`.
+
+Operational stance unchanged after this session: `ppo-full-rl-v1-hybrid` at `0.638 / 0.847` is the protected AE high.
+
 ## Full AE submission ledger (cloud scores)
 
 | Tag | Cloud | Speed | Notes |
@@ -113,6 +219,8 @@ Interpretation:
 | ppo-qualifier-best-v1 | 0.610 | 0.857 | First `qualifier-best` PPO retry from restored BC; best checkpoint `epoch=65`, weighted eval `0.6547`; useful as a base, not promoted. |
 | ppo-qualifier-best-v3 | local only | — | Scripted/balanced continuation; best weighted eval `0.6199`, no cloud submit. |
 | ppo-full-rl-v1-policy | 0.625 best of 3 | 0.848 | Full-RL pure-policy checkpoint, epoch 230, weighted eval `0.742858` with cloudsuite `0.752000`; cloud variance across duplicate submits was `0.550`, `0.579`, `0.625`, all 0/30 errors. |
+| ppo-full-rl-v1-policy-vf2..vf7 | 0.594 best of 5 | 0.852 best | Variance-farm of the same artefact (`1f30da4e...`) on 23 May. Five fresh submits drew `0.594, 0.565, 0.567, 0.557, 0.577`, all 0/30 errors. Combined with the 3 earlier draws: n=8, mean `~0.577`, max still `0.625`. Right tail did not repeat. |
+| ppo-full-rl-belief-v1-* | local only | — | Belief-aware PPO experiment (23 May). BC val_acc `0.9527` on mixed-opponent (`library`) data, PPO stopped at update 200 with weighted eval `0.4925` — well below the `0.6236` save floor. No candidate written to `ppo-full-rl-belief-v1.pt`; the `latest.pt` is on disk for analysis. Negative result for belief on the available training budget; see "23 May session" section above. |
 | **ae-item-confidence-v1** | **0.593** | **0.844** | **Item-confidence/respawn priors; former second-best before the fixed-map-v5/full-RL sequence.** |
 | pessimistic-mini-search-v1 | 0.396 | 0.847 | FAILED. Local Docker `0.456`; local cloudsuite `0.3962` predicted cloud almost exactly. Safety search preserved base better but lost too much attack/farming tempo. Disabled by default. |
 | ttd-defense-v1 | local rejected | — | Mac gate failed before Workbench: random `0.6446`, library `0.5475`, cloudsuite `0.2714`; disabled by default. |

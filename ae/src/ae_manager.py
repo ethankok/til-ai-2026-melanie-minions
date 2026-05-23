@@ -244,6 +244,11 @@ class AEManager:
             "resource": self.item_resource_value,
             "recon": self.item_recon_value,
         }
+        # Dijkstra "step cost" added when traversing through a destructible
+        # wall on the fixed Novice map. Lower values make the planner more
+        # willing to bomb-break walls to reach distant items / enemy bases.
+        # Shipped default (5.0) was set without a sweep; tuning candidate.
+        self.DIJKSTRA_BOMB_COST = _env_float("AE_DIJKSTRA_BOMB_COST", 5.0)
         self._reset_memory()
 
     # ------------------------------------------------------------------
@@ -275,7 +280,7 @@ class AEManager:
                         if tuple(base_loc) == tuple(BASE_LOCATIONS[i]):
                             self.is_fixed_novice_map = True
                             self.fixed_team_idx = i
-                            self.dijkstra_bomb_cost = 5.0
+                            self.dijkstra_bomb_cost = self.DIJKSTRA_BOMB_COST
                             self.playbook = None
                             if _env_float("AE_ENEMY_BASE_VALUE", -999.0) == -999.0:
                                 self.ENEMY_BASE_VALUE = 130.0
@@ -461,7 +466,7 @@ class AEManager:
         self.last_step = None
         self.is_fixed_novice_map = False
         self.fixed_team_idx = None
-        self.dijkstra_bomb_cost = 5.0
+        self.dijkstra_bomb_cost = self.DIJKSTRA_BOMB_COST
 
     def _update_memory(
         self,

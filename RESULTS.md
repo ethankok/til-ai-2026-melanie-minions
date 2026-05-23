@@ -1,9 +1,44 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 23 May 2026 03:50 SGT — **AE `ppo-full-rl-v1-hybrid` is the current AE max-score high at `0.638 / 0.847`, but the latest A/Bs are variance-dominated: pure policy mean `0.585`, hybrid shortcut-off mean `0.588`, and hybrid shortcut-on mean `0.580`. `ppo-full-rl-v1-hybrid-shortcut` nearly tied the high at `0.637 / 0.845`, so protect the `0.638` result while treating wrapper/RL/shortcut conclusions as unresolved. ASR `nemo-zs-v5` is the new overall blended high at `0.9605` (Accuracy: `0.966`, Speed: `0.944`).**
+Last updated: 23 May 2026 12:30 SGT — **AE `ppo-full-rl-v1-hybrid` remains the AE max-score high at `0.638 / 0.847`. The 23 May session added 5 variance-farm submits of `ppo-full-rl-v1-policy` (n now 8, mean ~0.577, max still `0.625`), produced no new high, and falsified belief-aware PPO on the available training budget (`ppo-full-rl-belief-v1` reached weighted eval `0.4925` and never cleared the `0.6236` save floor; nothing submitted). ASR `nemo-zs-v5` is still the overall blended high at `0.9605`.**
 
-AE 23 May 01:55 SGT update: full-RL deployment A/Bs are now documented and
+AE 23 May 12:30 SGT update: three new pieces of work this session, no new
+cloud high. (1) Variance-farmed `ppo-full-rl-v1-policy` with 5 fresh submits
+(`vf2..vf7`); results `0.594, 0.565, 0.567, 0.557, 0.577`, all 0/30 errors;
+combined with the original 3 submits gives n=8, mean `~0.577`, max still
+`0.625`. The right tail did not repeat. (2) Plumbed a new env var
+`AE_DIJKSTRA_BOMB_COST` (default `5.0`, preserves shipped behavior) into
+`AEManager`. Mac sweep across {random, library, cloudsuite}: cost `5.0` mean
+`0.569`, `4.0` mean `0.554`, `3.0` mean `0.544`. Direction is monotonic and
+clean (lower cost trades random tempo for cloudsuite pressure score), but
+random regression dominates the cloudsuite gain, so aggregate falls. Did not
+ship; lever stays available behind one env var. (3) Fixed a pre-existing
+crash in `training/ae/opponents.py` `BaseRusher._choose_target` that called
+the long-removed `_fixed_base_attack_cells` helper and broke every
+cloudsuite validator run since 21 May.
+
+AE 23 May 12:30 SGT belief-PPO experiment: built and ran the full
+belief-aware training pipeline. New launcher
+`training/ae/run_full_rl_belief_v1.py` chained mixed-opponent BC collection
+(`collect_bc.py` got an `--opponents` flag mirroring `simulate.py`), belief
+BC training (best val_acc `0.9527`, ahead of the previous `bc-belief`'s
+`0.897`), and PPO with `--preset full-rl --use-belief`. PPO was stopped at
+update 200/240 once the trajectory plateaued. Final weighted eval
+`0.4925` (parts `random=0.7909, scripted=0.5553, cloudsuite=0.2805`) vs
+the `ppo-full-rl-v1.pt` reference (`0.7428` weighted, parts `0.917 / 0.647 /
+0.752`) — belief-PPO lost on every suite, biggest gap on cloudsuite. Save
+floor was `0.6236`; no candidate cleared the gate, no deployable artefact
+written. Honest read: the comparison is biased against belief because the
+no-belief reference warm-started at selection `~0.60` while belief PPO
+started from BC at `0.13`, belief overhead added ~20-30% per-update
+wall-clock, and BC-vs-PPO distribution shift made cloudsuite oscillate
+rather than converge. A clean ablation needs a belief-aware warm-start at
+parity selection score plus matched compute and BC distribution, which is
+out of scope before 24 May. Conclusion for this submission cycle: belief
+is off the table; infrastructure stays in tree for future work.
+
+AE 23 May 03:50 SGT update: full-RL deployment A/Bs are now documented and
 the honest interpretation is cloud variance, not a clean winner. The gated
 epoch-230 checkpoint (`ppo-full-rl-v1.pt`, sha256
 `1f30da4ebbfa7bd8d6fd131df5d5dcb9ee9a103fb57b1092d77c9beb3c827b43`) produced
@@ -288,6 +323,12 @@ Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       
 AE (current high) melanie-minions-ae ppo-full-rl-v1-hybrid 22/05/2026 23:40:11 0 / 30 0.638 0.847 ← CURRENT AE HIGH BY MAX SCORE. Full-RL epoch-230 checkpoint, `AE_MODE=hybrid`, `AE_HYBRID_FIXED_MAP_SHORTCUT=0`; duplicate submits were 0.564/0.843, 0.599/0.848, and 0.552/0.841, so the mean is only ~0.588.
 AE (near-tie / shortcut) melanie-minions-ae ppo-full-rl-v1-hybrid-shortcut 23/05/2026 01:27:37 0 / 30 0.637 0.845 ← Shortcut-on A/B. `AE_HYBRID_FIXED_MAP_SHORTCUT=1` mostly bypasses PPO on detected Novice maps; duplicate submits were 0.521/0.849 and 0.582/0.845. Nearly tying the high shows cloud variance dominates the wrapper/shortcut distinction.
 AE (policy A/B) melanie-minions-ae ppo-full-rl-v1-policy 22/05/2026 22:48:06 0 / 30 0.625 0.848 ← Pure-policy full-RL checkpoint best of 3; other submits were 0.550/0.847 and 0.579/0.848. Same noisy performance band as hybrid variants, just lower max so far.
+AE (policy variance farm) melanie-minions-ae ppo-full-rl-v1-policy-vf2 23/05/2026 02:41:30 0 / 30 0.594 0.852 ← Same artefact (`1f30da4e...`) as `ppo-full-rl-v1-policy`. First of 5 variance-farm draws.
+AE (policy variance farm) melanie-minions-ae ppo-full-rl-v1-policy-vf3 23/05/2026 02:49:09 0 / 30 0.565 0.857 ← Same artefact, 2nd variance draw.
+AE (policy variance farm) melanie-minions-ae ppo-full-rl-v1-policy-vf4 23/05/2026 02:54:26 0 / 30 0.567 0.855 ← Same artefact, 3rd variance draw.
+AE (policy variance farm) melanie-minions-ae ppo-full-rl-v1-policy-vf6 23/05/2026 03:10:38 0 / 30 0.557 0.847 ← Same artefact, 4th variance draw.
+AE (policy variance farm) melanie-minions-ae ppo-full-rl-v1-policy-vf7 23/05/2026 03:17:41 0 / 30 0.577 0.844 ← Same artefact, 5th variance draw. Combined with the 3 earlier policy submits gives n=8, mean ~0.577, max still 0.625; right tail did not repeat. Pure-policy std across 8 samples is ~0.024.
+AE (belief PPO local only) melanie-minions-ae ppo-full-rl-belief-v1 23/05/2026 LOCAL ONLY — — 0.4925 weighted ← Belief-aware PPO experiment. BC val_acc 0.9527 on mixed-opponent (`library`) data; PPO stopped at update 200/240 with weighted eval 0.4925 (random 0.7909, scripted 0.5553, cloudsuite 0.2805). Save floor was 0.6236 (reference `ppo-full-rl-v1.pt` selection 0.6086 + 0.015 margin); no candidate cleared the gate. Per-suite vs no-belief reference: random −0.13, scripted −0.09, cloudsuite −0.47. Comparison is biased — belief PPO started from BC at 0.13 vs reference's `qualifier-best-v1` warm-start at ~0.60, belief overhead added ~20-30% per-update wall-clock, BC-vs-PPO distribution shift. Conclusion: belief is off the table for the 24 May submission; infrastructure stays in tree (`run_full_rl_belief_v1.py`, `collect_bc.py --opponents`). Not submitted.
 AE (former high) melanie-minions-ae fixed-map-v5 21/05/2026 17:08:00 0 / 30 0.630 0.858 ← Former AE high and still fastest competitive AE tag. Restored fixed-map-v3-era hybrid source plus `deployed-bc-v1.pt`; keep as a fallback/provenance anchor.
 AE (PPO retry best local, duplicate 1) melanie-minions-ae ppo-qualifier-best-v4-balanced 22/05/2026 12:14:59 0 / 30 0.602 0.846 ← Best local PPO continuation: checkpoint epoch 75, weighted eval 0.6881, local Docker 0.7507. Did not beat fixed-map-v5.
 AE (PPO retry best local, duplicate 2) melanie-minions-ae ppo-qualifier-best-v4-balanced 22/05/2026 12:44:55 0 / 30 0.578 0.845 ← Same tag accidentally submitted again; variance confirmed, still not promotable.

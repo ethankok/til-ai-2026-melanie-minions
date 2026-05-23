@@ -29,6 +29,31 @@ from til_environment import bomberman_env  # noqa: E402
 from til_environment.config import default_config  # noqa: E402
 
 from encoder import FrameStacker, rasterize_belief  # noqa: E402
+from opponents import MixedOpponent, OpponentFn, make_opponent  # noqa: E402
+
+
+def _resolve_opponent_names(spec: str) -> list[str]:
+    """Mirror of simulate.run_simulation()'s opponent resolution.
+
+    Keeps `collect_bc.py` independent of simulate.py while matching its
+    naming conventions ('random', 'mixed', 'library', 'cloudsuite', or an
+    explicit comma-separated list).
+    """
+
+    if spec == "random":
+        return ["random"] * 5
+    if spec == "mixed":
+        return ["mixed"] * 5
+    if spec == "library":
+        return ["random", "greedy", "bomber", "defender", "hunter"]
+    if spec == "cloudsuite":
+        return ["rusher", "hunter", "bomber", "defender", "mixed"]
+    names = [n.strip() for n in spec.split(",") if n.strip()]
+    if len(names) == 1:
+        names = names * 5
+    if len(names) != 5:
+        raise ValueError(f"need 5 opponent names (got {len(names)}): {names}")
+    return names
 
 
 def _obs_to_python(obs) -> dict:
@@ -48,19 +73,38 @@ def collect_dataset(
     seed: int | None = None,
     n_frames: int = 4,
     with_belief: bool = True,
+    opponents_spec: str = "random",
 ) -> None:
     """Collect a BC dataset from planner-v3b rollouts.
 
     When ``with_belief=True`` (default), each sample also includes the
     rasterized belief tensor at the planner's step. Setting it False
     keeps the file size down for legacy single-frame BC training.
+
+    ``opponents_spec`` controls what the other 5 agents do during data
+    collection. Use 'random' (legacy) to reproduce the old single-game
+    distribution, or one of 'mixed' / 'library' / 'cloudsuite' / a
+    5-comma-separated list to expose the planner to the same opponent
+    mix the qualifier is likely to use. Mixing here makes the BC dataset
+    cover a wider state distribution, which is how we avoid the
+    bc-belief-hybrid failure mode (overfit to planner-vs-random).
     """
     config = default_config()
     config.env.novice = novice
     env = bomberman_env.basic_env(env_wrappers=[], cfg=config)
     our_agent = env.possible_agents[0]
-    print(f"Controlling {our_agent} of {env.possible_agents}; "
-          f"n_frames={n_frames}; with_belief={with_belief}")
+    other_ids = list(env.possible_agents[1:])
+
+    names = _resolve_opponent_names(opponents_spec)
+    opponent_seed = seed if seed is not None else 0
+    opponents: list[OpponentFn] = [
+        make_opponent(n, seed=opponent_seed + 1000 + i) for i, n in enumerate(names)
+    ]
+    print(
+        f"Controlling {our_agent} of {env.possible_agents}; "
+        f"n_frames={n_frames}; with_belief={with_belief}; "
+        f"opponents_spec={opponents_spec} -> {names}"
+    )
 
     agent_views: list[np.ndarray] = []
     base_views: list[np.ndarray] = []
@@ -75,6 +119,13 @@ def collect_dataset(
             env.reset(seed=seed + game)
         else:
             env.reset()
+        # Per-game reset for opponents that need it (Mixed picks a fresh
+        # archetype each game; AEManager-based opponents zero their belief).
+        for op in opponents:
+            if hasattr(op, "reset_for_game"):
+                op.reset_for_game()
+            if hasattr(op, "_reset_memory"):
+                op._reset_memory()
         planner = AEManager()
         stacker = FrameStacker(n_frames)
 
@@ -101,7 +152,25 @@ def collect_dataset(
                     beliefs.append(belief)
                 actions.append(int(action))
             else:
-                action = env.action_space(agent).sample()
+                obs_py = _obs_to_python(obs)
+                slot = other_ids.index(agent)
+                op = opponents[slot]
+                try:
+                    action = int(op(obs_py))
+                except Exception:
+                    action = env.action_space(agent).sample()
+                # Safety: if the opponent returned an illegal action, fall
+                # back to the first legal one (mirrors simulate.py).
+                mask = obs_py.get("action_mask")
+                if mask is not None:
+                    try:
+                        if not int(mask[action]):
+                            for i, m in enumerate(mask):
+                                if int(m):
+                                    action = i
+                                    break
+                    except Exception:
+                        pass
             env.step(action)
 
     env.close()
@@ -148,14 +217,29 @@ def main() -> None:
     parser.add_argument("--n-frames", type=int, default=4)
     parser.add_argument("--no-belief", dest="with_belief", action="store_false",
                         help="Skip belief-map rasterization (legacy single-frame BC)")
+    parser.add_argument(
+        "--opponents", type=str, default="random",
+        help=(
+            "Opponent set used for the other 5 agents during data collection. "
+            "Same vocabulary as simulate.py: 'random' (legacy), 'mixed', "
+            "'library', 'cloudsuite', or 5 comma-separated names."
+        ),
+    )
     parser.set_defaults(with_belief=True)
     args = parser.parse_args()
 
     out_path = Path(args.out)
     if not out_path.is_absolute():
         out_path = REPO_ROOT / out_path
-    collect_dataset(args.games, out_path, novice=args.novice, seed=args.seed,
-                    n_frames=args.n_frames, with_belief=args.with_belief)
+    collect_dataset(
+        args.games,
+        out_path,
+        novice=args.novice,
+        seed=args.seed,
+        n_frames=args.n_frames,
+        with_belief=args.with_belief,
+        opponents_spec=args.opponents,
+    )
 
 
 if __name__ == "__main__":

@@ -35,6 +35,8 @@ training/ae/checkpoints/ppo-full-rl-v1.pt Full-RL PPO candidate         current 
 - `eval_policy.py` — runs a checkpoint against the env for N games, reports the same `score = total_reward / games / 1000` as `test/test_ae.py`.
 - `train_ppo.py` — pure-PyTorch PPO fine-tune. Warm-starts from `bc.pt`/PPO checkpoints, trains agent 0 against scripted/cloudsuite/league/per-game mixed pools, saves a deployment-compatible actor checkpoint.
 - `run_full_rl_v1.py` — Mac-first launcher for the current full-RL attempt. Wraps `train_ppo.py --preset full-rl` and streams logs to `training/ae/checkpoints/ppo-full-rl-v1.log`.
+- `run_full_rl_belief_v1.py` — Three-stage belief-aware launcher (collect mixed-opp BC -> train belief BC -> PPO with `--preset full-rl --use-belief`). 23 May 2026 attempt did not clear the save floor; kept on disk as the template for any future memory-hypothesis ablation. See `ae/NOTES.md` "23 May session" for the negative-result analysis.
+- `collect_bc.py` — supports `--opponents` (vocabulary mirrors `simulate.py`: `random` / `mixed` / `library` / `cloudsuite` / explicit comma list). Default `random` preserves the legacy planner-vs-random distribution; use `library` or `cloudsuite` for belief / future memory-aware experiments to avoid the original `bc-belief-hybrid` overfit cause.
 - `simulate.py`, `opponents.py` — Tier 1+2 simulation harness with the 5-archetype scripted opponent library (random / greedy / bomber / defender / hunter).
 - `build_playbook.py`, `fit_opponent_model.py`, `oracle_bc.py` — Tier 1+2 artifact builders.
 
@@ -260,6 +262,62 @@ Do **not** submit only because the trainer's eval rises. These runs prove the
 local proxy can climb while hidden eval stays below `fixed-map-v5`. First deploy
 to `ae/models/bc.pt`, build a tag, run `til test ae <tag>`, and require a large
 margin over the v1/v4 local profiles before spending another cloud submission.
+
+### Belief-aware PPO launcher (`run_full_rl_belief_v1.py`)
+
+Built on 23 May 2026 to test whether memory (the existing belief branch in
+`model.py` + `encoder.py`) closes the local→cloud gap. Three stages, each
+skippable:
+
+```bash
+.venv/bin/python -u training/ae/run_full_rl_belief_v1.py                 # all stages
+.venv/bin/python -u training/ae/run_full_rl_belief_v1.py --skip-ppo      # BC only (preview)
+.venv/bin/python -u training/ae/run_full_rl_belief_v1.py --skip-collect  # rerun BC + PPO
+.venv/bin/python -u training/ae/run_full_rl_belief_v1.py --skip-collect --skip-bc  # PPO only
+```
+
+Outputs (all gitignored):
+
+```text
+training/ae/data/bc-belief-mixed-v1.npz
+training/ae/checkpoints/bc-belief-mixed-v1.pt
+training/ae/checkpoints/ppo-full-rl-belief-v1.pt          gated candidate only
+training/ae/checkpoints/ppo-full-rl-belief-v1-latest.pt   latest evaluated, for analysis
+training/ae/checkpoints/ppo-full-rl-belief-v1.log
+```
+
+23 May result: BC val_acc `0.9527` on 600-game `library` data (better than
+the 15 May `bc-belief`'s `0.897`). PPO stopped early at update 200/240 with
+weighted eval `0.4925` (parts random `0.7909`, scripted `0.5553`, cloudsuite
+`0.2805`); save floor was `0.6236`. No candidate cleared the gate. The
+comparison was confounded by warm-start (BC at `0.13` vs no-belief reference
+at `~0.60`), belief overhead (`+20-30%` per-update wall-clock), and BC-vs-PPO
+distribution shift. Conclusion is "not validatable in time", not
+"memory hypothesis killed". See [../../ae/NOTES.md](../../ae/NOTES.md)
+"23 May session" for the per-suite breakdown.
+
+### `AE_DIJKSTRA_BOMB_COST` lever
+
+Plumbed 23 May 2026 as an env var read once in `AEManager.__init__`,
+propagated into the fixed-Novice detection block. Default `5.0` preserves
+shipped behavior. Only affects the heuristic path (used by `AE_MODE=heuristic`
+and the heuristic fallback inside `hybrid` when the policy is vetoed; pure
+`policy` mode ignores it).
+
+Mac sweep at 24 rounds × {random, library, cloudsuite}, deterministic seed=42:
+
+| Cost | random | library | cloudsuite | mean-of-means |
+|---|---:|---:|---:|---:|
+| 5.0 (shipped) | 0.821 | 0.567 | 0.319 | 0.569 |
+| 4.0 | 0.783 | 0.544 | 0.335 | 0.554 |
+| 3.0 | 0.742 | 0.535 | 0.354 | 0.544 |
+
+Direction is monotonic: lower cost trades random tempo for cloudsuite
+pressure score. Aggregate falls because random regression dominates the
+cloudsuite gain. Did not ship. The lever stays available for cloud A/B work
+without code changes — set `ENV AE_DIJKSTRA_BOMB_COST=4.0` in `ae/Dockerfile`
+and rebuild. A heuristic-mode A/B at `4.0` would be the cheapest comparison
+to the `fixed-map-v5` lineage (cloud `0.630 / 0.858`).
 
 ### Full fixed-Novice RL launcher
 
