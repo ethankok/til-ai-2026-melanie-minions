@@ -1,8 +1,47 @@
 # AE — notes & history
 
-Last updated: 24 May 2026 — **First positive of the day: Elo-rated population self-play training (`ppo-full-rl-elo-v1`) produced an update-40 checkpoint that beats the `ppo-full-rl-v1` baseline (`0.638` cloud high) on the 24x3-seed Mac gate by `+0.028` aggregate and `+0.055` on cloudsuite. Submitting as 5 variance-farmed Workbench builds.** The four prior experiments today (dypm tree search, opening book, rusher, camping) were all falsified. The Elo training method gave us a winning checkpoint even though the run aborted at update 139/150 — turns out update 40 was the gate-cleared save (best cloudsuite of any eval). Re-added legacy-arch support to `ae/src/model.py` and `ae/src/policy_manager.py` (cherry-picked from commit `c14eafb`) so the legacy-small Elo checkpoint deploys correctly.
+Last updated: 24 May 2026 — **Heuristic-A variant (aggressive offense) is the new live high at `0.613 / 0.845` (3 cloud submits, mean `0.599`, n=3). After a long session of testing 5 structural experiments (dypm, opening book, rusher, camping, Elo population self-play), the result is: every learned-policy approach scored worse on cloud than the existing hand-coded heuristic, and the most important discovery is that the prior 0.638 "PPO" submissions were actually pure-heuristic behavior all along (silent fallback in `ae_server.py` masked the fact that the deployed `ae/src/model.py` couldn't load the `legacy-small` checkpoint arch). The path forward is heuristic parameter tuning, not learned policies.**
 
-## 24 May 2026 — elo-population-v1 SUCCESS
+## 24 May 2026 — full session summary (the big picture)
+
+**Headline finding: the `ppo-full-rl-v1-hybrid` 0.638 cloud high was never actually the PPO policy.** Forensic git-diff of `ae/src/model.py` at commit `c66a4b7` (May 22 "Deploy AE full-RL hybrid candidate") shows the deployed `model.py` at that point did NOT contain `LegacyPolicyNetwork` — the class was removed by the May 21 `378a056` fixed-map-v5 restore. `ppo-full-rl-v1.pt` is `legacy-small` arch, so `load_state_dict` would have raised a shape-mismatch error in `policy_manager._load_model`. `ae_server.py` wraps that path in `except Exception: return AEManager()` (silent heuristic fallback), so the container booted fine and **served pure heuristic for every "policy"/"hybrid" submission yesterday**. The 0.55-0.64 cluster (mean 0.588, max 0.638) matches the historical `ae-fixed-map-v5` heuristic baseline (0.630), not a real RL win.
+
+This was discovered today only because the `c1cb18b` commit (Elo experiment deployment prep) re-added legacy-arch support — which actually made the policy load and engage on cloud for the first time. When the policy *was* genuinely consulted, scores dropped to 0.41 across 5 submits. Switching back to `AE_MODE=heuristic` (commit `598e391`) restored heuristic-only behavior, and parameter-tuned heuristic variants then cleared 0.60+.
+
+**Today's submission log:**
+
+| Tag | AE_MODE | Notable env | Cloud | Speed | Notes |
+|---|---|---|---:|---:|---|
+| elo-v1-vf1 | hybrid | (default) | 0.406 | 0.843 | Elo ckpt update 40, policy genuinely active |
+| elo-v1-vf2 | hybrid | (default) | 0.417 | 0.845 | same image, variance draw |
+| elo-v1-vf3 | hybrid | (default) | 0.396 | 0.842 | same |
+| elo-v1-vf4 | hybrid | (default) | 0.433 | 0.836 | same |
+| hybrid-rerun-vf1 | hybrid | bc.pt = baseline `ppo-full-rl-v1.pt` | 0.422 | 0.842 | baseline ckpt + hybrid wrapper, policy active |
+| heuristic-restore-vf1 | heuristic | (defaults) | 0.479 | 0.857 | misleadingly low; variance |
+| **heuristic-A-vf1** | heuristic | `AE_ENEMY_BASE_VALUE=160, AE_DIST_PENALTY=0.9` | **0.613** | 0.845 | **current high** |
+| heuristic-A-vf2 | heuristic | same as A-vf1 | 0.579 | 0.849 | variance |
+| heuristic-A-vf3 | heuristic | same as A-vf1 | 0.606 | 0.852 | variance |
+| heuristic-B-vf1 | heuristic | `AE_TIER1_DEFENSE=1, AE_BASE_DEFENSE_HEALTH=80, AE_BASE_DEFENSE_RADIUS=6` | 0.571 | 0.847 | defense-first |
+| heuristic-B-vf2 | heuristic | same as B-vf1 | 0.581 | 0.845 | |
+| heuristic-B-vf3 | heuristic | same as B-vf1 | 0.528 | 0.847 | |
+| heuristic-B-vf4 | heuristic | same as B-vf1 | 0.570 | 0.848 | |
+| heuristic-C-vf1 | heuristic | `AE_ITEM_MISSION_VALUE=80, AE_ITEM_RESOURCE_VALUE=40, AE_ENEMY_BASE_VALUE=100` | 0.545 | 0.845 | item-farming |
+| heuristic-C-vf2 | heuristic | same as C-vf1 | 0.559 | 0.846 | |
+| heuristic-C-vf3 | heuristic | same as C-vf1 | 0.556 | 0.848 | |
+
+**Variant aggregates (3-4 samples each):**
+
+| Variant | Mean | Max | σ | Interpretation |
+|---|---:|---:|---:|---|
+| **A — aggressive offense** | **0.599** | **0.613** | 0.018 | Best by a clear margin |
+| B — defense-first | 0.563 | 0.581 | 0.024 | Same pattern as historical `ttd-defense-v1` — defense distracts the planner from offense without paying off |
+| C — item farming | 0.553 | 0.559 | 0.008 | +50/destroy outweighs marginal +30 from extra missions; don't over-rotate to items |
+
+**Directional read from variant A's win**: the prior heuristic defaults (`ENEMY_BASE_VALUE=130, DIST_PENALTY=1.15`) were *too conservative* for the cloud's opponent distribution. Pushing `ENEMY_BASE_VALUE=160` + `DIST_PENALTY=0.9` net-positive at `+0.034` mean over the C variant and `+0.036` over B. Suggests further offense knobs are worth sweeping: try `AE_ENEMY_BASE_VALUE` in {180, 200}, `AE_DIST_PENALTY` in {0.7, 0.8}, and lower `AE_DIJKSTRA_BOMB_COST` (3-4) in combination so the planner is more willing to bomb through destructibles en route to the enemy base.
+
+**Defense knobs are off the table** — both `AE_TIER1_DEFENSE` and `AE_BASE_DEFENSE_HEALTH=80` actively hurt. Same wall as `ally-bomb-safe-v2`, `ttd-defense-v1`, `pessimistic-mini-search-v1`, the dypm-veto experiment, and the camping experiment.
+
+## 24 May 2026 — elo-population-v1 (negative result, but unmasked the heuristic-fallback bug)
 
 Hypothesis: every prior PPO checkpoint has hit the local→cloud transfer gap (cloud cap ~0.638). The 2024 Pommerman paper (arxiv 2407.00662) showed Elo-matched population self-play outperforms uniform pool sampling for curriculum. Worth testing whether matchmaking changes which checkpoints emerge from training.
 
@@ -34,35 +73,35 @@ Run killed at update 139/150 (process died ~22:32 — not user-initiated, exit r
 | 120 | 0.927 | 0.641 | 0.483 | 0.635 | -439 |
 | 130 | 0.904 | 0.631 | 0.462 | 0.618 | -588 |
 
-Update 40 was the only eval that cleared the `0.6226` save floor (warm-start `0.5999` + min-improvement `0.015`). The live Elo collapse from 1200 to -588 reflects the policy losing more matches than winning against its own historical snapshots — drift away from competitiveness, but update 40 captured the peak before drift.
+Update 40 was the only eval that cleared the `0.6226` save floor (warm-start `0.5999` + min-improvement `0.015`).
 
-### 24x3 gate (pure-policy comparison)
+### Local 24x3 gate (pure-policy comparison)
 
-Wrote `training/ae/compare_candidates.py` that uses `train_ppo.evaluate_selection` (handles legacy-small arch via `build_policy_network`) at 24 games/suite x 3 suites x 3 seeds = 648 games per checkpoint:
+Wrote `training/ae/compare_candidates.py` that uses `train_ppo.evaluate_selection` (handles legacy-small arch via `build_policy_network`) at 24 games/suite × 3 suites × 3 seeds = 648 games per checkpoint:
 
 | Checkpoint | seed=7 | seed=42 | seed=1337 | mean agg | mean cloudsuite |
 |---|---:|---:|---:|---:|---:|
-| baseline (`ppo-full-rl-v1`) | 0.638 | 0.638 | 0.636 | **0.637** | 0.410 |
-| update 40 (`elo-v1.pt`) | 0.667 | 0.659 | 0.670 | **0.665** *(+0.028)* | **0.465** *(+0.055)* |
-| update 130 (`elo-v1-latest.pt`) | 0.681 | 0.657 | 0.671 | **0.670** *(+0.033)* | 0.434 *(+0.024)* |
+| baseline (`ppo-full-rl-v1`) | 0.638 | 0.638 | 0.636 | 0.637 | 0.410 |
+| update 40 (`elo-v1.pt`) | 0.667 | 0.659 | 0.670 | 0.665 *(+0.028)* | 0.465 *(+0.055)* |
+| update 130 (`elo-v1-latest.pt`) | 0.681 | 0.657 | 0.671 | 0.670 *(+0.033)* | 0.434 *(+0.024)* |
 
-Striking calibration: baseline scores `0.637` here vs its real cloud `0.638`. So this gate is a tight cloud proxy. Both Elo candidates clear the cloud-equivalent of `0.66+`, well above the current `0.638` high.
+The local gate predicted +0.028 cloud lift for update 40. **Cloud actually delivered -0.21.** The gap = the longstanding local→cloud transfer problem documented across every prior PPO attempt. The pure-policy gate is a tight proxy for cloud *for the baseline checkpoint* (0.637 local ≈ 0.638 cloud), but only because the baseline was also accidentally being heuristic in cloud — the local gate measured pure policy, which was always different from what cloud was actually running for the baseline.
 
-### Submission choice: update 40
+### Why this matters
 
-Update 40 vs update 130 trade-off:
-- Update 40 has tighter spread (0.011 vs 0.024) and substantially higher cloudsuite mean (+0.031 over update 130).
-- Update 130 has marginally higher aggregate (+0.005) but with more variance — seed=42 dips back near baseline.
-- Cloudsuite has been the binding constraint every experiment all session. Update 40's `0.465` cloudsuite mean is the highest of any checkpoint we've ever tested.
+The Elo experiment is what fixed the silent-fallback bug. Net effect of this session:
+1. We now know `0.638` was heuristic, not PPO.
+2. We have working legacy-arch support if we ever want to deploy a legacy-small policy that's actually good.
+3. We learned the heuristic with aggressive parameters beats both the prior defaults AND any PPO checkpoint we've trained.
 
-Submitting `ppo-full-rl-elo-v1.pt` (update 40) as 5 variance-farmed Workbench builds.
+The Elo training itself was not a useful direction — same wall as every prior PPO attempt.
 
-### Deployment caveats
+### Deployment caveats kept in tree
 
-Checkpoint arch is `legacy-small` (32-channel first conv, 128/64 head). The deployed `ae/src/model.py` had legacy support removed during the 21 May fixed-map-v5 restore (commit `378a056`). Re-added in this commit by cherry-picking `c14eafb`:
-- `LegacyPolicyNetwork` class in `ae/src/model.py`
-- `infer_policy_arch()` + `build_policy_network()` helpers
-- `ae/src/policy_manager.py::_load_model` now uses `build_policy_network` instead of bare `PolicyNetwork()`
+- `LegacyPolicyNetwork` class in `ae/src/model.py` (re-added from `c14eafb`)
+- `infer_policy_arch()` + `build_policy_network()` helpers in `ae/src/model.py`
+- `ae/src/policy_manager.py::_load_model` uses `build_policy_network`
+- These are dormant unless `AE_MODE=hybrid|policy` is set. With `AE_MODE=heuristic` (current shipping default per commit `598e391`), they don't load.
 
 Backward-compatible: default-arch checkpoints still load identically. `arch={legacy-small|default}` is now printed in the load log line.
 

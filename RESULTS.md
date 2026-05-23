@@ -1,7 +1,23 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 23 May 2026 — **AE `ppo-full-rl-v1-hybrid` remains the AE max-score high at `0.638 / 0.847`. ASR `nemo-zs-v5` is still the overall blended high at `0.9605`. NLP `v24-speed-optimized` is the new NLP blended high at `0.959 / 0.950` (blended `0.957`). In CV, we trained and submitted `yolo11l-1280-alldata-final-v2` at imgsz=1280, reaching local validation mAP 0.988.**
+Last updated: 24 May 2026 — **AE: heuristic-A (aggressive offense: `AE_ENEMY_BASE_VALUE=160, AE_DIST_PENALTY=0.9`) is the new live high at `0.613 / 0.845` (3 cloud submits, mean `0.599`). Prior `ppo-full-rl-v1-hybrid` `0.638` was retroactively confirmed to have been pure-heuristic behavior all along (silent fallback in `ae_server.py` masked that the deployed `ae/src/model.py` couldn't load the legacy-small checkpoint arch — discovered today when the Elo experiment's deployment prep accidentally fixed the load path and revealed the underlying policy was actively worse than heuristic). Five structural experiments today (dypm, opening book, rusher, camping, Elo population self-play) were all falsified; the learned-policy direction is dead for this codebase. Heuristic parameter sweep is in progress for further uplift. ASR `nemo-zs-v5` is still the overall blended high at `0.9605`. NLP `v24-speed-optimized` blended high at `0.957`. CV `yolo11l-1280-alldata-final-v2` at imgsz=1280 reached local validation mAP 0.988.**
+
+AE 24 May session — full submission log (17 new submits, 1 new max-score high):
+
+| Tag | AE_MODE | Notable env | Cloud | Speed |
+|---|---|---|---:|---:|
+| elo-v1-vf1..vf4 | hybrid | (default, Elo ckpt update 40) | 0.406, 0.417, 0.396, 0.433 | ~0.84 |
+| hybrid-rerun-vf1 | hybrid | baseline `ppo-full-rl-v1.pt` | 0.422 | 0.842 |
+| heuristic-restore-vf1 | heuristic | (defaults) | 0.479 | 0.857 |
+| **heuristic-A-vf1** | heuristic | `AE_ENEMY_BASE_VALUE=160, AE_DIST_PENALTY=0.9` | **0.613** | 0.845 |
+| heuristic-A-vf2, vf3 | heuristic | same as A-vf1 | 0.579, 0.606 | ~0.85 |
+| heuristic-B-vf1..vf4 | heuristic | `AE_TIER1_DEFENSE=1, AE_BASE_DEFENSE_HEALTH=80, AE_BASE_DEFENSE_RADIUS=6` | 0.571, 0.581, 0.528, 0.570 | ~0.85 |
+| heuristic-C-vf1..vf3 | heuristic | `AE_ITEM_MISSION_VALUE=80, AE_ITEM_RESOURCE_VALUE=40, AE_ENEMY_BASE_VALUE=100` | 0.545, 0.559, 0.556 | ~0.85 |
+
+Variant aggregates: A (n=3, mean 0.599, max 0.613, σ 0.018) > B (n=4, mean 0.563, σ 0.024) > C (n=3, mean 0.553, σ 0.008). Aggressive-offense direction wins clearly; defense-first and item-farming both hurt. Next heuristic-knob sweep targets higher `ENEMY_BASE_VALUE` ({180, 200}), lower `DIST_PENALTY` ({0.7, 0.8}), and lower `AE_DIJKSTRA_BOMB_COST` ({3, 4}) in combination.
+
+Discovery this session: the prior `ppo-full-rl-v1-hybrid` `0.638` (and every other 0.55-0.64 "PPO"/"hybrid" submission yesterday) was actually pure-heuristic behavior. `ae/src/model.py` at the May 22 deploy commit `c66a4b7` did not contain `LegacyPolicyNetwork` — so loading `ppo-full-rl-v1.pt` (legacy-small arch) raised a shape-mismatch in `policy_manager._load_model`, which `ae_server.py` silently swallows via `except Exception: return AEManager()`. The container booted fine and served pure heuristic the whole time, matching the historical `ae-fixed-map-v5` heuristic baseline of `0.630`. Today's `c1cb18b` commit re-added legacy support, the policy actually engaged on cloud for the first time, and scores immediately collapsed to ~0.41 — confirming the policy is genuinely worse than the heuristic on the cloud distribution. Reverted to `AE_MODE=heuristic` (commit `598e391`) before continuing with parameter tuning.
 
 AE 23 May 12:30 SGT update: three new pieces of work this session, no new
 cloud high. (1) Variance-farmed `ppo-full-rl-v1-policy` with 5 fresh submits
