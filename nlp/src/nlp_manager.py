@@ -132,6 +132,13 @@ AE_TRIGGER_FILE = os.getenv(
 # text, but eliminates the RoBERTa forward at QA time.
 AE_TRIGGER_ONLY = os.getenv("NLP_AE_TRIGGER_ONLY", "0").strip() == "1"
 
+# Default to skip reranker and QA if trigger-only is active
+SKIP_RERANKER_DEFAULT = "1" if AE_TRIGGER_ONLY else "0"
+SKIP_QA_DEFAULT = "1" if AE_TRIGGER_ONLY else "0"
+
+SKIP_RERANKER = os.getenv("NLP_SKIP_RERANKER", SKIP_RERANKER_DEFAULT).strip() == "1"
+SKIP_QA = os.getenv("NLP_SKIP_QA", SKIP_QA_DEFAULT).strip() == "1"
+
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]+")
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 _DOC_ID_RE = re.compile(r"\bDOC-(\d{4})\b")
@@ -495,23 +502,25 @@ class NLPManager:
         # BGE uses an encoder; AutoModel gives the encoder we need for CLS pooling.
         self._dense_model = AutoModel.from_pretrained(dense_path).to(self.device).eval()
 
-        self._rerank_tok = AutoTokenizer.from_pretrained(rerank_path)
-        if self._rerank_tok.pad_token is None:
-            self._rerank_tok.pad_token = self._rerank_tok.eos_token or self._rerank_tok.unk_token
-        self._rerank_model = (
-            AutoModelForSequenceClassification.from_pretrained(rerank_path)
-            .to(self.device)
-            .eval()
-        )
-        if getattr(self._rerank_model.config, "pad_token_id", None) is None:
-            self._rerank_model.config.pad_token_id = self._rerank_tok.pad_token_id
-        print(f"[nlp_manager] reranker model: {rerank_path}", flush=True)
+        if not SKIP_RERANKER:
+            self._rerank_tok = AutoTokenizer.from_pretrained(rerank_path)
+            if self._rerank_tok.pad_token is None:
+                self._rerank_tok.pad_token = self._rerank_tok.eos_token or self._rerank_tok.unk_token
+            self._rerank_model = (
+                AutoModelForSequenceClassification.from_pretrained(rerank_path)
+                .to(self.device)
+                .eval()
+            )
+            if getattr(self._rerank_model.config, "pad_token_id", None) is None:
+                self._rerank_model.config.pad_token_id = self._rerank_tok.pad_token_id
+            print(f"[nlp_manager] reranker model: {rerank_path}", flush=True)
 
         if self.device.type == "cuda":
             # Half precision is a ~2x speedup on these small models with no
             # measurable quality loss in our regime.
             self._dense_model = self._dense_model.half()
-            self._rerank_model = self._rerank_model.half()
+            if not SKIP_RERANKER:
+                self._rerank_model = self._rerank_model.half()
 
         # v14/v19 answerer dispatch. Try LLM if requested; if vLLM init or the
         # weight dir is missing, downgrade to extractive so the container still
@@ -526,7 +535,7 @@ class NLPManager:
                 )
                 self._answerer_mode = "extractive"
 
-        if self._answerer_mode != "llm":
+        if self._answerer_mode != "llm" and not SKIP_QA:
             self._init_extractive_qa()
 
         self._models_initialized = True
@@ -968,7 +977,10 @@ class NLPManager:
         passage_idxs_list = [r[0] for r in retrieved_list]
         doc_candidates_list = [r[1] for r in retrieved_list]
 
-        reranked_list = self._rerank_batch(questions, passage_idxs_list)
+        if SKIP_RERANKER:
+            reranked_list = passage_idxs_list
+        else:
+            reranked_list = self._rerank_batch(questions, passage_idxs_list)
 
         results = []
         for i in range(len(questions)):
@@ -1917,7 +1929,10 @@ class NLPManager:
         """Run retrieval + rerank, return (reranked_passage_idxs, doc_ids,
         retrieved, doc_candidates). Shared by extractive and LLM paths."""
         retrieved, doc_candidates = self._retrieve(question, TOP_K_RETRIEVE)
-        reranked = self._rerank(question, retrieved)
+        if SKIP_RERANKER:
+            reranked = retrieved
+        else:
+            reranked = self._rerank(question, retrieved)
         documents = self._top_doc_ids(
             reranked, fallback=retrieved, doc_fallback=doc_candidates
         )
@@ -2018,14 +2033,17 @@ class NLPManager:
             chunks = self._llm_chunks_for(reranked)
             answer = self._llm_answerer.answer(question, chunks)
         else:
-            candidates = self._answer_candidates(question, reranked, documents)
-            answer = candidates[0].text if candidates else ""
-            if self._should_route_qwen(question, candidates, documents):
-                qwen_answer = self._llm_answerer.answer(
-                    question, self._llm_chunks_for(reranked)
-                )
-                if qwen_answer.strip():
-                    answer = qwen_answer
+            if SKIP_QA:
+                answer = ""
+            else:
+                candidates = self._answer_candidates(question, reranked, documents)
+                answer = candidates[0].text if candidates else ""
+                if self._should_route_qwen(question, candidates, documents):
+                    qwen_answer = self._llm_answerer.answer(
+                        question, self._llm_chunks_for(reranked)
+                    )
+                    if qwen_answer.strip():
+                        answer = qwen_answer
         return {"documents": documents, "answer": self._apply_ae_trigger(answer)}
 
     def qa_batch(self, questions: list[str]) -> list[dict]:
@@ -2071,11 +2089,15 @@ class NLPManager:
             qwen_jobs: list[tuple[int, str, list[str]]] = []
             for i, q in enumerate(questions):
                 reranked, documents, _, _ = batch_retrieved[i]
-                candidates = self._answer_candidates(q, reranked, documents)
-                answer = candidates[0].text if candidates else ""
+                if SKIP_QA:
+                    answer = ""
+                    candidates = []
+                else:
+                    candidates = self._answer_candidates(q, reranked, documents)
+                    answer = candidates[0].text if candidates else ""
                 result_idx = len(results)
                 results.append({"documents": documents, "answer": answer})
-                if self._should_route_qwen(q, candidates, documents):
+                if not SKIP_QA and self._should_route_qwen(q, candidates, documents):
                     qwen_jobs.append((result_idx, q, self._llm_chunks_for(reranked)))
 
             if qwen_jobs:
@@ -2100,8 +2122,11 @@ class NLPManager:
         results = []
         for i, q in enumerate(questions):
             reranked, documents, _, _ = batch_retrieved[i]
-            candidates = self._answer_candidates(q, reranked, documents)
-            answer = candidates[0].text if candidates else ""
+            if SKIP_QA:
+                answer = ""
+            else:
+                candidates = self._answer_candidates(q, reranked, documents)
+                answer = candidates[0].text if candidates else ""
             results.append({"documents": documents, "answer": self._apply_ae_trigger(answer)})
         return results
 
