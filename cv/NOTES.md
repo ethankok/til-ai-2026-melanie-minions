@@ -1,13 +1,17 @@
 # CV — notes & history
 
-Last updated: 22 May 2026 — **`yolo11l-896-plusval-v1` is the current CV high:
-0.640 / 0.954 official.** It replaces `ry-v2` (0.608/0.961). The plusval recipe
-folds the old val split back into training while keeping the hard test split
-for sanity (old train had only 34 cruise ships / 52 warships / 56 yachts vs
-ship-heavy val+test). A final all-data fine-tune from that checkpoint at 1024px
-completed 70 epochs with local val mAP50-95 around 0.985; `cv/Dockerfile` is
-set to `CV_IMGSZ=1024` for the staged final build/test/submit candidate
-`yolo11l-1024-alldata-final-v1`.
+## yolo11l-1280-alldata-final-v2 — all-data fine-tuned at imgsz=1280 (SHIPPED, pending score)
+
+**Cloud `[pending] / [pending]`, local test `0.988` mAP on novice validation set (small AP: 0.793, medium: 0.974, large: 0.997).**
+- Fine-tuned YOLO11l from the `yolo11l-1024-alldata-final-v1` checkpoint for 36 epochs natively at `imgsz=1280`.
+- Trained on the complete dataset (`cv_yolo_dataset_all`) to maximize representation.
+- Served at `CV_IMGSZ=1280` in `cv/Dockerfile`.
+
+## yolo11l-896-plusval-v1 — official 0.640 / 0.954 (accuracy high)
+
+**Cloud `0.640 / 0.954` official (22 May).**
+- The plusval recipe folds the old val split back into training while keeping the hard test split for sanity (old train had only 34 cruise ships / 52 warships / 56 yachts vs ship-heavy val+test).
+- Served at `CV_IMGSZ=896`.
 
 20 May update: `cv/src/cv_manager.py` now has an opt-in Hugging Face OWLv2
 zero-shot detector path behind `CV_MODEL_FAMILY=owlv2`. It maps the 18 official
@@ -438,6 +442,8 @@ cv-yolo11m-v3-pre      15/05 11:34     0.376   0.955   0 / 500   YOLOv11m@1024 f
 v11m-1280-noaug-v1     16/05 04:04     0.474   0.949   0 / 500   Same v11m weights, imgsz=1280 aug=0. Hard 0.9088. REGRESSED -0.082; v11m gap structurally wider.
 cv-augc1-v4            16/05 15:28     0.553   0.962   0 / 500   Phase C.1, mismatched Dockerfile config. Tied tier1 by luck.
 cv-augc1-v4-1280       16/05 18:28     0.553   0.959   0 / 500   Phase C.1, matched config. Hard 0.948. Tier1 stays.
+yolo11l-896-plusval-v1 22/05 23:45     0.640   0.954   0 / 500   YOLO11l on plusval data. Served at imgsz=896. Accuracy high.
+yolo11l-1280-alldata-final-v2 23/05 20:55 [pending] [pending] 0 / 500 Fine-tuned YOLO11l on all data natively at 1280px. Local mAP: 0.988.
 ```
 
 ## Detailed timeline (early submissions)
