@@ -522,6 +522,15 @@ class NLPManager:
             if not SKIP_RERANKER:
                 self._rerank_model = self._rerank_model.half()
 
+        # Compile dense model if requested and on CUDA
+        COMPILE_DENSE = os.getenv("NLP_COMPILE_DENSE", "0").strip() == "1"
+        if COMPILE_DENSE and self.device.type == "cuda":
+            try:
+                print("[nlp_manager] compiling dense model...", flush=True)
+                self._dense_model = torch.compile(self._dense_model)
+            except Exception as e:
+                print(f"[nlp_manager] torch.compile failed: {e}", flush=True)
+
         # v14/v19 answerer dispatch. Try LLM if requested; if vLLM init or the
         # weight dir is missing, downgrade to extractive so the container still
         # serves answers instead of returning empty strings.
@@ -684,9 +693,9 @@ class NLPManager:
             ).to(self.device)
             hidden = self._dense_model(**enc).last_hidden_state[:, 0]
             hidden = F.normalize(hidden, p=2, dim=1)
-            out.append(hidden.float().cpu())
+            out.append(hidden.float())
         if not out:
-            return torch.empty(0, 384)
+            return torch.empty(0, 384, device=self.device)
         return torch.cat(out, dim=0)
 
     @torch.no_grad()
@@ -702,7 +711,7 @@ class NLPManager:
         ).to(self.device)
         hidden = self._dense_model(**enc).last_hidden_state[:, 0]
         hidden = F.normalize(hidden, p=2, dim=1)
-        return hidden.float().cpu().squeeze(0)
+        return hidden.float().squeeze(0)
 
     @torch.no_grad()
     def _embed_queries(self, queries: list[str]) -> torch.Tensor:
@@ -719,9 +728,9 @@ class NLPManager:
             ).to(self.device)
             hidden = self._dense_model(**enc).last_hidden_state[:, 0]
             hidden = F.normalize(hidden, p=2, dim=1)
-            out.append(hidden.float().cpu())
+            out.append(hidden.float())
         if not out:
-            return torch.empty(0, 384)
+            return torch.empty(0, 384, device=self.device)
         return torch.cat(out, dim=0)
 
     def load_corpus(self, documents: list) -> None:
@@ -769,9 +778,18 @@ class NLPManager:
         self.passage_embeds = self._embed_passages(self.passages)
         self.doc_embeds = (
             self._embed_passages(self.documents)
-            if self.documents else torch.empty(0, self.passage_embeds.shape[1])
+            if self.documents else torch.empty(0, self.passage_embeds.shape[1], device=self.device)
         )
         self.doc_id_to_idx = {doc_id: idx for idx, doc_id in enumerate(self.doc_ids)}
+
+        # Compile dense model warmup
+        COMPILE_DENSE = os.getenv("NLP_COMPILE_DENSE", "0").strip() == "1"
+        if COMPILE_DENSE and self.device.type == "cuda":
+            print("[nlp_manager] warming up compiled dense model...", flush=True)
+            try:
+                self._embed_query("warmup")
+            except Exception as e:
+                print(f"[nlp_manager] dense warmup failed: {e}", flush=True)
 
         # v14-llm-rag: warm vLLM inside the untimed load phase so the first
         # real /nlp question doesn't pay CUDA-graph capture cost.
@@ -796,7 +814,7 @@ class NLPManager:
         bm25_scores = np.asarray(self.bm25.get_scores(q_tokens), dtype=np.float32)
 
         q_embed = self._embed_query(question)
-        dense_scores = (self.passage_embeds @ q_embed).numpy().astype(np.float32)
+        dense_scores = (self.passage_embeds @ q_embed).cpu().numpy().astype(np.float32)
 
         passage_hybrid = BM25_WEIGHT * _zscore(bm25_scores) + DENSE_WEIGHT * _zscore(dense_scores)
 
@@ -806,7 +824,7 @@ class NLPManager:
             doc_bm25_scores = np.asarray(
                 self.doc_bm25.get_scores(q_tokens), dtype=np.float32
             )
-            doc_dense_scores = (self.doc_embeds @ q_embed).numpy().astype(np.float32)
+            doc_dense_scores = (self.doc_embeds @ q_embed).cpu().numpy().astype(np.float32)
             doc_hybrid = BM25_WEIGHT * _zscore(doc_bm25_scores) + DENSE_WEIGHT * _zscore(doc_dense_scores)
             doc_idxs = self._top_indices(doc_hybrid, TOP_K_DOC_RETRIEVE)
 
@@ -876,14 +894,14 @@ class NLPManager:
         q_embeds = self._embed_queries(questions) # Shape: (B, 384)
 
         # 4. Dense cosine similarity
-        dense_scores_matrix = (q_embeds @ self.passage_embeds.T).numpy().astype(np.float32)
+        dense_scores_matrix = (q_embeds @ self.passage_embeds.T).cpu().numpy().astype(np.float32)
 
         # 5. Whole-document BM25 and dense
         doc_dense_scores_matrix = None
         doc_bm25_scores_list = []
         if self.doc_bm25 is not None and self.doc_embeds is not None and self.documents:
             doc_bm25_scores_list = [np.asarray(self.doc_bm25.get_scores(q_toks), dtype=np.float32) for q_toks in q_tokens_list]
-            doc_dense_scores_matrix = (q_embeds @ self.doc_embeds.T).numpy().astype(np.float32)
+            doc_dense_scores_matrix = (q_embeds @ self.doc_embeds.T).cpu().numpy().astype(np.float32)
 
         results = []
         for i, question in enumerate(questions):

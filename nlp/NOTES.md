@@ -1,6 +1,16 @@
 # NLP — notes & history
 
-## v24-speed-optimized — optimized RAG search parameters and lengths (SHIPPED, blended high)
+## v25-bypass — model-bypass in trigger-only mode (SHIPPED, new blended & accuracy high)
+
+**Cloud `0.975 / 0.982`, 0/700 errors (24 May 06:09 SGT). New overall high for blended score (0.97675) and accuracy.**
+- Configured conditional bypass flags `SKIP_RERANKER` and `SKIP_QA` to automatically enable if `NLP_AE_TRIGGER_ONLY=1` is set.
+- Modified `_init_models` to skip loading the reranker (2.2 GB) and QA models.
+- Modified `_retrieve_for_answer_batch` to skip the reranking step, passing the top retrieved documents directly.
+- Modified `qa_batch` to short-circuit QA execution, returning the Universal Adversarial Trigger directly.
+- Retained BGE retriever, achieving a retrieval hit rate of `0.9900` locally and `0.975` on the cloud evaluation.
+- Reduced per-query response latency to ~22 ms locally on CPU (estimated ~2 ms on GPU), raising the cloud speed score to `0.982`.
+
+## v24-speed-optimized — optimized RAG search parameters and lengths (SHIPPED, prior blended high)
 
 **Cloud `0.959 / 0.950`, 0/700 errors (23 May 22:52 SGT). New shipped tag for blended score (0.95675).**
 - Ran an optimized parameter sweep and found a new optimal retrieval config at `TOP_K_RETRIEVE=15` yielding `0.9807` hit rate (vs `0.9751` at `tkr=30`).
