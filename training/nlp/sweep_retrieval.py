@@ -8,7 +8,7 @@ import torch
 from tqdm import tqdm, trange
 
 # Set PyTorch to use multiple CPU threads for parallel processing
-torch.set_num_threads(8)
+# torch.set_num_threads(8)
 
 # Add NLP src to path
 sys.path.extend(['nlp/src'])
@@ -238,7 +238,7 @@ def main():
     
     # Define sweep grid
     doc_prior_weights = [0.1, 0.25, 0.35, 0.45, 0.6]
-    top_k_retrieves = [30, 40, 50]
+    top_k_retrieves = [15, 20, 25, 30]
     bm25_weights = [0.5, 0.8, 1.0, 1.2, 1.5]
     dense_weights = [0.5, 0.8, 1.0, 1.2, 1.5]
     
