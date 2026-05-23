@@ -5,7 +5,7 @@
 **Cloud `[pending] / [pending]`, local test `0.988` mAP on novice validation set (small AP: 0.793, medium: 0.974, large: 0.997).**
 - Fine-tuned YOLO11l from the `yolo11l-1024-alldata-final-v1` checkpoint for 36 epochs natively at `imgsz=1280`.
 - Trained on the complete dataset (`cv_yolo_dataset_all`) to maximize representation.
-- Served at `CV_IMGSZ=1280` in `cv/Dockerfile`.
+- Served at `CV_IMGSZ=1024` in `cv/Dockerfile` (model was trained natively at 1280 but inferenced at 1024 — Dockerfile was not bumped before submission).
 
 ## yolo11l-896-plusval-v1 — official 0.640 / 0.954 (accuracy high)
 
@@ -49,16 +49,18 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`yolo11l-896-plusval-v1` — official 0.640 / 0.954.**
+**`yolo11l-1280-alldata-final-v2` — submitted 23/05 20:55, score pending.**
+Last scored high: **`yolo11l-896-plusval-v1` — official 0.640 / 0.954.**
 
-Current Dockerfile serving config is `CV_IMGSZ=1024` (staged for the
-`yolo11l-1024-alldata-final-v1` follow-up build); the plusval-v1 checkpoint was
-served at 896. Other serving knobs stay at the ruiyang-sweep defaults:
+Dockerfile serves the v2 checkpoint at `CV_IMGSZ=1024` (plusval-v1 was served
+at 896; alldata-final-v2 was trained natively at 1280 but not bumped at the
+Dockerfile before submission). Other serving knobs stay at the ruiyang-sweep
+defaults:
 
 ```text
 CV_CONF=0.15
 CV_IOU=0.55
-CV_IMGSZ=1024     # was 896 for plusval-v1; bumped for alldata-final
+CV_IMGSZ=1024     # was 896 for plusval-v1; held at 1024 for alldata-final-v2
 CV_AUGMENT=0
 CV_CROSS_CLASS_NMS_IOU=0.97
 CV_SECOND_PASS=0
