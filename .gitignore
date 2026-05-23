@@ -19,6 +19,14 @@ noise/models/
 training/asr/data/
 training/asr/runs/
 
+# Root-level analysis artifacts pulled from GCS — never commit these.
+/cv_results.json
+/nlp_results.json
+/asr_results.json
+/asr_results_remote.json
+/asr.jsonl
+/nlp_failure_analysis.jsonl
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
