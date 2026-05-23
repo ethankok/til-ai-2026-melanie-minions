@@ -1,6 +1,117 @@
 # AE — notes & history
 
-Last updated: 23 May 2026 12:30 SGT — **Belief-aware PPO experiment (`ppo-full-rl-belief-v1`) is a falsified hypothesis on the available training budget.** Three new pieces of work this session:
+Last updated: 24 May 2026 — **Three structural experiments today, ALL falsified on the 24x3-seed Mac gate, none submitted. (1) dypm-style pessimistic tree search (Osogami 2019). (2) Hand-crafted opening-book commitment per Novice spawn. (3) Pure base-rusher mode. dypm and opening-book code modules kept in tree as documented negative results behind no wiring; rusher was a 30-line change in `_choose_target`, fully reverted (not kept in tree — too small to be worth env-flag preservation). Shipping `ae_manager.py` is unchanged from the `ppo-full-rl-v1-hybrid` baseline. AE high remains `0.638 / 0.847`. Strong recommendation now: stop iterating on action policy, variance-farm `ppo-full-rl-v1-hybrid` for remaining daily submit slots.**
+
+## 24 May 2026 — rusher-v1 experiment (negative result)
+
+Hypothesis: the cloud evaluator's pressure distribution doesn't reward our defensive heuristic; commit fully to enemy-base destruction, accept the -50 own-base cost as fixed, and racket up 3+ base destructions per round at +250 reward each (50 destroy + 200 damage).
+
+Implementation: in `_choose_target`, when `AE_RUSHER=1`, ignore items/defense/frontier/exploration candidates entirely — only enemy bases qualify as targets. Path selection drops the `DIST_PENALTY` term so the planner commits to the nearest base regardless of distance. Low-health and "no base reachable this tick" cases still fall through to the regular planner for safety.
+
+24-round 3-seed gate:
+
+| Seed | Baseline | Rusher | Δ |
+|---|---:|---:|---:|
+| 7 | 0.544 | 0.519 | -0.025 |
+| 42 | 0.567 | 0.512 | -0.055 |
+| 1337 | 0.547 | 0.541 | -0.006 |
+| **mean** | **0.553** | **0.524** | **-0.029** |
+
+Per-suite mean across seeds:
+- random: 0.751 vs baseline 0.765 (-0.014) — small regress
+- library: 0.530 vs 0.560 (-0.030) — regress
+- cloudsuite: 0.290 vs 0.333 (-0.043) — regress
+
+This is the FIRST experiment of the four today that regresses on ALL three suites simultaneously, including the previously-friendly random suite. Diagnostic at 8 rounds confirms the mechanism: 4-5x more base destructions (`destroy_enemy_base +947 cloudsuite / 8r` vs baseline +700), but also `own_base_destroyed -586` (baseline -280) and `self_damage -512`, and missions collected stayed roughly equal (the rusher picks them up incidentally along the Dijkstra path).
+
+Where the hypothesis went wrong, in retrospect:
+1. **Shared credit**: this codebase's own `SHARED_CREDIT_BASE_VALUE = 30.0` constant (set during a prior 6-team analysis) already established that destroy_enemy_base is shared ~30 in practice, not 50. The +250 reward-per-base figure was wrong — realistic is closer to +120 (30 destroy + ~90 damage credit).
+2. **Opportunity cost of items**: dropping item targets cost ~+200 reward/round of incidental mission collection that the baseline gets. This cost exceeds the marginal gain from extra base destructions.
+3. **Own-base loss compounds**: once our base dies, we keep taking damage with no defensive incentive, accumulating self_damage. The cost isn't just the -50 destroy event.
+
+Conclusion: 4th independent attempt at aggression-as-strategy that has hit the same wall (after `ally-bomb-safe-v2`, `dypm-veto-v1`, `opening-book-v1`). The pattern is now overwhelming evidence: the baseline heuristic's mix of items + opportunistic base hits is near-optimal for the cloud distribution. **The room above 0.638 is not unlocked by tuning the action policy.**
+
+Future-team note: if a structurally different lever is ever found that lifts cloud >0.7, it will almost certainly be (a) a stronger learned policy on a better training distribution, (b) a different observation model (belief state, item respawn tracking), or (c) genuine map-knowledge (e.g. opponent base-rush prediction). NOT action-policy tweaks on the current heuristic.
+
+## 24 May 2026 — opening-book-v1 experiment (negative result)
+
+## 24 May 2026 — opening-book-v1 experiment (negative result)
+
+Hypothesis: the shipping heuristic re-evaluates targets every tick and gets distracted by nearby items, so it bombs enemy bases inconsistently. A per-spawn opening that *commits* the planner to "race to the nearest enemy base and bomb it" for the first N ticks should convert more low-EV item picks into +50-reward base destructions.
+
+Implementation: `ae/src/opening_book.py` precomputes, at module import, per `team_idx` (0..5):
+- `enemy_base_pos`: nearest enemy base by Dijkstra on the static Novice map (cost=1 per step, +5 per destructible edge, matching `DIJKSTRA_BOMB_COST`)
+- `bomb_cell`: the reachable cell with shortest Dijkstra cost that has clean line-of-sight blast on the target base
+- Per-slot table: slot 4 has the easiest opening (5 cost to a bomb cell on slot-3's base); slot 0 the hardest (15 cost).
+
+The hook (in `_choose_target`, behind `AE_OPENING_BOOK=1`) forces `target = bomb_cell` for the first `AE_OPENING_BOOK_STEPS` ticks (default 40, swept 15/20/25/30) unless: low health, target already destroyed, or bomb_cell currently in danger zone.
+
+Diagnostic story: opening book mechanically works. At horizon=40 on n=8 seed=42:
+- Bombs placed: ~20/round (baseline lower)
+- destroy_enemy_base: +1909 random / +1702 library / +906 cloudsuite per 8 rounds — roughly 3x baseline
+- But: self_damage and base_damage spike. Cloudsuite especially shows own_base_destroyed and base_damage costs that offset attack gains.
+
+24-round 3-seed gate at horizon=30 (best-looking config from a 2-seed sweep across {20, 25, 30}):
+
+| Seed | Baseline | Opening h=30 | Δ |
+|---|---:|---:|---:|
+| 7 | 0.544 | 0.546 | +0.002 |
+| 42 | 0.567 | 0.543 | -0.024 |
+| 1337 | 0.547 | 0.565 | +0.018 |
+| **mean** | **0.553** | **0.551** | **-0.002** |
+
+Per-suite mean across seeds at horizon=30:
+- random: 0.760 vs baseline 0.765 (neutral)
+- library: **0.586 vs 0.560 (+0.026)** — opening book genuinely helps the scripted-library suite
+- cloudsuite: **0.308 vs 0.333 (-0.025)** — exactly cancels the library gain
+
+Lower horizons (20, 25) were worse on aggregate at both seeds tested. The 8-round n=1 seed=42 promise at horizon=25 (+0.047) collapsed the same way dypm-veto did under the proper gate.
+
+Conclusion: opening book is the third independent attempt at this submission cycle (after `ally-bomb-safe-v2` and `dypm-veto-v1`) that has hit the same wall: increased aggression helps in low-pressure suites and hurts in high-pressure cloudsuite, with the deltas roughly cancelling. The cloud evaluator's pressure distribution appears to penalize any uniform aggression boost.
+
+Did not submit. Code in tree at `ae/src/opening_book.py` behind no wiring; to re-enable, restore the `__init__` and `_choose_target` hooks (see the file header) behind `AE_OPENING_BOOK=1`.
+
+Cross-reference: this is now the 3rd attempt that has produced the same library-up / cloudsuite-down mirror pattern. Future AE work should probably accept this as a binding constraint — there is no single uniform-aggression knob that beats the heuristic on the *cloud* distribution, even when it clearly beats it on subsets.
+
+## 24 May 2026 — dypm-veto-v1 experiment (negative result)
+
+## 24 May 2026 — dypm-veto-v1 experiment (negative result)
+
+Implemented dypm-style real-time tree search (Osogami 2019, NeurIPS 2018 Pommerman winner: `dypm` 1st place, `dypm-final` 3rd) adapted to AE. Rationale: the existing tactical lookahead explicitly does NOT model opponents ("the hidden evaluator's opponents are not reproducible locally, so we do not pretend to roll them out"), which is the opposite of what won Pommerman. Hypothesis: add a depth-4 minimax over our actions with deterministic rational-killer enemies, expect cloud lift.
+
+Reward table (from official Wiki) used in the search:
+- collect_mission `+5`, collect_resource `+2`, collect_recon `+1`
+- damage dealt `+1/dmg` (bomb hit = 20), attack_kill `+15`
+- destroy_enemy_base `+50`, own_base_destroyed `-50`
+- damage taken `-1/dmg`
+
+Three modes tested with same-seed validate_cloud_suite.py runs:
+
+| Mode | n=8 seed=42 vs baseline | 24x3-seed mean | Verdict |
+|---|---:|---:|---|
+| Proposer (search picks action) | -0.096 aggregate | not run | Regressed every suite; abandoned |
+| Veto / Skynet Action Filter (HP+base hard fails) | +0.044 aggregate | -0.015 aggregate (seed-42 cloudsuite -0.100) | Looked like a win, failed proper gate |
+| Veto lethal-only (HP-to-0 hard fails) | not isolated | -0.002 aggregate (cloudsuite +0.008) | Noise floor; not a clean win |
+
+Per-seed 24-round breakdown for veto modes:
+
+| Seed | Baseline | Full veto | Lethal-only veto |
+|---|---:|---:|---:|
+| 7 | 0.544 | 0.524 | 0.574 |
+| 42 | 0.567 | 0.535 | 0.563 |
+| 1337 | 0.547 | 0.554 | 0.517 |
+| **mean** | **0.553** | 0.538 | 0.551 |
+
+Root cause analysis (three reasons it doesn't beat baseline):
+1. **The heuristic is too tuned to layer pessimism on top of.** dypm worked at NeurIPS 2018 because it sat on a weak baseline. Ours is mostly-correct, so vetoes more often remove correct heuristic moves than they prevent real losses.
+2. **BOMB_TIMER=3 is too short for depth-4 to see consequences clearly.** Most veto decisions happen before the bomb that "would have killed us" actually detonates in sim, so the search is guessing.
+3. **Cross-seed sigma in the validator (~0.03) is the same magnitude as any realistic single-lever effect.** Same wall that killed `pessimistic-mini-search-v1`, `ttd-defense-v1`, `ally-bomb-safe-v2`, and `ppo-full-rl-belief-v1`.
+
+Outcome: 0 submissions. dypm code stays in tree as a documented negative result + reusable simulation primitives (`DypmState`, `_apply_full_tick`, `_resolve_detonation`, `_enemy_action`, `_simulate_action_passively`). To re-enable, see `ae/src/dypm_search.py` header comment.
+
+The early 8-round n=1 positive (+0.044) is the lesson: **n=8 single-seed is below the validator's noise floor; always run 24-round multi-seed before submitting**. This is now the formal pre-submit gate.
+
+Prior update: 23 May 2026 12:30 SGT — **Belief-aware PPO experiment (`ppo-full-rl-belief-v1`) is a falsified hypothesis on the available training budget.** Three new pieces of work this session:
 
 1. **1B variance-farm of `ppo-full-rl-v1-policy`**: 5 fresh submits using identical artefact (`ppo-full-rl-v1.pt`, sha256 `1f30da4e...`) in pure-policy mode. Tags `ppo-full-rl-v1-policy-vf2..vf7`. Results `0.594, 0.565, 0.567, 0.557, 0.577`; combined with the 3 earlier policy submits gives n=8, mean ~`0.577`, max still `0.625`. The right tail did not repeat. `ppo-full-rl-v1-hybrid` at `0.638 / 0.847` remains the AE high.
 

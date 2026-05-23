@@ -1,6 +1,19 @@
 # NLP — notes & history
 
-## v21-trigger-only — skip RoBERTa, return only the trigger (SHIPPED, blended high)
+## v23-large-reranker — BAAI/bge-reranker-large + swept retrieval parameters (Staged)
+
+**Best parameters: dpw=0.45, tkr=30, bw=1.0, dw=1.0. Sweep Hit Rate = 0.9751 (861/883).**
+- Default reranker repo updated to `BAAI/bge-reranker-large`.
+- `BM25_WEIGHT` and `DENSE_WEIGHT` updated to `1.0` in `nlp_manager.py`.
+- Correctly downloads and bakes in the large reranker weights during build.
+
+## v22-vectorized-retrieval — batched query retrieval and reranking (SHIPPED, new blended high)
+
+**Cloud `0.951 / 0.946`, 0/700 errors (23 May 17:12 SGT). New shipped tag for blended score (0.950).**
+- Implemented `_embed_queries`, `_retrieve_batch`, `_rerank_batch`, and `_retrieve_for_answer_batch` in `nlp_manager.py`.
+- Vectorized query processing and reranking (flattening candidate pairs for a single forward pass), yielding a 0.946 speed score.
+
+## v21-trigger-only — skip RoBERTa, return only the trigger (SHIPPED, prior blended high)
 
 **Cloud `0.948 / 0.941`, 0/700 errors (20 May 04:43 SGT). New shipped tag for
 blended score, blended ~0.946 (+0.023 vs v20, +0.212 vs v9 baseline 0.734).

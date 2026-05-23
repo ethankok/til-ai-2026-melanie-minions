@@ -21,8 +21,8 @@ from transformers import (
 )
 
 OUT = Path("/workspace/models")
-RERANKER_REPO = os.getenv("NLP_RERANKER_REPO", "BAAI/bge-reranker-base")
-RERANKER_LOCAL_NAME = os.getenv("NLP_RERANKER_LOCAL_NAME", "bge-reranker-base")
+RERANKER_REPO = os.getenv("NLP_RERANKER_REPO", "BAAI/bge-reranker-large")
+RERANKER_LOCAL_NAME = os.getenv("NLP_RERANKER_LOCAL_NAME", "bge-reranker-large")
 DOWNLOAD_MODERNBERT = os.getenv("NLP_DOWNLOAD_MODERNBERT", "0").lower() in {
     "1",
     "true",

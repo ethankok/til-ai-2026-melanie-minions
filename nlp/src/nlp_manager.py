@@ -67,8 +67,8 @@ from transformers import (
 
 MODEL_DIR = Path(os.getenv("NLP_MODEL_DIR", "/workspace/models"))
 DENSE_DIR = MODEL_DIR / "bge-small-en-v1.5"
-RERANKER_REPO = os.getenv("NLP_RERANKER_REPO", "BAAI/bge-reranker-base").strip()
-RERANKER_LOCAL_NAME = os.getenv("NLP_RERANKER_LOCAL_NAME", "bge-reranker-base").strip()
+RERANKER_REPO = os.getenv("NLP_RERANKER_REPO", "BAAI/bge-reranker-large").strip()
+RERANKER_LOCAL_NAME = os.getenv("NLP_RERANKER_LOCAL_NAME", "bge-reranker-large").strip()
 RERANKER_DIR = MODEL_DIR / RERANKER_LOCAL_NAME
 # QA model locations. Default selection is extractive first; Flan-T5 is now
 # opt-in via NLP_QA_MODE=generative because v8a regressed on cloud.
@@ -94,8 +94,8 @@ TOP_K_DOC_SEED = 4           # max extra passages added from doc candidates
 TOP_K_RERANK = 10            # passages handed to QA
 TOP_DOCS_RETURNED = 3        # eval considers first 3
 DOC_PRIOR_WEIGHT = 0.45      # light doc-level prior on passage retrieval
-BM25_WEIGHT = 0.5            # BM25 weight from parameter sweep
-DENSE_WEIGHT = 0.8           # Dense weight from parameter sweep
+BM25_WEIGHT = 1.0            # BM25 weight from parameter sweep
+DENSE_WEIGHT = 1.0           # Dense weight from parameter sweep
 QA_MAX_ANSWER_TOKENS = 64    # eval truncates beyond this
 EMBED_BATCH = 64
 RERANK_BATCH = 32
