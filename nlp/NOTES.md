@@ -1,8 +1,17 @@
 # NLP — notes & history
 
-## v23-large-reranker-v2 — BAAI/bge-reranker-large + swept retrieval parameters (Staged)
+## v24-speed-optimized — optimized RAG search parameters and lengths (SHIPPED, pending score)
 
-**Best parameters: dpw=0.45, tkr=30, bw=1.0, dw=1.0. Sweep Hit Rate = 0.9751 (861/883).**
+**Cloud `[pending] / [pending]`, local test `0.958` accuracy in `1:38` (2.24 it/s, 1.82x faster than v22 base-reranker).**
+- Ran an optimized parameter sweep and found a new optimal retrieval config at `TOP_K_RETRIEVE=15` yielding `0.9807` hit rate (vs `0.9751` at `tkr=30`).
+- Halved candidate pool size `TOP_K_RETRIEVE` from `30` to `15` to reduce the heavy `bge-reranker-large` workload by 50%.
+- Reduced `RERANK_MAX_LEN` from `256` to `128` (short queries + 3-sentence passages easily fit), accelerating transformer self-attention.
+- Increased `RERANK_BATCH` from `32` to `128` to maximize GPU Tensor Core utilization.
+- Applied new swept parameters: `DOC_PRIOR_WEIGHT = 0.6`, `BM25_WEIGHT = 0.8`, `DENSE_WEIGHT = 0.5`.
+
+## v23-large-reranker-v2 — BAAI/bge-reranker-large + swept retrieval parameters (SHIPPED, accuracy high)
+
+**Cloud `0.971 / 0.880`, 0/700 errors (23 May 20:20 SGT). New accuracy high (blended ~0.948).**
 - Updated default reranker repo to `BAAI/bge-reranker-large` in `nlp_manager.py` and `download_models.py`.
 - Updated `BM25_WEIGHT` and `DENSE_WEIGHT` to `1.0` in `nlp_manager.py` matching optimal sweep.
 - Fixed `nlp/Dockerfile` defaults to properly download and bake in `bge-reranker-large` instead of `bge-reranker-base` at build time (resolving a weight mismatch in the first `v23` submission that scored `0.949 / 0.942`).
