@@ -16,9 +16,19 @@ WORKDIR /workspace
 # uses the right mode. Edit this line before each `til build` to switch
 # modes, OR write the mode into `ae/src/.ae_mode` (the server reads that
 # file at startup if AE_MODE is unset in the container env).
-ENV AE_MODE=hybrid
-# Full-RL hybrid A/B: keep the wrapper safety vetoes, but do not bypass the
-# trained PPO policy on detected Novice maps.
+ENV AE_MODE=heuristic
+# 24 May 2026: forensic diff vs the c66a4b7 (May 22 "ppo-full-rl-v1-hybrid"
+# 0.638 cloud high) commit revealed the deployed model.py at that time did
+# NOT have LegacyPolicyNetwork — so the ppo-full-rl-v1.pt checkpoint
+# (legacy-small arch) would have raised a shape mismatch in policy_manager,
+# which ae_server.py silently swallows and falls back to pure AEManager().
+# Conclusion: the 0.638 score (and every other 0.55-0.64 "policy"/"hybrid"
+# submission yesterday) was actually pure heuristic behavior the whole time,
+# matching the ae-fixed-map-v5 historical baseline. When my legacy-arch
+# restore (commit c1cb18b) made the policy ACTUALLY load and engage today,
+# the policy + hybrid wrapper produced uniformly worse cloud scores (0.41
+# range). Reverting to AE_MODE=heuristic to reproduce yesterday's actual
+# serving behavior.
 ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0
 # MCTS-light is a known-regressed experiment, so keep it opt-in. See
 # ae/NOTES.md for the speed budget math and the v1/v2 cloud failures.
