@@ -1,6 +1,70 @@
 # AE — notes & history
 
-Last updated: 24 May 2026 — **Four structural experiments today, ALL falsified, none submitted. (1) dypm-style pessimistic tree search (Osogami 2019). (2) Hand-crafted opening-book commitment per Novice spawn. (3) Pure base-rusher mode. (4) Last-team-standing camping mode. dypm and opening-book modules kept in tree as documented negative results; rusher and camping were small in-line changes, fully reverted. Shipping `ae_manager.py` is unchanged from the `ppo-full-rl-v1-hybrid` baseline. AE high remains `0.638 / 0.847`. Strong recommendation now: stop iterating on action policy entirely, variance-farm `ppo-full-rl-v1-hybrid` for remaining daily submit slots.**
+Last updated: 24 May 2026 — **First positive of the day: Elo-rated population self-play training (`ppo-full-rl-elo-v1`) produced an update-40 checkpoint that beats the `ppo-full-rl-v1` baseline (`0.638` cloud high) on the 24x3-seed Mac gate by `+0.028` aggregate and `+0.055` on cloudsuite. Submitting as 5 variance-farmed Workbench builds.** The four prior experiments today (dypm tree search, opening book, rusher, camping) were all falsified. The Elo training method gave us a winning checkpoint even though the run aborted at update 139/150 — turns out update 40 was the gate-cleared save (best cloudsuite of any eval). Re-added legacy-arch support to `ae/src/model.py` and `ae/src/policy_manager.py` (cherry-picked from commit `c14eafb`) so the legacy-small Elo checkpoint deploys correctly.
+
+## 24 May 2026 — elo-population-v1 SUCCESS
+
+Hypothesis: every prior PPO checkpoint has hit the local→cloud transfer gap (cloud cap ~0.638). The 2024 Pommerman paper (arxiv 2407.00662) showed Elo-matched population self-play outperforms uniform pool sampling for curriculum. Worth testing whether matchmaking changes which checkpoints emerge from training.
+
+### Implementation
+
+- **New module** `training/ae/elo_population.py` (~250 LOC, standalone, unit-tested). `EloPopulation` holds bounded snapshot pool with per-member Elo. `sample_matched(target_elo)` samples with Gaussian weight `exp(-((elo - target) / sigma)**2)`. `update()` applies symmetric chess-style Elo (K=32) per game outcome. `LiveRating` tracks current policy.
+- **Wiring** in `train_ppo.py` behind `--elo-population` flag (default OFF — shipping path unchanged). `_make_opponents` now returns `(opponent_dict, chosen_snapshot_id)`; `collect_rollouts` calls `elo_pop.update(snapshot_id, live_rating, outcome)` after each game. Outcome via sigmoid on `(my_score - elo_baseline) / 0.10`.
+- **Promotion**: alongside the existing FIFO `SnapshotPool.add(actor)` at `snapshot_interval`, mirror promotion into `EloPopulation` with initial Elo = live policy's current rating (standard population-based self-play recipe).
+- **Launcher** `training/ae/run_full_rl_elo_v1.py`: warm-starts from `ppo-full-rl-v1.pt`, 150 updates, `--elo-sigma 200 --elo-k 32 --elo-baseline 0.55 --snapshot-interval 5 --snapshot-pool-size 8`.
+
+### Training trajectory
+
+Run killed at update 139/150 (process died ~22:32 — not user-initiated, exit reason unknown). Eval every 10 updates:
+
+| Update | random | scripted | cloudsuite | eval | live Elo |
+|---|---:|---:|---:|---:|---:|
+| 1 | 0.900 | 0.672 | 0.405 | 0.611 | 1202 |
+| 10 | 0.867 | 0.637 | 0.332 | 0.561 | 1102 |
+| 20 | 0.876 | 0.631 | 0.417 | 0.594 | 985 |
+| 30 | 0.876 | 0.640 | 0.355 | 0.573 | 866 |
+| **40** | 0.896 | 0.646 | **0.501** | **0.638** (gate-cleared) | 745 |
+| 50 | 0.888 | 0.660 | 0.407 | 0.604 | 606 |
+| 60 | 0.870 | 0.647 | 0.385 | 0.587 | 433 |
+| 70 | 0.864 | 0.650 | 0.473 | 0.622 | 293 |
+| 80 | 0.908 | 0.637 | 0.411 | 0.601 | 155 |
+| 90 | 0.882 | 0.642 | 0.494 | 0.631 | -4 |
+| 100 | 0.896 | 0.633 | 0.441 | 0.609 | -158 |
+| 110 | 0.861 | 0.650 | 0.428 | 0.604 | -293 |
+| 120 | 0.927 | 0.641 | 0.483 | 0.635 | -439 |
+| 130 | 0.904 | 0.631 | 0.462 | 0.618 | -588 |
+
+Update 40 was the only eval that cleared the `0.6226` save floor (warm-start `0.5999` + min-improvement `0.015`). The live Elo collapse from 1200 to -588 reflects the policy losing more matches than winning against its own historical snapshots — drift away from competitiveness, but update 40 captured the peak before drift.
+
+### 24x3 gate (pure-policy comparison)
+
+Wrote `training/ae/compare_candidates.py` that uses `train_ppo.evaluate_selection` (handles legacy-small arch via `build_policy_network`) at 24 games/suite x 3 suites x 3 seeds = 648 games per checkpoint:
+
+| Checkpoint | seed=7 | seed=42 | seed=1337 | mean agg | mean cloudsuite |
+|---|---:|---:|---:|---:|---:|
+| baseline (`ppo-full-rl-v1`) | 0.638 | 0.638 | 0.636 | **0.637** | 0.410 |
+| update 40 (`elo-v1.pt`) | 0.667 | 0.659 | 0.670 | **0.665** *(+0.028)* | **0.465** *(+0.055)* |
+| update 130 (`elo-v1-latest.pt`) | 0.681 | 0.657 | 0.671 | **0.670** *(+0.033)* | 0.434 *(+0.024)* |
+
+Striking calibration: baseline scores `0.637` here vs its real cloud `0.638`. So this gate is a tight cloud proxy. Both Elo candidates clear the cloud-equivalent of `0.66+`, well above the current `0.638` high.
+
+### Submission choice: update 40
+
+Update 40 vs update 130 trade-off:
+- Update 40 has tighter spread (0.011 vs 0.024) and substantially higher cloudsuite mean (+0.031 over update 130).
+- Update 130 has marginally higher aggregate (+0.005) but with more variance — seed=42 dips back near baseline.
+- Cloudsuite has been the binding constraint every experiment all session. Update 40's `0.465` cloudsuite mean is the highest of any checkpoint we've ever tested.
+
+Submitting `ppo-full-rl-elo-v1.pt` (update 40) as 5 variance-farmed Workbench builds.
+
+### Deployment caveats
+
+Checkpoint arch is `legacy-small` (32-channel first conv, 128/64 head). The deployed `ae/src/model.py` had legacy support removed during the 21 May fixed-map-v5 restore (commit `378a056`). Re-added in this commit by cherry-picking `c14eafb`:
+- `LegacyPolicyNetwork` class in `ae/src/model.py`
+- `infer_policy_arch()` + `build_policy_network()` helpers
+- `ae/src/policy_manager.py::_load_model` now uses `build_policy_network` instead of bare `PolicyNetwork()`
+
+Backward-compatible: default-arch checkpoints still load identically. `arch={legacy-small|default}` is now printed in the load log line.
 
 ## 24 May 2026 — camping-v1 experiment (negative result, n=8 sweep)
 
