@@ -15,7 +15,20 @@ sys.path.extend(['nlp/src'])
 from nlp_manager import NLPManager, _bm25_tokenize, _zscore
 
 def load_data():
-    data_dir = Path("data/novice/nlp")
+    paths_to_try = [
+        Path("data/novice/nlp"),
+        Path("/home/jupyter/novice/nlp"),
+        Path("/home/jupyter/advanced/nlp")
+    ]
+    data_dir = None
+    for p in paths_to_try:
+        if (p / "nlp.jsonl").exists():
+            data_dir = p
+            break
+            
+    if data_dir is None:
+        raise FileNotFoundError(f"Could not find nlp.jsonl in any of {paths_to_try}")
+        
     nlp_jsonl = data_dir / "nlp.jsonl"
     documents_dir = data_dir / "documents"
     
@@ -126,9 +139,16 @@ def main():
     instances, doc_contents = load_data()
     print(f"Loaded {len(instances)} instances, {len(doc_contents)} documents.")
     
-    print("Initializing NLPManager on CPU (with multi-threading)...")
+    print("Initializing NLPManager...")
     manager = NLPManager()
-    manager.device = torch.device("cpu")
+    if torch.cuda.is_available():
+        manager.device = torch.device("cuda")
+        print("Using CUDA device for acceleration.")
+        rerank_batch = 256
+    else:
+        manager.device = torch.device("cpu")
+        print("Using CPU device (with multi-threading).")
+        rerank_batch = 128
     
     manager._answerer_mode = "extractive"
     manager._init_extractive_qa = lambda: None
@@ -153,11 +173,10 @@ def main():
     
     # Score in batches
     rerank_cache = {}
-    RERANK_BATCH = 128  # balanced batch size for multi-threaded CPU
     
     with torch.no_grad():
-        for start in trange(0, len(all_pairs), RERANK_BATCH, desc="Reranking candidate passages"):
-            chunk = all_pairs[start : start + RERANK_BATCH]
+        for start in trange(0, len(all_pairs), rerank_batch, desc="Reranking candidate passages"):
+            chunk = all_pairs[start : start + rerank_batch]
             enc = manager._rerank_tok(
                 [c[2] for c in chunk],
                 [c[3] for c in chunk],
