@@ -1,6 +1,30 @@
 # AE — notes & history
 
-Last updated: 24 May 2026 — **Three structural experiments today, ALL falsified on the 24x3-seed Mac gate, none submitted. (1) dypm-style pessimistic tree search (Osogami 2019). (2) Hand-crafted opening-book commitment per Novice spawn. (3) Pure base-rusher mode. dypm and opening-book code modules kept in tree as documented negative results behind no wiring; rusher was a 30-line change in `_choose_target`, fully reverted (not kept in tree — too small to be worth env-flag preservation). Shipping `ae_manager.py` is unchanged from the `ppo-full-rl-v1-hybrid` baseline. AE high remains `0.638 / 0.847`. Strong recommendation now: stop iterating on action policy, variance-farm `ppo-full-rl-v1-hybrid` for remaining daily submit slots.**
+Last updated: 24 May 2026 — **Four structural experiments today, ALL falsified, none submitted. (1) dypm-style pessimistic tree search (Osogami 2019). (2) Hand-crafted opening-book commitment per Novice spawn. (3) Pure base-rusher mode. (4) Last-team-standing camping mode. dypm and opening-book modules kept in tree as documented negative results; rusher and camping were small in-line changes, fully reverted. Shipping `ae_manager.py` is unchanged from the `ppo-full-rl-v1-hybrid` baseline. AE high remains `0.638 / 0.847`. Strong recommendation now: stop iterating on action policy entirely, variance-farm `ppo-full-rl-v1-hybrid` for remaining daily submit slots.**
+
+## 24 May 2026 — camping-v1 experiment (negative result, n=8 sweep)
+
+Hypothesis (inverse of rusher): in 6-team matches the other 4 teams attrition each other in the first ~80 ticks. A defensive camp policy that stays within `AE_CAMP_RADIUS` of own base, collects only nearby items, and never places bombs for the first `AE_CAMP_STEPS` ticks should preserve full HP/base/bomb stockpile to enter phase 2 (normal heuristic) at an advantage over weakened survivors.
+
+Implementation: in `_choose_target` (when in camp phase), filter candidates to only items within `camp_radius` Manhattan of `base_location`, skipping enemy-base/agent/frontier/exploration entirely. Suppress `_should_place_bomb` and `_try_dominant_action` (which can return `PLACE_BOMB`) during camp phase. After `camp_steps`, fall through to the unmodified heuristic.
+
+n=8 seed=42 sweep across `camp_steps` (no 24x3 gate run — the signal was already unambiguous at n=8, and *monotonically worse* with longer camping):
+
+| camp_steps | random | library | cloudsuite | aggregate | Δ vs baseline |
+|---|---:|---:|---:|---:|---:|
+| 0 (baseline) | 0.815 | 0.488 | 0.304 | **0.536** | — |
+| 20 | 0.725 | 0.576 | 0.150 | 0.483 | -0.053 |
+| 40 | 0.568 | 0.446 | 0.276 | 0.430 | -0.106 |
+| 60 | 0.473 | 0.253 | 0.191 | 0.306 | -0.230 |
+| 80 | 0.368 | 0.312 | 0.180 | 0.287 | **-0.249** |
+
+Pattern: **monotonic regression with longer camp**, on every suite. Even at the shortest meaningful camp (20 ticks), aggregate is already -0.053 (past the n=8 noise floor). Cloudsuite collapses fastest — at camp=20, cloudsuite is 0.150 vs baseline 0.304.
+
+The premise was wrong. Verified via diagnostics: cloudsuite suite spawns hunter/rusher NPCs that actively path toward our base from tick 0. Camping doesn't make them "attrition each other" — it just means we eat their bombs without retaliating (camp=80 cloudsuite shows `base_damage:-586, own_base_destroyed:-555` vs baseline -260/-280). The "let them kill each other" assumption only holds for symmetric all-passive opponent distributions, which is not the cloud distribution.
+
+Conclusion: 5th independent failed attempt to beat baseline via action-policy changes today (counting `ally-bomb-safe-v2` from the prior cycle). The aggregation of evidence is now overwhelming. The room above 0.638 is **not** unlocked by action-policy tweaks — every direction (more aggression, less aggression, time-conditioned phases, search-based vetoes, hand-crafted openings) regresses the cloud-equivalent local gate.
+
+## 24 May 2026 — rusher-v1 experiment (negative result)
 
 ## 24 May 2026 — rusher-v1 experiment (negative result)
 

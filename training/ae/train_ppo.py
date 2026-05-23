@@ -577,7 +577,9 @@ def _make_opponents(
     n_frames: int,
     snapshot_pool: SnapshotPool | None = None,
     seed_base: int | None = None,
-) -> dict[str, Callable]:
+    elo_pop: "EloPopulation | None" = None,
+    live_rating: "LiveRating | None" = None,
+) -> tuple[dict[str, Callable], int | None]:
     """Build opponent dict.
 
     Modes:
@@ -606,7 +608,19 @@ def _make_opponents(
       fall back to the live actor (legacy behavior — equivalent to
       "play your shadow").
     """
+    # The Elo-matched path: when an EloPopulation is provided and non-empty,
+    # frozen opponents are sampled via Gaussian-weighted matchmaking on the
+    # live policy's current Elo. The chosen snapshot_id is recorded so the
+    # training loop can apply post-game Elo updates symmetrically.
+    chosen_snapshot_id: int | None = None
     def _frozen_opponent_actor() -> PolicyNetwork:
+        nonlocal chosen_snapshot_id
+        if elo_pop is not None and live_rating is not None and len(elo_pop) > 0:
+            picked = elo_pop.sample_matched(live_rating.rating)
+            if picked is not None:
+                snap, snap_id = picked
+                chosen_snapshot_id = snap_id
+                return snap
         if snapshot_pool is not None:
             snap = snapshot_pool.sample()
             if snap is not None:
@@ -693,10 +707,10 @@ def _make_opponents(
                 # library` already works.
                 op_name = scripted_names[i % len(scripted_names)]
                 scripted_assignment[agent] = _ScriptedAdapter(op_name, seed=seed_base + i)
-            return scripted_assignment
+            return scripted_assignment, chosen_snapshot_id
     if not choices:
         choices = [_random_opponent]
-    return {agent: random.choice(choices) for agent in opponent_agents}
+    return {agent: random.choice(choices) for agent in opponent_agents}, chosen_snapshot_id
 
 
 def _make_env(args: argparse.Namespace):
@@ -791,6 +805,9 @@ def collect_rollouts(
     seed_offset: int,
     snapshot_pool: SnapshotPool | None = None,
     opponent_mode: str | None = None,
+    elo_pop: "EloPopulation | None" = None,
+    live_rating: "LiveRating | None" = None,
+    elo_baseline: float = 0.55,
 ) -> tuple[list[Transition], float, dict[str, int]]:
     env = _make_env(args)
     our_agent = env.possible_agents[0]
@@ -820,13 +837,18 @@ def collect_rollouts(
         stacker = FrameStacker(args.n_frames)
         # Per-game belief-tracking planner for OUR agent. Cheap when use_belief=False.
         planner = AEManager()
-        opponents = _make_opponents(
+        opponents, elo_snapshot_id = _make_opponents(
             actor, device, game_mode,
             [a for a in env.possible_agents if a != our_agent],
             args.n_frames,
             snapshot_pool=snapshot_pool,
             seed_base=None if reset_seed is None else reset_seed + 100_000,
+            elo_pop=elo_pop,
+            live_rating=live_rating,
         )
+        # Snapshot whatever our cumulative reward is so we can extract
+        # this game's score for Elo update.
+        game_start_reward = total_reward
         for op in opponents.values():
             if hasattr(op, "reset"):
                 op.reset()
@@ -876,6 +898,17 @@ def collect_rollouts(
                 if action < 0 or action >= ACTION_DIM or not bool(mask[action]):
                     action = _random_legal_action(mask, env, agent)
             env.step(action)
+
+        # Game finished. If this game used an Elo-pool snapshot opponent,
+        # update its rating + the live rating based on our normalized score
+        # margin vs ``elo_baseline``. ``elo_baseline`` is set to a reasonable
+        # mean cloud score so that the sigmoid centers on "did we play above
+        # or below average for this codebase".
+        if elo_pop is not None and live_rating is not None and elo_snapshot_id is not None:
+            game_reward = (total_reward - game_start_reward) / MAX_SCORE
+            from elo_population import score_to_outcome  # local import to avoid hard dep
+            outcome = score_to_outcome(game_reward, elo_baseline)
+            elo_pop.update(elo_snapshot_id, live_rating, outcome)
 
     env.close()
     return transitions, total_reward / max(args.games_per_update, 1) / MAX_SCORE, mode_counts
@@ -1041,7 +1074,7 @@ def evaluate(
                     os.environ.pop("AE_HYBRID_FIXED_MAP_SHORTCUT", None)
                 else:
                     os.environ["AE_HYBRID_FIXED_MAP_SHORTCUT"] = previous_shortcut
-        opponents = _make_opponents(
+        opponents, _ = _make_opponents(
             actor, device, mode,
             [a for a in env.possible_agents if a != our_agent],
             args.n_frames,
@@ -1421,6 +1454,32 @@ def train(args: argparse.Namespace) -> None:
             f"(seeded with initial actor)"
         )
 
+    # Elo-rated population (24 May 2026 experiment, arxiv 2407.00662 style).
+    # Optional alongside SnapshotPool — when --elo-population is set, frozen
+    # snapshot opponents are sampled with Gaussian weight on the live policy's
+    # Elo instead of uniformly. Disabled by default so the shipping path /
+    # legacy runs are unchanged.
+    elo_pop = None
+    live_rating = None
+    if args.elo_population and snapshot_pool is not None:
+        from elo_population import EloPopulation, LiveRating  # noqa: E402, WPS433
+        elo_pop = EloPopulation(
+            max_size=args.snapshot_pool_size,
+            sigma=args.elo_sigma,
+            k=args.elo_k,
+        )
+        live_rating = LiveRating(rating=args.elo_initial)
+        # Seed the pool with the initial actor at the same Elo as the live
+        # policy so the early matchmaking doesn't pathologically pick only
+        # one snapshot.
+        elo_pop.add(snapshot=copy.deepcopy(actor).cpu().eval(),
+                    initial_elo=live_rating.rating, at_update=0)
+        print(
+            f"elo-population: size_cap={args.snapshot_pool_size} sigma={args.elo_sigma} "
+            f"k={args.elo_k} initial_elo={args.elo_initial} "
+            f"baseline_score={args.elo_baseline:.3f}"
+        )
+
     for update in range(1, args.updates + 1):
         progress = (update - 1) / max(args.updates - 1, 1)
         opponent_mode = _current_opponent_mode(args, update)
@@ -1437,6 +1496,9 @@ def train(args: argparse.Namespace) -> None:
             seed_offset=update * args.games_per_update,
             snapshot_pool=snapshot_pool,
             opponent_mode=opponent_mode,
+            elo_pop=elo_pop,
+            live_rating=live_rating,
+            elo_baseline=args.elo_baseline,
         )
         if not transitions:
             raise SystemExit("No PPO transitions collected; environment likely terminated before our agent acted.")
@@ -1472,10 +1534,27 @@ def train(args: argparse.Namespace) -> None:
         # update so the snapshot reflects the latest weights.
         if snapshot_pool is not None and update % args.snapshot_interval == 0:
             snapshot_pool.add(actor)
+            # Mirror promotion into the Elo population at the live Elo.
+            # This is the standard population-based self-play recipe: when
+            # the current policy is added to the pool, it inherits the
+            # live Elo rather than getting a fixed initial rating.
+            if elo_pop is not None and live_rating is not None:
+                elo_pop.add(
+                    snapshot=copy.deepcopy(actor).cpu().eval(),
+                    initial_elo=live_rating.rating,
+                    at_update=update,
+                )
 
         elapsed = time.time() - start_time
         current_lr = optimizer.param_groups[0]["lr"]
         pool_tag = f" pool={len(snapshot_pool)}" if snapshot_pool is not None else ""
+        if elo_pop is not None and live_rating is not None:
+            es = elo_pop.stats()
+            pool_tag += (
+                f" elo_live={live_rating.rating:.0f}"
+                f" elo_pool=[{es.get('min', 0):.0f}-{es.get('max', 0):.0f}"
+                f", n={es.get('size', 0)}]"
+            )
         mode_tag = _format_mode_counts(mode_counts) if mode_counts else opponent_mode
         eval_tag = ""
         if eval_parts:
@@ -1580,6 +1659,24 @@ def main() -> None:
                              "(set to 0 to disable; falls back to live-actor frozen opponents).")
     parser.add_argument("--snapshot-pool-size", type=int, default=5,
                         help="Max historical snapshots kept in the self-play pool (FIFO).")
+    # Elo population self-play (24 May 2026 experiment). When set, frozen
+    # snapshot opponents are sampled with Gaussian-weight matchmaking on the
+    # live policy's Elo, rather than uniformly. Snapshot pool capacity comes
+    # from --snapshot-pool-size; promotion cadence from --snapshot-interval.
+    parser.add_argument("--elo-population", action="store_true",
+                        help="Enable Elo-rated snapshot population matchmaking. "
+                             "Requires snapshot opponents (league/selfplay/mixed/frozen).")
+    parser.add_argument("--elo-sigma", type=float, default=200.0,
+                        help="Gaussian sigma for matchmaking weight on |snapshot_elo - live_elo|. "
+                             "Smaller = stricter skill matching; larger = closer to uniform.")
+    parser.add_argument("--elo-k", type=float, default=32.0,
+                        help="Chess-standard Elo K-factor for per-game rating updates.")
+    parser.add_argument("--elo-initial", type=float, default=1200.0,
+                        help="Initial Elo for the live policy and the seed snapshot.")
+    parser.add_argument("--elo-baseline", type=float, default=0.55,
+                        help="Normalized score that maps to outcome=0.5 (neutral). "
+                             "Scores above push live Elo up; below push it down. "
+                             "0.55 ~ current heuristic baseline aggregate.")
     parser.add_argument("--use-belief", action="store_true",
                         help="Train with the belief-map architecture (16x16xK extra CNN branch). "
                              "Overridden by the BC checkpoint's use_belief flag if loading one.")

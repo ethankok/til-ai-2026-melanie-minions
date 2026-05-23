@@ -5,8 +5,8 @@
 # bundled unless the env vars below are explicitly changed.
 FROM nvcr.io/nvidia/pytorch:25.11-py3
 
-ARG NLP_RERANKER_REPO=BAAI/bge-reranker-base
-ARG NLP_RERANKER_LOCAL_NAME=bge-reranker-base
+ARG NLP_RERANKER_REPO=BAAI/bge-reranker-large
+ARG NLP_RERANKER_LOCAL_NAME=bge-reranker-large
 
 # Configures settings for the image.
 ENV PYTHONDONTWRITEBYTECODE=1

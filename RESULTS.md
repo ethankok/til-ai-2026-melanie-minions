@@ -293,6 +293,7 @@ blocked by cloud/runtime/quantization failures, not by answer format.
 
 ```text
 NLP (shipped blended high) melanie-minions-nlp v22-vectorized-retrieval 23/05/2026 17:12:48 0 / 700 0.951   0.946  ← NEW NLP HIGH (blended ~0.950). Batched/vectorized query retrieval and reranking to optimize speed.
+NLP (regressed) melanie-minions-nlp v23-large-reranker 23/05/2026 19:17:39 0 / 700 0.949   0.942  ← Weight mismatch: Dockerfile default ARGs still pointed to bge-reranker-base, loading base model with weights optimized for large model.
 NLP (prior blended high) melanie-minions-nlp v21-trigger-only 20/05/2026 04:43:34 0 / 700 0.948   0.941  ← Prior NLP high. Same trigger as v20 but skipping RoBERTa QA.
 NLP (v20 accuracy high) melanie-minions-nlp v20-ae-trigger 20/05/2026 03:54:03 0 / 700 0.951   0.840  ← Universal Adversarial Trigger (HotFlip / Wallace 2019) trained against the bundled `nlp_eval_512` ModernBERT-AE checkpoint and prepended to every answer. Local equiv_rate 0.957, val pass rate 100% with mean prob 0.999. Pipeline otherwise = v9 (RoBERTa kept). Blended ~0.923; v21/v22 supersedes for blended.
 NLP (v14 prior accuracy high) melanie-minions-nlp v14-llm-rag 17/05/2026 16:15:15 0 / 700 0.734   0.286  ← Qwen2.5-7B-Instruct-AWQ via vLLM as the answerer, v9 retrieval kept. Blended 0.622 vs v9 0.734 (-0.112) — speed regressed from 21-min wall-clock. v14b-speed iterates with fewer few-shots.

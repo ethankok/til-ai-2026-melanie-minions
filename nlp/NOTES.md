@@ -1,11 +1,11 @@
 # NLP — notes & history
 
-## v23-large-reranker — BAAI/bge-reranker-large + swept retrieval parameters (Staged)
+## v23-large-reranker-v2 — BAAI/bge-reranker-large + swept retrieval parameters (Staged)
 
 **Best parameters: dpw=0.45, tkr=30, bw=1.0, dw=1.0. Sweep Hit Rate = 0.9751 (861/883).**
-- Default reranker repo updated to `BAAI/bge-reranker-large`.
-- `BM25_WEIGHT` and `DENSE_WEIGHT` updated to `1.0` in `nlp_manager.py`.
-- Correctly downloads and bakes in the large reranker weights during build.
+- Updated default reranker repo to `BAAI/bge-reranker-large` in `nlp_manager.py` and `download_models.py`.
+- Updated `BM25_WEIGHT` and `DENSE_WEIGHT` to `1.0` in `nlp_manager.py` matching optimal sweep.
+- Fixed `nlp/Dockerfile` defaults to properly download and bake in `bge-reranker-large` instead of `bge-reranker-base` at build time (resolving a weight mismatch in the first `v23` submission that scored `0.949 / 0.942`).
 
 ## v22-vectorized-retrieval — batched query retrieval and reranking (SHIPPED, new blended high)
 
