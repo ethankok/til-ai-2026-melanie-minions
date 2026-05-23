@@ -1,0 +1,27 @@
+# Keep the Docker build context lean. Without this file, the 1.5 GB
+# Imagenette training set under src/imagenette2/ and the multi-hundred-KB
+# damage_report.png visualizer output get copied into the build context
+# on every `til build noise`, blowing up image size and push time.
+#
+# Runtime artefacts inside the image (kept):
+#   - src/advgan.py                — Generator architecture
+#   - src/advgan_generator.pth     — trained generator weights (~14 KB)
+#   - src/noise_manager.py         — inference path
+#   - src/noise_server.py          — HTTP wrapper
+#
+# Everything below is training-side or analysis-only and stays on the
+# Workbench disk.
+
+src/imagenette2/
+src/damage_report.png
+src/train_advgan.py
+src/simulate_damage.py
+src/data/
+
+# Python build noise.
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.DS_Store
