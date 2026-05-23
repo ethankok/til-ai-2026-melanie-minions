@@ -1,11 +1,20 @@
 # CV — notes & history
 
+## 24 May 2026 — Dockerfile bumped to CV_IMGSZ=1280
+
+Commit `543516e` flipped `cv/Dockerfile` from `CV_IMGSZ=1024` to
+`CV_IMGSZ=1280` so the next submission of the yolo11l-1280-alldata-final-v2
+weights actually inferences at the resolution the model was trained at.
+The already-shipped v2 row below was submitted at `CV_IMGSZ=1024` and has
+not been re-submitted yet — when the next `til submit cv` goes out, it
+will be at native 1280.
+
 ## yolo11l-1280-alldata-final-v2 — all-data fine-tuned at imgsz=1280 (SHIPPED, pending score)
 
 **Cloud `[pending] / [pending]`, local test `0.988` mAP on novice validation set (small AP: 0.793, medium: 0.974, large: 0.997).**
 - Fine-tuned YOLO11l from the `yolo11l-1024-alldata-final-v1` checkpoint for 36 epochs natively at `imgsz=1280`.
 - Trained on the complete dataset (`cv_yolo_dataset_all`) to maximize representation.
-- Served at `CV_IMGSZ=1024` in `cv/Dockerfile` (model was trained natively at 1280 but inferenced at 1024 — Dockerfile was not bumped before submission).
+- Submitted at `CV_IMGSZ=1024` (Dockerfile was not bumped before this submission). Dockerfile is now at 1280 for the next submission — see top note.
 
 ## yolo11l-896-plusval-v1 — official 0.640 / 0.954 (accuracy high)
 
@@ -52,15 +61,15 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 **`yolo11l-1280-alldata-final-v2` — submitted 23/05 20:55, score pending.**
 Last scored high: **`yolo11l-896-plusval-v1` — official 0.640 / 0.954.**
 
-Dockerfile serves the v2 checkpoint at `CV_IMGSZ=1024` (plusval-v1 was served
-at 896; alldata-final-v2 was trained natively at 1280 but not bumped at the
-Dockerfile before submission). Other serving knobs stay at the ruiyang-sweep
-defaults:
+Dockerfile now serves at `CV_IMGSZ=1280` (bumped 24 May in `543516e` —
+matches the v2 checkpoint's training resolution). The already-shipped v2
+row above was submitted at 1024; the next submission will be at native
+1280. Other serving knobs stay at the ruiyang-sweep defaults:
 
 ```text
 CV_CONF=0.15
 CV_IOU=0.55
-CV_IMGSZ=1024     # was 896 for plusval-v1; held at 1024 for alldata-final-v2
+CV_IMGSZ=1280     # was 896 for plusval-v1, 1024 for the first v2 submit
 CV_AUGMENT=0
 CV_CROSS_CLASS_NMS_IOU=0.97
 CV_SECOND_PASS=0

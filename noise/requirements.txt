@@ -1,4 +1,4 @@
-# Dependencies for the CV container.
+# Dependencies for the Noise container.
 
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
