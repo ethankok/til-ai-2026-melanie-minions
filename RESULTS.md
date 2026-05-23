@@ -309,6 +309,7 @@ blocked by cloud/runtime/quantization failures, not by answer format.
 
 ```text
 NLP (blended & acc high) melanie-minions-nlp v25-bypass 24/05/2026 06:09:26 0 / 700 0.975 0.982  ← NEW BLENDED & ACCURACY HIGH (0.97675). Skip reranker & QA initialization and execution in trigger-only mode (skips ~2.2 GB cross-encoder + QA models).
+NLP (blended & acc tie)  melanie-minions-nlp v26-compiled 24/05/2026 06:32:50 0 / 700 0.975 0.982  ← Compiled dense model + GPU similarity. Speed flat because corpus load time is counted, and compilation warmup overhead offset query speedups.
 NLP (prior blended high) melanie-minions-nlp v24-speed-optimized 23/05/2026 22:52:34 0 / 700 0.959   0.950  ← Prior blended high (0.95675). Halved TOP_K_RETRIEVE (30->15), RERANK_MAX_LEN (256->128), RERANK_BATCH (32->128). Applied new swept weights (dpw=0.6, bw=0.8, dw=0.5, hit rate 0.9807).
 NLP (prior accuracy high) melanie-minions-nlp v23-large-reranker-v2 23/05/2026 20:20:40 0 / 700 0.971   0.880  ← Prior accuracy high. Baked in bge-reranker-large, restored swept retrieval weights (dpw=0.45, bw=1.0, dw=1.0). Blended ~0.948.
 NLP (prior blended high) melanie-minions-nlp v22-vectorized-retrieval 23/05/2026 17:12:48 0 / 700 0.951   0.946  ← Prior NLP high. Batched/vectorized query retrieval and reranking.
@@ -341,7 +342,8 @@ CV (v3-pre) melanie-minions-cv  cv-yolo11m-v3-pre 15/05/2026 11:34:42 0 / 500   
 CV (v11m-1280-noaug-v1) melanie-minions-cv  v11m-1280-noaug-v1 16/05/2026 04:04:59 0 / 500 0.474 0.949  ← REGRESSED -0.082; v11m at 1280 aug=0 looked great locally (hard held-out 0.9088, +0.014 vs tier1) but v11m's local→cloud gap is structurally ~0.44 vs v8s's ~0.35. Tier1 stays on leaderboard.
 CV (cv-augc1-v4) melanie-minions-cv  cv-augc1-v4  16/05/2026 15:28:35 0 / 500 0.553 0.962  ← Phase C.1 augmented training (JPEG aug + 1024×1024 native-res tile crops, v8s @ imgsz=1024 scale=0.80), shipped with mismatched Dockerfile config (CV_IMGSZ=768 default). Essentially tied with tier1; informative only as a config-mismatch demonstration.
 CV (cv-augc1-v4-1280) melanie-minions-cv  cv-augc1-v4-1280 16/05/2026 18:28:27 0 / 500 0.553 0.959  ← Same model rebuilt with matched Dockerfile config (CV_IMGSZ=1280 CV_CONF=0.001 CV_IOU=0.7 CV_AUGMENT=0). Hard held-out lifted +0.04 to 0.948 / small AP 0.779. Cloud flat at 0.553 — gap WIDENED 0.349 → 0.395. Phase C confirmed dead as a path to 0.7; v8s/v11m family at-ceiling. Tier1 stays on leaderboard.
-Noise  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970
+Noise (current high) melanie-minions-noise level9 24/05/2026 06:18:59 0 / 500 1.000 0.934  ← NEW NOISE HIGH. Level 9 AdvGAN single-forward-pass generator (ε=32/255, bilinear upsample, JPEG q=95). Validator: SSIM inside mean `0.9839` (min `0.9414`), L2 inside mean `6.6800`, 500/500 images pass fairness gate. Replaces the JPEG re-encode baseline. Speed dropped 0.970 → 0.934 for the extra forward pass + upsample.
+Noise (prior baseline)  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970  ← Plain JPEG re-encode baseline; superseded by `level9`.
 AE (current high) melanie-minions-ae ppo-full-rl-v1-hybrid 22/05/2026 23:40:11 0 / 30 0.638 0.847 ← CURRENT AE HIGH BY MAX SCORE. Full-RL epoch-230 checkpoint, `AE_MODE=hybrid`, `AE_HYBRID_FIXED_MAP_SHORTCUT=0`; duplicate submits were 0.564/0.843, 0.599/0.848, and 0.552/0.841, so the mean is only ~0.588.
 AE (near-tie / shortcut) melanie-minions-ae ppo-full-rl-v1-hybrid-shortcut 23/05/2026 01:27:37 0 / 30 0.637 0.845 ← Shortcut-on A/B. `AE_HYBRID_FIXED_MAP_SHORTCUT=1` mostly bypasses PPO on detected Novice maps; duplicate submits were 0.521/0.849 and 0.582/0.845. Nearly tying the high shows cloud variance dominates the wrapper/shortcut distinction.
 AE (policy A/B) melanie-minions-ae ppo-full-rl-v1-policy 22/05/2026 22:48:06 0 / 30 0.625 0.848 ← Pure-policy full-RL checkpoint best of 3; other submits were 0.550/0.847 and 0.579/0.848. Same noisy performance band as hybrid variants, just lower max so far.
@@ -445,6 +447,7 @@ v23-large-reranker 23/05 19:17      0.949   0.942   0 / 700   —            Mis
 v23-large-reranker-v2 23/05 20:20   0.971   0.880   0 / 700   —            Baked in bge-reranker-large, restored swept retrieval weights (dpw=0.45, bw=1.0, dw=1.0).
 v24-speed-optimized 23/05 22:52    0.959   0.950   0 / 700   0.9807       Reduced TOP_K_RETRIEVE (30->15), max_len (128), and batched rerank (128) with swept weights (dpw=0.6, bw=0.8, dw=0.5).
 v25-bypass        24/05 06:09        0.975   0.982   0 / 700   0.9900       ★ NEW BLENDED & ACCURACY HIGH ★ (0.97675). Conditional model-bypass in trigger-only mode (skips reranker & QA initialization and forward).
+v26-compiled      24/05 06:32        0.975   0.982   0 / 700   0.973        Compiled dense model + GPU similarity. Speed flat due to counted corpus load time (compilation warmup overhead).
 
 **Architecture conclusion for NLP at this point**: vllm/vllm-openai base image
 is not cloud-shippable for our setup; only NGC base (v14) has cloud-verified

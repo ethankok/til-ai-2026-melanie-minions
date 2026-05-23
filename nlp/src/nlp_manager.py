@@ -132,9 +132,12 @@ AE_TRIGGER_FILE = os.getenv(
 # text, but eliminates the RoBERTa forward at QA time.
 AE_TRIGGER_ONLY = os.getenv("NLP_AE_TRIGGER_ONLY", "0").strip() == "1"
 
-# Default to skip reranker and QA if trigger-only is active
-SKIP_RERANKER_DEFAULT = "1" if AE_TRIGGER_ONLY else "0"
-SKIP_QA_DEFAULT = "1" if AE_TRIGGER_ONLY else "0"
+# Pure BM25 path (no neural retriever, no reranker, no QA model)
+PURE_BM25 = os.getenv("NLP_PURE_BM25", "0").strip() == "1"
+
+# Default to skip reranker and QA if trigger-only or pure BM25 is active
+SKIP_RERANKER_DEFAULT = "1" if (AE_TRIGGER_ONLY or PURE_BM25) else "0"
+SKIP_QA_DEFAULT = "1" if (AE_TRIGGER_ONLY or PURE_BM25) else "0"
 
 SKIP_RERANKER = os.getenv("NLP_SKIP_RERANKER", SKIP_RERANKER_DEFAULT).strip() == "1"
 SKIP_QA = os.getenv("NLP_SKIP_QA", SKIP_QA_DEFAULT).strip() == "1"
@@ -493,6 +496,10 @@ class NLPManager:
         if self._models_initialized:
             return
 
+        if PURE_BM25:
+            self._models_initialized = True
+            return
+
         dense_path = str(DENSE_DIR) if DENSE_DIR.exists() else "BAAI/bge-small-en-v1.5"
         rerank_path = str(RERANKER_DIR) if RERANKER_DIR.exists() else RERANKER_REPO
 
@@ -751,6 +758,15 @@ class NLPManager:
             self.doc_ids.append(doc_id)
             self.documents.append(text)
 
+        doc_tokenized = [_bm25_tokenize(d) for d in self.documents]
+        doc_tokenized = [toks if toks else ["_empty_"] for toks in doc_tokenized]
+        self.doc_bm25 = BM25Okapi(doc_tokenized) if doc_tokenized else None
+
+        if PURE_BM25:
+            self.doc_id_to_idx = {doc_id: idx for idx, doc_id in enumerate(self.doc_ids)}
+            self.loaded = True
+            return
+
         self.passages = []
         self.passage_doc_idx = []
         self.doc_passage_idxs = [[] for _ in self.documents]
@@ -770,10 +786,6 @@ class NLPManager:
         # rank_bm25 expects non-empty token lists; guard against pathological docs.
         tokenized = [toks if toks else ["_empty_"] for toks in tokenized]
         self.bm25 = BM25Okapi(tokenized)
-
-        doc_tokenized = [_bm25_tokenize(d) for d in self.documents]
-        doc_tokenized = [toks if toks else ["_empty_"] for toks in doc_tokenized]
-        self.doc_bm25 = BM25Okapi(doc_tokenized) if doc_tokenized else None
 
         self.passage_embeds = self._embed_passages(self.passages)
         self.doc_embeds = (
@@ -991,6 +1003,16 @@ class NLPManager:
         self, questions: list[str]
     ) -> list[tuple[list[int], list[str], list[int], list[int]]]:
         """Run batched retrieval + rerank, return list of (reranked_passage_idxs, doc_ids, retrieved, doc_candidates)."""
+        if PURE_BM25:
+            results = []
+            for q in questions:
+                q_tokens = _bm25_tokenize(q) or [q.lower()]
+                doc_scores = np.asarray(self.doc_bm25.get_scores(q_tokens), dtype=np.float32)
+                top_doc_idxs = self._top_indices(doc_scores, 3)
+                documents = [self.doc_ids[idx] for idx in top_doc_idxs]
+                results.append(([], documents, [], []))
+            return results
+
         retrieved_list = self._retrieve_batch(questions, TOP_K_RETRIEVE)
         passage_idxs_list = [r[0] for r in retrieved_list]
         doc_candidates_list = [r[1] for r in retrieved_list]
@@ -1946,6 +1968,13 @@ class NLPManager:
     ) -> tuple[list[int], list[str], list[int], list[int]]:
         """Run retrieval + rerank, return (reranked_passage_idxs, doc_ids,
         retrieved, doc_candidates). Shared by extractive and LLM paths."""
+        if PURE_BM25:
+            q_tokens = _bm25_tokenize(question) or [question.lower()]
+            doc_scores = np.asarray(self.doc_bm25.get_scores(q_tokens), dtype=np.float32)
+            top_doc_idxs = self._top_indices(doc_scores, 3)
+            documents = [self.doc_ids[idx] for idx in top_doc_idxs]
+            return [], documents, [], []
+
         retrieved, doc_candidates = self._retrieve(question, TOP_K_RETRIEVE)
         if SKIP_RERANKER:
             reranked = retrieved
@@ -2039,7 +2068,7 @@ class NLPManager:
         return hard_score >= HYBRID_QWEN_THRESHOLD
 
     def _answer_one(self, question: str) -> dict:
-        if not self.loaded or not self.passages:
+        if not self.loaded or (not PURE_BM25 and not self.passages):
             return {"documents": [], "answer": ""}
 
         reranked, documents, retrieved, _ = self._retrieve_for_answer(question)
@@ -2075,7 +2104,7 @@ class NLPManager:
         """
         if not questions:
             return []
-        if not self.loaded or not self.passages:
+        if not self.loaded or (not PURE_BM25 and not self.passages):
             return [{"documents": [], "answer": ""} for _ in questions]
 
         # Use our new batched retrieval + reranking path

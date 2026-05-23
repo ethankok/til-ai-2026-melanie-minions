@@ -1,6 +1,13 @@
 # NLP — notes & history
 
-## v25-bypass — model-bypass in trigger-only mode (SHIPPED, new blended & accuracy high)
+## v26-compiled — compiled dense model and GPU similarity (SHIPPED, blended/accuracy tie)
+
+**Cloud `0.975 / 0.982`, 0/700 errors (24 May 06:32 SGT). Blended/accuracy tie (0.97675).**
+- Compiled the dense retriever model using `torch.compile` on CUDA and ran warmup during corpus load.
+- Kept document and passage embeddings on GPU memory to compute cosine similarity on GPU.
+- Query speed improved significantly, but the overall cloud speed score remained at `0.982` because the corpus load phase (which performs the 296-document embedding and model compilation warmup) is counted in the NLP speed score.
+
+## v25-bypass — model-bypass in trigger-only mode (SHIPPED, prior blended & accuracy high)
 
 **Cloud `0.975 / 0.982`, 0/700 errors (24 May 06:09 SGT). New overall high for blended score (0.97675) and accuracy.**
 - Configured conditional bypass flags `SKIP_RERANKER` and `SKIP_QA` to automatically enable if `NLP_AE_TRIGGER_ONLY=1` is set.

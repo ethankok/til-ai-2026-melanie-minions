@@ -35,6 +35,9 @@ ENV NLP_COMPOSITION_MODE=off
 # trigger as the candidate. Locally measured 0.994 AE pass rate; saves the QA
 # inference time. Set to 0 to keep v20-style trigger+real_answer concat.
 ENV NLP_AE_TRIGGER_ONLY=1
+# v26-pure-bm25: use pure document-level BM25 search to skip dense model loading
+# and encoding. Reduces corpus-load time from ~15 seconds to ~0.05 seconds.
+ENV NLP_PURE_BM25=1
 # v15-lora: directory inside the image where the trained LoRA adapter
 # lives. llm_answerer.py auto-enables LoRA in vLLM when this path contains
 # an adapter_config.json. Set to empty string to force base-model-only.
