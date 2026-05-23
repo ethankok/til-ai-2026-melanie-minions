@@ -1,24 +1,21 @@
 # CV — notes & history
 
-Last updated: 19 May 2026 18:45 SGT — **`ry-v2` is the current CV high:
-0.608/0.961 official, 0/500 errors.** Same weights as `ruiyang-v1`, but with
-the partial core sweep's serving row baked in: `CV_CONF=0.15`, `CV_IOU=0.55`,
-`CV_IMGSZ=896`, `CV_AUGMENT=0`, `CV_CROSS_CLASS_NMS_IOU=0.97`. Local hard
-held-out mAP was 0.9234.
+Last updated: 22 May 2026 — **`yolo11l-896-plusval-v1` is the current CV high:
+0.640 / 0.954 official.** It replaces `ry-v2` (0.608/0.961). The plusval recipe
+folds the old val split back into training while keeping the hard test split
+for sanity (old train had only 34 cruise ships / 52 warships / 56 yachts vs
+ship-heavy val+test). A final all-data fine-tune from that checkpoint at 1024px
+completed 70 epochs with local val mAP50-95 around 0.985; `cv/Dockerfile` is
+set to `CV_IMGSZ=1024` for the staged final build/test/submit candidate
+`yolo11l-1024-alldata-final-v1`.
 
 20 May update: `cv/src/cv_manager.py` now has an opt-in Hugging Face OWLv2
 zero-shot detector path behind `CV_MODEL_FAMILY=owlv2`. It maps the 18 official
 TIL category prompts to LTWH output, supports custom `CV_OWLV2_PROMPTS`, and
-keeps `ry-v2` as the Docker default until Workbench `til test` / submission
-numbers prove OWLv2 helps. For offline evaluator runs, prefetch/bake the model
-cache during Docker build or point `CV_OWLV2_MODEL_ID` at a copied local model
-directory, then keep `CV_OWLV2_LOCAL_FILES_ONLY=1`.
-
-22 May final push: `yolo11l-896-plusval-v1` raised official CV to **0.640 /
-0.954**. A final all-data fine-tune from that checkpoint at 1024px completed
-70 epochs with local val mAP50-95 around 0.985; `cv/Dockerfile` is set to
-`CV_IMGSZ=1024` for the final build/test/submit candidate
-`yolo11l-1024-alldata-final-v1`.
+keeps the YOLO path as the Docker default until Workbench `til test` /
+submission numbers prove OWLv2 helps. For offline evaluator runs, prefetch/bake
+the model cache during Docker build or point `CV_OWLV2_MODEL_ID` at a copied
+local model directory, then keep `CV_OWLV2_LOCAL_FILES_ONLY=1`.
 
 Failed follow-up: `ry_v3_adaptive` tried low-conf base (`CV_CONF=0.05`,
 `CV_IOU=0.70`, `CV_CROSS_CLASS_NMS_IOU=0`) plus an adaptive down-weighted TTA
@@ -48,21 +45,23 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`ry-v2` — official 0.608 / 0.961 (19 May 18:37 SGT, 0/500 errors).**
+**`yolo11l-896-plusval-v1` — official 0.640 / 0.954.**
 
-Current submitted serving row baked into `cv/Dockerfile`:
+Current Dockerfile serving config is `CV_IMGSZ=1024` (staged for the
+`yolo11l-1024-alldata-final-v1` follow-up build); the plusval-v1 checkpoint was
+served at 896. Other serving knobs stay at the ruiyang-sweep defaults:
 
 ```text
 CV_CONF=0.15
 CV_IOU=0.55
-CV_IMGSZ=896
+CV_IMGSZ=1024     # was 896 for plusval-v1; bumped for alldata-final
 CV_AUGMENT=0
 CV_CROSS_CLASS_NMS_IOU=0.97
 CV_SECOND_PASS=0
 ```
 
-The previous high was `ruiyang-v1` at 0.588 / 0.955; the older parked tag was
-`cv-yolo-v2-tier1-best` at 0.556 / 0.956.
+Previous CV highs: `ry-v2` 0.608 / 0.961, `ruiyang-v1` 0.588 / 0.955, parked
+v8s `cv-yolo-v2-tier1-best` 0.556 / 0.956.
 
 Tier1 + Tier2 attempts (15-16 May) all regressed cloud or were blended-flat:
 
