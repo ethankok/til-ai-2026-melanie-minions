@@ -93,7 +93,9 @@ TOP_K_DOC_RETRIEVE = 8       # whole-doc candidates used to seed reranker
 TOP_K_DOC_SEED = 4           # max extra passages added from doc candidates
 TOP_K_RERANK = 10            # passages handed to QA
 TOP_DOCS_RETURNED = 3        # eval considers first 3
-DOC_PRIOR_WEIGHT = 0.35      # light doc-level prior on passage retrieval
+DOC_PRIOR_WEIGHT = 0.45      # light doc-level prior on passage retrieval
+BM25_WEIGHT = 0.5            # BM25 weight from parameter sweep
+DENSE_WEIGHT = 0.8           # Dense weight from parameter sweep
 QA_MAX_ANSWER_TOKENS = 64    # eval truncates beyond this
 EMBED_BATCH = 64
 RERANK_BATCH = 32
@@ -693,6 +695,26 @@ class NLPManager:
         hidden = F.normalize(hidden, p=2, dim=1)
         return hidden.float().cpu().squeeze(0)
 
+    @torch.no_grad()
+    def _embed_queries(self, queries: list[str]) -> torch.Tensor:
+        prefixed = ["Represent this sentence for searching relevant passages: " + q for q in queries]
+        out = []
+        for start in range(0, len(prefixed), EMBED_BATCH):
+            batch = prefixed[start : start + EMBED_BATCH]
+            enc = self._dense_tok(
+                batch,
+                padding=True,
+                truncation=True,
+                max_length=DENSE_MAX_LEN,
+                return_tensors="pt",
+            ).to(self.device)
+            hidden = self._dense_model(**enc).last_hidden_state[:, 0]
+            hidden = F.normalize(hidden, p=2, dim=1)
+            out.append(hidden.float().cpu())
+        if not out:
+            return torch.empty(0, 384)
+        return torch.cat(out, dim=0)
+
     def load_corpus(self, documents: list) -> None:
         self._init_models()
 
@@ -767,7 +789,7 @@ class NLPManager:
         q_embed = self._embed_query(question)
         dense_scores = (self.passage_embeds @ q_embed).numpy().astype(np.float32)
 
-        passage_hybrid = _zscore(bm25_scores) + _zscore(dense_scores)
+        passage_hybrid = BM25_WEIGHT * _zscore(bm25_scores) + DENSE_WEIGHT * _zscore(dense_scores)
 
         doc_idxs: list[int] = []
         doc_hybrid = np.empty(0, dtype=np.float32)
@@ -776,7 +798,7 @@ class NLPManager:
                 self.doc_bm25.get_scores(q_tokens), dtype=np.float32
             )
             doc_dense_scores = (self.doc_embeds @ q_embed).numpy().astype(np.float32)
-            doc_hybrid = _zscore(doc_bm25_scores) + _zscore(doc_dense_scores)
+            doc_hybrid = BM25_WEIGHT * _zscore(doc_bm25_scores) + DENSE_WEIGHT * _zscore(doc_dense_scores)
             doc_idxs = self._top_indices(doc_hybrid, TOP_K_DOC_RETRIEVE)
 
         hybrid = passage_hybrid
@@ -833,6 +855,128 @@ class NLPManager:
             scores.extend(float(score) for score in batch_scores)
         order = sorted(range(len(passage_idxs)), key=lambda i: -scores[i])
         return [passage_idxs[i] for i in order]
+
+    def _retrieve_batch(self, questions: list[str], k: int) -> list[tuple[list[int], list[int]]]:
+        # 1. Tokenize all questions for BM25
+        q_tokens_list = [_bm25_tokenize(q) or [q.lower()] for q in questions]
+
+        # 2. Get BM25 scores (CPU-based rank_bm25 is fast)
+        bm25_scores_list = [np.asarray(self.bm25.get_scores(q_toks), dtype=np.float32) for q_toks in q_tokens_list]
+
+        # 3. Batch embed all queries
+        q_embeds = self._embed_queries(questions) # Shape: (B, 384)
+
+        # 4. Dense cosine similarity
+        dense_scores_matrix = (q_embeds @ self.passage_embeds.T).numpy().astype(np.float32)
+
+        # 5. Whole-document BM25 and dense
+        doc_dense_scores_matrix = None
+        doc_bm25_scores_list = []
+        if self.doc_bm25 is not None and self.doc_embeds is not None and self.documents:
+            doc_bm25_scores_list = [np.asarray(self.doc_bm25.get_scores(q_toks), dtype=np.float32) for q_toks in q_tokens_list]
+            doc_dense_scores_matrix = (q_embeds @ self.doc_embeds.T).numpy().astype(np.float32)
+
+        results = []
+        for i, question in enumerate(questions):
+            bm25_scores = bm25_scores_list[i]
+            dense_scores = dense_scores_matrix[i]
+            passage_hybrid = BM25_WEIGHT * _zscore(bm25_scores) + DENSE_WEIGHT * _zscore(dense_scores)
+
+            doc_idxs: list[int] = []
+            doc_hybrid = np.empty(0, dtype=np.float32)
+            if doc_dense_scores_matrix is not None:
+                doc_bm25_scores = doc_bm25_scores_list[i]
+                doc_dense_scores = doc_dense_scores_matrix[i]
+                doc_hybrid = BM25_WEIGHT * _zscore(doc_bm25_scores) + DENSE_WEIGHT * _zscore(doc_dense_scores)
+                doc_idxs = self._top_indices(doc_hybrid, TOP_K_DOC_RETRIEVE)
+
+            hybrid = passage_hybrid
+            if doc_hybrid.size:
+                doc_prior = np.asarray(
+                    [doc_hybrid[d] for d in self.passage_doc_idx], dtype=np.float32
+                )
+                hybrid = hybrid + DOC_PRIOR_WEIGHT * _zscore(doc_prior)
+
+            passage_idxs = self._top_indices(hybrid, k)
+
+            seen = set(passage_idxs)
+            for didx in doc_idxs[:TOP_K_DOC_SEED]:
+                candidates = (
+                    self.doc_passage_idxs[didx]
+                    if didx < len(self.doc_passage_idxs) else []
+                )
+                if not candidates:
+                    continue
+                best_pidx = max(candidates, key=lambda pidx: hybrid[pidx])
+                if best_pidx not in seen:
+                    passage_idxs.append(best_pidx)
+                    seen.add(best_pidx)
+            results.append((passage_idxs, doc_idxs))
+
+        return results
+
+    @torch.no_grad()
+    def _rerank_batch(self, questions: list[str], passage_idxs_list: list[list[int]]) -> list[list[int]]:
+        pairs = []
+        lengths = []
+        for i, q in enumerate(questions):
+            p_idxs = passage_idxs_list[i]
+            lengths.append(len(p_idxs))
+            for pidx in p_idxs:
+                pairs.append((q, self.passages[pidx]))
+
+        if not pairs:
+            return [[] for _ in questions]
+
+        scores: list[float] = []
+        for start in range(0, len(pairs), RERANK_BATCH):
+            batch = pairs[start : start + RERANK_BATCH]
+            enc = self._rerank_tok(
+                [b[0] for b in batch],
+                [b[1] for b in batch],
+                padding=True,
+                truncation=True,
+                max_length=RERANK_MAX_LEN,
+                return_tensors="pt",
+            ).to(self.device)
+            logits = self._rerank_model(**enc).logits.float().cpu()
+            if logits.ndim == 1:
+                batch_scores = logits.tolist()
+            elif logits.shape[-1] == 1:
+                batch_scores = logits[:, 0].tolist()
+            else:
+                batch_scores = (logits[:, -1] - logits[:, 0]).tolist()
+            scores.extend(float(score) for score in batch_scores)
+
+        offset = 0
+        reranked_results = []
+        for i, p_idxs in enumerate(passage_idxs_list):
+            length = lengths[i]
+            q_scores = scores[offset : offset + length]
+            offset += length
+
+            order = sorted(range(len(p_idxs)), key=lambda idx: -q_scores[idx])
+            reranked_results.append([p_idxs[idx] for idx in order])
+
+        return reranked_results
+
+    def _retrieve_for_answer_batch(
+        self, questions: list[str]
+    ) -> list[tuple[list[int], list[str], list[int], list[int]]]:
+        """Run batched retrieval + rerank, return list of (reranked_passage_idxs, doc_ids, retrieved, doc_candidates)."""
+        retrieved_list = self._retrieve_batch(questions, TOP_K_RETRIEVE)
+        passage_idxs_list = [r[0] for r in retrieved_list]
+        doc_candidates_list = [r[1] for r in retrieved_list]
+
+        reranked_list = self._rerank_batch(questions, passage_idxs_list)
+
+        results = []
+        for i in range(len(questions)):
+            documents = self._top_doc_ids(
+                reranked_list[i], fallback=passage_idxs_list[i], doc_fallback=doc_candidates_list[i]
+            )
+            results.append((reranked_list[i], documents, passage_idxs_list[i], doc_candidates_list[i]))
+        return results
 
     def _top_doc_ids(
         self,
@@ -1898,19 +2042,22 @@ class NLPManager:
         if not self.loaded or not self.passages:
             return [{"documents": [], "answer": ""} for _ in questions]
 
+        # Use our new batched retrieval + reranking path
+        batch_retrieved = self._retrieve_for_answer_batch(questions)
+
         # v21: trigger-only short-circuit — retrieval only, no QA forward.
         if self._ae_trigger_only:
             results = []
-            for q in questions:
-                _, documents, _, _ = self._retrieve_for_answer(q)
+            for item in batch_retrieved:
+                _, documents, _, _ = item
                 results.append({"documents": documents, "answer": self._ae_trigger})
             return results
 
         if self._answerer_mode == "llm" and self._llm_answerer is not None:
             doc_lists: list[list[str]] = []
             chunks_per_q: list[list[str]] = []
-            for q in questions:
-                reranked, documents, _, _ = self._retrieve_for_answer(q)
+            for item in batch_retrieved:
+                reranked, documents, _, _ = item
                 doc_lists.append(documents)
                 chunks_per_q.append(self._llm_chunks_for(reranked))
             answers = self._llm_answerer.answer_batch(questions, chunks_per_q)
@@ -1922,8 +2069,8 @@ class NLPManager:
         if self._answerer_mode == "hybrid" and self._llm_answerer is not None:
             results: list[dict] = []
             qwen_jobs: list[tuple[int, str, list[str]]] = []
-            for q in questions:
-                reranked, documents, _, _ = self._retrieve_for_answer(q)
+            for i, q in enumerate(questions):
+                reranked, documents, _, _ = batch_retrieved[i]
                 candidates = self._answer_candidates(q, reranked, documents)
                 answer = candidates[0].text if candidates else ""
                 result_idx = len(results)
@@ -1949,7 +2096,14 @@ class NLPManager:
                 r["answer"] = self._apply_ae_trigger(r["answer"])
             return results
 
-        return [self._answer_one(q) for q in questions]
+        # Extractive QA mode fallback using batch retrieved docs/passages
+        results = []
+        for i, q in enumerate(questions):
+            reranked, documents, _, _ = batch_retrieved[i]
+            candidates = self._answer_candidates(q, reranked, documents)
+            answer = candidates[0].text if candidates else ""
+            results.append({"documents": documents, "answer": self._apply_ae_trigger(answer)})
+        return results
 
     # Compatibility shim — old call site returns a bare string.
     def qa(self, question: str) -> dict:
