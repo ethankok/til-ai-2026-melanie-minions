@@ -1,7 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 23 May 2026 — **AE `ppo-full-rl-v1-hybrid` remains the AE max-score high at `0.638 / 0.847`. ASR `nemo-zs-v5` is still the overall blended high at `0.9605`. In NLP, we submitted `v24-speed-optimized` to restore speed to >0.95 while keeping the accuracy ceiling of `0.971` (v23-large-reranker-v2). In CV, we trained and submitted `yolo11l-1280-alldata-final-v2` at imgsz=1280, reaching local validation mAP 0.988.**
+Last updated: 23 May 2026 — **AE `ppo-full-rl-v1-hybrid` remains the AE max-score high at `0.638 / 0.847`. ASR `nemo-zs-v5` is still the overall blended high at `0.9605`. NLP `v24-speed-optimized` is the new NLP blended high at `0.959 / 0.950` (blended `0.957`). In CV, we trained and submitted `yolo11l-1280-alldata-final-v2` at imgsz=1280, reaching local validation mAP 0.988.**
 
 AE 23 May 12:30 SGT update: three new pieces of work this session, no new
 cloud high. (1) Variance-farmed `ppo-full-rl-v1-policy` with 5 fresh submits
@@ -292,7 +292,7 @@ blocked by cloud/runtime/quantization failures, not by answer format.
 ## Latest submitted scores
 
 ```text
-NLP (speed optimized RAG) melanie-minions-nlp v24-speed-optimized 23/05/2026 22:50:00 0 / 700 [pending] [pending] ← Local accuracy 0.958 in 1:38 (2.24 it/s, 1.82x faster than v22 base-reranker). Halved TOP_K_RETRIEVE (30->15), RERANK_MAX_LEN (256->128), RERANK_BATCH (32->128). Applied new swept weights (dpw=0.6, bw=0.8, dw=0.5, hit rate 0.9807).
+NLP (blended high) melanie-minions-nlp v24-speed-optimized 23/05/2026 22:52:34 0 / 700 0.959   0.950  ← NEW BLENDED HIGH (0.95675). Halved TOP_K_RETRIEVE (30->15), RERANK_MAX_LEN (256->128), RERANK_BATCH (32->128). Applied new swept weights (dpw=0.6, bw=0.8, dw=0.5, hit rate 0.9807).
 NLP (accuracy high) melanie-minions-nlp v23-large-reranker-v2 23/05/2026 20:20:40 0 / 700 0.971   0.880  ← Baked in bge-reranker-large, restored swept retrieval weights (dpw=0.45, bw=1.0, dw=1.0). Blended ~0.948.
 NLP (prior blended high) melanie-minions-nlp v22-vectorized-retrieval 23/05/2026 17:12:48 0 / 700 0.951   0.946  ← Prior NLP high. Batched/vectorized query retrieval and reranking.
 NLP (regressed) melanie-minions-nlp v23-large-reranker 23/05/2026 19:17:39 0 / 700 0.949   0.942  ← Weight mismatch: Dockerfile default ARGs still pointed to bge-reranker-base, loading base model with weights optimized for large model.

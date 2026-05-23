@@ -1,8 +1,8 @@
 # NLP — notes & history
 
-## v24-speed-optimized — optimized RAG search parameters and lengths (SHIPPED, pending score)
+## v24-speed-optimized — optimized RAG search parameters and lengths (SHIPPED, blended high)
 
-**Cloud `[pending] / [pending]`, local test `0.958` accuracy in `1:38` (2.24 it/s, 1.82x faster than v22 base-reranker).**
+**Cloud `0.959 / 0.950`, 0/700 errors (23 May 22:52 SGT). New shipped tag for blended score (0.95675).**
 - Ran an optimized parameter sweep and found a new optimal retrieval config at `TOP_K_RETRIEVE=15` yielding `0.9807` hit rate (vs `0.9751` at `tkr=30`).
 - Halved candidate pool size `TOP_K_RETRIEVE` from `30` to `15` to reduce the heavy `bge-reranker-large` workload by 50%.
 - Reduced `RERANK_MAX_LEN` from `256` to `128` (short queries + 3-sentence passages easily fit), accelerating transformer self-attention.
