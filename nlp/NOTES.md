@@ -1,8 +1,8 @@
 # NLP — notes & history
 
-## v28-optimized-bm25 — tuned hybrid BM25 (SHIPPED, pending score)
+## v28-optimized-bm25 — tuned hybrid BM25 (SHIPPED, blended & accuracy high)
 
-**Cloud `[pending] / [pending]`, 0/700 errors (24 May 13:02 SGT).**
+**Cloud `0.984 / 0.985`, 0/700 errors (24 May 13:01 SGT). New overall blended & accuracy high (0.98425).**
 - Replaced default document-level BM25 with a tuned hybrid document-level and passage-level BM25 retriever.
 - Tuned document-level BM25 parameters to `k1=2.05, b=1.0` (optimal document-length normalization, yields 0.9819 hit rate locally).
 - Combined document-level BM25 with passage-level BM25 (3-sentence windows, default parameters `k1=1.5, b=0.75`) using a z-score weighted combination: `doc_score + 0.6 * max_passage_score`.
