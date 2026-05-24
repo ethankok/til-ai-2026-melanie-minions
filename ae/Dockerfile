@@ -16,14 +16,7 @@ WORKDIR /workspace
 # uses the right mode. Edit this line before each `til build` to switch
 # modes, OR write the mode into `ae/src/.ae_mode` (the server reads that
 # file at startup if AE_MODE is unset in the container env).
-#
-# 24 May 2026: hail-mary scripted-attack rewrite regressed on cloud
-# (0.394, 0.382 over 2 submits vs heuristic-A-vf1 0.613). Reverted to
-# legacy ae_manager.py. Keep AE_MODE=heuristic so we ship the rule-based
-# planner directly, no hybrid wrapper, no PPO load.
-ENV AE_MODE=heuristic
-ENV AE_ENEMY_BASE_VALUE=160
-ENV AE_DIST_PENALTY=0.9
+ENV AE_MODE=hybrid
 # MCTS-light is a known-regressed experiment, so keep it opt-in. See
 # ae/NOTES.md for the speed budget math and the v1/v2 cloud failures.
 # v1 used DEPTH=5 WIDTH=96 with no gate / no latency cap; cloud killed it after
