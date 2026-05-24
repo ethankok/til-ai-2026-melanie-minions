@@ -45,7 +45,7 @@ def main() -> int:
     model = ASRModel.restore_from(restore_path=str(args.base_model))
 
     print(f"Loading checkpoint state dict from {args.ckpt} ...", flush=True)
-    checkpoint = torch.load(args.ckpt, map_location="cpu")
+    checkpoint = torch.load(args.ckpt, map_location="cpu", weights_only=False)
     state_dict = checkpoint["state_dict"]
 
     print("Loading weights into model ...", flush=True)
