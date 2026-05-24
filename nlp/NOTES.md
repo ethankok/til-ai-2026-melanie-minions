@@ -1,5 +1,22 @@
 # NLP — notes & history
 
+## v28-optimized-bm25 — tuned hybrid BM25 (SHIPPED, pending score)
+
+**Cloud `[pending] / [pending]`, 0/700 errors (24 May 13:02 SGT).**
+- Replaced default document-level BM25 with a tuned hybrid document-level and passage-level BM25 retriever.
+- Tuned document-level BM25 parameters to `k1=2.05, b=1.0` (optimal document-length normalization, yields 0.9819 hit rate locally).
+- Combined document-level BM25 with passage-level BM25 (3-sentence windows, default parameters `k1=1.5, b=0.75`) using a z-score weighted combination: `doc_score + 0.6 * max_passage_score`.
+- Achieved a local hit rate of **0.9853** (870/883) and a local `til test` equivalent rate of **0.980** (865.2/883), which is better than dense BGE hybrid's 0.9807 hit rate (and 0.975 accuracy).
+- Maintained the speed advantages of bypassing neural models (estimated query latency <1ms, corpus indexing <0.5s).
+
+## v27-pure-bm25 — pure document-level BM25 (SHIPPED, blended tie)
+
+**Cloud `0.971 / 0.994`, 0/700 errors (24 May 12:23 SGT). Blended score tie (0.97675).**
+- Enabled `NLP_PURE_BM25=1` to run a pure whole-document BM25 index on CPU.
+- Bypassed loading of all neural models (no dense retriever, no reranker, no QA model), dropping corpus load time to ~0.05 seconds.
+- Speed score improved to `0.994` (confirming that corpus load time is a major speed bottleneck).
+- Accuracy fell slightly to `0.971` (local hit rate 0.9796) due to relying purely on default document-level BM25 without passage routing.
+
 ## v26-compiled — compiled dense model and GPU similarity (SHIPPED, blended/accuracy tie)
 
 **Cloud `0.975 / 0.982`, 0/700 errors (24 May 06:32 SGT). Blended/accuracy tie (0.97675).**

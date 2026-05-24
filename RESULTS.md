@@ -1,7 +1,7 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 24 May 2026 — **AE is parked after local sweep work. The protected leaderboard max remains `ppo-full-rl-v1-hybrid` at `0.638 / 0.847`, but that tag was retroactively confirmed to have served pure heuristic through silent policy-load fallback. The best intentional heuristic cloud tag is `heuristic-A-vf1` at `0.613 / 0.845` (3 cloud submits, mean `0.599`). Five structural experiments (dypm, opening book, rusher, camping, Elo population self-play), broad/focused/bridge heuristic sweeps, and a controlled option-v2 planner sweep all failed to produce a promotable candidate. ASR `nemo-zs-v5` is still the overall blended high at `0.9605`. NLP `v25-bypass` is the new overall blended high at `0.97675` (Score: `0.975`, Speed: `0.982`). CV `yolo11l-1280-alldata-final-v2` at imgsz=1280 reached local validation mAP 0.988.**
+Last updated: 24 May 2026 — **AE is parked after local sweep work. The protected leaderboard max remains `ppo-full-rl-v1-hybrid` at `0.638 / 0.847`, but that tag was retroactively confirmed to have served pure heuristic through silent policy-load fallback. The best intentional heuristic cloud tag is `heuristic-A-vf1` at `0.613 / 0.845` (3 cloud submits, mean `0.599`). Five structural experiments (dypm, opening book, rusher, camping, Elo population self-play), broad/focused/bridge heuristic sweeps, and a controlled option-v2 planner sweep all failed to produce a promotable candidate. ASR `nemo-zs-v5` is still the overall blended high at `0.9605`. NLP `v28-optimized-bm25` is submitted to optimize pure BM25 retrieval (local evaluator 0.980 accuracy). CV `yolo11l-1280-alldata-final-v2` at imgsz=1280 reached local validation mAP 0.988.**
 
 AE 24 May session — full submission log (17 new submits, best intentional heuristic tag found):
 
@@ -318,7 +318,9 @@ blocked by cloud/runtime/quantization failures, not by answer format.
 ## Latest submitted scores
 
 ```text
-NLP (blended & acc high) melanie-minions-nlp v25-bypass 24/05/2026 06:09:26 0 / 700 0.975 0.982  ← NEW BLENDED & ACCURACY HIGH (0.97675). Skip reranker & QA initialization and execution in trigger-only mode (skips ~2.2 GB cross-encoder + QA models).
+NLP (optimized hybrid BM25) melanie-minions-nlp v28-optimized-bm25 24/05/2026 13:02:00 0 / 700 [pending] [pending]  ← NEW STAGED HYBRID BM25. Combined tuned document BM25 (k1=2.05, b=1.0) and passage BM25 (k1=1.5, b=0.75) with w=0.6. Local hit rate 0.9853 (accuracy 0.980 on til test).
+NLP (pure BM25)             melanie-minions-nlp v27-pure-bm25 24/05/2026 12:23:00 0 / 700 0.971 0.994  ← Pure document BM25 (default params). Bypassed dense models entirely for speed. Blended 0.97675.
+NLP (blended & acc high)    melanie-minions-nlp v25-bypass 24/05/2026 06:09:26 0 / 700 0.975 0.982  ← NEW BLENDED & ACCURACY HIGH (0.97675). Skip reranker & QA initialization and execution in trigger-only mode (skips ~2.2 GB cross-encoder + QA models).
 NLP (blended & acc tie)  melanie-minions-nlp v26-compiled 24/05/2026 06:32:50 0 / 700 0.975 0.982  ← Compiled dense model + GPU similarity. Speed flat because corpus load time is counted, and compilation warmup overhead offset query speedups.
 NLP (prior blended high) melanie-minions-nlp v24-speed-optimized 23/05/2026 22:52:34 0 / 700 0.959   0.950  ← Prior blended high (0.95675). Halved TOP_K_RETRIEVE (30->15), RERANK_MAX_LEN (256->128), RERANK_BATCH (32->128). Applied new swept weights (dpw=0.6, bw=0.8, dw=0.5, hit rate 0.9807).
 NLP (prior accuracy high) melanie-minions-nlp v23-large-reranker-v2 23/05/2026 20:20:40 0 / 700 0.971   0.880  ← Prior accuracy high. Baked in bge-reranker-large, restored swept retrieval weights (dpw=0.45, bw=1.0, dw=1.0). Blended ~0.948.
