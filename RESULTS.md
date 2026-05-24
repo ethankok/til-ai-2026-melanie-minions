@@ -319,6 +319,7 @@ blocked by cloud/runtime/quantization failures, not by answer format.
 
 ```text
 NLP (blended & acc high)    melanie-minions-nlp v28-optimized-bm25 24/05/2026 13:01:16 0 / 700 0.984 0.985  ← NEW BLENDED & ACCURACY HIGH (0.98425). Combined tuned document BM25 (k1=2.05, b=1.0) and passage BM25 (k1=1.5, b=0.75) with w=0.6. Local hit rate 0.9853 (accuracy 0.980 on til test).
+NLP (non-promoting A/B)     melanie-minions-nlp v29-bm25-k1-retune 24/05/2026 17:54:45 0 / 700 0.984 0.984  ← Retuned pure-BM25 document k1 from 2.05 to 1.8. Saved predictions confirm 871/883 retrieval hits, but cloud accuracy rounded to the same 0.984 as v28 and speed lost 0.001, so v28 remains protected.
 NLP (pure BM25)             melanie-minions-nlp v27-pure-bm25 24/05/2026 12:23:00 0 / 700 0.971 0.994  ← Pure document BM25 (default params). Bypassed dense models entirely for speed. Blended 0.97675.
 NLP (prior blended high)    melanie-minions-nlp v25-bypass 24/05/2026 06:09:26 0 / 700 0.975 0.982  ← Prior blended high. Skip reranker & QA initialization and execution in trigger-only mode (skips ~2.2 GB cross-encoder + QA models).
 NLP (blended & acc tie)  melanie-minions-nlp v26-compiled 24/05/2026 06:32:50 0 / 700 0.975 0.982  ← Compiled dense model + GPU similarity. Speed flat because corpus load time is counted, and compilation warmup overhead offset query speedups.

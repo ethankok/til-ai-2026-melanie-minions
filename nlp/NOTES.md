@@ -1,13 +1,13 @@
 # NLP — notes & history
 
-## v29-bm25-k1-retune — pure BM25 document-k1 retune (CANDIDATE)
+## v29-bm25-k1-retune — pure BM25 document-k1 retune (SUBMITTED, non-promoting A/B)
 
-**Submitted 24 May 2026 as `v29-bm25-k1-retune`; Discord/cloud score pending. Workbench `til test` passed at `0.981` accuracy with 0 visible request failures. Local manager gate: 871/883 top-3 hit rate (0.9864), `load_seconds=0.400`, 0 import/check errors.**
+**Cloud `0.984 / 0.984`, 0/700 errors (24 May 17:54 SGT). Non-promoting A/B: accuracy tied `v28-optimized-bm25`, speed lost 0.001, so `v28` remains the protected blended high. Workbench `til test` passed at `0.981` accuracy with 0 visible request failures. Local manager gate and saved cloud predictions both show 871/883 top-3 retrieval hits (0.9864), `load_seconds=0.400`, 0 import/check errors.**
 - Code-review pass on top of `v28-optimized-bm25` found no sensible neural-model changes: v28 is already retrieval-only, trigger-only, and near the local retrieval ceiling.
 - One focused local sweep over the shipped pure-BM25 scorer found a tiny, architecture-preserving gain by reducing document-level BM25 `k1` from `2.05` to `1.8`, keeping `b=1.0` and passage weight `0.6`.
 - Local top-3 source-document hit rate moved from **870/883 (0.9853)** to **871/883 (0.9864)** on `data/novice/nlp/nlp.jsonl`.
 - The change is exposed as env defaults (`NLP_PURE_BM25_DOC_K1`, `NLP_PURE_BM25_DOC_B`, `NLP_PURE_BM25_PASSAGE_K1`, `NLP_PURE_BM25_PASSAGE_B`, `NLP_PURE_BM25_PASSAGE_WEIGHT`) so Workbench can roll forward or override without another source patch.
-- Risk: this is a one-question local gain at an already-high score. If Discord returns below `v28-optimized-bm25` (`0.984 / 0.985`), keep v28 as the protected NLP high and treat v29 as a harmless submitted A/B.
+- Diagnosis: the one-question local retrieval gain transferred into the saved predictions (`871/883` retrieval hits vs v28 note's `870/883` local gate), but cloud accuracy rounded to the same `0.984`; because there was no architecture-level speed improvement, normal speed variance made the blended score slightly worse than v28.
 
 ## v28-optimized-bm25 — tuned hybrid BM25 (SHIPPED, blended & accuracy high)
 
