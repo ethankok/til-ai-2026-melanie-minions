@@ -295,6 +295,7 @@ def main() -> int:
         EarlyStopping,
         LearningRateMonitor,
     )
+    from pytorch_lightning.loggers import CSVLogger
     try:
         from nemo.collections.common.parts.optional_cuda_graphs import WithOptionalCudaGraphs
         WithOptionalCudaGraphs.enable_cuda_graphs_recursive = lambda *args, **kwargs: None
