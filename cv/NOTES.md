@@ -58,6 +58,15 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
+**`yolo11-optimized-v3` — high-precision + TTA at 1280 (SHIPPED, pending score)**
+**Submitted: 24/05 (By [Your Name])**
+- Rebuilt from the `yolo11l-1280-alldata-final-v2` checkpoint.
+- **Fixed:** The v2 submission accidentally served at 1024px. The Dockerfile was already bumped to 1280px, so this build finally serves at native resolution.
+- **Precision Tweak:** Bumped `CV_CONF` from 0.15 to 0.20 to prune false positives.
+- **Recall Tweak:** Flipped `CV_AUGMENT` from 0 to 1 to enable Test-Time Augmentation (TTA). Expecting a speed hit but a significant mAP lift on hidden/small objects.
+
+**`yolo11l-1280-alldata-final-v2` — submitted 23/05 20:55, score pending.**
+Last scored high: **`yolo11l-896-plusval-v1` — official 0.640 / 0.954.**
 **`yolo11l-1280-alldata-final-v2` — submitted 23/05 20:55, score pending.**
 Last scored high: **`yolo11l-896-plusval-v1` — official 0.640 / 0.954.**
 
