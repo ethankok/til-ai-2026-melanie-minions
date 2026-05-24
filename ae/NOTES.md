@@ -1,8 +1,83 @@
 # AE — notes & history
 
-Last updated: 24 May 2026 (afternoon) — **AE remains parked. Today's `AE_USE_MEMORIZED_ROUTE` cheese (precomputed greedy item+base route per fixed-Novice spawn) returned 4 cloud samples vs 5 fresh baseline samples and lost by ~0.022 on mean (cheese mean `0.535`, baseline mean `0.557`). Two updates from this round of data: (1) the cheese hypothesis is falsified — commitment to a static route loses to per-tick re-evaluation in the cloud opponent distribution, same shape failure as opening-book / rusher / ally-bomb-safe; (2) the `heuristic-A-vf1` `0.613` was upper-tail variance, not a stable ceiling — five fresh baseline samples max at `0.592` with mean `0.557` and σ ≈ `0.022`. The `0.638` protected leaderboard tag is still on the board but neither it nor the `0.613` is reproducible in expectation. Do not iterate further cheese variants; keep heuristic defaults protected.**
+Last updated: 24 May 2026 (evening) — **Local→cloud calibration attempt found that we cannot reliably predict cloud AE rankings from local evals on this scaffold. Two methodology findings stand out as the durable takeaways from this session: (1) `PYTHONHASHSEED` is unpinned in our sim, so identical `(env, seed, rounds)` triples drift by 0.10+ on cloudsuite mean across runs — every sweep in this file from the past week was reading a hash-noised signal; (2) for the env knobs that distinguished `heuristic-A` from `baseline` on cloud (Δ=0.042, ~2.6σ), our local opponents produce identical AEManager behavior (4 different `ENEMY_BASE_VALUE`/`DIST_PENALTY` combos all yield identical local cloudsuite scores at hash=0). Cloud is exercising code paths our local opponents don't. No new cloud submits today; leaderboard tags stand. See "24 May 2026 (evening) — local→cloud calibration" below for the full writeup and data file pointers.**
+
+Prior update: 24 May 2026 (afternoon) — **AE remains parked. Today's `AE_USE_MEMORIZED_ROUTE` cheese (precomputed greedy item+base route per fixed-Novice spawn) returned 4 cloud samples vs 5 fresh baseline samples and lost by ~0.022 on mean (cheese mean `0.535`, baseline mean `0.557`). Two updates from this round of data: (1) the cheese hypothesis is falsified — commitment to a static route loses to per-tick re-evaluation in the cloud opponent distribution, same shape failure as opening-book / rusher / ally-bomb-safe; (2) the `heuristic-A-vf1` `0.613` was upper-tail variance, not a stable ceiling — five fresh baseline samples max at `0.592` with mean `0.557` and σ ≈ `0.022`. The `0.638` protected leaderboard tag is still on the board but neither it nor the `0.613` is reproducible in expectation. Do not iterate further cheese variants; keep heuristic defaults protected.**
 
 Prior update: 24 May 2026 — AE is parked after the late local sweeps. The protected leaderboard max remains `ppo-full-rl-v1-hybrid` at `0.638 / 0.847`, but that tag was serving pure heuristic through silent fallback. The best intentional heuristic cloud tag is `heuristic-A-vf1` at `0.613 / 0.845` (originally claimed mean `0.599` over 3 submits — see afternoon revision above). Five structural experiments, broad/focused/bridge heuristic knob sweeps, and the controlled option-v2 planner sweep all failed to produce a candidate worth baking. Keep the legacy heuristic path protected; future AE work should be a narrow legacy-manager patch with a paired cloudsuite/pressure2 gate, not another broad sweep.
+
+## 24 May 2026 (evening) — local→cloud calibration (methodology finding, no submits)
+
+**Goal**: use the 25 cloud submits we've accumulated across 8 distinct heuristic/PPO configs to find a local eval suite whose rankings predict cloud rankings. Then we could iterate offline without burning cloud submits on noise.
+
+**Setup**: 6 heuristic configs from the prior 24h with paired cloud means (n=3-5 each) → `training/ae/data/cloud-calibration-truth.json`. Built `training/ae/calibrate_local_eval.py` (spawns one subprocess per config with per-config env vars set) and `training/ae/analyze_calibration.py` (Spearman + Pearson rank correlation per suite + a few weighted combos). Tested `random`, `library`, `cloudsuite`, `pressure2`, `mixed` at 24 rounds × 5 configs aligned with cloud truth.
+
+### Finding #1: `PYTHONHASHSEED` was unpinned — every prior local sweep is hash-noised
+
+Same `(env=160/0.9, seed=42, rounds=24, suite=cloudsuite)` triple, three runs at different ambient hash seeds:
+
+| Run | Cloudsuite mean |
+|---|---:|
+| Original sweep (concurrent w/ second sweep) | 0.4064 |
+| Isolation run, same triple | 0.3144 |
+| Concurrent run during candidate sweep | 0.2705 |
+| **Same triple with `PYTHONHASHSEED=0`, run 1** | **0.4684** |
+| **Same triple with `PYTHONHASHSEED=0`, run 2** | **0.4684** ← identical |
+
+Spread 0.14 across unpinned runs, deterministic to 4 decimal places once pinned. AEManager has hash-order-dependent code (set/dict iteration in candidate scoring) and Python's default per-process random hash seed flips the rankings. **Every sweep in this file that didn't pin `PYTHONHASHSEED` was reading noise on top of signal** — bridge_0211, focus_0124, option_grid_*, dypm-veto-v1 promotion gates, every "24-round" or "n=8" multi-config comparison. The calibrator was patched to `env["PYTHONHASHSEED"] = "0"` per subprocess (one line, [calibrate_local_eval.py:64](training/ae/calibrate_local_eval.py:64)). Recommend applying the same patch to `validate_cloud_suite.py` and the sweep harnesses for any future AE work.
+
+### Finding #2: With `PYTHONHASHSEED=0` the local rank correlation flips and is not statistically robust
+
+Same 5 configs, hash-noised vs hash=0:
+
+| Local signal | Hash-noised Spearman | Hash=0 Spearman |
+|---|---:|---:|
+| random | +0.50 | **+0.975** |
+| library | −0.80 | +0.894 |
+| cloudsuite | **+0.80** ← prior "best" | +0.564 |
+| pressure2 | −0.90 | +0.359 |
+| mixed | +0.40 | −0.359 |
+| mean_of_means | −0.90 | +0.667 |
+| pressure_only (cs+p2) | −1.00 | +0.667 |
+
+Two different "best predictors" depending on hash seed. With n=5 configs the Spearman p-value is high either way (rho=0.97 at n=5 needs more samples to clear p<0.05 once Bonferroni-corrected across the 8 signals tested). No defensible local cloud proxy.
+
+### Finding #3: Local opponents don't exercise the knobs that distinguish heuristic-A from baseline on cloud
+
+Re-ran the candidate sweep at `PYTHONHASHSEED=0` across 9 new `ENEMY_BASE_VALUE` / `DIST_PENALTY` perturbations on cloudsuite (30 rounds). Result:
+
+```
+cand-baseline-anchor (no env):           0.5119
+cand-A-anchor    (160/0.9):              0.4771
+cand-A-more-aggressive (200/0.9):        0.4771  ← identical to A-anchor
+cand-A-soft      (140/0.95):             0.4771  ← identical
+cand-A-mid       (180/0.8):              0.4771  ← identical
+cand-A-flatter-dist (160/0.7):           0.4758
+cand-A-corner    (200/0.7):              0.4758
+cand-A-extreme   (240/0.6):              0.4637
+cand-A-plus-mission (180/0.8 + mission_value=75): 0.1719  ← only meaningful change
+```
+
+4 distinct env combos collapse to the same local cloudsuite score. Cloud distinguishes heuristic-A (0.599) from baseline (0.557) by Δ=0.042 — locally that gap is 0.035 in the *opposite* direction. The cloud opponent distribution must be driving AEManager through code paths the local rusher/hunter/bomber pool doesn't activate. Only `AE_ITEM_MISSION_VALUE` actually moved the local needle (tanked it), so that one knob has a real local signal — but it's a clear regressor, not a candidate.
+
+### Finding #4: Cloud effect sizes are barely above per-submit variance
+
+Cloud σ per submit ≈ 0.022 (from baseline n=5 fixed-routes-vf1..5 stdev). heuristic-A vs baseline cloud Δ=0.042; combined SE ≈ 0.016 → ~2.6σ. Statistically real, but small. Many "wins" we've claimed across the past week were below this resolution.
+
+### Data file pointers (for future runs)
+
+- Cloud truth (config → cloud_scores): `training/ae/data/cloud-calibration-truth.json`
+- Candidate definitions (env-only, no cloud submits): `training/ae/data/cloud-calibration-candidates.json`
+- Hash-noised heuristic sweep (do not trust): `training/ae/data/calib-heuristic-24r-s42.json`, `calib-heuristic-24r-s137.json`
+- Hash-noised candidate sweep (do not trust): `training/ae/data/calib-candidates-30r-cs.json`
+- **Deterministic heuristic sweep** (use this): `training/ae/data/calib-heuristic-24r-s42-hash0.json`
+- **Deterministic candidate sweep** (use this): `training/ae/data/calib-candidates-30r-cs-hash0.json`
+
+### Recommendation for next year
+
+1. Pin `PYTHONHASHSEED=0` in **all** local AE eval entry points before any sweep is interpreted (`validate_cloud_suite.py`, `sweep_heuristic_knobs.py`, `sweep_option_v2.py`, `compare_candidates.py`). Re-run any prior sweep result you intend to act on.
+2. Local opponent suites here (random / library / cloudsuite / pressure2 / mixed) under-represent the actual cloud distribution along the `ENEMY_BASE_VALUE`/`DIST_PENALTY` axis. Before another knob sweep, instrument AEManager's decision path counters per-tick and check which suite triggers the most variation in branch counts vs cloud-submit logs. If your local opponents don't push the planner through the same branches, your sweep has no statistical power on those knobs regardless of suite choice.
+3. For genuine config A/B testing, n=5 configs is too few for rank-correlation conclusions. Either collect more cloud data points on diverse configs or budget for multi-hash-seed local averaging (5 hash seeds × N rounds approximates cloud's hash-distribution average).
 
 ## 24 May 2026 (afternoon) — memorized-route cheese (negative result)
 
