@@ -19,7 +19,9 @@ ae/models/playbook.npz                   state→action lookup            Tier-1
 ae/models/opponent_model.json            walk-distance scalar           Tier-2 #8
 ae/models/oracle_table.npz               oracle BC table                Tier-2 #10
 training/ae/checkpoints/ppo-scripted.pt  PPO trained vs scripted pool   Tier-2 #9
-training/ae/checkpoints/ppo-full-rl-v1.pt Full-RL PPO candidate         current next experiment
+training/ae/checkpoints/ppo-full-rl-v1.pt Full-RL PPO candidate         historical; cloud did not prove PPO lift
+training/ae/data/knob-*.json             heuristic sweep summaries      local-only, no baked winner yet
+training/ae/data/option-v2-*.json        option-v2 sweep summaries      local-only, rejected
 ```
 
 ---
@@ -37,7 +39,11 @@ training/ae/checkpoints/ppo-full-rl-v1.pt Full-RL PPO candidate         current 
 - `run_full_rl_v1.py` — Mac-first launcher for the current full-RL attempt. Wraps `train_ppo.py --preset full-rl` and streams logs to `training/ae/checkpoints/ppo-full-rl-v1.log`.
 - `run_full_rl_belief_v1.py` — Three-stage belief-aware launcher (collect mixed-opp BC -> train belief BC -> PPO with `--preset full-rl --use-belief`). 23 May 2026 attempt did not clear the save floor; kept on disk as the template for any future memory-hypothesis ablation. See `ae/NOTES.md` "23 May session" for the negative-result analysis.
 - `collect_bc.py` — supports `--opponents` (vocabulary mirrors `simulate.py`: `random` / `mixed` / `library` / `cloudsuite` / explicit comma list). Default `random` preserves the legacy planner-vs-random distribution; use `library` or `cloudsuite` for belief / future memory-aware experiments to avoid the original `bc-belief-hybrid` overfit cause.
-- `simulate.py`, `opponents.py` — Tier 1+2 simulation harness with the 5-archetype scripted opponent library (random / greedy / bomber / defender / hunter).
+- `simulate.py`, `opponents.py` — Tier 1+2 simulation harness with the scripted opponent library. Current serious gates should use `library`, `cloudsuite`, `pressure2`, and/or `mixed`; random is only a weak packaging sanity check.
+- `validate_cloud_suite.py` — suite gate wrapper for `random`, `library`, `cloudsuite`, `pressure2`, and `mixed`.
+- `compare_candidates.py` — paired checkpoint comparison harness for PPO artifacts.
+- `sweep_heuristic_knobs.py` — Mac-first heuristic env-var sweep harness with `broad`, `focused`, and `bridge` candidate generators. The 24 May broad/focused/bridge sweeps found no promotable candidate.
+- `sweep_option_v2.py` — controlled sweep for the opt-in `AE_PLANNER=option_v2` decision layer. The 24 May screen and top-3 advance gate rejected option-v2.
 - `build_playbook.py`, `fit_opponent_model.py`, `oracle_bc.py` — Tier 1+2 artifact builders.
 
 `data/` and `checkpoints/` are gitignored. Move/copy weights into a tracked location only at deploy time.
@@ -51,9 +57,9 @@ training/ae/checkpoints/ppo-full-rl-v1.pt Full-RL PPO candidate         current 
 | Behavior-cloning collector| implemented |
 | Behavior-cloning trainer  | implemented |
 | Local policy evaluator    | implemented |
-| PPO fine-tune             | implemented; old scripted/self-play runs regressed cloud; `qualifier-best` improved local proxy but did not beat `fixed-map-v5`; `full-rl` launcher staged |
+| PPO fine-tune             | implemented; old scripted/self-play/full-RL runs regressed once policy actually loaded; keep only for analysis |
 | Tier 1+2 artifact builders| implemented |
-| Deployment into `ae/src/` | implemented; shipped tag = `hybrid-v3` |
+| Deployment into `ae/src/` | implemented; current protected path is legacy heuristic / historical heuristic-fallback max |
 
 ### BC training (steps A–C below) is a prerequisite for PPO (step 8) but not for Tier-1/Tier-2 (steps 1-7)
 
@@ -95,15 +101,15 @@ The inference path in [../../ae/src/ae_server.py](../../ae/src/ae_server.py) sup
 - `policy` — pure `PolicyAEManager`.
 - `heuristic` — pure rule-based `AEManager` (no torch needed in the image at all).
 
-Current AE max-score high: `ppo-full-rl-v1-hybrid` scored `0.638 / 0.847`.
-That is only barely ahead of `ppo-full-rl-v1-hybrid-shortcut` at
-`0.637 / 0.845` and the former `fixed-map-v5` high at `0.630 / 0.858`.
-Follow-up PPO attempts improved local proxies, but repeated cloud submits show
-the current deployment variants are hard to distinguish by mean score: pure
-policy mean `0.585`, hybrid shortcut-off mean `0.588`, and hybrid shortcut-on
-mean `0.580`. Treat the `0.638` result as the protected leaderboard artifact,
-not proof that the shortcut-off wrapper is materially better than the shortcut
-heuristic under hidden eval.
+Current AE max-score high: `ppo-full-rl-v1-hybrid` scored `0.638 / 0.847`,
+but 24 May forensic review showed this was not evidence for PPO. The deployed
+runtime lacked the `legacy-small` policy class, policy load failed, and
+`ae_server.py` silently fell back to plain `AEManager`. When legacy checkpoint
+support was restored and the policy actually loaded, cloud scores dropped to
+about `0.41`. Treat the `0.638` result as a protected leaderboard artifact
+with heuristic-fallback provenance, not as proof that PPO/hybrid is better.
+The best intentional heuristic cloud tag is `heuristic-A-vf1` at
+`0.613 / 0.845`.
 
 Deploy a new policy checkpoint by copying it into the model slot:
 
@@ -119,6 +125,64 @@ til submit ae <tag>
 Keep `ae/models/bc.pt` as the expected filename unless you also set `AE_POLICY_CHECKPOINT`, because `policy_manager.py` searches for that path by default.
 
 **Important**: `AE_MODE=foo til build …` does NOT work — `docker build` doesn't inherit the shell env, so the cloud container would default to hybrid regardless. Either edit the `ENV AE_MODE=…` line in `ae/Dockerfile` or write the mode into `ae/src/.ae_mode` (gitignored) before each build.
+
+### 24 May local sweep harnesses and current AE decision
+
+Use these harnesses only for local evidence gathering. The 24 May runs did not
+produce a setting worth baking into Docker.
+
+Heuristic sweep smoke:
+
+```bash
+.venv/bin/python training/ae/sweep_heuristic_knobs.py \
+  --candidates 8 --rounds 1 --suites cloudsuite pressure2 \
+  --jobs 4 --summary-out training/ae/data/knob-smoke.json
+```
+
+Heuristic bridge screen:
+
+```bash
+.venv/bin/python training/ae/sweep_heuristic_knobs.py \
+  --mode bridge --candidates 240 --rounds 3 \
+  --suites cloudsuite pressure2 \
+  --jobs 8 --summary-out training/ae/data/knob-bridge-240.json
+```
+
+Promotion gate for named heuristic candidates:
+
+```bash
+.venv/bin/python training/ae/sweep_heuristic_knobs.py \
+  --mode bridge --candidates 240 \
+  --candidate-ids baseline bridge_0211 \
+  --rounds 32 --suites library cloudsuite pressure2 mixed \
+  --jobs 8 --summary-out training/ae/data/knob-bridge-final.json
+```
+
+Option-v2 controlled screen:
+
+```bash
+.venv/bin/python training/ae/sweep_option_v2.py \
+  --candidates 96 --rounds 2 \
+  --suites library cloudsuite pressure2 \
+  --jobs 8 --summary-out training/ae/data/option-v2-controlled-96.json
+```
+
+Option-v2 advance gate:
+
+```bash
+.venv/bin/python training/ae/sweep_option_v2.py \
+  --candidates 96 \
+  --candidate-ids baseline option_grid_0030 option_grid_0070 option_grid_0086 \
+  --rounds 6 --suites library cloudsuite pressure2 mixed \
+  --jobs 8 --summary-out training/ae/data/option-v2-advance-top3.json
+```
+
+Decision from the 24 May evidence:
+
+- Do not bake `bridge_0211`, `focus_0124`, `focus_0266`, `option_grid_0030`, `option_grid_0070`, or `option_grid_0086`.
+- Keep `AE_PLANNER=option_v2` as opt-in experimental scaffolding only; default `AE_PLANNER=legacy` remains the shipping behavior.
+- Random-only local score should not promote AE changes. Use paired `cloudsuite` + `pressure2` evidence and reject candidates that trade one pressure suite for the other.
+- Future AE work should be a narrow legacy-manager structural patch around visible base-bomb pressure, not another broad knob sweep.
 
 ### 19 May immediate handoff: speedcheck before more AE code
 

@@ -213,6 +213,7 @@ class AEManager:
         self.last_lookahead_score = -inf
         self.last_lookahead_path: tuple[int, ...] = ()
         self.planner_mode = os.environ.get("AE_PLANNER", "legacy").strip().lower()
+        self.option_v2_disable_commit = _env_flag("AE_OPTION_DISABLE_COMMIT", False)
         self.option_v2_commit_margin = _env_float("AE_OPTION_COMMIT_MARGIN", 10.0)
         self.option_v2_base_bias = _env_float("AE_OPTION_BASE_BIAS", 120.0)
         self.option_v2_mission_bias = _env_float("AE_OPTION_MISSION_BIAS", 70.0)
@@ -908,7 +909,11 @@ class AEManager:
     ) -> _OptionCandidate:
         best = max(candidates, key=lambda c: c.score)
         committed = None
-        if self.option_v2_target is not None and step <= self.option_v2_until_step:
+        if (
+            not self.option_v2_disable_commit
+            and self.option_v2_target is not None
+            and step <= self.option_v2_until_step
+        ):
             for candidate in candidates:
                 if (
                     candidate.mode == self.option_v2_mode

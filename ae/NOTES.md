@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 24 May 2026 — **Heuristic-A variant (aggressive offense) is the new live high at `0.613 / 0.845` (3 cloud submits, mean `0.599`, n=3). After a long session of testing 5 structural experiments (dypm, opening book, rusher, camping, Elo population self-play), the result is: every learned-policy approach scored worse on cloud than the existing hand-coded heuristic, and the most important discovery is that the prior 0.638 "PPO" submissions were actually pure-heuristic behavior all along (silent fallback in `ae_server.py` masked the fact that the deployed `ae/src/model.py` couldn't load the `legacy-small` checkpoint arch). The path forward is heuristic parameter tuning, not learned policies.**
+Last updated: 24 May 2026 — **AE is parked after the late local sweeps. The protected leaderboard max remains `ppo-full-rl-v1-hybrid` at `0.638 / 0.847`, but that tag was serving pure heuristic through silent fallback. The best intentional heuristic cloud tag is `heuristic-A-vf1` at `0.613 / 0.845` (3 submits, mean `0.599`). Five structural experiments, broad/focused/bridge heuristic knob sweeps, and the controlled option-v2 planner sweep all failed to produce a candidate worth baking. Keep the legacy heuristic path protected; future AE work should be a narrow legacy-manager patch with a paired cloudsuite/pressure2 gate, not another broad sweep.**
 
 ## 24 May 2026 — full session summary (the big picture)
 
@@ -18,7 +18,7 @@ This was discovered today only because the `c1cb18b` commit (Elo experiment depl
 | elo-v1-vf4 | hybrid | (default) | 0.433 | 0.836 | same |
 | hybrid-rerun-vf1 | hybrid | bc.pt = baseline `ppo-full-rl-v1.pt` | 0.422 | 0.842 | baseline ckpt + hybrid wrapper, policy active |
 | heuristic-restore-vf1 | heuristic | (defaults) | 0.479 | 0.857 | misleadingly low; variance |
-| **heuristic-A-vf1** | heuristic | `AE_ENEMY_BASE_VALUE=160, AE_DIST_PENALTY=0.9` | **0.613** | 0.845 | **current high** |
+| **heuristic-A-vf1** | heuristic | `AE_ENEMY_BASE_VALUE=160, AE_DIST_PENALTY=0.9` | **0.613** | 0.845 | **best intentional heuristic cloud tag** |
 | heuristic-A-vf2 | heuristic | same as A-vf1 | 0.579 | 0.849 | variance |
 | heuristic-A-vf3 | heuristic | same as A-vf1 | 0.606 | 0.852 | variance |
 | heuristic-B-vf1 | heuristic | `AE_TIER1_DEFENSE=1, AE_BASE_DEFENSE_HEALTH=80, AE_BASE_DEFENSE_RADIUS=6` | 0.571 | 0.847 | defense-first |
@@ -37,9 +37,99 @@ This was discovered today only because the `c1cb18b` commit (Elo experiment depl
 | B — defense-first | 0.563 | 0.581 | 0.024 | Same pattern as historical `ttd-defense-v1` — defense distracts the planner from offense without paying off |
 | C — item farming | 0.553 | 0.559 | 0.008 | +50/destroy outweighs marginal +30 from extra missions; don't over-rotate to items |
 
-**Directional read from variant A's win**: the prior heuristic defaults (`ENEMY_BASE_VALUE=130, DIST_PENALTY=1.15`) were *too conservative* for the cloud's opponent distribution. Pushing `ENEMY_BASE_VALUE=160` + `DIST_PENALTY=0.9` net-positive at `+0.034` mean over the C variant and `+0.036` over B. Suggests further offense knobs are worth sweeping: try `AE_ENEMY_BASE_VALUE` in {180, 200}, `AE_DIST_PENALTY` in {0.7, 0.8}, and lower `AE_DIJKSTRA_BOMB_COST` (3-4) in combination so the planner is more willing to bomb through destructibles en route to the enemy base.
+**Directional read from variant A's win**: the prior heuristic defaults (`ENEMY_BASE_VALUE=130, DIST_PENALTY=1.15`) were *too conservative* for the cloud's opponent distribution. Pushing `ENEMY_BASE_VALUE=160` + `DIST_PENALTY=0.9` was net-positive at `+0.034` mean over the C variant and `+0.036` over B. This motivated the late broad/focused/bridge sweeps below; those sweeps did not find a stable setting worth baking.
 
 **Defense knobs are off the table** — both `AE_TIER1_DEFENSE` and `AE_BASE_DEFENSE_HEALTH=80` actively hurt. Same wall as `ally-bomb-safe-v2`, `ttd-defense-v1`, `pessimistic-mini-search-v1`, the dypm-veto experiment, and the camping experiment.
+
+## 24 May 2026 — late heuristic + option-v2 sweeps (negative result, park AE)
+
+Goal: answer whether we were merely missing the right knobs after `heuristic-A`, or whether the current AE manager shape is already near the useful local optimum.
+
+### Local opponent / validation change
+
+Random-only validation is not useful for this stage because it rewards tempo that hidden pressure opponents punish. The local gate now emphasizes:
+
+- `cloudsuite`: existing rusher/hunter pressure mix.
+- `pressure2`: harder local pressure mix (`rusher_fast`, `rusher_safe`, `hunter_sticky`, `bomber_fast`, `base_bomber`).
+- `library` and `mixed`: retained as secondary checks so pressure wins do not destroy general play.
+
+Random can still be used as a packaging sanity check, but it should not promote AE changes.
+
+### Heuristic knob sweeper
+
+`training/ae/sweep_heuristic_knobs.py` now supports broad, focused, and bridge candidate generators. Every candidate is expressed as actual `AE_*` env vars read by `AEManager`, with an explicit baseline row.
+
+Evidence:
+
+| Sweep | Evidence | Decision |
+|---|---|---|
+| Broad 224 screen | Baseline objective `0.2129`; best one-factor candidate (`one_dijkstra_bomb_cost_8`) looked good in the screen. | Failed later gate; do not bake. |
+| Focused 288 combo screen | Found screen winners such as `focus_0112`; top gated candidate `focus_0124` reached objective `0.3299`, `library=0.4380`, `cloudsuite=0.3132`, `pressure2=0.3830`, `mixed=0.2484`. | Rejected because cloudsuite dropped from baseline `0.3612` to `0.3132` (>0.03). |
+| Focus cloud-side candidate | `focus_0266` improved cloudsuite to `0.4126`. | Rejected because pressure2 collapsed to `0.1670`. |
+| Anchor Dijkstra candidate | `anchor_dijkstra_8` got a separate final gate. | Lost `0.2771` vs baseline `0.3186`; rejected. |
+| Bridge 240 screen | `bridge_0194`/`bridge_0203` reached objective `0.3687`, cloudsuite `0.3887`, pressure2 `0.3515`; later cloud-preserve gate made `bridge_0211` look clean at objective `0.4260`, cloudsuite `0.5727`, pressure2 `0.4190`. | Final 32-round pair killed `bridge_0211`: baseline objective `0.2942`, cloudsuite `0.3231`, pressure2 `0.3100`; bridge objective `0.2638`, cloudsuite `0.1873`, pressure2 `0.3335`. Rejected. |
+
+Conclusion: do not bake any heuristic knob from these sweeps. The screens repeatedly found false peaks that trade cloudsuite against pressure2. The baseline/`heuristic-A` family is still safer than the apparent local winners.
+
+### Option-v2 manager overhaul
+
+Implemented an opt-in structural planner behind `AE_PLANNER=option_v2`. It keeps the existing map memory/safety substrate but replaces the decision layer with explicit option modes:
+
+- defend own base
+- destroy enemy base
+- farm mission/resource/recon
+- hunt visible enemies
+- explore frontier
+- escape danger
+
+The option layer has commitment/hysteresis knobs (`AE_OPTION_COMMIT_MARGIN`, `AE_OPTION_DISABLE_COMMIT`) and value knobs (`AE_OPTION_BASE_BIAS`, `AE_OPTION_MISSION_BIAS`, etc.). Default Docker behavior is unchanged because `AE_PLANNER` defaults to `legacy` and the shipping path remains `AE_MODE=heuristic`.
+
+Initial compact 4-suite gate:
+
+| Candidate | mean-of-means | worst | library | cloudsuite | pressure2 | mixed |
+|---|---:|---:|---:|---:|---:|---:|
+| baseline | 0.2844 | 0.1460 | 0.4610 | 0.2589 | 0.1460 | 0.2719 |
+| option-v2 default | 0.1244 | 0.0430 | 0.0430 | 0.0988 | 0.1985 | 0.1573 |
+
+Aggressive-base and defense-heavy manual variants were worse, so the follow-up was a controlled sweep rather than more hand tuning.
+
+`training/ae/sweep_option_v2.py` screens:
+
+- `AE_OPTION_BASE_BIAS`
+- `AE_OPTION_MISSION_BIAS`
+- `AE_OPTION_COMMIT_MARGIN`
+- `AE_OPTION_DISABLE_COMMIT`
+- `AE_BASE_DEFENSE_RADIUS`
+- `AE_BASE_DEFENSE_HEALTH`
+
+Controlled 96-candidate screen (`training/ae/data/option-v2-controlled-96.json`):
+
+| Candidate | objective | delta | library | cloudsuite | pressure2 | Decision |
+|---|---:|---:|---:|---:|---:|---|
+| baseline | 0.2309 | — | 0.2360 | 0.2890 | 0.1880 | reference |
+| `option_grid_0070` | 0.1489 | -0.0819 | 0.1800 | 0.1120 | 0.2005 | reject |
+| `option_grid_0030` | 0.1465 | -0.0844 | 0.2910 | 0.0725 | 0.2005 | reject |
+| `option_grid_0086` | 0.1171 | -0.1138 | — | 0.2430 | 0.0400 | reject |
+
+Advanced top-3 gate (`training/ae/data/option-v2-advance-top3.json`):
+
+| Candidate | objective | library | cloudsuite | pressure2 | mixed | Decision |
+|---|---:|---:|---:|---:|---:|---|
+| baseline | 0.2850 | 0.2950 | 0.3867 | 0.2630 | 0.2117 | reference |
+| `option_grid_0030` | 0.1426 | — | 0.1917 | — | 0.0697 | reject |
+| `option_grid_0070` | 0.0877 | — | 0.0411 | — | — | reject |
+| `option_grid_0086` | 0.0802 | — | 0.0893 | — | — | reject |
+
+Conclusion: option-v2 settings did not rescue the architecture. Keep the code and sweeper as experimental scaffolding, but do not promote `AE_PLANNER=option_v2`.
+
+### Final AE recommendation from this session
+
+Stop broad AE knob search. Do not bake option-v2. Do not bake bridge/focus settings. The only protected paths are:
+
+- existing leaderboard max: `ppo-full-rl-v1-hybrid` score `0.638 / 0.847`, understood as heuristic fallback provenance rather than PPO evidence
+- intentional explicit heuristic: `heuristic-A-vf1` score `0.613 / 0.845`
+
+If AE gets touched again, make one narrow patch in the legacy manager around visible base-bomb pressure and require paired cloudsuite/pressure2 improvement before any cloud submit.
 
 ## 24 May 2026 — elo-population-v1 (negative result, but unmasked the heuristic-fallback bug)
 
