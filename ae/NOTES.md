@@ -1,6 +1,53 @@
 # AE — notes & history
 
-Last updated: 24 May 2026 — **AE is parked after the late local sweeps. The protected leaderboard max remains `ppo-full-rl-v1-hybrid` at `0.638 / 0.847`, but that tag was serving pure heuristic through silent fallback. The best intentional heuristic cloud tag is `heuristic-A-vf1` at `0.613 / 0.845` (3 submits, mean `0.599`). Five structural experiments, broad/focused/bridge heuristic knob sweeps, and the controlled option-v2 planner sweep all failed to produce a candidate worth baking. Keep the legacy heuristic path protected; future AE work should be a narrow legacy-manager patch with a paired cloudsuite/pressure2 gate, not another broad sweep.**
+Last updated: 24 May 2026 (afternoon) — **AE remains parked. Today's `AE_USE_MEMORIZED_ROUTE` cheese (precomputed greedy item+base route per fixed-Novice spawn) returned 4 cloud samples vs 5 fresh baseline samples and lost by ~0.022 on mean (cheese mean `0.535`, baseline mean `0.557`). Two updates from this round of data: (1) the cheese hypothesis is falsified — commitment to a static route loses to per-tick re-evaluation in the cloud opponent distribution, same shape failure as opening-book / rusher / ally-bomb-safe; (2) the `heuristic-A-vf1` `0.613` was upper-tail variance, not a stable ceiling — five fresh baseline samples max at `0.592` with mean `0.557` and σ ≈ `0.022`. The `0.638` protected leaderboard tag is still on the board but neither it nor the `0.613` is reproducible in expectation. Do not iterate further cheese variants; keep heuristic defaults protected.**
+
+Prior update: 24 May 2026 — AE is parked after the late local sweeps. The protected leaderboard max remains `ppo-full-rl-v1-hybrid` at `0.638 / 0.847`, but that tag was serving pure heuristic through silent fallback. The best intentional heuristic cloud tag is `heuristic-A-vf1` at `0.613 / 0.845` (originally claimed mean `0.599` over 3 submits — see afternoon revision above). Five structural experiments, broad/focused/bridge heuristic knob sweeps, and the controlled option-v2 planner sweep all failed to produce a candidate worth baking. Keep the legacy heuristic path protected; future AE work should be a narrow legacy-manager patch with a paired cloudsuite/pressure2 gate, not another broad sweep.
+
+## 24 May 2026 (afternoon) — memorized-route cheese (negative result)
+
+**Hypothesis**: per-tick re-evaluation in `_choose_target` gets distracted by nearby low-value items (same diagnosis as the opening-book attempt earlier in the week). Commit the planner to a pre-baked greedy item+base sequence per fixed-Novice spawn and the agent should convert more low-EV item picks into mission/base completions, with all the existing safety machinery (danger cells, threats, action_mask, escape paths) still intact because we only override target selection, not action selection.
+
+**Implementation** (commit `6331272`):
+- New `ae/src/spawn_routes.py`: precomputes a 40-waypoint greedy item+base sequence per spawn cell using `opening_book._dijkstra_costs` + `_find_bomb_cell`. Scoring `value / (dist + 1)` with `mission=50`, `resource=25`, `recon=10`, `enemy_base=130`. All 6 routes precomputed at module import (~sub-second). Inspect with `python ae/src/spawn_routes.py`.
+- `ae/src/ae_manager.py`: reads `AE_USE_MEMORIZED_ROUTE` env flag (default OFF). On step-0 fixed-Novice detection loads `get_route(location)`, logs `[AEManager] memorized route loaded: team_idx=N spawn=(x,y) len=40`. `_choose_target` short-circuits to follow the route via new `_route_pick` helper. Abort gates (fall through to heuristic): low health, base-defense emergency, enemy within manhattan-2 of agent, waypoint unreachable, waypoint distance > 15 (drift), threat-on-path (skipped for enemy-base targets).
+
+**Cloud A/B** (10 submissions, all 0/30 errors, same image except for the env flag):
+
+| Configuration | n | scores | mean | σ | max |
+|---|---:|---|---:|---:|---:|
+| Baseline `fixed-routes-vfN` (no cheese flag) | 5 | 0.592, 0.532, 0.567, 0.550, 0.545 | **0.557** | 0.022 | 0.592 |
+| Cheese `fixed-routes-memorized-vfN` (`AE_USE_MEMORIZED_ROUTE=1`) | 4 | 0.505, 0.551, 0.529, 0.554 | **0.535** | 0.020 | 0.554 |
+
+Cheese is **−0.022 on mean (~1σ)**. Not statistically separable at n=4-5 but the directional sign is wrong and consistent with the cloudsuite-penalty pattern. **Hypothesis falsified.**
+
+**Likely mechanism for the loss**: the memorized route is a *commitment*, and per the existing NOTES pattern the cloud opponent distribution rewards adaptive re-evaluation. The drift-15 / threat-on-path abort gates probably fire too late OR the heuristic fallback mid-route lacks the planner's usual momentum because the planner was bypassed for many ticks beforehand. Tightening the abort gates is unlikely to claw back the gap — the directional signal is wrong, not just the magnitude.
+
+**Bigger finding from baseline n=5**: the prior `heuristic-A-vf1` `0.613 / 0.845` (3-submit mean `0.599`) was upper-tail variance, not a stable ceiling. Fresh baseline samples today max at `0.592` with mean `0.557` and σ ≈ `0.022`. True expected score of heuristic-A on cloud is ~`0.55-0.58`, not the previously claimed mean `0.599 / max 0.613`. The `0.613` and `0.638` leaderboard tags are still protected but not reproducible in expectation. Worth checking `git log --oneline ae/src/` between the commit that produced `0.613` and HEAD to confirm there was no silent regression (vs pure variance).
+
+**Decision**: do not iterate cheese variants (tighter gates, longer routes, mid-route re-plan). Module kept in tree (`ae/src/spawn_routes.py`, `_route_pick` helper, `AE_USE_MEMORIZED_ROUTE` flag) as a reusable map-analysis primitive and documented negative result, matching the `opening_book.py` precedent. To re-enable for ad-hoc experimentation, set `AE_USE_MEMORIZED_ROUTE=1`.
+
+**Discord submission log:**
+
+| Tag | Flag | Cloud | Speed |
+|---|---|---:|---:|
+| fixed-routes-vf1 | (off) | 0.592 | 0.848 |
+| fixed-routes-vf2 | (off) | 0.532 | 0.845 |
+| fixed-routes-vf3 | (off) | 0.567 | 0.847 |
+| fixed-routes-vf4 | (off) | 0.550 | 0.845 |
+| fixed-routes-vf5 | (off) | 0.545 | 0.854 |
+| fixed-routes-memorized-vf1 | `AE_USE_MEMORIZED_ROUTE=1` | 0.505 | 0.847 |
+| fixed-routes-memorized-vf2 | `AE_USE_MEMORIZED_ROUTE=1` | 0.551 | 0.848 |
+| fixed-routes-memorized-vf3 | `AE_USE_MEMORIZED_ROUTE=1` | 0.529 | 0.847 |
+| fixed-routes-memorized-vf5 | `AE_USE_MEMORIZED_ROUTE=1` | 0.554 | 0.848 |
+| fixed-routes-memorized-vf4 | `AE_USE_MEMORIZED_ROUTE=1` | (in queue at time of doc update) | — |
+
+**Surveyed-but-skipped directions** (audit notes from the morning session, retained for the next session):
+- **Reward-farming loop exploit**: not viable. `til-26-ae/til_environment/dynamics.py:754-858` shows respawns are stochastic Perlin-noise delays up to 40 ticks and `ae_manager.py:677-679` already discounts respawns 0.5×. `dynamics.py:733` splits kill credit `1/len(contributors)`. `own_base_destroyed=-50` fires once per base-death, not per-tick. No exploitable loop.
+- **Evaluator/opponent assumption exploit**: not viable. Action mask enforced (`ae_manager.py:1847-1854`), illegal actions no-op, `/reset` clean, no end-of-episode bonus.
+- **Recursive chain-detonation safety** (Option A from the open question): undecided. Worth a 30-min `grep -n "chain\|trigger\|propagat" til-26-ae/til_environment/dynamics.py` to confirm chain semantics, then a diagnostic counter in `_should_place_bomb` for "bomb placed within blast radius of existing bomb." If chain-adjacent placements <0.5/round, drop. If ≥1/round and chains genuinely instant-detonate, this is the only remaining direction that escapes the cloudsuite-penalty pattern (it's a correctness fix, not an aggression bet).
+- **Opponent-adaptive dynamic parameter tuning** (Option B): skip. This is "pressure-mode switching," already rejected per earlier NOTES — 20-tick detection signal too noisy against cloud variance to tune the threshold in time.
+- **Localized base interception** (Option C): undecided. Lower-risk than A's tuning bets but lower-impact too; same risk shape as cheese (conditional engagement boost in a small slice of game states).
 
 ## 24 May 2026 — full session summary (the big picture)
 

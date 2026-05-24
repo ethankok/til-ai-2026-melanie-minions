@@ -1,10 +1,24 @@
 """Pre-computed greedy item+base routes per fixed-Novice spawn cell.
 
-STATUS (24 May 2026): NEW — the "cheese" implementation. The shipping
-heuristic re-evaluates targets every tick and gets distracted by nearby
-low-value items (see opening_book.py status note and NOTES.md). This
-module commits the planner to a fixed greedy sequence of high-EV
-targets per spawn cell, so the per-tick re-evaluation tax is bypassed.
+STATUS (24 May 2026 PM): NEGATIVE RESULT — not part of the shipping
+path. Cloud A/B (5 baseline vs 4 cheese samples) returned cheese mean
+``0.535`` vs baseline mean ``0.557`` (−0.022, ~1σ). Hypothesis
+falsified: committing to a precomputed greedy route loses to per-tick
+re-evaluation in the cloud opponent distribution. Same shape failure as
+``opening_book.py`` — see ``ae/NOTES.md`` afternoon entry for the full
+write-up.
+
+Module kept in tree as a reusable map-analysis primitive (greedy
+EV/distance planner over the static map) and reference for the negative
+result. To re-enable for ad-hoc experimentation, set
+``AE_USE_MEMORIZED_ROUTE=1``; the runtime hook in ``ae_manager.py``
+remains wired (default OFF).
+
+ORIGINAL hypothesis: the shipping heuristic re-evaluates targets every
+tick and gets distracted by nearby low-value items (same diagnosis as
+``opening_book.py``). Committing the planner to a fixed greedy sequence
+of high-EV targets per spawn cell should bypass the per-tick re-
+evaluation tax.
 
 Guarded at runtime by ``AE_USE_MEMORIZED_ROUTE=1`` env flag. Default OFF
 so the shipping path is unaffected. Only loaded after the step-0 fixed-
