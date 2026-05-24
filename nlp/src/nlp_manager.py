@@ -763,6 +763,29 @@ class NLPManager:
         self.doc_bm25 = BM25Okapi(doc_tokenized) if doc_tokenized else None
 
         if PURE_BM25:
+            # Re-init doc_bm25 with tuned params
+            self.doc_bm25 = BM25Okapi(doc_tokenized, k1=2.05, b=1.0) if doc_tokenized else None
+
+            # Build passages and passage BM25
+            self.passages = []
+            self.passage_doc_idx = []
+            self.doc_passage_idxs = [[] for _ in self.documents]
+            for doc_idx, doc in enumerate(self.documents):
+                for chunk in self._chunk_document(doc):
+                    pidx = len(self.passages)
+                    self.passages.append(chunk)
+                    self.passage_doc_idx.append(doc_idx)
+                    self.doc_passage_idxs[doc_idx].append(pidx)
+
+            if not self.passages:
+                self.passages = [""]
+                self.passage_doc_idx = [0] if self.documents else [0]
+                self.doc_passage_idxs = [[0]] if self.documents else []
+
+            tokenized = [_bm25_tokenize(p) for p in self.passages]
+            tokenized = [toks if toks else ["_empty_"] for toks in tokenized]
+            self.bm25 = BM25Okapi(tokenized)
+
             self.doc_id_to_idx = {doc_id: idx for idx, doc_id in enumerate(self.doc_ids)}
             self.loaded = True
             return
@@ -1008,7 +1031,16 @@ class NLPManager:
             for q in questions:
                 q_tokens = _bm25_tokenize(q) or [q.lower()]
                 doc_scores = np.asarray(self.doc_bm25.get_scores(q_tokens), dtype=np.float32)
-                top_doc_idxs = self._top_indices(doc_scores, 3)
+                passage_scores = np.asarray(self.bm25.get_scores(q_tokens), dtype=np.float32)
+
+                max_passage_per_doc = np.zeros_like(doc_scores)
+                for d_idx in range(len(self.documents)):
+                    p_idxs = self.doc_passage_idxs[d_idx]
+                    if p_idxs:
+                        max_passage_per_doc[d_idx] = np.max(passage_scores[p_idxs])
+
+                final_scores = _zscore(doc_scores) + 0.6 * _zscore(max_passage_per_doc)
+                top_doc_idxs = self._top_indices(final_scores, 3)
                 documents = [self.doc_ids[idx] for idx in top_doc_idxs]
                 results.append(([], documents, [], []))
             return results
@@ -1971,7 +2003,16 @@ class NLPManager:
         if PURE_BM25:
             q_tokens = _bm25_tokenize(question) or [question.lower()]
             doc_scores = np.asarray(self.doc_bm25.get_scores(q_tokens), dtype=np.float32)
-            top_doc_idxs = self._top_indices(doc_scores, 3)
+            passage_scores = np.asarray(self.bm25.get_scores(q_tokens), dtype=np.float32)
+
+            max_passage_per_doc = np.zeros_like(doc_scores)
+            for d_idx in range(len(self.documents)):
+                p_idxs = self.doc_passage_idxs[d_idx]
+                if p_idxs:
+                    max_passage_per_doc[d_idx] = np.max(passage_scores[p_idxs])
+
+            final_scores = _zscore(doc_scores) + 0.6 * _zscore(max_passage_per_doc)
+            top_doc_idxs = self._top_indices(final_scores, 3)
             documents = [self.doc_ids[idx] for idx in top_doc_idxs]
             return [], documents, [], []
 
