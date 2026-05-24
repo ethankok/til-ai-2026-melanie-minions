@@ -1,6 +1,6 @@
 # ASR — notes & history
 
-Last updated: 24 May 2026 — **ASR is parked. `nemo-zs-v7` is the raw accuracy high at `0.969 / 0.941`, and it ties `nemo-zs-v6` on blended score at `0.9620`.** `nemo-zs-v7` is the latest shipped tag; `nemo-zs-v6` remains the faster blended-tie fallback.
+Last updated: 25 May 2026 — **Qualifier closed. `nemo-ft-v1` is the final high score at `0.969 / 0.946` (blended `0.96325`).**
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -10,11 +10,24 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`nemo-zs-v7` — official 0.969 / 0.941 (24 May 18:39 SGT, 0/400 errors).**
-Blended score `0.75*0.969 + 0.25*0.941 = 0.9620`, exactly tied with `nemo-zs-v6`.
-Retains the fast Parakeet-TDT-v2 backend and all `nemo-zs-v6` behavior, adding only residual post-processing repairs. This is the raw accuracy high; `nemo-zs-v6` is the faster blended-tie fallback.
+**`nemo-ft-v1` — official 0.969 / 0.946 (24 May 23:49 SGT, 0/400 errors).**
+Blended score `0.75*0.969 + 0.25*0.946 = 0.96325`.
+This model fine-tuned Parakeet-TDT-0.6B-v2 (step 713, val WER 0.0856) on the novice ASR data and successfully improved the blended score.
 
-Decision: **park ASR.** The v7 cleanup improved raw accuracy but paid back the gain in speed, leaving the 75/25 qualifier blend flat versus v6. Further ASR work is now very unlikely to move the overall score unless it improves both accuracy and speed without changing the model/runtime.
+Decision: **closed.**
+
+## nemo-ft-v1 (24/05) — fine-tuned model (new high score)
+
+Status: final submission.
+
+Why this candidate:
+- Fine-tuned Parakeet-TDT-0.6B-v2 on the novice dataset for ~1.5 epochs, reaching a val WER of 0.0856 at step 713.
+- Extracted weights to a standalone `.nemo` format using a CPU fallback conversion script and baked it into the Docker context.
+- Passed local `til test` with an English error rate (WER) of 0.0213.
+
+Submit gate:
+- Cloud result: 0/400 errors, Score `0.969`, Speed `0.946`.
+- Blended result: `0.96325` (new overall blended high score!).
 
 ## nemo-zs-v7 (24/05) — residual replay candidate (accuracy high / blended tie)
 
