@@ -2,7 +2,7 @@
 
 ## v29-bm25-k1-retune — pure BM25 document-k1 retune (SUBMITTED, non-promoting A/B)
 
-**Cloud `0.984 / 0.984`, 0/700 errors (24 May 17:54 SGT). Non-promoting A/B: accuracy tied `v28-optimized-bm25`, speed lost 0.001, so `v28` remains the protected blended high. Workbench `til test` passed at `0.981` accuracy with 0 visible request failures. Local manager gate and saved cloud predictions both show 871/883 top-3 retrieval hits (0.9864), `load_seconds=0.400`, 0 import/check errors.**
+**Cloud `0.984 / 0.984`, 0/700 errors (24 May 17:54 SGT). Non-promoting A/B: accuracy tied `v28-optimized-bm25`, speed lost 0.001, so `v28` remains the protected blended high. Workbench `til test` passed at `0.981` accuracy with 0 visible request failures. Local manager gate and saved Workbench predictions both show 871/883 top-3 retrieval hits (0.9864), `load_seconds=0.400`, 0 import/check errors.**
 - Code-review pass on top of `v28-optimized-bm25` found no sensible neural-model changes: v28 is already retrieval-only, trigger-only, and near the local retrieval ceiling.
 - One focused local sweep over the shipped pure-BM25 scorer found a tiny, architecture-preserving gain by reducing document-level BM25 `k1` from `2.05` to `1.8`, keeping `b=1.0` and passage weight `0.6`.
 - Local top-3 source-document hit rate moved from **870/883 (0.9853)** to **871/883 (0.9864)** on `data/novice/nlp/nlp.jsonl`.
