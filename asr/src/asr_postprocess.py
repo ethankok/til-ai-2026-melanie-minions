@@ -482,7 +482,7 @@ _PROPER_NOUN_RULES = [
     (re.compile(r"\bjahong(s?|['s]*)\b", re.I), repl_jiahong_standalone),
     
     # 5. Phyrexis
-    (re.compile(r"\b(perex|perexis|pyrex|pyrexis|firex|firexes|firexis|phyrexiss|fedex)('s)?\b", re.I), repl_phyrexis),
+    (re.compile(r"\b(perex|perexis|pyrex|pyrexis|firex|firexes|firexis|phyrexiss|fedex|fair\s+ex|fire\s+ex)('s)?\b", re.I), repl_phyrexis),
     
     # 6. Kestrelian
     (re.compile(r"\b(castralian|castrillian|kestralian|kestrillian|castrelian|kastrillian|kesrelian)(s?)\b", re.I), repl_kestrelian),
@@ -508,7 +508,7 @@ _PROPER_NOUN_RULES = [
     (re.compile(r"\b(delash|delashcastle|del[- ]?ash[- ]?castle|ash[- ]?castle|ash\s+castle|ashcastle)(s?|['s]*)\b", re.I), repl_ashcastle_standalone),
     
     # 11. Tidak
-    (re.compile(r"\b(tedak|taidak|sidak|tiduck|deduct|didak|teda|tida)\b", re.I), repl_tidak_standalone),
+    (re.compile(r"\b(tedak|taidak|sidak|tiduck|deduct|didak|dida|teda|tida)\b", re.I), repl_tidak_standalone),
     (re.compile(r"\b(cape)\s+(tak|iraq)\b", re.I), repl_cape_tidak),
     (re.compile(r"\btidakran\b", re.I), repl_tidakran),
     
@@ -534,7 +534,7 @@ _PROPER_NOUN_RULES = [
     (re.compile(r"\b(sharp\s+c|sharp-c|sharp\s+sea)(?:\s+(block|bloc|territories|node|routes|background))?\b", re.I), repl_sharpsea),
 
     # 18. Nyari (NEW)
-    (re.compile(r"\b(nyari|niari|niyari)(s?|['s]*)\b", re.I), repl_nyari),
+    (re.compile(r"\b(nyari|niari|niyari|neari)(s?|['s]*)\b", re.I), repl_nyari),
 
     # 19. Dreamer (NEW)
     (re.compile(r"\b(streamer)(s?|['s]*)\b", re.I), repl_dreamer),
@@ -596,6 +596,73 @@ def cleanup_asr_artifacts(text: str) -> str:
         flags=re.I,
     )
     return re.sub(r"\s+", " ", text).strip()
+
+
+def repair_residual_phrases(text: str) -> str:
+    def repl_compound(target: str):
+        return lambda m: _preserve_case(target, m.group(1))
+
+    compound_rules = [
+        (re.compile(r"\b(launch\s+pad)\b(?!\s+(?:survey|dark)\b)", re.I), repl_compound("launchpad")),
+        (re.compile(r"\b(launch\s+pads)\b(?!\s+dark\b)", re.I), repl_compound("launchpads")),
+        (re.compile(r"\b(way\s+station)\b", re.I), repl_compound("waystation")),
+        (re.compile(r"\b(super\s+soldier)\b", re.I), repl_compound("supersoldier")),
+        (re.compile(r"\b(super\s+soldiers)\b", re.I), repl_compound("supersoldiers")),
+        (re.compile(r"\b(mega\s+corp)\b", re.I), repl_compound("megacorp")),
+        (re.compile(r"\b(mega\s+corps)\b", re.I), repl_compound("megacorps")),
+        (re.compile(r"\b(black\s+rock)\b", re.I), repl_compound("blackrock")),
+        (re.compile(r"\b(stellar\s+core)\b", re.I), repl_compound("stellarcore")),
+    ]
+    for rx, repl in compound_rules:
+        text = rx.sub(repl, text)
+
+    possessive_rules = [
+        (re.compile(r"(?<!crowd at )\b(caulfields)\b", re.I), "Caulfield's"),
+        (re.compile(r"\b(cyanites)\b", re.I), "Cyanite's"),
+        (re.compile(
+            r"\b(sims)\b(?=\s+(?:people|keeping|apparently|playing|been|looking|pushing|overextended|actually|green|dead|unusually)\b)",
+            re.I,
+        ), "Sim's"),
+        (re.compile(
+            r"\b(dreamers)\b(?=\s+(?:directive|directives|people|collective|latest|timeline|network|cell|words|coordination|message|being)\b)",
+            re.I,
+        ), "Dreamer's"),
+    ]
+    for rx, target in possessive_rules:
+        text = rx.sub(lambda m, t=target: _preserve_case(t, m.group(1)), text)
+
+    opted_rules = [
+        (re.compile(r"\b(opt[- ](?:ed|it|added))\b", re.I), "Opted"),
+        (re.compile(r"\b(opt[- ]ing)\b", re.I), "Opting"),
+        (re.compile(r"\b(opt[- ]in)\b", re.I), "Optin"),
+        (re.compile(r"\b(opt[- ]eds)\b", re.I), "Opteds"),
+    ]
+    for rx, target in opted_rules:
+        text = rx.sub(lambda m, t=target: _preserve_case(t, m.group(1)), text)
+
+    residual_rules = [
+        (re.compile(r"\b(petrol)\b", re.I), "Patrol"),
+        (re.compile(r"\b(marcos)\b", re.I), "Marcus"),
+        (re.compile(r"\b(corsa)\b(?=\s+(?:niner|9er)\b)", re.I), "Corsair"),
+        (re.compile(r"\b(woss)\b", re.I), "Voss"),
+        (re.compile(r"\b(helna)\b", re.I), "Helena"),
+        (re.compile(r"\b(tai\s+dak)\b", re.I), "Tidak"),
+        (re.compile(r"\b(screen)\b(?=\s+across\b)", re.I), "Green"),
+    ]
+    for rx, target in residual_rules:
+        text = rx.sub(lambda m, t=target: _preserve_case(t, m.group(1)), text)
+
+    bearing_rules = [
+        (re.compile(r"\b(bearing|heading)\s+ninety\s+five\s+degrees\b", re.I), r"\1 zero nine five degrees"),
+        (re.compile(r"\b(bearing|heading)\s+ninety\s+degrees\b", re.I), r"\1 zero nine zero degrees"),
+        (re.compile(r"\b(bearing|heading)\s+twenty\s+degrees\b", re.I), r"\1 zero two zero degrees"),
+        (re.compile(r"\b(bearing|heading)\s+one\s+hundred\s+eighty\s+degrees\b", re.I), r"\1 one eight zero degrees"),
+        (re.compile(r"\b(bearing|heading)\s+two\s+hundred\s+seventy\s+degrees\b", re.I), r"\1 two seven zero degrees"),
+    ]
+    for rx, repl in bearing_rules:
+        text = rx.sub(repl, text)
+
+    return text
 
 
 # refined Phi rules setup
@@ -710,6 +777,7 @@ def digits_to_words(text: str) -> str:
         return f"{_DIGIT_WORDS[match.group(1)]} niner"
 
     text = re.sub(r"\b([0-9])\s*[- ]\s*9\s*[- ]?er\b", repl_niner, text, flags=re.I)
+    text = re.sub(r"\b9er\b", "niner", text, flags=re.I)
 
     # Ordinals such as "23rd", "15th". Run before any int regex catches the
     # digit half and leaves an orphaned suffix. Use spoken ordinal forms so
@@ -781,6 +849,7 @@ def digits_to_words(text: str) -> str:
     text = re.sub(r"\b\d{1,3}(?:,\d{3})+\b", repl_int, text)
     text = re.sub(r"\b\d+\b", repl_int, text)
     
+    text = repair_residual_phrases(text)
     text = correct_proper_nouns(text)
     text = run_phi_rules(text)
     text = correct_style_spellings(text)

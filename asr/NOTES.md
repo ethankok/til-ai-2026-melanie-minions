@@ -1,6 +1,6 @@
 # ASR — notes & history
 
-Last updated: 23 May 2026 — **`nemo-zs-v5` with refined v5 proper noun and context-specific Phi rules achieved a new overall ASR blended high of `0.9605` (Accuracy: `0.966`, Speed: `0.944`).** `nemo-zs-v5` is the live candidate.
+Last updated: 24 May 2026 — **`nemo-zs-v6` with residual post-processing cleanup achieved a new overall ASR blended high of `0.9620` (Accuracy: `0.967`, Speed: `0.947`).** `nemo-zs-v6` is the protected shipped tag; `nemo-zs-v7` is staged only as a post-processing replay candidate.
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -10,10 +10,52 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`nemo-zs-v5` — official 0.966 / 0.944 (23 May 03:38 SGT, 0/400 errors).**
-Blended score `0.75*0.966 + 0.25*0.944 = 0.9605` (+0.0035 over `nemo-zs-v4`).
-Retains slang prompter fallback wordlist extraction fix, post-processing space-eating bugfix, and Zonnon/Caulfield rules, plus refined v5 proper noun and context-specific Phi rules on the fast Parakeet-TDT-v2 backend.
+**`nemo-zs-v6` — official 0.967 / 0.947 (24 May 17:39 SGT, 0/400 errors).**
+Blended score `0.75*0.967 + 0.25*0.947 = 0.9620` (+0.0015 over `nemo-zs-v5`).
+Retains the fast Parakeet-TDT-v2 backend and all `nemo-zs-v5` slang/proper-noun/Phi rules. Adds a replay-gated cleanup pass for percent signs, filler hallucinations (`uh`, `um`, `mm`), hundreds ordinals, The CUBE/First Dreamer spacing, and extra local residual proper nouns/style spellings.
 
+## nemo-zs-v7 (24/05) — residual replay candidate (staged)
+
+Status: implemented locally, not yet cloud-scored at the time of this note.
+
+Why this candidate:
+- Keep the same Parakeet-TDT-v2 model/runtime as `nemo-zs-v6`; no decoder, prompt, or Docker risk.
+- Replay the actual saved `nemo-zs-v6` local outputs from Workbench against `/home/jupyter/novice/asr/asr.jsonl`.
+- Only keep residual rules that make sense after a second review and do not create replay regressions under the local alignment check.
+
+Replay gate:
+- `nemo-zs-v6` saved-output replay: 8532 edit errors, approximate WER `0.02912`.
+- `nemo-zs-v7` post-process replay: 7549 edit errors, approximate WER `0.02576`.
+- Delta: 983 fewer edit errors, 497 changed predictions, 494 improved lines, 0 worsened lines.
+
+Changes staged in `asr/src/asr_postprocess.py`:
+- Join high-confidence compounds: `launchpad`, `launchpads`, `waystation`, `supersoldiers`, `megacorp(s)`, `blackrock`, `stellarcore`.
+- Repair Opted/Opting/Optin hyphenation and a few residual ASR forms (`petrol` -> `patrol`, `Marcos` -> `Marcus`, `Fair Ex` -> `Phyrexis`, `Neari` -> `Nyari`, `Tai Dak`/`Dida` -> `Tidak`).
+- Add context-limited possessives for `Caulfield's`, `Cyanite's`, `Sim's`, and `Dreamer's` while preserving known plural exceptions.
+- Normalize maritime bearing phrases such as `bearing ninety five degrees` -> `bearing zero nine five degrees` and `heading one hundred eighty degrees` -> `heading one eight zero degrees`.
+
+Submit gate:
+- Build and run `til test asr nemo-zs-v7` on Workbench after pulling the commit.
+- Submit only if the full local test passes and English WER stays clearly better than `nemo-zs-v6`'s `0.0296` local run.
+
+## nemo-zs-v6 (24/05) — residual cleanup high
+
+Submitted 24 May 2026 17:39 SGT.
+
+Results:
+- Errors: 0/400
+- Score (Accuracy): 0.967
+- Speed: 0.947
+- Blended score (75/25): 0.9620 (new overall ASR high)
+- Workbench local test before submit: English WER `0.0296`, `1 - MER 0.9926082235489664`
+
+Why this candidate:
+- Kept `nemo-zs-v5`'s fast Parakeet-TDT-v2 backend and only added post-processing repairs discovered from saved-output replay.
+- Fixed `%` outputs to preserve `percent` after scorer punctuation removal.
+- Removed standalone filler hallucinations (`uh`, `um`, `mm`).
+- Fixed hundreds/thousands ordinals such as `123rd` -> `one hundred twenty third`.
+- Added cleanup for The CUBE spacing, First Dreamer spacing, and a small set of residual proper-noun/style variants.
+- Replay against saved local outputs reduced approximate WER from `0.03187` to `0.02960` before the full Workbench run.
 
 ## nemo-zs-v2 (22/05) — phonetic post-corrections accuracy peak
 
@@ -69,7 +111,7 @@ Why this candidate:
 - Added case-preserving phonetic/spelling post-corrections for `Zonnon` (e.g., Zonan, zonon, Zonanun, Zonal, zondun's -> Zonnon) and `Caulfield` (e.g., Coalfields, callfields, Coffield's -> Caulfield) to capture common mistakes.
 - Local validation on `asr_results.json` shows 335/4110 lines modified, successfully fixing boundary collapsing, word merging, and phonetically close proper nouns without affecting correct substitutions.
 
-## nemo-zs-v5 (23/05) — v5 post-processing & refined Phi rules (Current)
+## nemo-zs-v5 (23/05) — v5 post-processing & refined Phi rules
 
 Results:
 - Errors: 0/400
