@@ -270,6 +270,11 @@ class AEManager:
         # willing to bomb-break walls to reach distant items / enemy bases.
         # Shipped default (5.0) was set without a sweep; tuning candidate.
         self.DIJKSTRA_BOMB_COST = _env_float("AE_DIJKSTRA_BOMB_COST", 5.0)
+        # Cheese: pre-baked greedy item+base route per fixed-Novice spawn.
+        # Default OFF; opt in with AE_USE_MEMORIZED_ROUTE=1 for A/B testing.
+        # See spawn_routes.py for the precompute + ae() / _choose_target
+        # for the runtime hook.
+        self.use_memorized_route = _env_flag("AE_USE_MEMORIZED_ROUTE", False)
         self._reset_memory()
 
     # ------------------------------------------------------------------
@@ -318,6 +323,26 @@ class AEManager:
                             self.destructible = set(DESTRUCTIBLE)
                             self.enemy_bases = {tuple(BASE_LOCATIONS[j]): 0 for j in range(6) if j != i}
                             self.last_seen_items = {tuple(pos): (kind, 0) for kind, pos in STATIC_ENTITIES}
+                            # Cheese: load memorized greedy route for this spawn.
+                            # No-op when AE_USE_MEMORIZED_ROUTE is unset.
+                            if self.use_memorized_route:
+                                try:
+                                    from spawn_routes import get_route
+                                    wp_list = get_route(tuple(location))
+                                    if wp_list:
+                                        self.route_waypoints = wp_list
+                                        self.route_idx = 0
+                                        print(
+                                            f"[AEManager] memorized route loaded: "
+                                            f"team_idx={i} spawn={tuple(location)} "
+                                            f"len={len(wp_list)}",
+                                            flush=True,
+                                        )
+                                except ImportError as exc:
+                                    print(
+                                        f"[AEManager] spawn_routes import failed: {exc}",
+                                        flush=True,
+                                    )
                             break
                 except ImportError:
                     pass
@@ -496,6 +521,11 @@ class AEManager:
         # base so we can detect "took damage this step" reliably.
         self.last_base_health: int = 100
         self.last_step = None
+        # Memorized-route cheese state. Populated on step-0 fixed-Novice
+        # detection (see ae()) when AE_USE_MEMORIZED_ROUTE=1; reset here
+        # so /reset between episodes starts from waypoint 0.
+        self.route_waypoints: list = []
+        self.route_idx: int = 0
         self.is_fixed_novice_map = False
         self.fixed_team_idx = None
         self.dijkstra_bomb_cost = self.DIJKSTRA_BOMB_COST
@@ -969,6 +999,28 @@ class AEManager:
         else:
             distance, parent = self._bfs_distance_map(start, danger)
 
+        # === Cheese: memorized-route override (AE_USE_MEMORIZED_ROUTE) ===
+        # When enabled and on the fixed Novice map, follow the pre-baked
+        # greedy item+base sequence from spawn_routes.py instead of re-
+        # scoring all candidates each tick. Aborts (falls through to the
+        # heuristic below) on: low health, base defense emergency, enemy
+        # near agent, waypoint unreachable, path crosses recent enemy
+        # threat cell, or route exhausted. See spawn_routes.py for the
+        # planner. Default OFF — no effect on the shipping path.
+        if (
+            getattr(self, "use_memorized_route", False)
+            and getattr(self, "is_fixed_novice_map", False)
+            and not low_health
+            and self.route_waypoints
+        ):
+            route_target = self._route_pick(start, distance, parent, threats, step)
+            if route_target is not None:
+                path = self._reconstruct_path(parent, start, route_target)
+                if path is not None:
+                    self.current_path = path
+                    return route_target, path
+        # === end memorized-route override ===
+
         candidates: list[tuple[float, tuple[int, int]]] = []
         # Defensive emergency logic (disabled on fixed novice map, optional on general maps)
         defense_emergency = False
@@ -1055,6 +1107,78 @@ class AEManager:
         path = self._reconstruct_path(parent, start, best_target)
         self.current_path = path
         return best_target, path
+
+    def _route_pick(
+        self,
+        start: tuple[int, int],
+        distance: dict[tuple[int, int], float],
+        parent: dict[tuple[int, int], tuple[int, int] | None],
+        threats: set[tuple[int, int]],
+        step: int,
+    ) -> tuple[int, int] | None:
+        """Memorized-route waypoint selector for ``AE_USE_MEMORIZED_ROUTE``.
+
+        Returns the position of the next waypoint to target, or ``None``
+        to fall through to the dynamic heuristic. Called from
+        ``_choose_target`` after the distance map is computed.
+
+        Abort cases (return ``None``):
+          1. Base under attack while hurt — let heuristic defend.
+          2. Enemy within 2 cells of agent — let tactical layer engage.
+          3. Route exhausted.
+          4. Waypoint unreachable in current Dijkstra.
+          5. Waypoint distance > 15 (drifted far from plan).
+          6. Path to a non-base waypoint crosses an enemy threat cell.
+        """
+        if not self.route_waypoints:
+            return None
+        # (1) Base-defense gate.
+        if (
+            self.base_location is not None
+            and self.base_health < self.BASE_DEFENSE_HEALTH
+        ):
+            for pos, last_seen in self.enemy_agents.items():
+                if step - int(last_seen) > self.ENEMY_STALENESS:
+                    continue
+                if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
+                    return None
+        # (2) Self-defense gate.
+        for pos, last_seen in self.enemy_agents.items():
+            if step - int(last_seen) > self.ENEMY_STALENESS:
+                continue
+            if self._manhattan(pos, start) <= 2:
+                return None
+        # Advance past completed waypoints (collected items, destroyed bases).
+        while self.route_idx < len(self.route_waypoints):
+            wp = self.route_waypoints[self.route_idx]
+            if wp.kind == "enemy_base":
+                if wp.pos in self.enemy_bases:
+                    break
+            else:
+                if wp.pos in self.last_seen_items:
+                    break
+            self.route_idx += 1
+        # (3) Exhausted.
+        if self.route_idx >= len(self.route_waypoints):
+            return None
+        wp = self.route_waypoints[self.route_idx]
+        target = wp.pos
+        # (4) Unreachable.
+        if target not in distance:
+            return None
+        # (5) Drift guard.
+        if distance[target] > 15:
+            return None
+        # (6) Threat-on-path (skip for enemy-base targets — we want to engage).
+        if wp.kind != "enemy_base":
+            cursor: tuple[int, int] | None = target
+            guard = 0
+            while cursor is not None and cursor != start and guard < 64:
+                if cursor in threats:
+                    return None
+                cursor = parent.get(cursor)
+                guard += 1
+        return target
 
     def _bfs(
         self,
