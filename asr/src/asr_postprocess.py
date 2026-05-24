@@ -51,6 +51,16 @@ def _int_to_ordinal(n: int) -> str:
     if n < 100:
         q, r = divmod(n, 10)
         return f"{_TENS[q]} {_ORDINALS[r]}"
+    if n < 1000:
+        q, r = divmod(n, 100)
+        if r == 0:
+            return f"{_ONES[q]} hundredth"
+        return f"{_ONES[q]} hundred {_int_to_ordinal(r)}"
+    if n < 1_000_000:
+        q, r = divmod(n, 1000)
+        if r == 0:
+            return f"{_int_to_words(q)} thousandth"
+        return f"{_int_to_words(q)} thousand {_int_to_ordinal(r)}"
     return _int_to_words(n) + "th"
 
 
@@ -67,6 +77,8 @@ def _int_to_words(n: int) -> str:
         q, r = divmod(n, 1000)
         return f"{_int_to_words(q)} thousand" if r == 0 else f"{_int_to_words(q)} thousand {_int_to_words(r)}"
     return " ".join(_DIGIT_WORDS[d] for d in str(n))
+
+
 def _preserve_case(target: str, match_text: str) -> str:
     if match_text.isupper():
         return target.upper()
@@ -98,6 +110,12 @@ def repl_standalone_mewan(match: re.Match[str]) -> str:
         base = "new mewan"
     else:
         base = "New Mewan"
+    return base + suffix
+
+
+def repl_mewan(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Mewan", match.group(1))
     return base + suffix
 
 
@@ -246,6 +264,12 @@ def repl_tidakran(match: re.Match[str]) -> str:
         return "Tidak run"
 
 
+def repl_cape_tidak(match: re.Match[str]) -> str:
+    prefix = _preserve_case("Cape", match.group(1))
+    target = _preserve_case("Tidak", match.group(1))
+    return f"{prefix} {target}"
+
+
 def repl_kashikari_standalone(match: re.Match[str]) -> str:
     suffix = match.group(2) if match.group(2) else ""
     base = _preserve_case("Kashikari", match.group(1))
@@ -280,6 +304,10 @@ def repl_veyanova(match: re.Match[str]) -> str:
     suffix = match.group(2) if match.group(2) else ""
     base = _preserve_case("Veyanova", match.group(1))
     return base + suffix
+
+
+def repl_sarento_site(match: re.Match[str]) -> str:
+    return _preserve_case("Sarento site", match.group(1))
 
 
 def repl_ashcastle_prefix(match: re.Match[str]) -> str:
@@ -320,6 +348,18 @@ def repl_caulfield(match: re.Match[str]) -> str:
 def repl_canian(match: re.Match[str]) -> str:
     suffix = match.group(2) if match.group(2) else ""
     base = _preserve_case("Canian", match.group(1))
+    return base + suffix
+
+
+def repl_cania(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Cania", match.group(1))
+    return base + suffix
+
+
+def repl_clairos(match: re.Match[str]) -> str:
+    suffix = match.group(2) if match.group(2) else ""
+    base = _preserve_case("Clairos", match.group(1))
     return base + suffix
 
 
@@ -395,12 +435,20 @@ def repl_tec(match: re.Match[str]) -> str:
     return _preserve_case("TEC", matched)
 
 
+def repl_tec_possessive(match: re.Match[str]) -> str:
+    return _preserve_case("TEC", match.group(1)) + match.group(2)
+
+
 def repl_cypher(match: re.Match[str]) -> str:
     matched = match.group(1) if match.group(1) else match.group(0)
     if match.group(1):
         prefix = match.group(0)[:-len(matched)]
         return prefix + _preserve_case("Cypher", matched)
     return _preserve_case("Cypher", matched)
+
+
+def repl_cypher_possessive(match: re.Match[str]) -> str:
+    return _preserve_case("Cypher", match.group(1)) + match.group(2)
 
 
 def repl_bloc(match: re.Match[str]) -> str:
@@ -415,17 +463,19 @@ _PROPER_NOUN_RULES = [
     # 1. Complex/Combined Names (to avoid parts getting replaced by standalone rules)
     (re.compile(r"\b(takeshi|ada)\s+(oilaran|olrn|oyelaran)(s?|['s]*)\b", re.I), repl_takeshi_ada_oyelaran),
     (re.compile(r"\b(devika|divika|davika|de\s+vika|devi\s+ka)\s+(oranyan|uranyan|auranyan|aranyan|origins)(s?|['s]*)\b", re.I), repl_devika_oranyan),
-    (re.compile(r"\bdivikauranyan(s?|['s]*)\b", re.I), repl_divikauranyan),
+    (re.compile(r"\b(?:divikauranyan|devikauranya)(s?|['s]*)\b", re.I), repl_divikauranyan),
     (re.compile(r"\bdevi\s+kauranyan(s?|['s]*)\b", re.I), repl_devi_kauranyan),
     
     # 2. Park Soo-Hyun
-    (re.compile(r"\b(park|pak|pack)\s+(su\s+hyun|soo\s+hyun|suzanne|suhyon|suhyun|shohyan|sho\s+hyan|su\s+hyon)(s?|['s]*)\b", re.I), repl_park_soo_hyun),
+    (re.compile(r"\b(park|pak|pack)\s+(su\s+hyun|soo\s+hyun|suzanne|suhyon|suhyun|suhyin|shohyan|sho\s+hyan|su\s+hyon|su\s+hyin)(s?|['s]*)\b", re.I), repl_park_soo_hyun),
+    (re.compile(r"\b(pak)\s*(su\s+hyon|su\s+hyin)(s?|['s]*)\b", re.I), repl_park_soo_hyun),
     (re.compile(r"\b(su|soo)\s+hyun(s?|['s]*)\b", re.I), repl_soo_hyun_standalone),
-    (re.compile(r"\b(suyan|suyon|sujan|suhyan|soohyan|suhyun|suhyon|soohyun|shohyan|suzanne)(s?|['s]*)\b", re.I), repl_suyan_standalone),
+    (re.compile(r"\b(suyan|suyon|sujan|suhyan|soohyan|suhyin|suhyun|suhyon|soohyun|shohyan|suzanne)(s?|['s]*)\b", re.I), repl_suyan_standalone),
     
     # 3. New Mewan
-    (re.compile(r"\b(new|nu|noo|u)\s*(mewan|mevan|miwan|muvan|muon|muan|mi1|mu1|mi\s*1|mu\s*1|mi\s*one|mu\s*one|muons?|muvans?|miwans?|muans?|mevans?)(s?|['s]*)\b", re.I), repl_new_mewan),
+    (re.compile(r"\b(new|nu|noo|u)\s*(mewan|mevan|miwan|mivan|muvan|muon|muan|maven|miuen|miami|niwan|newan|mi1|mu1|mi\s*1|mu\s*1|mi\s*one|mu\s*one|muons?|muvans?|miwans?|muans?|mevans?)(s?|['s]*)\b", re.I), repl_new_mewan),
     (re.compile(r"\b(numiwan|numuan|mumuan|umiwan)(s?|['s]*)\b", re.I), repl_standalone_mewan),
+    (re.compile(r"\b(maven|me1)(s?|['s]*)\b", re.I), repl_mewan),
     
     # 4. Sim Jiahong
     (re.compile(r"\bsim\s+jahong(s?|['s]*)\b", re.I), repl_sim_jiahong),
@@ -438,13 +488,14 @@ _PROPER_NOUN_RULES = [
     (re.compile(r"\b(castralian|castrillian|kestralian|kestrillian|castrelian|kastrillian|kesrelian)(s?)\b", re.I), repl_kestrelian),
     
     # 7. Sarento / Sorrento
-    (re.compile(r"\b(s[oae]r+[ea]nto)(s?)\b", re.I), repl_sarento),
+    (re.compile(r"\b(sarantosite|sarentosite)\b", re.I), repl_sarento_site),
+    (re.compile(r"\b(s[oae]r+[ea]nto|sarantu|sarinto|sarano)(s?)\b", re.I), repl_sarento),
     
     # 8. Cyanite
-    (re.compile(r"\b(cyanide|syanite|sanite|sinide|sinite|sinai)(s?)\b", re.I), repl_cyanite),
+    (re.compile(r"\b(cyanide|syanite|sionite|sanite|sinide|sinite|sinai)(s?)\b", re.I), repl_cyanite),
     
     # 9. Renhwa
-    (re.compile(r"\b(renwa|renva|renhua|renhoa|renha|ren\s+ha|renoir)(s?)\b", re.I), repl_renhwa),
+    (re.compile(r"\b(renwa|renva|renhua|renhoa|renha|ren\s+ha|renoir|renoa)(s?)\b", re.I), repl_renhwa),
     
     # 10. Standalone Last Names / Names
     (re.compile(r"\b(oilaran|olrn)(s?|['s]*)\b", re.I), repl_oyelaran_standalone),
@@ -452,12 +503,13 @@ _PROPER_NOUN_RULES = [
     (re.compile(r"\b(kashikarikari|kashkari|kashigari)(s?|['s]*)\b", re.I), repl_kashikari_standalone),
     (re.compile(r"\b(devika|divika|davika|de\s+vika)\b", re.I), repl_devika_standalone),
     (re.compile(r"\b(davenport|tavernport)(s?|['s]*)\b", re.I), repl_tavenport_standalone),
-    (re.compile(r"\b(vayanova|vyanova|vianova|vaianova)(s?|['s]*)\b", re.I), repl_veyanova),
+    (re.compile(r"\b(vayanova|vayanawa|vyanova|vianova|vaianova)(s?|['s]*)\b", re.I), repl_veyanova),
     (re.compile(r"\b(del|skel|tell)\s+(del[- ]?ash[- ]?castle|ash[- ]?castle|ash\s+castle|ashcastle)(s?|['s]*)\b", re.I), repl_ashcastle_prefix),
     (re.compile(r"\b(delash|delashcastle|del[- ]?ash[- ]?castle|ash[- ]?castle|ash\s+castle|ashcastle)(s?|['s]*)\b", re.I), repl_ashcastle_standalone),
     
     # 11. Tidak
-    (re.compile(r"\b(tedak|taidak|sidak|tiduck|deduct)\b", re.I), repl_tidak_standalone),
+    (re.compile(r"\b(tedak|taidak|sidak|tiduck|deduct|didak|teda|tida)\b", re.I), repl_tidak_standalone),
+    (re.compile(r"\b(cape)\s+(tak|iraq)\b", re.I), repl_cape_tidak),
     (re.compile(r"\btidakran\b", re.I), repl_tidakran),
     
     # 12. Blackshore
@@ -465,12 +517,15 @@ _PROPER_NOUN_RULES = [
     
     # 13. Zonnon
     (re.compile(r"\b(zonon|zonan|zonun|zondon|zondun|zonkon|zonnan|zonnal|zonone|zono|zonom|zonanun|zonal)(s?|['s]*)\b", re.I), repl_zonnon),
+    (re.compile(r"\b(zone\s+nine|zone\s+known|sonon)(s?|['s]*)\b", re.I), repl_zonnon),
     
     # 14. Caulfield
     (re.compile(r"\b(coalfield|colfield|callfield|coffield|cofield|colefield)(s?|['s]*)\b", re.I), repl_caulfield),
     
     # 15. Canian (NEW)
     (re.compile(r"\b(k[ae]nyan|kanyean|canaanian|canadian|khan[yi]an|canyon|kanyan)(s?|['s]*)\b", re.I), repl_canian),
+    (re.compile(r"\b(kenya|kanya)(s?|['s]*)\b", re.I), repl_cania),
+    (re.compile(r"\b(kleros)(s?|['s]*)\b", re.I), repl_clairos),
     
     # 16. Hegemony (NEW)
     (re.compile(r"\b(hegel|hegemoni|hegmoni|hegemony)(s?|['s]*)\b", re.I), repl_hegemony),
@@ -494,10 +549,12 @@ _PROPER_NOUN_RULES = [
     (re.compile(r"\b(flood)\s+wall(s?|['s]*)\b", re.I), repl_floodwall),
 
     # 23. TEC / tech (NEW)
+    (re.compile(r"\b(tekki)(['’]s)\b", re.I), repl_tec_possessive),
     (re.compile(r"\btech\b(?=\s+(?:command|signature|signatures|side|surveillance|nanoswarm|personnel|releases|succession|ties|handlers|response|deployment|sponsoring|integration|fundamentally|infrastructure|security|wants|lately|making|situation|probably|operates|Renhwa|Renoir|Renoa|operational|politics|implodes|liaison|liaisons|execs|backing|grade|distributed|bleed|throwing|partnership|gets|Cube|has|is|out|sometime|and|quietly|does|doesn|even|for|benefit)\b)|\b(?:for|benefit|and)\s+(tech)\b", re.I), repl_tec),
 
     # 24. CYPHER / cipher (NEW)
-    (re.compile(r"\bciphers?\b(?=\s+(?:calculates|estimates|acknowledged|acknowledges|requires|sees|has|is|was|satellite|constellation|power|bandwidth|vision|conduit|out|counting|flagged|timeline|speaks|watches|hears|emphasizes|wants|confirms|demands|resupply|supply)\b)|\b(?:give|to|from|heard|references|admitting|targeting|reached|serve|about|with|for|believe|starve|starves|starving)\s+(ciphers?)\b", re.I), repl_cypher),
+    (re.compile(r"\b(cipher)(['’]s)\b", re.I), repl_cypher_possessive),
+    (re.compile(r"\bciphers?\b(?=\s+(?:calculates|estimates|acknowledged|acknowledges|requires|sees|has|is|was|satellite|constellation|power|bandwidth|vision|conduit|out|counting|flagged|timeline|speaks|watches|hears|emphasizes|wants|confirms|demands|resupply|supply|left|flagging|responding)\b)|\b(?:give|to|from|heard|references|admitting|targeting|reached|serve|about|with|for|believe|starve|starves|starving)\s+(ciphers?)\b", re.I), repl_cypher),
 
     # 25. Bloc / block (NEW)
     (re.compile(r"\bblock\b(?=\s+(?:tensions|maritime|coordinates|operational|signature|consensus|territories|operations|seaside|security|sector|operation|territorial|customs|freight|coordinator|observers|registry|waters|coordination|surveillance|research|unity|intelligence|ports|joint|counterintelligence|farming|infrastructure|merchant|logistics|counter|shipping|naval|vessel|database)\b)|\b(?:Accommodationist)\s+(block)\b", re.I), repl_bloc),
@@ -508,6 +565,37 @@ def correct_proper_nouns(text: str) -> str:
     for rx, repl in _PROPER_NOUN_RULES:
         text = rx.sub(repl, text)
     return text
+
+
+_STYLE_RULES = [
+    (re.compile(r"\bsynchronization\b", re.I), "Synchronisation"),
+    (re.compile(r"\bdefence\b", re.I), "Defense"),
+    (re.compile(r"\barmored\b", re.I), "Armoured"),
+]
+
+
+def correct_style_spellings(text: str) -> str:
+    for rx, target in _STYLE_RULES:
+        text = rx.sub(lambda m, t=target: _preserve_case(t, m.group(0)), text)
+    return text
+
+
+def cleanup_asr_artifacts(text: str) -> str:
+    text = re.sub(r"\s*%", " percent", text)
+    text = re.sub(r"(?i)(?<!\w)(?:uh+|um+|mm+)(?!\w)", " ", text)
+    text = re.sub(
+        r"\bthe\s*cube\b|\bthecube\b",
+        lambda m: "The CUBE" if m.group(0)[0].isupper() else "the CUBE",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        r"\bfirstdreamer\b",
+        lambda m: _preserve_case("First Dreamer", m.group(0)),
+        text,
+        flags=re.I,
+    )
+    return re.sub(r"\s+", " ", text).strip()
 
 
 # refined Phi rules setup
@@ -644,6 +732,12 @@ def digits_to_words(text: str) -> str:
     # boundaries by turning digit-to-digit dots into spaces before integer
     # verbalization; the scorer removes punctuation without inserting spaces.
     text = re.sub(r"(?<=\d)\.(?=\d)", " ", text)
+    text = re.sub(
+        r"\b(decimal)([0-9])\b",
+        lambda m: f"{m.group(1)} {_DIGIT_WORDS[m.group(2)]}",
+        text,
+        flags=re.I,
+    )
 
     def _time_words(hour: int, minute: int) -> str:
         if minute == 0:
@@ -689,5 +783,5 @@ def digits_to_words(text: str) -> str:
     
     text = correct_proper_nouns(text)
     text = run_phi_rules(text)
-    return text
-
+    text = correct_style_spellings(text)
+    return cleanup_asr_artifacts(text)

@@ -8,9 +8,12 @@ from asr_postprocess import digits_to_words
 def test_digits_to_words():
     # 1. Numerics
     assert digits_to_words("123") == "one hundred twenty three"
-    assert digits_to_words("123rd") == "one hundred twenty threeth"
+    assert digits_to_words("123rd") == "one hundred twenty third"
     assert digits_to_words("0.8.4") == "zero eight four"
     assert digits_to_words("0.8") == "zero point eight"
+    assert digits_to_words("0.3%") == "zero point three percent"
+    assert digits_to_words("40%") == "forty percent"
+    assert digits_to_words("decimal2") == "decimal two"
     assert digits_to_words("0900") == "zero nine hundred"
     assert digits_to_words("0430") == "zero four thirty"
     assert digits_to_words("2300") == "twenty three hundred"
@@ -26,6 +29,7 @@ def test_digits_to_words():
     # 3. Cyanide/Syanite -> Cyanite
     assert digits_to_words("cyanide") == "cyanite"
     assert digits_to_words("Syanite") == "Cyanite"
+    assert digits_to_words("Sionite") == "Cyanite"
     assert digits_to_words("sanite") == "cyanite"
     assert digits_to_words("sinide") == "cyanite"
 
@@ -33,11 +37,15 @@ def test_digits_to_words():
     assert digits_to_words("renwa") == "renhwa"
     assert digits_to_words("Ren Ha") == "Renhwa"
     assert digits_to_words("Renha") == "Renhwa"
+    assert digits_to_words("Renoa") == "Renhwa"
 
     # 5. New Mewan
     assert digits_to_words("New Mu1") == "New Mewan"
     assert digits_to_words("New Mi One") == "New Mewan"
+    assert digits_to_words("New Maven") == "New Mewan"
+    assert digits_to_words("New Niwan") == "New Mewan"
     assert digits_to_words("numiwan") == "new mewan"
+    assert digits_to_words("maven") == "mewan"
     assert digits_to_words("New Muvan's") == "New Mewan's"
 
     # 6. Phyrexis
@@ -58,6 +66,7 @@ def test_digits_to_words():
     # 9. Oranyan
     assert digits_to_words("devika aranyan") == "devika oranyan"
     assert digits_to_words("Divikauranyan") == "Devika Oranyan"
+    assert digits_to_words("Devikauranya") == "Devika Oranyan"
 
     # 10. Soo-Hyun
     assert digits_to_words("Park Soo Hyun") == "Park Soo-Hyun"
@@ -71,6 +80,8 @@ def test_digits_to_words():
 
     # 12. Tidak
     assert digits_to_words("tedak") == "tidak"
+    assert digits_to_words("Cape Teda") == "Cape Tidak"
+    assert digits_to_words("Cape Iraq") == "Cape Tidak"
     assert digits_to_words("tidakran") == "tidak run"
 
     # 13. Blackshore
@@ -81,10 +92,13 @@ def test_digits_to_words():
     assert digits_to_words("Vyanova's") == "Veyanova's"
     assert digits_to_words("vianova") == "veyanova"
     assert digits_to_words("Vaianova") == "Veyanova"
+    assert digits_to_words("Vayanawa") == "Veyanova"
 
     # 15. Sarento (extra)
     assert digits_to_words("Sarrento") == "Sarento"
     assert digits_to_words("serento") == "sarento"
+    assert digits_to_words("Sarantu") == "Sarento"
+    assert digits_to_words("Sarantosite") == "Sarento site"
 
     # 16. Kashikari (extra)
     assert digits_to_words("Kashigari's") == "Kashikari's"
@@ -97,6 +111,8 @@ def test_digits_to_words():
     # 18. Park Soo-Hyun (extra)
     assert digits_to_words("Park Suzanne") == "Park Soo-Hyun"
     assert digits_to_words("Park Suhyon") == "Park Soo-Hyun"
+    assert digits_to_words("Park Suhyin") == "Park Soo-Hyun"
+    assert digits_to_words("Paksu Hyon") == "Park Soo-Hyun"
     assert digits_to_words("Park Shohyan") == "Park Soo-Hyun"
     assert digits_to_words("suzanne") == "soo-hyun"
 
@@ -125,6 +141,8 @@ def test_digits_to_words():
     assert digits_to_words("ZONON") == "ZONNON"
     assert digits_to_words("Zonanun") == "Zonnon"
     assert digits_to_words("Zonal") == "Zonnon"
+    assert digits_to_words("Zone nine Maritime") == "Zonnon Maritime"
+    assert digits_to_words("Sonon") == "Zonnon"
     assert digits_to_words("Zonon's") == "Zonnon's"
     assert digits_to_words("zondun's") == "zonnon's"
 
@@ -139,6 +157,8 @@ def test_digits_to_words():
     assert digits_to_words("kanyan") == "canian"
     assert digits_to_words("canaanian") == "canian"
     assert digits_to_words("Canadian") == "Canian"
+    assert digits_to_words("Kenya") == "Cania"
+    assert digits_to_words("Kleros") == "Clairos"
 
     # 24. Hegemony
     assert digits_to_words("hegemoni") == "hegemony"
@@ -174,6 +194,7 @@ def test_digits_to_words():
     # 31. TEC / tech
     assert digits_to_words("tech command") == "tec command"
     assert digits_to_words("Tech command") == "TEC command"
+    assert digits_to_words("Tekki's politics") == "TEC's politics"
     assert digits_to_words("for tech") == "for tec"
     assert digits_to_words("for Tech") == "for TEC"
     assert digits_to_words("tech team") == "tech team"
@@ -181,6 +202,8 @@ def test_digits_to_words():
     # 32. CYPHER / cipher
     assert digits_to_words("cipher requires") == "cypher requires"
     assert digits_to_words("Cipher requires") == "Cypher requires"
+    assert digits_to_words("Cipher's acknowledgement") == "Cypher's acknowledgement"
+    assert digits_to_words("Ciphers left") == "Cypher left"
     assert digits_to_words("give cipher") == "give cypher"
     assert digits_to_words("give Cipher") == "give Cypher"
     assert digits_to_words("cascade cipher") == "cascade cipher"
@@ -191,6 +214,14 @@ def test_digits_to_words():
     assert digits_to_words("Accommodationist block") == "Accommodationist bloc"
     assert digits_to_words("Accommodationist Block") == "Accommodationist Bloc"
     assert digits_to_words("road block") == "road block"
+
+    # 34. Cleanup artifacts
+    assert digits_to_words("Uh") == ""
+    assert digits_to_words("TheCUBE's angle") == "The CUBE's angle"
+    assert digits_to_words("firstdreamer") == "first dreamer"
+    assert digits_to_words("synchronization") == "synchronisation"
+    assert digits_to_words("Maritime Defence") == "Maritime Defense"
+    assert digits_to_words("armored support") == "armoured support"
 
     print("All unit tests passed successfully!")
 
