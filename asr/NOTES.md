@@ -1,6 +1,6 @@
 # ASR — notes & history
 
-Last updated: 24 May 2026 — **`nemo-zs-v6` with residual post-processing cleanup achieved a new overall ASR blended high of `0.9620` (Accuracy: `0.967`, Speed: `0.947`).** `nemo-zs-v6` is the protected shipped tag; `nemo-zs-v7` is staged only as a post-processing replay candidate.
+Last updated: 24 May 2026 — **`nemo-zs-v6` with residual post-processing cleanup achieved a protected ASR blended high of `0.9620` (Accuracy: `0.967`, Speed: `0.947`).** `nemo-zs-v7` is submitted after a stronger Workbench test, but is not promoted until Discord/cloud score returns.
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -14,9 +14,11 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 Blended score `0.75*0.967 + 0.25*0.947 = 0.9620` (+0.0015 over `nemo-zs-v5`).
 Retains the fast Parakeet-TDT-v2 backend and all `nemo-zs-v5` slang/proper-noun/Phi rules. Adds a replay-gated cleanup pass for percent signs, filler hallucinations (`uh`, `um`, `mm`), hundreds ordinals, The CUBE/First Dreamer spacing, and extra local residual proper nouns/style spellings.
 
-## nemo-zs-v7 (24/05) — residual replay candidate (staged)
+Pending challenger: **`nemo-zs-v7`**. Workbench `til test asr nemo-zs-v7` passed with English WER `0.0270`, `1 - MER 0.9932495352686306`, and the tag was submitted for cloud scoring. Wait for Discord score before replacing `nemo-zs-v6` as the shipped high.
 
-Status: implemented locally, not yet cloud-scored at the time of this note.
+## nemo-zs-v7 (24/05) — residual replay candidate (submitted)
+
+Status: submitted 24 May after full Workbench local test; awaiting Discord/cloud score.
 
 Why this candidate:
 - Keep the same Parakeet-TDT-v2 model/runtime as `nemo-zs-v6`; no decoder, prompt, or Docker risk.
@@ -35,8 +37,10 @@ Changes staged in `asr/src/asr_postprocess.py`:
 - Normalize maritime bearing phrases such as `bearing ninety five degrees` -> `bearing zero nine five degrees` and `heading one hundred eighty degrees` -> `heading one eight zero degrees`.
 
 Submit gate:
-- Build and run `til test asr nemo-zs-v7` on Workbench after pulling the commit.
-- Submit only if the full local test passes and English WER stays clearly better than `nemo-zs-v6`'s `0.0296` local run.
+- Workbench `til build asr nemo-zs-v7`: passed.
+- Workbench `til test asr nemo-zs-v7`: passed in about 15:18 with English WER `0.0270`, `1 - MER 0.9932495352686306`.
+- Workbench `til submit asr nemo-zs-v7`: completed cleanly and handed off to automatic evaluation.
+- Promote only if Discord/cloud score beats protected `nemo-zs-v6` (`0.967 / 0.947`, blended `0.9620`).
 
 ## nemo-zs-v6 (24/05) — residual cleanup high
 
