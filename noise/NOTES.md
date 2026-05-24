@@ -140,4 +140,4 @@ images; the official cloud eval returned 0/500 errors, Score `1.000`, Speed
 - HTTP server (don't edit): [src/noise_server.py](src/noise_server.py)
 - Container build: [Dockerfile](Dockerfile), [requirements.txt](requirements.txt)
 - Input/output spec: [README.md](README.md)
-- Strategic context: [../SUMMARY.md#noise](../SUMMARY.md)
+- Score/status rollup: [../RESULTS.md](../RESULTS.md)

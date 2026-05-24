@@ -622,5 +622,5 @@ re-evaluated against AE/NLP marginal-hour ROI before kicking off.
 - HTTP server (don't edit): [src/cv_server.py](src/cv_server.py)
 - Container build: [Dockerfile](Dockerfile), [requirements.txt](requirements.txt)
 - Input/output spec: [README.md](README.md)
-- Strategic context: [../SUMMARY.md#cv](../SUMMARY.md)
+- Score/status rollup: [../RESULTS.md](../RESULTS.md)
 - Training scripts: [../training/cv/](../training/cv/) — `prepare_yolo_dataset.py`, `build_aug_dataset.py`, `train_v3.sh`, `train_v4.sh`, `eval_cv_http.py`, `sweep_cv_http.py`, `analyze_cv_failures.py`, `gap_diagnose.py`

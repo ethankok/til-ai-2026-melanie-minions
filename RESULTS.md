@@ -3,6 +3,20 @@
 Team: `melanie-minions`
 Last updated: 25 May 2026 (deadline) — **Qualifier closed. AE final: protected leaderboard max stays `ppo-full-rl-v1-hybrid 0.638 / 0.847` (heuristic via silent fallback). Last-session hail-mary restored `ae_manager.py` + `Dockerfile` to commit `747b1e1` (byte-identical to the 0.638 build on the served path) and burned 6 cloud submits: 5 vanilla farming + 1 A* tiebreak experiment (`AE_ASTAR_TIEBREAK=1`, plumbed in commit `afd03fd` alongside `AE_DIJKSTRA_BOMB_COST`). Scores 0.553 / 0.608 / 0.591 / 0.521 / **0.612** (`A-star-base`) / 0.573 (`a-star-v2`, A* tiebreak on). No new high. Combined 14-submit farming of byte-equivalent vanilla code over the past 36h confirms 0.638 is right-tail variance: mean ≈ 0.572, max 0.612. A* tiebreak (n=1) inside baseline σ — null result, can't reject either direction. Best intentional heuristic tag remains `heuristic-A-vf1` at `0.613 / 0.845`. ASR final: `nemo-ft-v1` is the new high score at `0.969 / 0.946` (blended `0.96325`). NLP `v28-optimized-bm25` is the new overall blended & accuracy high at `0.98425` (Score: `0.984`, Speed: `0.985`). CV `yolo11l-1280-alldata-final-v2` at imgsz=1280 reached local validation mAP 0.988. Noise `level10-detector-stress` is the current Semifinals/Finals disruption tag at `1.000 / 0.947`.**
 
+## Final Qualifier Status
+
+This table carries the former root dashboard content. Detailed decisions,
+gotchas, and experiment history live in each task's `NOTES.md`; submission
+history stays in this file.
+
+| Task | Latest shipped tag | Acc/reward | Speed | Status | Working log |
+|---|---|---:|---:|---|---|
+| ASR | `nemo-ft-v1` | 0.969 | 0.946 | Final high score. Fine-tuned Parakeet-TDT-0.6B-v2 model (step 713, val WER 0.0856) built as `nemo-ft-v1`. Submitted 24 May 23:49 SGT with 0/400 errors. Blended score `0.96325`. | [asr/NOTES.md](asr/NOTES.md) |
+| AE | `ppo-full-rl-v1-hybrid` / `heuristic-A-vf1` | 0.638 max; 0.613 explicit heuristic | 0.847 max; 0.845 explicit heuristic | Parked. Protected leaderboard max remains `ppo-full-rl-v1-hybrid`, but forensics showed it served heuristic fallback rather than PPO. Best intentional heuristic tag is `heuristic-A-vf1`; final farming did not reproduce the 0.638 right-tail draw. | [ae/NOTES.md](ae/NOTES.md) |
+| NLP | `v28-optimized-bm25` | 0.984 | 0.985 | Final blended and accuracy high. Tuned document-level plus passage-level BM25 bypasses neural models for high speed and reached blended `0.98425`. | [nlp/NOTES.md](nlp/NOTES.md) |
+| CV | `yolo11l-1280-alldata-final-v2` | pending | pending | All-data 1280px YOLO11l candidate. Fine-tuned on all data for 36 epochs; local validation mAP is 0.988, but official score was still pending in the deadline notes. | [cv/NOTES.md](cv/NOTES.md) |
+| Noise | `level10-detector-stress` | 1.000 | 0.947 | Shipped for Semifinals/Finals CV disruption. No direct Qualifier reward, but passed fairness locally and scored 1.000 cloud. | [noise/NOTES.md](noise/NOTES.md) |
+
 AE 24 May session — full submission log (17 new submits, best intentional heuristic tag found):
 
 | Tag | AE_MODE | Notable env | Cloud | Speed |

@@ -138,7 +138,7 @@ Triggered by a teammate's friend reporting ~0.7 cloud with "hybrid PPO". Spent ~
 - `training/ae/run_hybrid_friend_v1.py` — launcher
 - `training/ae/checkpoints/hybrid-friend-v1-latest.pt` — trained policy (uploaded to `gs://melanie-minions-bucket-til-26/handoff/`)
 - `ae/src/ae_manager.py` — `AE_TACTICAL_CLUSTER_BOMB` flag (opt-in)
-- `ae/NOTES.md`, `SUMMARY.md` — this writeup
+- `ae/NOTES.md` — this writeup
 
 ### Recommendation for next year
 

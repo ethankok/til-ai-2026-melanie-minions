@@ -1047,6 +1047,6 @@ Outcome: local `0.698`, below v7-v1's `0.709`. Fuzzy fallback net-negative; do n
 - Weight bundler: [download_models.py](download_models.py)
 - Container build: [Dockerfile](Dockerfile), [requirements.txt](requirements.txt)
 - Input/output spec: [README.md](README.md)
-- Strategic context: [../SUMMARY.md#nlp](../SUMMARY.md)
+- Score/status rollup: [../RESULTS.md](../RESULTS.md)
 - Diagnostic: [error_report.py](error_report.py)
 - Training pipeline: [../training/nlp/README.md](../training/nlp/README.md), [../training/nlp/finetune_qa.py](../training/nlp/finetune_qa.py), [../training/nlp/finetune_genqa.py](../training/nlp/finetune_genqa.py), [../training/nlp/finetune_lora.py](../training/nlp/finetune_lora.py), [../training/nlp/merge_lora_and_quantize.py](../training/nlp/merge_lora_and_quantize.py), [../training/nlp/train_answer_ranker.py](../training/nlp/train_answer_ranker.py)
