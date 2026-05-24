@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections import Counter, defaultdict
@@ -98,7 +99,8 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
     """Construct the agent we control in slot 0.
 
     Currently supported:
-      heuristic — `AEManager` (default; what's in `ae/src/ae_manager.py`)
+      heuristic — `AEManager` legacy planner (default)
+      option_v2 — `AEManager` with the option-style decision core enabled
 
     Easy to extend: drop a new branch here and pass the matching --our flag.
     """
@@ -107,6 +109,16 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
     kwargs = kwargs or {}
     if name == "heuristic":
         return AEManager(**kwargs)
+    if name == "option_v2":
+        old = os.environ.get("AE_PLANNER")
+        os.environ["AE_PLANNER"] = "option_v2"
+        try:
+            return AEManager(**kwargs)
+        finally:
+            if old is None:
+                os.environ.pop("AE_PLANNER", None)
+            else:
+                os.environ["AE_PLANNER"] = old
     if name == "hybrid":
         from hybrid_manager import HybridAEManager
         return HybridAEManager(**kwargs)
@@ -538,7 +550,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     p.add_argument("--our", type=str, default="heuristic",
-                   help="which agent to control in slot 0 (currently: heuristic)")
+                   help="which agent to control in slot 0 (heuristic, option_v2, hybrid)")
     p.add_argument("--out", type=Path, default=None,
                    help="optional .npz to dump trajectories into")
     p.add_argument("--summary-out", type=Path, default=None,

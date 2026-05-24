@@ -123,7 +123,7 @@ def run_suite(args: argparse.Namespace) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rounds", type=int, default=12)
-    parser.add_argument("--our", choices=["heuristic", "hybrid"], default="heuristic")
+    parser.add_argument("--our", choices=["heuristic", "option_v2", "hybrid"], default="heuristic")
     parser.add_argument("--suites", nargs="+", default=DEFAULT_SUITES)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--non-novice", action="store_true")

@@ -80,6 +80,7 @@ def _strip_aimanager_smarts(m: AEManager) -> None:
     m.tier1_shared_credit = False
     m.tier1_no_stay_penalty = False
     m.tier1_predictive_walk = False
+    m.planner_mode = "legacy"
 
     # Force default heuristic parameters for opponents so they don't inherit our tuned settings
     m.ENEMY_BASE_VALUE = 80.0

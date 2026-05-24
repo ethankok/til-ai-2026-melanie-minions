@@ -64,6 +64,16 @@ class _LookaheadState:
     path: tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class _OptionCandidate:
+    mode: str
+    target: tuple[int, int]
+    objective: tuple[int, int]
+    score: float
+    path: list[tuple[int, int]]
+    bomb_plan: bool
+
+
 class AEManager:
     """Rule-based autonomous-exploration planner.
 
@@ -202,6 +212,13 @@ class AEManager:
         self.mcts_log_timing = _env_flag("AE_MCTS_LOG_TIMING", True)
         self.last_lookahead_score = -inf
         self.last_lookahead_path: tuple[int, ...] = ()
+        self.planner_mode = os.environ.get("AE_PLANNER", "legacy").strip().lower()
+        self.option_v2_commit_margin = _env_float("AE_OPTION_COMMIT_MARGIN", 10.0)
+        self.option_v2_base_bias = _env_float("AE_OPTION_BASE_BIAS", 120.0)
+        self.option_v2_mission_bias = _env_float("AE_OPTION_MISSION_BIAS", 70.0)
+        self.option_v2_resource_bias = _env_float("AE_OPTION_RESOURCE_BIAS", 35.0)
+        self.option_v2_recon_bias = _env_float("AE_OPTION_RECON_BIAS", 18.0)
+        self.option_v2_explore_bias = _env_float("AE_OPTION_EXPLORE_BIAS", 12.0)
         # Tier-1 toggles. Bisect on 100-200 round local sims (17 May 2026)
         # picked the clean winning subset: #3, #6, #7 default ON; #2, #4
         # default OFF. Cloud A/B should validate before flipping more on.
@@ -361,6 +378,11 @@ class AEManager:
         danger = self._danger_cells()
         low_health = self.health < self.LOW_HEALTH_THRESHOLD
 
+        if self.planner_mode in {"option_v2", "options_v2", "v2"}:
+            option_action = self._option_v2_action(observation, location, direction, danger, low_health)
+            if option_action is not None:
+                return option_action
+
         escape_path = None
         if False:
             target, path = self.escape_target, escape_path
@@ -458,6 +480,12 @@ class AEManager:
         self.base_health: int = 100
         self.last_lookahead_score = -inf
         self.last_lookahead_path = ()
+        self.option_v2_mode: str | None = None
+        self.option_v2_target: tuple[int, int] | None = None
+        self.option_v2_objective: tuple[int, int] | None = None
+        self.option_v2_until_step: int = -1
+        self.option_v2_score: float = -inf
+        self.option_v2_switches: int = 0
         # Per-turn blast cell cache; cleared at the start of every ae() call.
         self._blast_cache: dict[tuple[int, int], frozenset[tuple[int, int]]] = {}
         # Tier-1 #3: track recent kills so we can plant a follow-up bomb
@@ -616,6 +644,310 @@ class AEManager:
     # ------------------------------------------------------------------
     # Planning
     # ------------------------------------------------------------------
+    def _option_v2_action(
+        self,
+        observation: dict,
+        location: tuple[int, int],
+        direction: int,
+        danger: set[tuple[int, int]],
+        low_health: bool,
+    ) -> int | None:
+        """Option-style decision core.
+
+        The legacy planner flattens every objective into one target score and
+        reconsiders that target every tick. Option-v2 keeps the same belief map
+        and safety primitives, but makes the top-level choice explicit:
+        survive, defend, destroy a base, farm items, hunt, or explore. A small
+        commitment margin prevents cheap target churn unless a new option is
+        clearly better.
+        """
+
+        step = self.last_step if self.last_step is not None else 0
+
+        active_escape = self._active_escape_path(location, step)
+        if active_escape is not None:
+            action = self._action_for_path(location, direction, active_escape)
+            if action is not None and self._legal(observation, action):
+                return action
+
+        if location in danger:
+            escape_action = self._option_v2_escape_action(observation, location, direction, danger)
+            if escape_action is not None:
+                return escape_action
+
+        dominant = self._try_dominant_action(observation, location, direction, danger, low_health)
+        if dominant is not None:
+            self._option_v2_clear_commit()
+            return dominant
+
+        lookahead = self._tactical_lookahead_action(observation, location, direction)
+        if lookahead is not None:
+            self._option_v2_clear_commit()
+            return lookahead
+
+        if getattr(self, "is_fixed_novice_map", False):
+            distance, parent = self._dijkstra_distance_map(start=location, danger=danger)
+        else:
+            distance, parent = self._bfs_distance_map(start=location, danger=danger)
+
+        candidates = self._option_v2_candidates(location, danger, low_health, distance, parent)
+        if not candidates:
+            self._option_v2_clear_commit()
+            return self._fallback_action(observation, location, direction, None)
+
+        choice = self._option_v2_choose_candidate(candidates, step)
+        self.current_path = choice.path
+
+        if choice.bomb_plan and self._should_place_bomb(observation, location, choice.objective, danger):
+            return self.PLACE_BOMB
+
+        if choice.mode in {"DEFEND_BASE", "HUNT_ENEMY"}:
+            if self._should_place_bomb(observation, location, choice.objective, danger):
+                return self.PLACE_BOMB
+
+        preferred = self._action_for_path(location, direction, choice.path)
+        if preferred is not None and self._legal(observation, preferred):
+            return preferred
+
+        return self._fallback_action(observation, location, direction, choice.target)
+
+    def _option_v2_clear_commit(self) -> None:
+        self.option_v2_mode = None
+        self.option_v2_target = None
+        self.option_v2_objective = None
+        self.option_v2_until_step = -1
+        self.option_v2_score = -inf
+
+    def _option_v2_escape_action(
+        self,
+        observation: dict,
+        location: tuple[int, int],
+        direction: int,
+        danger: set[tuple[int, int]],
+    ) -> int | None:
+        target = self._nearest_escape_cell(location, danger)
+        if target is not None:
+            path = self._bfs(location, target, danger)
+            action = self._action_for_path(location, direction, path)
+            if action is not None and self._legal(observation, action):
+                return action
+
+        threats = self._enemy_threat_cells()
+        best_action = None
+        best_score = -inf
+        for action in [self.FORWARD, self.BACKWARD, self.LEFT, self.RIGHT, self.STAY]:
+            if not self._legal(observation, action):
+                continue
+            pos, new_dir = self._simulate_action(location, direction, action)
+            score = 0.0
+            if pos in danger:
+                score -= 1000.0
+            if pos in threats:
+                score -= 35.0
+            score += 0.4 * sum(1 for n in self._raw_neighbors(pos) if n not in danger)
+            if action == self.STAY:
+                score -= 0.5
+            target_dir = self._rough_direction(pos, self.base_location or location)
+            if target_dir == new_dir:
+                score += 0.2
+            if score > best_score:
+                best_score = score
+                best_action = action
+        return best_action
+
+    def _option_v2_candidates(
+        self,
+        start: tuple[int, int],
+        danger: set[tuple[int, int]],
+        low_health: bool,
+        distance: dict[tuple[int, int], float],
+        parent: dict[tuple[int, int], tuple[int, int] | None],
+    ) -> list[_OptionCandidate]:
+        step = self.last_step if self.last_step is not None else 0
+        threats = self._enemy_threat_cells()
+        candidates: list[_OptionCandidate] = []
+
+        def add(
+            mode: str,
+            target: tuple[int, int],
+            objective: tuple[int, int],
+            value: float,
+            *,
+            bomb_plan: bool = False,
+            dist_penalty: float | None = None,
+            threat_penalty: float | None = None,
+        ) -> None:
+            if target not in distance:
+                return
+            path = self._reconstruct_path(parent, start, target)
+            if path is None:
+                return
+            dist = float(distance[target])
+            score = value - (self.DIST_PENALTY if dist_penalty is None else dist_penalty) * dist
+            score -= 0.22 * self.visit_count.get(target, 0)
+            if target in self.recent_locations[-4:]:
+                score -= 3.0
+            if target in danger:
+                score -= 80.0
+            if target not in self.enemy_agents and target not in self.enemy_bases:
+                path_threat = sum(1 for pos in path[1:] if pos in threats)
+                score -= (self.PATH_THREAT_PENALTY if threat_penalty is None else threat_penalty) * path_threat
+            candidates.append(_OptionCandidate(mode, target, objective, score, path, bomb_plan))
+
+        # DEFEND_BASE: only becomes dominant when the base is actually under
+        # pressure. This is deliberately narrower than "always patrol base",
+        # because previous defense toggles lost attack tempo.
+        if self.base_location is not None:
+            urgency = 0.0
+            if self.base_damaged_this_step:
+                urgency += 60.0
+            if self.base_health < self.BASE_DEFENSE_HEALTH:
+                urgency += 1.8 * (self.BASE_DEFENSE_HEALTH - self.base_health)
+            for pos, last_seen in self.enemy_agents.items():
+                age = step - int(last_seen)
+                if age > self.ENEMY_STALENESS:
+                    continue
+                dist_to_base = self._manhattan(pos, self.base_location)
+                if dist_to_base <= self.BASE_DEFENSE_RADIUS + 2:
+                    value = 155.0 + urgency - 8.0 * max(0, dist_to_base - self.BASE_DEFENSE_RADIUS)
+                    add("DEFEND_BASE", pos, pos, value, bomb_plan=True, dist_penalty=1.0)
+            if urgency > 0.0 and self.base_location in distance:
+                add("DEFEND_BASE", self.base_location, self.base_location, 90.0 + urgency, dist_penalty=0.8)
+
+        # DESTROY_BASE: commit to a bomb cell, not the base tile itself. That
+        # makes "walk there, bomb, escape" one option rather than a target plus
+        # an after-the-fact maybe-bomb rule.
+        if not low_health:
+            for base in self.enemy_bases:
+                bomb_cell = self._option_v2_best_bomb_cell(base, distance, danger)
+                if bomb_cell is None:
+                    continue
+                value = self.option_v2_base_bias
+                # Early base attacks are worth more before the map is picked
+                # clean of nearby mission/resource tiles.
+                if step < 80:
+                    value += 18.0
+                add("DESTROY_BASE", bomb_cell, base, value, bomb_plan=True, dist_penalty=1.05)
+
+        # FARM_*: collect visible objectives with explicit modes, instead of
+        # letting them silently tie with bases/frontiers in one flat list.
+        for pos, (kind, _seen_step) in self.last_seen_items.items():
+            if kind == "mission":
+                add("FARM_MISSION", pos, pos, self.option_v2_mission_bias + self.ITEM_VALUES[kind], dist_penalty=0.95)
+            elif kind == "resource":
+                add("FARM_RESOURCE", pos, pos, self.option_v2_resource_bias + self.ITEM_VALUES[kind], dist_penalty=1.05)
+            elif kind == "recon":
+                add("FARM_RECON", pos, pos, self.option_v2_recon_bias + self.ITEM_VALUES[kind], dist_penalty=1.10)
+
+        for pos, (kind, collected_step) in self.collected_items.items():
+            if step - collected_step >= self.TILE_RESPAWN_STEPS:
+                value = 0.45 * self.ITEM_VALUES.get(kind, 1.0)
+                add(f"RESPAWN_{kind.upper()}", pos, pos, 18.0 + value, dist_penalty=1.15)
+
+        # HUNT_ENEMY: keep it local and fresh. Long chases are where this
+        # class of planner burns score by ignoring base/items.
+        if not low_health:
+            for pos, last_seen in self.enemy_agents.items():
+                age = step - int(last_seen)
+                if age > 1 or pos not in distance:
+                    continue
+                if float(distance[pos]) <= 6.0:
+                    add("HUNT_ENEMY", pos, pos, 80.0 - 12.0 * age, bomb_plan=True, dist_penalty=0.9)
+
+        # EXPLORE: compact fallback options. Prefer frontiers that uncover new
+        # cells and known cells we have barely visited.
+        frontier_scores: list[tuple[float, tuple[int, int]]] = []
+        for pos in self._frontier_cells():
+            if pos not in distance:
+                continue
+            unseen_neighbors = sum(1 for n in self._raw_neighbors(pos) if n not in self.seen)
+            frontier_scores.append((self.option_v2_explore_bias + 4.0 * unseen_neighbors, pos))
+        frontier_scores.sort(reverse=True)
+        for value, pos in frontier_scores[:24]:
+            add("EXPLORE", pos, pos, value, dist_penalty=0.8, threat_penalty=1.0)
+
+        low_visit = sorted(
+            (pos for pos in self.seen if pos in distance and pos != start),
+            key=lambda p: (self.visit_count.get(p, 0), distance[p]),
+        )
+        for pos in low_visit[:12]:
+            add("EXPLORE", pos, pos, 10.0 - 0.12 * self.visit_count.get(pos, 0), dist_penalty=0.75, threat_penalty=1.0)
+
+        return candidates
+
+    def _option_v2_best_bomb_cell(
+        self,
+        objective: tuple[int, int],
+        distance: dict[tuple[int, int], float],
+        danger: set[tuple[int, int]],
+    ) -> tuple[int, int] | None:
+        best_cell = None
+        best_cost = inf
+        for cell, dist in distance.items():
+            if cell in danger:
+                continue
+            if objective not in self._blast_cells(cell):
+                continue
+            if self.base_location is not None and self.base_location in self._blast_cells(cell):
+                continue
+            escape = self._safe_escape_within(cell, self._blast_cells(cell), self.BOMB_TIMER, danger)
+            if escape is None:
+                continue
+            cost = float(dist) + 0.18 * self.visit_count.get(cell, 0)
+            if cell in self.recent_locations[-4:]:
+                cost += 1.0
+            if cost < best_cost:
+                best_cost = cost
+                best_cell = cell
+        return best_cell
+
+    def _option_v2_choose_candidate(
+        self,
+        candidates: list[_OptionCandidate],
+        step: int,
+    ) -> _OptionCandidate:
+        best = max(candidates, key=lambda c: c.score)
+        committed = None
+        if self.option_v2_target is not None and step <= self.option_v2_until_step:
+            for candidate in candidates:
+                if (
+                    candidate.mode == self.option_v2_mode
+                    and candidate.target == self.option_v2_target
+                    and candidate.objective == self.option_v2_objective
+                ):
+                    committed = candidate
+                    break
+        if committed is not None and committed.score >= best.score - self.option_v2_commit_margin:
+            chosen = committed
+        else:
+            chosen = best
+
+        if (
+            chosen.mode != self.option_v2_mode
+            or chosen.target != self.option_v2_target
+            or chosen.objective != self.option_v2_objective
+        ):
+            self.option_v2_switches += 1
+
+        self.option_v2_mode = chosen.mode
+        self.option_v2_target = chosen.target
+        self.option_v2_objective = chosen.objective
+        self.option_v2_score = chosen.score
+        self.option_v2_until_step = step + self._option_v2_commit_horizon(chosen.mode)
+        return chosen
+
+    @staticmethod
+    def _option_v2_commit_horizon(mode: str) -> int:
+        if mode == "DESTROY_BASE":
+            return 8
+        if mode.startswith("FARM_") or mode.startswith("RESPAWN_"):
+            return 5
+        if mode == "EXPLORE":
+            return 4
+        if mode in {"DEFEND_BASE", "HUNT_ENEMY"}:
+            return 3
+        return 2
+
     def _choose_target(
         self,
         start: tuple[int, int],
