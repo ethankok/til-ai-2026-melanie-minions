@@ -275,6 +275,15 @@ class AEManager:
         # See spawn_routes.py for the precompute + ae() / _choose_target
         # for the runtime hook.
         self.use_memorized_route = _env_flag("AE_USE_MEMORIZED_ROUTE", False)
+        # M5-inspired tactical cluster bombing: when 2+ enemy agents fall in
+        # our blast (this-step OR within `AE_CLUSTER_BOMB_STALENESS` ticks of
+        # this step) AND we have verified escape AND base safe, place a bomb.
+        # Default OFF; opt in via AE_TACTICAL_CLUSTER_BOMB=1 for cloud A/Bs.
+        # Tighter than existing _try_dominant_action because it requires
+        # MULTIPLE enemies (high-EV) but looser on sighting staleness because
+        # cluster value justifies acting on 1-2 step old observations.
+        self.tactical_cluster_bomb = _env_flag("AE_TACTICAL_CLUSTER_BOMB", False)
+        self.cluster_bomb_staleness = _env_int("AE_CLUSTER_BOMB_STALENESS", 1)
         self._reset_memory()
 
     # ------------------------------------------------------------------
@@ -1375,6 +1384,19 @@ class AEManager:
                 int(last_seen) == step and pos in bomb_blast
                 for pos, last_seen in self.enemy_agents.items()
             )
+            # M5-inspired tactical cluster bombing (opt-in via
+            # AE_TACTICAL_CLUSTER_BOMB=1): when 2+ enemies are in blast within
+            # the staleness window, treat as enemy_agent_hit even if not all
+            # are this-step. Rationale: 2+ hit potential (~60 reward) justifies
+            # acting on slightly older sightings.
+            if not enemy_agent_hit and self.tactical_cluster_bomb:
+                cluster_hits = sum(
+                    1 for pos, last_seen in self.enemy_agents.items()
+                    if int(last_seen) >= step - self.cluster_bomb_staleness
+                    and pos in bomb_blast
+                )
+                if cluster_hits >= 2:
+                    enemy_agent_hit = True
 
             if base_safe and (enemy_base_hit or enemy_agent_hit):
                 escape = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER)
