@@ -16,20 +16,7 @@ WORKDIR /workspace
 # uses the right mode. Edit this line before each `til build` to switch
 # modes, OR write the mode into `ae/src/.ae_mode` (the server reads that
 # file at startup if AE_MODE is unset in the container env).
-ENV AE_MODE=heuristic
-# 24 May 2026: forensic diff vs the c66a4b7 (May 22 "ppo-full-rl-v1-hybrid"
-# 0.638 cloud high) commit revealed the deployed model.py at that time did
-# NOT have LegacyPolicyNetwork — so the ppo-full-rl-v1.pt checkpoint
-# (legacy-small arch) would have raised a shape mismatch in policy_manager,
-# which ae_server.py silently swallows and falls back to pure AEManager().
-# Conclusion: the 0.638 score (and every other 0.55-0.64 "policy"/"hybrid"
-# submission yesterday) was actually pure heuristic behavior the whole time,
-# matching the ae-fixed-map-v5 historical baseline. When my legacy-arch
-# restore (commit c1cb18b) made the policy ACTUALLY load and engage today,
-# the policy + hybrid wrapper produced uniformly worse cloud scores (0.41
-# range). Reverting to AE_MODE=heuristic to reproduce yesterday's actual
-# serving behavior.
-ENV AE_HYBRID_FIXED_MAP_SHORTCUT=0
+ENV AE_MODE=hybrid
 # MCTS-light is a known-regressed experiment, so keep it opt-in. See
 # ae/NOTES.md for the speed budget math and the v1/v2 cloud failures.
 # v1 used DEPTH=5 WIDTH=96 with no gate / no latency cap; cloud killed it after
@@ -66,12 +53,6 @@ ENV AE_TIER1_REPEAT_KILL=1
 ENV AE_TIER1_SHARED_CREDIT=0
 ENV AE_TIER1_NO_STAY_PENALTY=1
 ENV AE_TIER1_PREDICTIVE_WALK=1
-# AE_ENEMY_BASE_VALUE is intentionally not baked here: AEManager defaults to
-# 80 on generic maps, but auto-promotes to 130 on detected fixed Novice maps
-# unless explicitly overridden for an A/B.
-ENV AE_BASE_DEFENSE_VALUE=60
-ENV AE_BASE_DEFENSE_EMERGENCY_VALUE=150
-ENV AE_CELL_THREAT_PENALTY=5
 ENV AE_USE_PLAYBOOK=0
 ENV AE_USE_OPPONENT_MODEL=0
 # Opt-in via `-e AE_USE_PLAYBOOK=1 -e AE_PLAYBOOK_FILTER=bomb_only` for a
