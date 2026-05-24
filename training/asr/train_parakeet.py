@@ -295,7 +295,12 @@ def main() -> int:
         EarlyStopping,
         LearningRateMonitor,
     )
-    from pytorch_lightning.loggers import CSVLogger
+    try:
+        from nemo.collections.common.parts.optional_cuda_graphs import WithOptionalCudaGraphs
+        WithOptionalCudaGraphs.enable_cuda_graphs_recursive = lambda *args, **kwargs: None
+        print("[train_parakeet] Monkeypatched WithOptionalCudaGraphs to disable CUDA graphs in training/validation.", flush=True)
+    except Exception as exc:
+        print(f"[train_parakeet] WARN: failed to monkeypatch optional_cuda_graphs: {exc}", flush=True)
 
     pl.seed_everything(args.seed, workers=True)
 
