@@ -1,6 +1,6 @@
 # ASR — notes & history
 
-Last updated: 24 May 2026 — **`nemo-zs-v6` with residual post-processing cleanup achieved a protected ASR blended high of `0.9620` (Accuracy: `0.967`, Speed: `0.947`).** `nemo-zs-v7` is submitted after a stronger Workbench test, but is not promoted until Discord/cloud score returns.
+Last updated: 24 May 2026 — **ASR is parked. `nemo-zs-v7` is the raw accuracy high at `0.969 / 0.941`, and it ties `nemo-zs-v6` on blended score at `0.9620`.** `nemo-zs-v7` is the latest shipped tag; `nemo-zs-v6` remains the faster blended-tie fallback.
 
 Per-task working log for ASR. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
@@ -10,15 +10,15 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`nemo-zs-v6` — official 0.967 / 0.947 (24 May 17:39 SGT, 0/400 errors).**
-Blended score `0.75*0.967 + 0.25*0.947 = 0.9620` (+0.0015 over `nemo-zs-v5`).
-Retains the fast Parakeet-TDT-v2 backend and all `nemo-zs-v5` slang/proper-noun/Phi rules. Adds a replay-gated cleanup pass for percent signs, filler hallucinations (`uh`, `um`, `mm`), hundreds ordinals, The CUBE/First Dreamer spacing, and extra local residual proper nouns/style spellings.
+**`nemo-zs-v7` — official 0.969 / 0.941 (24 May 18:39 SGT, 0/400 errors).**
+Blended score `0.75*0.969 + 0.25*0.941 = 0.9620`, exactly tied with `nemo-zs-v6`.
+Retains the fast Parakeet-TDT-v2 backend and all `nemo-zs-v6` behavior, adding only residual post-processing repairs. This is the raw accuracy high; `nemo-zs-v6` is the faster blended-tie fallback.
 
-Pending challenger: **`nemo-zs-v7`**. Workbench `til test asr nemo-zs-v7` passed with English WER `0.0270`, `1 - MER 0.9932495352686306`, and the tag was submitted for cloud scoring. Wait for Discord score before replacing `nemo-zs-v6` as the shipped high.
+Decision: **park ASR.** The v7 cleanup improved raw accuracy but paid back the gain in speed, leaving the 75/25 qualifier blend flat versus v6. Further ASR work is now very unlikely to move the overall score unless it improves both accuracy and speed without changing the model/runtime.
 
-## nemo-zs-v7 (24/05) — residual replay candidate (submitted)
+## nemo-zs-v7 (24/05) — residual replay candidate (accuracy high / blended tie)
 
-Status: submitted 24 May after full Workbench local test; awaiting Discord/cloud score.
+Status: shipped and parked as the final ASR candidate.
 
 Why this candidate:
 - Keep the same Parakeet-TDT-v2 model/runtime as `nemo-zs-v6`; no decoder, prompt, or Docker risk.
@@ -40,7 +40,13 @@ Submit gate:
 - Workbench `til build asr nemo-zs-v7`: passed.
 - Workbench `til test asr nemo-zs-v7`: passed in about 15:18 with English WER `0.0270`, `1 - MER 0.9932495352686306`.
 - Workbench `til submit asr nemo-zs-v7`: completed cleanly and handed off to automatic evaluation.
-- Promote only if Discord/cloud score beats protected `nemo-zs-v6` (`0.967 / 0.947`, blended `0.9620`).
+- Cloud result: 0/400 errors, Score `0.969`, Speed `0.941`.
+- Blended result: `0.9620`, tied with `nemo-zs-v6`.
+
+Decision:
+- Keep `nemo-zs-v7` as the latest/raw-accuracy-high tag.
+- Keep `nemo-zs-v6` as the faster blended-tie fallback.
+- Park ASR; no further model/runtime/post-processing work is recommended before deadline.
 
 ## nemo-zs-v6 (24/05) — residual cleanup high
 
@@ -50,7 +56,7 @@ Results:
 - Errors: 0/400
 - Score (Accuracy): 0.967
 - Speed: 0.947
-- Blended score (75/25): 0.9620 (new overall ASR high)
+- Blended score (75/25): 0.9620 (first blended high; now tied by `nemo-zs-v7`)
 - Workbench local test before submit: English WER `0.0296`, `1 - MER 0.9926082235489664`
 
 Why this candidate:
@@ -815,16 +821,14 @@ so recovery was fast.
 
 ## State of remaining ASR work
 
-ASR is **parked at 0.957 / 0.849**. Marginal hour invested here now is
-lower-ROI than the same hour on:
+ASR is **parked at the `nemo-zs-v7` / `nemo-zs-v6` blended tie**:
 
-- **AE** (40% qualifier weight, best shipped `planner-v3b` at 0.499/0.853; learned policy needs mixed-opponent PPO after `bc-v1` regressed)
-- **NLP** (currently 0.301; official scorer gives partial credit for retrieval, so BM25/chunking has direct upside)
-- **CV** (currently 0.402/0.963 with 0/500 errors; fine-tuned YOLOv8s shipped, but hidden eval is far below local mAP)
+- `nemo-zs-v7`: `0.969 / 0.941`, blended `0.9620`, raw accuracy high.
+- `nemo-zs-v6`: `0.967 / 0.947`, blended `0.9620`, faster fallback.
 
-The only ASR experiment worth a short cycle now is `beam_size=2` or a tiny
-prompt tweak since it can't regress our leaderboard entry. Speed quantization
-is no longer a priority: `ft-lora32-int8f16` regressed to `0.923 / 0.856`.
+Marginal ASR time is no longer justified before the deadline. Do not run beam,
+prompt, model, or runtime experiments unless organisers change scoring or a hard
+failure appears. Put time into unresolved task scores or final packaging.
 
 ## Reproducibility / pointers
 
