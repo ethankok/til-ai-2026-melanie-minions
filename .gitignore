@@ -29,6 +29,10 @@ training/asr/runs/
 /asr.jsonl
 /nlp_failure_analysis.jsonl
 
+# Workbench backup pulled before potential GCP access revocation.
+# Mirrored to gs://melanie-minions-bucket-til-26/workbench-backup/ — too large for git.
+/workbench-backup/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
