@@ -134,6 +134,11 @@ AE_TRIGGER_ONLY = os.getenv("NLP_AE_TRIGGER_ONLY", "0").strip() == "1"
 
 # Pure BM25 path (no neural retriever, no reranker, no QA model)
 PURE_BM25 = os.getenv("NLP_PURE_BM25", "0").strip() == "1"
+PURE_BM25_DOC_K1 = float(os.getenv("NLP_PURE_BM25_DOC_K1", "1.8"))
+PURE_BM25_DOC_B = float(os.getenv("NLP_PURE_BM25_DOC_B", "1.0"))
+PURE_BM25_PASSAGE_K1 = float(os.getenv("NLP_PURE_BM25_PASSAGE_K1", "1.5"))
+PURE_BM25_PASSAGE_B = float(os.getenv("NLP_PURE_BM25_PASSAGE_B", "0.75"))
+PURE_BM25_PASSAGE_WEIGHT = float(os.getenv("NLP_PURE_BM25_PASSAGE_WEIGHT", "0.6"))
 
 # Default to skip reranker and QA if trigger-only or pure BM25 is active
 SKIP_RERANKER_DEFAULT = "1" if (AE_TRIGGER_ONLY or PURE_BM25) else "0"
@@ -763,8 +768,11 @@ class NLPManager:
         self.doc_bm25 = BM25Okapi(doc_tokenized) if doc_tokenized else None
 
         if PURE_BM25:
-            # Re-init doc_bm25 with tuned params
-            self.doc_bm25 = BM25Okapi(doc_tokenized, k1=2.05, b=1.0) if doc_tokenized else None
+            # Re-init doc_bm25 with tuned params from the retrieval-only sweep.
+            self.doc_bm25 = (
+                BM25Okapi(doc_tokenized, k1=PURE_BM25_DOC_K1, b=PURE_BM25_DOC_B)
+                if doc_tokenized else None
+            )
 
             # Build passages and passage BM25
             self.passages = []
@@ -784,7 +792,9 @@ class NLPManager:
 
             tokenized = [_bm25_tokenize(p) for p in self.passages]
             tokenized = [toks if toks else ["_empty_"] for toks in tokenized]
-            self.bm25 = BM25Okapi(tokenized)
+            self.bm25 = BM25Okapi(
+                tokenized, k1=PURE_BM25_PASSAGE_K1, b=PURE_BM25_PASSAGE_B
+            )
 
             self.doc_id_to_idx = {doc_id: idx for idx, doc_id in enumerate(self.doc_ids)}
             self.loaded = True
@@ -1039,7 +1049,10 @@ class NLPManager:
                     if p_idxs:
                         max_passage_per_doc[d_idx] = np.max(passage_scores[p_idxs])
 
-                final_scores = _zscore(doc_scores) + 0.6 * _zscore(max_passage_per_doc)
+                final_scores = (
+                    _zscore(doc_scores)
+                    + PURE_BM25_PASSAGE_WEIGHT * _zscore(max_passage_per_doc)
+                )
                 top_doc_idxs = self._top_indices(final_scores, 3)
                 documents = [self.doc_ids[idx] for idx in top_doc_idxs]
                 results.append(([], documents, [], []))
@@ -2011,7 +2024,10 @@ class NLPManager:
                 if p_idxs:
                     max_passage_per_doc[d_idx] = np.max(passage_scores[p_idxs])
 
-            final_scores = _zscore(doc_scores) + 0.6 * _zscore(max_passage_per_doc)
+            final_scores = (
+                _zscore(doc_scores)
+                + PURE_BM25_PASSAGE_WEIGHT * _zscore(max_passage_per_doc)
+            )
             top_doc_idxs = self._top_indices(final_scores, 3)
             documents = [self.doc_ids[idx] for idx in top_doc_idxs]
             return [], documents, [], []

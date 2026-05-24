@@ -38,6 +38,11 @@ ENV NLP_AE_TRIGGER_ONLY=1
 # v26-pure-bm25: use pure document-level BM25 search to skip dense model loading
 # and encoding. Reduces corpus-load time from ~15 seconds to ~0.05 seconds.
 ENV NLP_PURE_BM25=1
+ENV NLP_PURE_BM25_DOC_K1=1.8
+ENV NLP_PURE_BM25_DOC_B=1.0
+ENV NLP_PURE_BM25_PASSAGE_K1=1.5
+ENV NLP_PURE_BM25_PASSAGE_B=0.75
+ENV NLP_PURE_BM25_PASSAGE_WEIGHT=0.6
 # v15-lora: directory inside the image where the trained LoRA adapter
 # lives. llm_answerer.py auto-enables LoRA in vLLM when this path contains
 # an adapter_config.json. Set to empty string to force base-model-only.

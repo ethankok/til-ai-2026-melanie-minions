@@ -1,5 +1,14 @@
 # NLP — notes & history
 
+## v29-bm25-k1-retune — pure BM25 document-k1 retune (CANDIDATE)
+
+**Local manager gate: 871/883 top-3 hit rate (0.9864), `load_seconds=0.400`, 0 import/check errors. Workbench `til test` pending.**
+- Code-review pass on top of `v28-optimized-bm25` found no sensible neural-model changes: v28 is already retrieval-only, trigger-only, and near the local retrieval ceiling.
+- One focused local sweep over the shipped pure-BM25 scorer found a tiny, architecture-preserving gain by reducing document-level BM25 `k1` from `2.05` to `1.8`, keeping `b=1.0` and passage weight `0.6`.
+- Local top-3 source-document hit rate moved from **870/883 (0.9853)** to **871/883 (0.9864)** on `data/novice/nlp/nlp.jsonl`.
+- The change is exposed as env defaults (`NLP_PURE_BM25_DOC_K1`, `NLP_PURE_BM25_DOC_B`, `NLP_PURE_BM25_PASSAGE_K1`, `NLP_PURE_BM25_PASSAGE_B`, `NLP_PURE_BM25_PASSAGE_WEIGHT`) so Workbench can roll forward or override without another source patch.
+- Risk: this is a one-question local gain at an already-high score, so submit only if `til test nlp v29-bm25-k1-retune` remains clean and near the v28 local band.
+
 ## v28-optimized-bm25 — tuned hybrid BM25 (SHIPPED, blended & accuracy high)
 
 **Cloud `0.984 / 0.985`, 0/700 errors (24 May 13:01 SGT). New overall blended & accuracy high (0.98425).**
