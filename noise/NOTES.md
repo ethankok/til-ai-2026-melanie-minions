@@ -92,6 +92,29 @@ current perturbation isn't degrading opponents' CV enough:
 
 If `level9` is good enough for Finals as-is, leave it alone.
 
+## Semifinals disruption candidate: detector-stress mode
+
+24 May PM candidate: `src/noise_manager.py` now defaults to
+`NOISE_MODE=detector_stress`. This keeps the Level 9 AdvGAN generator but
+saturates its weak regions with a legal high-frequency, multi-scale,
+edge-aware perturbation pattern aimed at CNN detector feature maps. It still
+clamps total perturbation to the existing `epsilon = 32/255` and re-encodes
+as JPEG quality 95. `NOISE_MODE=advgan` restores the shipped Level 9 behavior
+without code changes.
+
+Local Mac smoke on a synthetic structured JPEG:
+
+```text
+NOISE_MODE=advgan          RMSE ~= 4.43
+NOISE_MODE=detector_stress RMSE ~= 29.33
+Synthetic fairness check       pass (L2 inside 28.68, SSIM inside 0.761)
+```
+
+The official fairness config allows RMSE inside up to `50` and SSIM inside
+down to `0.3`, so this candidate deliberately spends more of the legal
+distortion budget than Level 9. It still needs Workbench `til test noise`
+before cloud submission.
+
 ## Reproducibility / pointers
 
 - Manager source: [src/noise_manager.py](src/noise_manager.py)
