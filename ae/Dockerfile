@@ -59,6 +59,18 @@ ENV AE_USE_OPPONENT_MODEL=0
 # cloud-only A/B if local-cloud distribution gap turns out to favor the
 # playbook on real opponents.
 
+# Hail-mary AE knobs (24 May late session). Default values keep behavior
+# byte-identical to the 0.638 build; edit before `til build` to A/B.
+#   AE_DIJKSTRA_BOMB_COST — step cost added when routing through a
+#     destructible wall (effective cost = 1.0 + this). 23 May sweep was
+#     monotonic in cloud score for {3.0, 4.0, 5.0} -> {0.544, 0.554, 0.569};
+#     values >5.0 are untested. Try 7.0 / 10.0 for variance batches.
+#   AE_ASTAR_TIEBREAK — when =1, secondary heap key in _dijkstra_distance_map
+#     is Manhattan distance to enemy-base centroid, biasing equal-cost path
+#     reconstruction toward enemy territory. Optimal distances unchanged.
+ENV AE_DIJKSTRA_BOMB_COST=5.0
+ENV AE_ASTAR_TIEBREAK=0
+
 # Installs your dependencies.
 RUN pip install -U pip
 COPY requirements.txt .

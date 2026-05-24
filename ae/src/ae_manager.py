@@ -275,7 +275,7 @@ class AEManager:
                         if tuple(base_loc) == tuple(BASE_LOCATIONS[i]):
                             self.is_fixed_novice_map = True
                             self.fixed_team_idx = i
-                            self.dijkstra_bomb_cost = 5.0
+                            self.dijkstra_bomb_cost = _env_float("AE_DIJKSTRA_BOMB_COST", 5.0)
                             self.playbook = None
                             if _env_float("AE_ENEMY_BASE_VALUE", -999.0) == -999.0:
                                 self.ENEMY_BASE_VALUE = 130.0
@@ -461,7 +461,13 @@ class AEManager:
         self.last_step = None
         self.is_fixed_novice_map = False
         self.fixed_team_idx = None
-        self.dijkstra_bomb_cost = 5.0
+        self.dijkstra_bomb_cost = _env_float("AE_DIJKSTRA_BOMB_COST", 5.0)
+        # Hail-mary A* tie-breaker: when enabled, equal-cost paths in
+        # `_dijkstra_distance_map` get expanded toward enemy-base centroid
+        # first via a Manhattan-distance secondary key. Optimal distances
+        # are unchanged (proven equivalence) but path reconstruction shifts,
+        # which alters bomb placement / exposed tiles downstream.
+        self.astar_tiebreak = _env_flag("AE_ASTAR_TIEBREAK", False)
 
     def _update_memory(
         self,
@@ -798,9 +804,30 @@ class AEManager:
         danger = danger or set()
         distance: dict[tuple[int, int], float] = {start: 0.0}
         parent: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
-        pq = [(0.0, start)]
+
+        # A* tie-breaker (opt-in via AE_ASTAR_TIEBREAK). Manhattan distance
+        # to the enemy-base centroid (or grid center fallback) is used as a
+        # SECONDARY heap key. Edge costs are unchanged → optimal distances
+        # are identical to pure Dijkstra; only `parent` reconstruction may
+        # diverge for tied-cost paths. Negative weights are *not* used —
+        # they'd produce negative cycles on a bidirectional grid.
+        if getattr(self, "astar_tiebreak", False):
+            enemy_bases = list((getattr(self, "enemy_bases", None) or {}).keys())
+            if enemy_bases:
+                gx = sum(b[0] for b in enemy_bases) / len(enemy_bases)
+                gy = sum(b[1] for b in enemy_bases) / len(enemy_bases)
+            else:
+                gx, gy = 8.0, 8.0
+
+            def _h(cell: tuple[int, int]) -> float:
+                return abs(cell[0] - gx) + abs(cell[1] - gy)
+        else:
+            def _h(cell: tuple[int, int]) -> float:
+                return 0.0
+
+        pq = [(0.0, _h(start), start)]
         while pq:
-            cost, current = heapq.heappop(pq)
+            cost, _hcur, current = heapq.heappop(pq)
             if cost > distance.get(current, float('inf')):
                 continue
             for direction, (dx, dy) in self.DIR_DELTAS.items():
@@ -811,7 +838,7 @@ class AEManager:
                     continue
                 if nxt not in self.seen:
                     continue
-                
+
                 # Check walls
                 if not self._edge_blocked(current, direction):
                     step_cost = 1.0
@@ -819,12 +846,12 @@ class AEManager:
                     step_cost = 1.0 + self.dijkstra_bomb_cost
                 else:
                     continue
-                
+
                 new_cost = cost + step_cost
                 if new_cost < distance.get(nxt, float('inf')):
                     distance[nxt] = new_cost
                     parent[nxt] = current
-                    heapq.heappush(pq, (new_cost, nxt))
+                    heapq.heappush(pq, (new_cost, _h(nxt), nxt))
         return distance, parent
 
     def _reconstruct_path(
