@@ -1,6 +1,6 @@
 """Scripted opponents for offline AE training and simulation.
 
-Six callable opponents that take a raw observation dict and return an int
+Scripted opponents that take a raw observation dict and return an int
 action 0..5. The signature matches the hidden cloud "policy interface"
 where the only input is the partial observation. All opponents respect
 ``action_mask`` and never crash on edge-case observations.
@@ -10,13 +10,18 @@ loops in `simulate.py` and `train_ppo.py`. No torch, no numpy heavy
 allocations; every choice resolves in microseconds.
 
 Why this set:
-  - random       : matches `test_ae.py`'s local NPCs (uniform distribution).
+  - random       : retained for explicit baseline checks only.
   - greedy       : enemies that move toward visible items / their own base.
   - bomber       : periodically places bombs, otherwise greedy.
+  - bomber_fast  : faster periodic bomber for pressure stress tests.
   - defender     : rarely strays far from its own base; bombs intruders.
   - hunter       : chases the nearest sighted enemy and bombs adjacent.
+  - hunter_sticky: keeps chasing stale sightings longer.
   - rusher       : fixed-map base pressure; stresses our defense/escape logic.
-  - mixed        : per-game random switch among the above.
+  - rusher_fast  : more single-minded base rusher.
+  - rusher_safe  : base rusher that respects threats more heavily.
+  - base_bomber  : frequent-bomb base pressure bot.
+  - mixed        : per-game random switch among the non-random above.
 
 Together they span the strategy space the hidden evaluator's NPCs
 plausibly occupy. Training PPO and fitting an opponent model against
@@ -78,9 +83,12 @@ def _strip_aimanager_smarts(m: AEManager) -> None:
 
     # Force default heuristic parameters for opponents so they don't inherit our tuned settings
     m.ENEMY_BASE_VALUE = 80.0
+    m.BASE_DEFENSE_VALUE = 60.0
+    m.BASE_DEFENSE_EMERGENCY_VALUE = 150.0
     m.BASE_DEFENSE_RADIUS = 6
     m.DIST_PENALTY = 1.15
     m.PATH_THREAT_PENALTY = 2.0
+    m.CELL_THREAT_PENALTY = 5.0
     m.ENEMY_CHASE_VALUE = 0.0
 
 
@@ -186,6 +194,15 @@ class Bomber(AEManager):
         return super().ae(observation)
 
 
+class FastBomber(Bomber):
+    """Bomber with a shorter fuse cycle to stress bomb-escape decisions."""
+
+    name = "bomber_fast"
+
+    def __init__(self) -> None:
+        super().__init__(period=4)
+
+
 class Defender(AEManager):
     """Stays within a small radius of its own base; bombs intruders."""
 
@@ -258,6 +275,33 @@ class Hunter(AEManager):
         return super()._choose_target(start, danger, low_health)
 
 
+class StickyHunter(Hunter):
+    """Hunter that keeps pursuing stale enemy sightings for longer."""
+
+    name = "hunter_sticky"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ENEMY_STALENESS = 8
+        self.ENEMY_CHASE_VALUE = 28.0
+        self.ENEMY_CHASE_RADIUS = 8
+
+    def _choose_target(self, start, danger, low_health=False):
+        if self.enemy_agents and not low_health:
+            step = self.last_step if self.last_step is not None else 0
+            remembered = [
+                pos for pos, seen in self.enemy_agents.items()
+                if step - int(seen) <= self.ENEMY_STALENESS
+            ]
+            if remembered:
+                target = min(remembered, key=lambda p: self._manhattan(start, p))
+                distance, parent = self._bfs_distance_map(start, danger)
+                if target in distance:
+                    path = self._reconstruct_path(parent, start, target)
+                    return target, path
+        return super()._choose_target(start, danger, low_health)
+
+
 class BaseRusher(AEManager):
     """Pressure opponent that prioritizes enemy bases over item farming."""
 
@@ -315,18 +359,108 @@ class BaseRusher(AEManager):
         return cells
 
 
+class FastRusher(BaseRusher):
+    """More single-minded base rusher with lower path-distance penalty."""
+
+    name = "rusher_fast"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ENEMY_BASE_VALUE = 190.0
+        self.DIST_PENALTY = 0.55
+        self.PATH_THREAT_PENALTY = 0.75
+        self.CELL_THREAT_PENALTY = 2.0
+        self.ITEM_VALUES = {"mission": 6.0, "resource": 2.0, "recon": 1.0}
+
+
+class SafeRusher(BaseRusher):
+    """Base rusher that still pressures bases but avoids threat cells harder."""
+
+    name = "rusher_safe"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ENEMY_BASE_VALUE = 145.0
+        self.DIST_PENALTY = 0.95
+        self.PATH_THREAT_PENALTY = 4.0
+        self.CELL_THREAT_PENALTY = 10.0
+        self.ITEM_VALUES = {"mission": 16.0, "resource": 6.0, "recon": 2.0}
+
+
+class BaseBomber(BaseRusher):
+    """Rusher that drops bombs more readily near enemy-base routes."""
+
+    name = "base_bomber"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._bomb_clock = 0
+        self.period = 5
+        self.ENEMY_BASE_VALUE = 175.0
+        self.DIST_PENALTY = 0.70
+        self.ITEM_VALUES = {"mission": 8.0, "resource": 3.0, "recon": 1.0}
+
+    def _should_place_bomb(self, observation, location, target, danger) -> bool:
+        if super()._should_place_bomb(observation, location, target, danger):
+            self._bomb_clock = 0
+            return True
+        self._bomb_clock += 1
+        if (
+            location is not None
+            and self._bomb_clock >= self.period
+            and self._legal(observation, self.PLACE_BOMB)
+            and self._as_int(observation.get("team_bombs"), default=0) > 0
+            and self._as_int(observation.get("health"), default=60) >= self.LOW_HEALTH_THRESHOLD
+            and location not in danger
+        ):
+            blast = self._blast_cells(location)
+            base = self.base_location or self._location(observation.get("base_location"))
+            enemy_base_hit = any(pos in blast for pos in self.enemy_bases)
+            wall_break = False
+            target_base = target if target in self.enemy_bases else None
+            if target_base is None and self.enemy_bases:
+                target_base = min(self.enemy_bases, key=lambda p: self._manhattan(location, p))
+            if target_base is not None:
+                d = self._rough_direction(location, target_base)
+                wall_break = d is not None and (location[0], location[1], d) in self.destructible
+            if (enemy_base_hit or wall_break) and (base is None or base not in blast):
+                escape = self._safe_escape_within(location, blast, self.BOMB_TIMER, danger)
+                if escape is not None:
+                    self._bomb_clock = 0
+                    self.known_bombs[location] = {
+                        "timer": self.BOMB_TIMER,
+                        "own": True,
+                        "last_step": self.last_step or 0,
+                    }
+                    self.escape_target = escape
+                    self.escape_until_step = (self.last_step or 0) + self.BOMB_TIMER
+                    return True
+        return False
+
+
 class MixedOpponent:
-    """Picks one of the above at the start of each game."""
+    """Picks one non-random scripted opponent at the start of each game."""
 
     name = "mixed"
 
     def __init__(self, seed: int | None = None) -> None:
         self.rng = random.Random(seed)
         self._inner: object | None = None
-        self._inner_name = "random"
+        self._inner_name = "greedy"
 
     def reset_for_game(self) -> None:
-        choice = self.rng.choice(("random", "greedy", "bomber", "defender", "hunter", "rusher"))
+        choice = self.rng.choice((
+            "greedy",
+            "bomber",
+            "bomber_fast",
+            "defender",
+            "hunter",
+            "hunter_sticky",
+            "rusher",
+            "rusher_fast",
+            "rusher_safe",
+            "base_bomber",
+        ))
         self._inner_name = choice
         self._inner = make_opponent(choice, seed=self.rng.randint(0, 1 << 30))
 
@@ -340,7 +474,20 @@ class MixedOpponent:
 # Public factory
 # ---------------------------------------------------------------------------
 
-OPPONENT_NAMES = ("random", "greedy", "bomber", "defender", "hunter", "rusher", "mixed")
+OPPONENT_NAMES = (
+    "random",
+    "greedy",
+    "bomber",
+    "bomber_fast",
+    "defender",
+    "hunter",
+    "hunter_sticky",
+    "rusher",
+    "rusher_fast",
+    "rusher_safe",
+    "base_bomber",
+    "mixed",
+)
 
 
 def make_opponent(name: str, seed: int | None = None) -> OpponentFn:
@@ -354,12 +501,22 @@ def make_opponent(name: str, seed: int | None = None) -> OpponentFn:
     if name == "bomber":
         period = int(os.environ.get("AE_BOMBER_PERIOD", "8"))
         return Bomber(period=period)
+    if name == "bomber_fast":
+        return FastBomber()
     if name == "defender":
         return Defender()
     if name == "hunter":
         return Hunter()
+    if name == "hunter_sticky":
+        return StickyHunter()
     if name == "rusher":
         return BaseRusher()
+    if name == "rusher_fast":
+        return FastRusher()
+    if name == "rusher_safe":
+        return SafeRusher()
+    if name == "base_bomber":
+        return BaseBomber()
     if name == "mixed":
         return MixedOpponent(seed)
     raise ValueError(f"unknown opponent name: {name!r}")

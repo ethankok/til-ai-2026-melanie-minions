@@ -9,7 +9,7 @@ accordingly, so the same script works for both single-frame and
 frame-stacked policies.
 
 Usage:
-    # legacy random-opponent eval (default)
+    # pressure-heavy scripted eval (default)
     python training/ae/eval_policy.py --checkpoint training/ae/checkpoints/bc.pt --games 6
 
     # apples-to-apples against the ppo-v1-era 'mixed' baseline
@@ -179,11 +179,11 @@ def main() -> None:
     parser.add_argument(
         "--opponents",
         choices=OPPONENT_MODES,
-        default="random",
-        help="Opponent distribution. 'random' (default) preserves legacy "
-             "single-game-eval behavior; 'mixed' matches the ppo-v1-era "
-             "training distribution; 'league' is the hardest self-play pool; "
-             "'cloudsuite' is the pressure-heavy scripted proxy suite.",
+        default="cloudsuite",
+        help="Opponent distribution. 'cloudsuite' is the default pressure-heavy "
+             "scripted proxy suite; 'pressure2' is the harder stress suite; "
+             "'mixed' and 'league' include planner/frozen-policy opponents; "
+             "'random' is retained only for legacy sanity checks.",
     )
     evaluate(parser.parse_args())
 

@@ -1,6 +1,6 @@
 """Collect frame-stacked (observation, action) pairs from planner-v3b for BC.
 
-Runs the bomberman env with our planner controlling agent 0 and random
+Runs the bomberman env with our planner controlling agent 0 and scripted
 opponents for the rest. Each saved sample is the **4-frame stacked**
 encoding at the planner's step, so the BC dataset matches the v2 policy's
 expected input shape.
@@ -36,8 +36,8 @@ def _resolve_opponent_names(spec: str) -> list[str]:
     """Mirror of simulate.run_simulation()'s opponent resolution.
 
     Keeps `collect_bc.py` independent of simulate.py while matching its
-    naming conventions ('random', 'mixed', 'library', 'cloudsuite', or an
-    explicit comma-separated list).
+    naming conventions ('mixed', 'library', 'cloudsuite', 'pressure2',
+    legacy 'random', or an explicit comma-separated list).
     """
 
     if spec == "random":
@@ -45,9 +45,11 @@ def _resolve_opponent_names(spec: str) -> list[str]:
     if spec == "mixed":
         return ["mixed"] * 5
     if spec == "library":
-        return ["random", "greedy", "bomber", "defender", "hunter"]
+        return ["greedy", "bomber", "defender", "hunter", "rusher"]
     if spec == "cloudsuite":
-        return ["rusher", "hunter", "bomber", "defender", "mixed"]
+        return ["rusher", "hunter_sticky", "bomber_fast", "defender", "mixed"]
+    if spec == "pressure2":
+        return ["rusher_fast", "rusher_safe", "hunter_sticky", "bomber_fast", "base_bomber"]
     names = [n.strip() for n in spec.split(",") if n.strip()]
     if len(names) == 1:
         names = names * 5
@@ -73,7 +75,7 @@ def collect_dataset(
     seed: int | None = None,
     n_frames: int = 4,
     with_belief: bool = True,
-    opponents_spec: str = "random",
+    opponents_spec: str = "library",
 ) -> None:
     """Collect a BC dataset from planner-v3b rollouts.
 
@@ -82,11 +84,11 @@ def collect_dataset(
     keeps the file size down for legacy single-frame BC training.
 
     ``opponents_spec`` controls what the other 5 agents do during data
-    collection. Use 'random' (legacy) to reproduce the old single-game
-    distribution, or one of 'mixed' / 'library' / 'cloudsuite' / a
-    5-comma-separated list to expose the planner to the same opponent
-    mix the qualifier is likely to use. Mixing here makes the BC dataset
-    cover a wider state distribution, which is how we avoid the
+    collection. Use one of 'library' / 'cloudsuite' / 'pressure2' / 'mixed' / a
+    5-comma-separated list to expose the planner to the same opponent mix the
+    qualifier is likely to use. Legacy 'random' is still accepted for old
+    reproductions. Mixing here makes the BC dataset cover a wider state
+    distribution, which is how we avoid the
     bc-belief-hybrid failure mode (overfit to planner-vs-random).
     """
     config = default_config()
@@ -218,11 +220,11 @@ def main() -> None:
     parser.add_argument("--no-belief", dest="with_belief", action="store_false",
                         help="Skip belief-map rasterization (legacy single-frame BC)")
     parser.add_argument(
-        "--opponents", type=str, default="random",
+        "--opponents", type=str, default="library",
         help=(
             "Opponent set used for the other 5 agents during data collection. "
-            "Same vocabulary as simulate.py: 'random' (legacy), 'mixed', "
-            "'library', 'cloudsuite', or 5 comma-separated names."
+            "Same vocabulary as simulate.py: 'mixed', 'library', 'cloudsuite', "
+            "'pressure2', legacy 'random', or 5 comma-separated names."
         ),
     )
     parser.set_defaults(with_belief=True)

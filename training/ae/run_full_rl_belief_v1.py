@@ -5,7 +5,7 @@ End-to-end:
      The legacy `bc-belief-hybrid` failed because its BC dataset was
      planner-vs-random — the policy overfit a weak local distribution.
      This launcher collects against a wider opponent mix (default
-     library: random+greedy+bomber+defender+hunter) so the BC reader
+     library: greedy+bomber+defender+hunter+rusher) so the BC reader
      sees state-distribution closer to the cloud's mixed pool.
   2. Train belief-aware BC on that dataset.
   3. Launch PPO with --preset full-rl --use-belief from the new BC,
@@ -157,9 +157,9 @@ def main() -> int:
         "--bc-opponents", type=str, default="library",
         help=(
             "Opponent spec for BC collection. 'library' covers "
-            "random/greedy/bomber/defender/hunter. Use 'cloudsuite' for "
-            "rusher/hunter/bomber/defender/mixed if you want a "
-            "harder distribution. Use 'mixed' for fully randomized."
+            "greedy/bomber/defender/hunter/rusher. Use 'cloudsuite' or "
+            "'pressure2' if you want a harder distribution. Use 'mixed' "
+            "for fully randomized non-random scripted opponents."
         ),
     )
     parser.add_argument("--bc-seed", type=int, default=4242)

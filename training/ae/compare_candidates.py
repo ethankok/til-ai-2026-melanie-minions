@@ -49,7 +49,7 @@ def make_args(checkpoint_path: Path, seed: int, games_per_suite: int) -> SimpleN
         use_belief=False,
         n_frames=1,
         # Eval / suite selection
-        selection_suites="random,scripted,cloudsuite",
+        selection_suites="scripted,cloudsuite,pressure2",
         selection_weights="1,1,1",
         selection_games=games_per_suite,
         selection_device="cpu",
@@ -118,9 +118,9 @@ def main() -> None:
             agg, parts = evaluate_selection(actor, args, device)
             results[label][seed] = (agg, parts)
             print(f"  seed={seed}: agg={agg:.4f}  "
-                  f"random={parts.get('random', 0):.4f} "
                   f"scripted={parts.get('scripted', 0):.4f} "
-                  f"cloudsuite={parts.get('cloudsuite', 0):.4f}")
+                  f"cloudsuite={parts.get('cloudsuite', 0):.4f} "
+                  f"pressure2={parts.get('pressure2', 0):.4f}")
         # Per-checkpoint summary
         aggs = [results[label][s][0] for s in args_cli.seeds]
         mean = sum(aggs) / len(aggs)

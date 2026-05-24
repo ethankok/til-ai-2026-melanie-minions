@@ -2,8 +2,7 @@
 
 `til test ae` is useful for container smoke testing, but its random NPCs have
 mis-ranked our AE candidates. This script keeps validation local while testing
-the planner against several opponent styles: random, scripted library, and a
-pressure-heavy `cloudsuite` with base rushers/hunters.
+the planner against non-random scripted libraries and pressure-heavy suites.
 """
 
 from __future__ import annotations
@@ -23,12 +22,20 @@ from simulate import run_simulation
 
 
 DEFAULT_SUITES = [
-    "random",
     "library",
     "cloudsuite",
+    "pressure2",
     "mixed",
     "rusher",
+    "rusher_fast",
+    "rusher_safe",
     "hunter",
+    "hunter_sticky",
+    "bomber",
+    "bomber_fast",
+    "base_bomber",
+    "defender",
+    "greedy",
 ]
 
 

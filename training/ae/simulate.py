@@ -10,14 +10,11 @@ output can feed downstream analyses:
 
 Usage examples:
 
-    # Score the current heuristic against random opponents (matches `til test`)
-    python training/ae/simulate.py --rounds 200 --opponents random --our heuristic
-
-    # Score against the mixed library used for PPO training
+    # Score against the non-random mixed pressure library
     python training/ae/simulate.py --rounds 1000 --opponents mixed --our heuristic
 
     # Score and dump trajectories (used by build_playbook.py)
-    python training/ae/simulate.py --rounds 1000 --opponents random,greedy,bomber,defender,hunter \
+    python training/ae/simulate.py --rounds 1000 --opponents greedy,bomber,defender,hunter,rusher \
         --our heuristic --out training/ae/data/sim-tier1.npz
 
 The output `.npz` contains four arrays:
@@ -397,10 +394,11 @@ def run_simulation(
     ``opponents_spec`` is a comma-separated list of opponent names (one per
     enemy slot, repeats fine), or one of:
 
-      'random'    : all 5 enemies are random (matches `til test`)
-      'mixed'     : 5 independent MixedOpponent instances
-      'library'   : random,greedy,bomber,defender,hunter (5 enemies)
-      'cloudsuite': rusher,hunter,bomber,defender,mixed (pressure-heavy)
+      'mixed'     : 5 independent non-random MixedOpponent instances
+      'library'   : greedy,bomber,defender,hunter,rusher (5 enemies)
+      'cloudsuite': rusher,hunter_sticky,bomber_fast,defender,mixed
+      'pressure2' : rusher_fast,rusher_safe,hunter_sticky,bomber_fast,base_bomber
+      'random'    : legacy explicit baseline only
 
     Or any explicit list: 'greedy,greedy,bomber,defender,hunter'.
     """
@@ -416,9 +414,11 @@ def run_simulation(
     elif opponents_spec == "mixed":
         names = ["mixed"] * 5
     elif opponents_spec == "library":
-        names = ["random", "greedy", "bomber", "defender", "hunter"]
+        names = ["greedy", "bomber", "defender", "hunter", "rusher"]
     elif opponents_spec == "cloudsuite":
-        names = ["rusher", "hunter", "bomber", "defender", "mixed"]
+        names = ["rusher", "hunter_sticky", "bomber_fast", "defender", "mixed"]
+    elif opponents_spec == "pressure2":
+        names = ["rusher_fast", "rusher_safe", "hunter_sticky", "bomber_fast", "base_bomber"]
     else:
         names = [n.strip() for n in opponents_spec.split(",") if n.strip()]
         if len(names) == 1:
@@ -531,10 +531,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--opponents",
         type=str,
-        default="random",
+        default="cloudsuite",
         help=(
-            "opponent set: 'random', 'mixed', 'library', 'cloudsuite', or 5 comma-separated "
-            "names from " + ",".join(OPPONENT_NAMES)
+            "opponent set: 'mixed', 'library', 'cloudsuite', 'pressure2', legacy 'random', "
+            "or 5 comma-separated names from " + ",".join(OPPONENT_NAMES)
         ),
     )
     p.add_argument("--our", type=str, default="heuristic",

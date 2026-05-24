@@ -1,25 +1,27 @@
 # Noise — notes & history
 
-Last updated: 24 May 2026 — **Reactivated.** The codebase has moved from a
-JPEG re-encode baseline to an active adversarial perturbation pipeline:
-Level 8 (PGD/EoT/ViT ensemble) landed in `7117b9c` and Level 9 (AdvGAN
-generator) replaced it in `83051b9`. **Nothing new has been submitted yet** —
-last cloud row is still `latest` at `1.000 / 0.970` from 12 May. The Level 9
-manager needs a `til build` / `til test` / `til submit` cycle before there is
-any new cloud signal.
+Last updated: 24 May 2026 — **Level 9 shipped.** `level9` submitted
+24 May 06:18 SGT scored **1.000 / 0.934** with 0/500 errors. Validator
+metrics on the cloud batch: SSIM inside mean `0.9839` (min `0.9414`,
+max `0.9915`), L2 inside mean `6.6800`, 500/500 images pass the per-image
+fairness gate. The AdvGAN generator (`83051b9`) cleared the SSIM/RMSE
+validity check at the shipped `epsilon = 32/255`; no need to drop epsilon
+or retrain for now. Speed dipped from the JPEG baseline's `0.970` to
+`0.934` for the extra Generator forward pass + bilinear upsample.
 
 Noise still has no direct Qualifier reward per the official spec, so this
-work is Finals-facing rather than leaderboard-facing. Worth shipping if and
-only if a Level 9 submission still passes the SSIM/RMSE validity gate.
+score does not move the leaderboard. The point of shipping was to swap
+the deployed container from a pure JPEG round-trip to an actual
+adversarial perturbation pipeline before Finals.
 
 Per-task working log for Noise (adversarial image noising). For the
 authoritative input/output/scoring spec see [README.md](README.md) and the
 official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#noise).
 For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
-## Current code state (unshipped)
+## Current code state (shipped as `level9`)
 
-Live on `main` as of 24 May:
+Live on `main` and in the deployed `level9` image as of 24 May:
 
 - `src/noise_manager.py` — Level 9 AdvGAN inference. Single Generator
   forward pass per image: `Generator(image) -> raw_noise`, bilinear
@@ -41,11 +43,14 @@ Gitignored (not part of the image, kept locally for training):
 
 ## What's shipped to cloud
 
-**`latest` — official 1.000 / 0.970 (12 May 03:54 SGT, 0 of 500 errors).**
+**`level9` — official 1.000 / 0.934 (24 May 06:18 SGT, 0 of 500 errors).**
+Validator: SSIM inside mean `0.9839` (min `0.9414`), L2 inside mean
+`6.6800`, 500/500 images pass the fairness gate. This is now the live
+container.
 
-This row predates all of Level 8/9. The deployed container still runs the
-old JPEG re-encode baseline. The Level 9 path on `main` has never been
-through `til build` / `til test` / `til submit`.
+`latest` — official 1.000 / 0.970 (12 May 03:54 SGT, 0 of 500 errors).
+Plain JPEG re-encode baseline; superseded by `level9` but kept as a
+fallback tag.
 
 ## Why the architecture changed
 
@@ -61,27 +66,31 @@ inference is a single forward pass — sub-millisecond on the deployed
 GPU. The trained generator should produce a near-optimal perturbation
 pattern for each input without per-query optimization.
 
-## Before submitting
-
-The shipped score is `1.000 / 0.970` against a JPEG round-trip. Level 9
-*will* introduce perturbation that the cloud SSIM/RMSE validator may or
-may not accept. Do these locally first:
-
-1. `til build noise level9` on the Workbench.
-2. `til test noise level9` — verify (a) no errors, (b) the SSIM/RMSE
-   validity score is still acceptable, (c) speed stays in the green.
-3. Only then `til submit noise level9`.
-
-The current code base-rates `epsilon = 32/255`. If the validity gate
-rejects, the obvious lever is to drop epsilon (e.g. 16/255 or 8/255)
-before re-training the generator.
-
 ## Submission history
 
 ```text
 Tag       Submitted          Score   Speed   Errors    Notes
-latest    12/05 03:54        1.000   0.970   0 / 500   Clean JPEG re-encode baseline (still the deployed container)
+level9    24/05 06:18        1.000   0.934   0 / 500   AdvGAN generator, ε=32/255, JPEG q=95. SSIM inside mean 0.9839, L2 inside mean 6.6800, 500/500 fairness pass.
+latest    12/05 03:54        1.000   0.970   0 / 500   Clean JPEG re-encode baseline (superseded by `level9`).
 ```
+
+## Levers if Finals requires more disruption
+
+`level9` passes validity comfortably (min SSIM `0.9414`, well above any
+typical floor), so there is room to push harder if Finals shows the
+current perturbation isn't degrading opponents' CV enough:
+
+- Re-train the Generator against a detector closer to the competition's
+  target distribution (current training target is ResNet18 / Imagenette
+  — see `train_advgan.py`). YOLO-class objectives would likely transfer
+  better than ImageNet classification gradients.
+- The current architecture is tiny (~14 KB weights, 4 conv layers).
+  Headroom on capacity if the validator allows it.
+- Epsilon stays at `32/255`; could push toward the validator edge if
+  needed, but doing so without a re-trained, target-aligned generator is
+  unlikely to help.
+
+If `level9` is good enough for Finals as-is, leave it alone.
 
 ## Reproducibility / pointers
 

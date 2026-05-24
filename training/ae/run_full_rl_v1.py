@@ -12,8 +12,8 @@ The resulting checkpoint is written to:
 This run keeps Novice geometry fixed, varies rollout seeds, and samples a
 stratified opponent mix every PPO update:
 
-    10% random, 35% scripted, 35% cloudsuite,
-    5% planner, 5% aggressive, 10% league/self-play snapshots
+    35% scripted, 35% cloudsuite, 15% pressure2,
+    5% planner, 5% aggressive, 5% league/self-play snapshots
 
 Selection scores use the pure learned policy. This is intentionally stricter
 than the deployed hybrid wrapper: the run should only save a candidate if the

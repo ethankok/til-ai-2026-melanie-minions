@@ -80,13 +80,14 @@ OPPONENT_MODES = (
     "selfplay",
     "scripted",
     "cloudsuite",
+    "pressure2",
 )
 
 OPPONENT_MIX_PRESETS = {
     # Full fixed-Novice RL blend. The core mass is scripted+cloudsuite because
     # local random is known-misleading, while small planner/aggressive/league
     # slices keep the policy from overfitting one handcrafted proxy.
-    "full-rl": "random:0.10,scripted:0.35,cloudsuite:0.35,planner:0.05,aggressive:0.05,league:0.10",
+    "full-rl": "scripted:0.35,cloudsuite:0.35,pressure2:0.15,planner:0.05,aggressive:0.05,league:0.05",
 }
 
 CURRICULA = {
@@ -95,17 +96,17 @@ CURRICULA = {
     "pressure": (
         (0.00, "scripted"),
         (0.35, "cloudsuite"),
-        (0.75, "league"),
+        (0.70, "pressure2"),
+        (0.88, "league"),
     ),
     # Broader Bomberman curriculum inspired by public Pommerman/TIL training
     # recipes: learn bomb usage safely, then progressively add moving and
     # adversarial opponents.
     "bomberman": (
         (0.00, "static"),
-        (0.12, "random"),
-        (0.30, "scripted"),
+        (0.15, "scripted"),
         (0.55, "cloudsuite"),
-        (0.82, "league"),
+        (0.82, "pressure2"),
     ),
 }
 
@@ -443,7 +444,7 @@ class SnapshotPool:
         self._snapshots.append(snap)
         # Drop oldest when over cap. FIFO; this preserves the "old +
         # recent" diversity the workshop and league-training papers
-        # recommend (the alternative — always drop random — degrades
+        # recommend (the alternative — always dropping a uniformly chosen entry — degrades
         # to "always recent" in expectation).
         if len(self._snapshots) > self.max_size:
             self._snapshots.pop(0)
@@ -584,22 +585,25 @@ def _make_opponents(
 
     Modes:
     - static:      always STAY when legal; easy bomb-usage curriculum
-    - random:      uniform-random; fastest but unrealistic
+    - random:      legacy uniform-random sanity mode; not used in active presets
     - planner:     frozen rule-based AEManager
     - frozen:      frozen copy of the trainee (live actor — your shadow)
     - aggressive:  planner with combat bias (hunter archetype)
-    - mixed:       random + planner + frozen
-    - league:      random + planner + aggressive + frozen-from-pool
+    - mixed:       planner + frozen
+    - league:      planner + aggressive + frozen-from-pool
                    ← strongest pool; recommended for the qualifier
     - selfplay:    pool-only — face historical snapshots of yourself,
                    no heuristic mix. Workshop's pure-self-play setup;
                    may be unstable on its own but useful as an A/B.
-    - scripted:    Tier 2 #9 — random + greedy + bomber + defender + hunter
+    - scripted:    Tier 2 #9 — greedy + bomber + defender + hunter + rusher
                    from training/ae/opponents.py. No self-play. Trains a
                    policy robust to any of the cloud-likely behavior types.
-    - cloudsuite:  rusher + hunter + bomber + defender + mixed. This is the
+    - cloudsuite:  rusher + hunter_sticky + bomber_fast + defender + mixed. This is the
                    pressure-heavy proxy pool for tactical-helper experiments,
                    not a default full-policy replacement path.
+    - pressure2:   rusher_fast + rusher_safe + hunter_sticky + bomber_fast
+                   + base_bomber. Adversarial stress proxy, mostly for
+                   rejecting brittle candidates.
 
     Snapshot pool behavior:
     - When ``snapshot_pool`` is provided AND non-empty, frozen opponents
@@ -630,7 +634,7 @@ def _make_opponents(
     choices: list[Callable] = []
     if mode == "static":
         choices.append(_static_opponent)
-    if mode in {"random", "mixed", "league"}:
+    if mode == "random":
         choices.extend([_random_opponent, _random_opponent])
     if mode in {"planner", "mixed", "league"}:
         choices.append(PlannerOpponent())
@@ -638,7 +642,7 @@ def _make_opponents(
         choices.append(AggressivePlannerOpponent())
     if mode in {"frozen", "mixed", "league", "selfplay"}:
         choices.append(FrozenPolicyOpponent(_frozen_opponent_actor(), device, n_frames))
-    if mode in {"scripted", "cloudsuite"}:
+    if mode in {"scripted", "cloudsuite", "pressure2"}:
         # Tier 2 #9: train against the same scripted library we use in
         # training/ae/simulate.py so the policy learns to be robust across
         # the strategy space cloud opponents likely occupy. ``cloudsuite``
@@ -657,9 +661,11 @@ def _make_opponents(
             choices = [_random_opponent]
         else:
             if mode == "cloudsuite":
-                scripted_names = ["rusher", "hunter", "bomber", "defender", "mixed"]
+                scripted_names = ["rusher", "hunter_sticky", "bomber_fast", "defender", "mixed"]
+            elif mode == "pressure2":
+                scripted_names = ["rusher_fast", "rusher_safe", "hunter_sticky", "bomber_fast", "base_bomber"]
             else:
-                scripted_names = ["random", "greedy", "bomber", "defender", "hunter"]
+                scripted_names = ["greedy", "bomber", "defender", "hunter", "rusher"]
 
             class _ScriptedAdapter:
                 """Wrap one scripted opponent for the (env, agent, obs_py)
@@ -1274,8 +1280,8 @@ def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
         args.curriculum = "pressure"
         args.opponents = "scripted"
         args.eval_opponents = "cloudsuite"
-        args.selection_suites = "random,scripted,cloudsuite"
-        args.selection_weights = "0.20,0.30,0.50"
+        args.selection_suites = "scripted,cloudsuite,pressure2"
+        args.selection_weights = "0.30,0.45,0.25"
         args.selection_games = max(args.selection_games, 12)
         args.games_per_update = max(args.games_per_update, 16)
         args.ppo_epochs = min(args.ppo_epochs, 4)
@@ -1300,8 +1306,8 @@ def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
         args.eval_opponents = "cloudsuite"
         args.selection_manager = "policy"
         args.selection_device = "cpu"
-        args.selection_suites = "random,scripted,cloudsuite"
-        args.selection_weights = "0.20,0.40,0.40"
+        args.selection_suites = "scripted,cloudsuite,pressure2"
+        args.selection_weights = "0.35,0.40,0.25"
         args.selection_games = max(args.selection_games, 24)
         args.games_per_update = max(args.games_per_update, 16)
         args.eval_every = max(args.eval_every, 10)
@@ -1623,11 +1629,11 @@ def main() -> None:
                         help="Progressively changes rollout opponent pool across updates.")
     parser.add_argument("--opponent-mix", default="",
                         help="Per-game opponent mix as mode:weight CSV, e.g. "
-                             "random:0.1,scripted:0.35,cloudsuite:0.35,league:0.2. "
+                             "scripted:0.35,cloudsuite:0.35,pressure2:0.15,league:0.05. "
                              "When set, this overrides --opponents/--curriculum for rollouts.")
     parser.add_argument("--opponent-mix-preset", choices=["none", *OPPONENT_MIX_PRESETS], default="none",
                         help="Named per-game opponent mix. full-rl keeps fixed Novice geometry but "
-                             "stratifies each PPO update across random/scripted/cloudsuite/planner/"
+                             "stratifies each PPO update across scripted/cloudsuite/pressure2/planner/"
                              "aggressive/league opponents.")
     parser.add_argument("--selection-suites", default="",
                         help="Comma-separated opponent pools used for checkpoint selection. "
