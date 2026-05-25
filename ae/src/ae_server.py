@@ -7,6 +7,8 @@ Mode selection is controlled by the ``AE_MODE`` env var:
   checkpoint is present.
 - ``policy``: pure neural policy. Falls back to heuristic if no
   checkpoint is present.
+- ``option_hybrid``: neural 8-way option selector plus heuristic planner
+  execution. Falls back to heuristic if no option checkpoint is present.
 - ``heuristic``: pure rule-based planner. No torch import, no model
   load, cheapest possible per-call latency.
 
@@ -67,6 +69,17 @@ def _make_manager():
             print(f"AE: mode=policy but no checkpoint — falling back to heuristic ({exc})")
         except Exception as exc:  # noqa: BLE001
             print(f"AE: mode=policy load failed — falling back to heuristic ({exc!r})")
+        return AEManager()
+
+    if mode == "option_hybrid":
+        try:
+            from option_hybrid_manager import OptionHybridAEManager  # noqa: WPS433
+            print("AE: mode=option_hybrid — option policy + planner execution")
+            return OptionHybridAEManager()
+        except FileNotFoundError as exc:
+            print(f"AE: mode=option_hybrid but no option checkpoint — using heuristic ({exc})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"AE: mode=option_hybrid init failed — using heuristic ({exc!r})")
         return AEManager()
 
     # Default: hybrid.

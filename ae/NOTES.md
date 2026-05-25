@@ -1318,7 +1318,7 @@ Speed is within striking distance with uvicorn/Docker tuning. **Score is the har
 
 **If the tag is original**: keep `hybrid-v3` as shipped via leaderboard retention and treat AE accuracy as hidden-eval unstable/changed. Spend AE time on structural intelligence. A public 0.9 score means someone found a different frame; likely candidates are fixed-map exploitation, hand-coded route/waypoint tables, or reward-farming behavior we have not observed locally.
 
-**Tier 3 hierarchical goal selector** remains the code-heavy option. It operates on coarser state (mission/recon/resource zones, base proximity, bomb-vs-explore phase), which could be more invariant to the local-cloud opponent distribution shift that killed BC/PPO/MCTS. Cost: 2-3 days, uncertain outcome.
+**Tier 3 hierarchical goal selector** is now implemented as the opt-in `option_hybrid` path (25 May 2026). It operates on coarser strategy labels (`escape`, `rush_base`, `base_bomb`, `defend_base`, `collect_mission`, `collect_resource`, `hunt_enemy`, `explore`) and leaves movement/bomb safety to planner variants. The training path is `collect_option_bc.py` -> `train_option_bc.py` -> `train_option_ppo.py`; only consider it for submission if it clears the furnished/bracket eval gate in `training/ae/RUNBOOK.md`.
 
 What to avoid (lessons learned):
 - Bigger BC networks with rich state inputs against random opponents (overfits transfer).

@@ -20,6 +20,8 @@ ae/models/opponent_model.json            walk-distance scalar           Tier-2 #
 ae/models/oracle_table.npz               oracle BC table                Tier-2 #10
 training/ae/checkpoints/ppo-scripted.pt  PPO trained vs scripted pool   Tier-2 #9
 training/ae/checkpoints/ppo-full-rl-v1.pt Full-RL PPO candidate         historical; cloud did not prove PPO lift
+training/ae/checkpoints/option_policy.pt Option-selector BC checkpoint  semifinals option path
+training/ae/checkpoints/option_policy_ppo.pt Option-selector PPO checkpoint gated candidate
 training/ae/data/knob-*.json             heuristic sweep summaries      local-only, no baked winner yet
 training/ae/data/option-v2-*.json        option-v2 sweep summaries      local-only, rejected
 ```
@@ -34,13 +36,17 @@ training/ae/data/option-v2-*.json        option-v2 sweep summaries      local-on
 - `model.py` — `PolicyNetwork`: small CNN over each viewcone + MLP over scalars. ~150k params, designed for CPU inference under ~5 ms/call.
 - `collect_bc.py` — rolls out the planner in `til_environment.bomberman_env`, logs every `(obs, action)` pair to a compressed `.npz`.
 - `train_bc.py` — supervised cross-entropy training of `PolicyNetwork` on the BC dataset. Masks illegal actions in both loss and argmax.
+- `collect_option_bc.py` — logs planner intent labels (`escape`, `rush_base`, `base_bomb`, `defend_base`, `collect_mission`, `collect_resource`, `hunt_enemy`, `explore`) for the option selector.
+- `train_option_bc.py` — supervised warm-start for the 8-way option selector.
+- `train_option_ppo.py` — PPO fine-tune for option choice only; movement/bomb execution remains planner-backed through `OptionExecutor`.
 - `eval_policy.py` — runs a checkpoint against the env for N games, reports the same `score = total_reward / games / 1000` as `test/test_ae.py`.
 - `train_ppo.py` — pure-PyTorch PPO fine-tune. Warm-starts from `bc.pt`/PPO checkpoints, trains agent 0 against scripted/cloudsuite/league/per-game mixed pools, saves a deployment-compatible actor checkpoint.
 - `run_full_rl_v1.py` — Mac-first launcher for the current full-RL attempt. Wraps `train_ppo.py --preset full-rl` and streams logs to `training/ae/checkpoints/ppo-full-rl-v1.log`.
 - `run_full_rl_belief_v1.py` — Three-stage belief-aware launcher (collect mixed-opp BC -> train belief BC -> PPO with `--preset full-rl --use-belief`). 23 May 2026 attempt did not clear the save floor; kept on disk as the template for any future memory-hypothesis ablation. See `ae/NOTES.md` "23 May session" for the negative-result analysis.
 - `collect_bc.py` — supports `--opponents` (vocabulary mirrors `simulate.py`: `random` / `mixed` / `library` / `cloudsuite` / explicit comma list). Default `random` preserves the legacy planner-vs-random distribution; use `library` or `cloudsuite` for belief / future memory-aware experiments to avoid the original `bc-belief-hybrid` overfit cause.
-- `simulate.py`, `opponents.py` — Tier 1+2 simulation harness with the scripted opponent library. Current serious gates should use `library`, `cloudsuite`, `pressure2`, and/or `mixed`; random is only a weak packaging sanity check.
-- `validate_cloud_suite.py` — suite gate wrapper for `random`, `library`, `cloudsuite`, `pressure2`, and `mixed`.
+- `simulate.py`, `opponents.py` — Tier 1+2 simulation harness with the scripted opponent library. Current serious gates should use `cloudsuite`, `pressure2`, the furnished proxy suites (`strong_realistic`, `base_rush_exploit`, `bracket_proxy`, `top_seed_proxy`), and/or `mixed`; random is only a weak packaging sanity check.
+- `validate_cloud_suite.py` — suite gate wrapper with `legacy`, `furnished`, `bracket`, and `stress` presets, multi-seed support, weighted aggregate reporting, and decision-path diagnostics.
+- `rank_opponents.py` — local scripted-opponent ranking harness; scores each archetype both as slot 0 and as a 5x pressure suite against our current agent.
 - `compare_candidates.py` — paired checkpoint comparison harness for PPO artifacts.
 - `sweep_heuristic_knobs.py` — Mac-first heuristic env-var sweep harness with `broad`, `focused`, and `bridge` candidate generators. The 24 May broad/focused/bridge sweeps found no promotable candidate.
 - `sweep_option_v2.py` — controlled sweep for the opt-in `AE_PLANNER=option_v2` decision layer. The 24 May screen and top-3 advance gate rejected option-v2.
@@ -58,6 +64,7 @@ training/ae/data/option-v2-*.json        option-v2 sweep summaries      local-on
 | Behavior-cloning trainer  | implemented |
 | Local policy evaluator    | implemented |
 | PPO fine-tune             | implemented; old scripted/self-play/full-RL runs regressed once policy actually loaded; keep only for analysis |
+| Option-selector RL        | implemented as opt-in `option_hybrid`; must beat furnished eval before any submission |
 | Tier 1+2 artifact builders| implemented |
 | Deployment into `ae/src/` | implemented; current protected path is legacy heuristic / historical heuristic-fallback max |
 
@@ -95,9 +102,10 @@ If BC worked, score should land near the planner's local score (~0.65-0.70). If 
 
 ### Deployment mechanics (used by step 7 and step 8 below)
 
-The inference path in [../../ae/src/ae_server.py](../../ae/src/ae_server.py) supports three modes selected by `AE_MODE` (env var) or `ae/src/.ae_mode` (file fallback):
+The inference path in [../../ae/src/ae_server.py](../../ae/src/ae_server.py) supports four modes selected by `AE_MODE` (env var) or `ae/src/.ae_mode` (file fallback):
 
 - `hybrid` (current Dockerfile default, matching the `fixed-map-v5` build source shape) — policy chooses, heuristic vetoes illegal / unsafe-bomb / step-into-blast / frozen-stay actions. See [../../ae/src/hybrid_manager.py](../../ae/src/hybrid_manager.py).
+- `option_hybrid` — 8-way option policy chooses the strategic intent; planner variants execute the option with legality and bomb-safety guardrails. Requires `AE_OPTION_POLICY_CHECKPOINT` or `ae/models/option_policy.pt`.
 - `policy` — pure `PolicyAEManager`.
 - `heuristic` — pure rule-based `AEManager` (no torch needed in the image at all).
 
@@ -123,6 +131,17 @@ til submit ae <tag>
 ```
 
 Keep `ae/models/bc.pt` as the expected filename unless you also set `AE_POLICY_CHECKPOINT`, because `policy_manager.py` searches for that path by default.
+
+For option-hybrid deployment, copy to the option slot and select the mode:
+
+```bash
+mkdir -p ae/models
+cp training/ae/checkpoints/<your-option>.pt ae/models/option_policy.pt
+echo option_hybrid > ae/src/.ae_mode
+til build ae <tag>
+til test ae <tag>
+til submit ae <tag>
+```
 
 **Important**: `AE_MODE=foo til build …` does NOT work — `docker build` doesn't inherit the shell env, so the cloud container would default to hybrid regardless. Either edit the `ENV AE_MODE=…` line in `ae/Dockerfile` or write the mode into `ae/src/.ae_mode` (gitignored) before each build.
 
@@ -183,6 +202,55 @@ Decision from the 24 May evidence:
 - Keep `AE_PLANNER=option_v2` as opt-in experimental scaffolding only; default `AE_PLANNER=legacy` remains the shipping behavior.
 - Random-only local score should not promote AE changes. Use paired `cloudsuite` + `pressure2` evidence and reject candidates that trade one pressure suite for the other.
 - Future AE work should be a narrow legacy-manager structural patch around visible base-bomb pressure, not another broad knob sweep.
+
+### Semifinals option-selector path
+
+This is the current logical RL route for fixed Novice maps. Do not replace
+Dijkstra globally; the manager already has an opt-in `AE_ASTAR_TIEBREAK` that
+only changes tied parent reconstruction. Keep Dijkstra as the default for exact
+weighted costs, and use the option policy to decide intent.
+
+Collect supervised option labels against the furnished semifinal proxy suites:
+
+```bash
+PYTHONHASHSEED=0 .venv/bin/python training/ae/collect_option_bc.py \
+  --games 400 \
+  --suite-cycle strong_realistic base_rush_exploit bracket_proxy top_seed_proxy cloudsuite pressure2 \
+  --out training/ae/data/option_bc_furnished.npz
+```
+
+Train the warm-start option selector:
+
+```bash
+.venv/bin/python training/ae/train_option_bc.py \
+  --data training/ae/data/option_bc_furnished.npz \
+  --out training/ae/checkpoints/option_policy.pt \
+  --epochs 20
+```
+
+Fine-tune option choice with PPO:
+
+```bash
+PYTHONHASHSEED=0 .venv/bin/python training/ae/train_option_ppo.py \
+  --bc-checkpoint training/ae/checkpoints/option_policy.pt \
+  --out training/ae/checkpoints/option_policy_ppo.pt \
+  --latest-out training/ae/checkpoints/option_policy_ppo_latest.pt \
+  --updates 50 --games-per-update 8 --eval-every 5 --eval-games 12 \
+  --save-floor 0.281
+```
+
+Gate it against the furnished eval before touching deploy artifacts:
+
+```bash
+AE_OPTION_POLICY_CHECKPOINT=training/ae/checkpoints/option_policy_ppo.pt \
+PYTHONHASHSEED=0 .venv/bin/python training/ae/validate_cloud_suite.py \
+  --preset furnished --rounds 12 --seeds 42 137 --our option_hybrid \
+  --summary-out training/ae/data/option_hybrid_furnished_eval.json
+```
+
+Promotion rule: only consider submission if the weighted furnished mean clears
+the current heuristic baseline by a visible margin and does not trade away
+`base_rush_exploit`/`top_seed_proxy`.
 
 ### 19 May immediate handoff: speedcheck before more AE code
 
@@ -731,14 +799,54 @@ local sim, ship the winner.
 
 ## 6. Local A/B before any push/build/submission (Mac first)
 
-For future AE behavior changes, run the cloud-like validation suite locally on
+For future AE behavior changes, run the furnished validation suite locally on
 the Mac before pushing to Workbench, building an image, or submitting. This is
-the first gate, not an optional afterthought:
+the first gate, not an optional afterthought. Launch it with `PYTHONHASHSEED=0`
+so AEManager-bearing opponents are comparable across runs:
 
 ```bash
-python training/ae/validate_cloud_suite.py \
+PYTHONHASHSEED=0 .venv/bin/python training/ae/validate_cloud_suite.py \
+  --preset furnished \
   --rounds 24 \
-  --suites random library cloudsuite \
+  --seeds 42 137 \
+  --our heuristic \
+  --summary-out training/ae/data/ae-furnished-gate.json
+```
+
+`furnished` means `cloudsuite`, `pressure2`, `strong_realistic`,
+`base_rush_exploit`, `bracket_proxy`, `top_seed_proxy`, `defense_trap`, and
+`mixed`. The weighted aggregate intentionally puts most mass on pressure and
+bracket-like suites. Promote only if the weighted mean improves, the
+worst-suite mean does not collapse, and the decision counters explain the
+change. Use the stress preset when testing base-survival patches:
+
+```bash
+PYTHONHASHSEED=0 .venv/bin/python training/ae/validate_cloud_suite.py \
+  --preset stress \
+  --rounds 24 \
+  --seeds 42 137 \
+  --our heuristic \
+  --summary-out training/ae/data/ae-stress-gate.json
+```
+
+Before freezing a new furnished suite, rank the opponent archetypes:
+
+```bash
+PYTHONHASHSEED=0 .venv/bin/python training/ae/rank_opponents.py \
+  --rounds 8 \
+  --summary-out training/ae/data/opponent-rank-furnished.json
+```
+
+The ranker reports two signals: how well an archetype scores as slot 0, and
+how much five copies suppress our current heuristic score. Prefer opponents
+that are high on both axes when composing a match-realistic local suite.
+
+The older legacy gate is still available for historical comparison:
+
+```bash
+PYTHONHASHSEED=0 python training/ae/validate_cloud_suite.py \
+  --preset legacy \
+  --rounds 24 \
   --our heuristic \
   --summary-out training/ae/data/ae-candidate-cloudsuite.json
 ```

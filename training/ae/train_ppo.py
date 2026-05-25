@@ -81,6 +81,11 @@ OPPONENT_MODES = (
     "scripted",
     "cloudsuite",
     "pressure2",
+    "strong_realistic",
+    "base_rush_exploit",
+    "bracket_proxy",
+    "top_seed_proxy",
+    "defense_trap",
 )
 
 OPPONENT_MIX_PRESETS = {
@@ -642,7 +647,7 @@ def _make_opponents(
         choices.append(AggressivePlannerOpponent())
     if mode in {"frozen", "mixed", "league", "selfplay"}:
         choices.append(FrozenPolicyOpponent(_frozen_opponent_actor(), device, n_frames))
-    if mode in {"scripted", "cloudsuite", "pressure2"}:
+    if mode in {"scripted", "cloudsuite", "pressure2", "strong_realistic", "base_rush_exploit", "bracket_proxy", "top_seed_proxy", "defense_trap"}:
         # Tier 2 #9: train against the same scripted library we use in
         # training/ae/simulate.py so the policy learns to be robust across
         # the strategy space cloud opponents likely occupy. ``cloudsuite``
@@ -655,17 +660,12 @@ def _make_opponents(
         # across multiple agents in the same game would interleave belief
         # updates between agents and corrupt their decisions.
         try:
-            from opponents import make_opponent  # noqa: WPS433
+            from opponents import make_opponent, resolve_opponent_spec  # noqa: WPS433
         except Exception as exc:
             print(f"[train_ppo] scripted opponents unavailable ({exc}); using random", flush=True)
             choices = [_random_opponent]
         else:
-            if mode == "cloudsuite":
-                scripted_names = ["rusher", "hunter_sticky", "bomber_fast", "defender", "mixed"]
-            elif mode == "pressure2":
-                scripted_names = ["rusher_fast", "rusher_safe", "hunter_sticky", "bomber_fast", "base_bomber"]
-            else:
-                scripted_names = ["greedy", "bomber", "defender", "hunter", "rusher"]
+            scripted_names = resolve_opponent_spec("library" if mode == "scripted" else mode)
 
             class _ScriptedAdapter:
                 """Wrap one scripted opponent for the (env, agent, obs_py)

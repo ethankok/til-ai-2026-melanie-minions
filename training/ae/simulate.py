@@ -53,7 +53,13 @@ for p in (str(AE_SRC), str(TRAINING_AE), str(TIL_AE)):
         sys.path.insert(0, p)
 
 from ae_manager import AEManager  # noqa: E402
-from opponents import OPPONENT_NAMES, MixedOpponent, OpponentFn, make_opponent  # noqa: E402
+from opponents import (  # noqa: E402
+    OPPONENT_NAMES,
+    OPPONENT_SUITES,
+    OpponentFn,
+    make_opponent,
+    resolve_opponent_spec,
+)
 
 from til_environment import bomberman_env  # noqa: E402
 from til_environment.config import default_config  # noqa: E402
@@ -95,12 +101,33 @@ def unpack_state_key(key: int) -> tuple[int, int, int, int]:
 # Our-agent factory
 # ---------------------------------------------------------------------------
 
+class _OpponentAsOurAgent:
+    """Adapter for ranking scripted opponents under the slot-0 score."""
+
+    def __init__(self, name: str, seed: int = 0) -> None:
+        self.name = name
+        self.seed = seed
+        self._op = make_opponent(name, seed=seed)
+
+    def _reset_memory(self) -> None:
+        self._op = make_opponent(self.name, seed=self.seed)
+        if hasattr(self._op, "reset_for_game"):
+            self._op.reset_for_game()
+
+    def ae(self, observation: dict) -> int:
+        return int(self._op(observation))
+
+    def __getattr__(self, name: str):
+        return getattr(self._op, name)
+
+
 def _make_our_agent(name: str, kwargs: dict | None = None):
     """Construct the agent we control in slot 0.
 
     Currently supported:
       heuristic — `AEManager` legacy planner (default)
       option_v2 — `AEManager` with the option-style decision core enabled
+      option_hybrid — learned option selector with planner execution
 
     Easy to extend: drop a new branch here and pass the matching --our flag.
     """
@@ -122,6 +149,14 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
     if name == "hybrid":
         from hybrid_manager import HybridAEManager
         return HybridAEManager(**kwargs)
+    if name == "option_hybrid":
+        from option_hybrid_manager import OptionHybridAEManager
+        return OptionHybridAEManager(**kwargs)
+    if name.startswith("opponent:"):
+        opponent_name = name.split(":", 1)[1].strip()
+        if opponent_name not in OPPONENT_NAMES:
+            raise ValueError(f"unknown opponent-as-agent name {opponent_name!r}")
+        return _OpponentAsOurAgent(opponent_name)
     raise ValueError(f"unknown --our value {name!r}")
 
 
@@ -209,8 +244,17 @@ def _classify_base_failure(prev_obs: dict, action: int | None) -> str:
 
 
 def _agent_attr(agent, name: str, default=0):
+    if hasattr(agent, name):
+        return getattr(agent, name)
     inner = getattr(agent, "heuristic", agent)
     return getattr(inner, name, default)
+
+
+def _counter_attr(agent, name: str) -> dict[str, int]:
+    value = _agent_attr(agent, name, {})
+    if not value:
+        return {}
+    return {str(k): int(v) for k, v in dict(value).items()}
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +428,7 @@ def run_one_round(
             "terminated_us": terminated_us,
             "freeze_ticks_seen": frozen_ticks_seen,
             "base_pressure_overrides": _agent_attr(our_agent, "base_pressure_override_count", 0),
+            "decision_counts": _counter_attr(our_agent, "decision_counts"),
         },
     }
 
@@ -406,11 +451,13 @@ def run_simulation(
     ``opponents_spec`` is a comma-separated list of opponent names (one per
     enemy slot, repeats fine), or one of:
 
-      'mixed'     : 5 independent non-random MixedOpponent instances
+      'mixed'     : 5 independent non-random mixed opponents
       'library'   : greedy,bomber,defender,hunter,rusher (5 enemies)
       'cloudsuite': rusher,hunter_sticky,bomber_fast,defender,mixed
       'pressure2' : rusher_fast,rusher_safe,hunter_sticky,bomber_fast,base_bomber
       'random'    : legacy explicit baseline only
+      'strong_realistic', 'base_rush_exploit', 'bracket_proxy',
+      'top_seed_proxy', 'defense_trap': stronger semifinal proxy suites
 
     Or any explicit list: 'greedy,greedy,bomber,defender,hunter'.
     """
@@ -420,25 +467,7 @@ def run_simulation(
     env = bomberman_env.basic_env(env_wrappers=[], cfg=cfg)
     our_agent = _make_our_agent(our_name, our_kwargs)
 
-    # Resolve opponents spec to a list of 5 names.
-    if opponents_spec == "random":
-        names = ["random"] * 5
-    elif opponents_spec == "mixed":
-        names = ["mixed"] * 5
-    elif opponents_spec == "library":
-        names = ["greedy", "bomber", "defender", "hunter", "rusher"]
-    elif opponents_spec == "cloudsuite":
-        names = ["rusher", "hunter_sticky", "bomber_fast", "defender", "mixed"]
-    elif opponents_spec == "pressure2":
-        names = ["rusher_fast", "rusher_safe", "hunter_sticky", "bomber_fast", "base_bomber"]
-    else:
-        names = [n.strip() for n in opponents_spec.split(",") if n.strip()]
-        if len(names) == 1:
-            names = names * 5
-        if len(names) != 5:
-            raise ValueError(
-                f"need 5 opponent names (got {len(names)}): {names}"
-            )
+    names = resolve_opponent_spec(opponents_spec)
 
     # Per-round opponent instances. Each round we'll get a fresh deterministic
     # seed for stochastic opponents, but the AEManager-based ones reset their
@@ -491,10 +520,12 @@ def run_simulation(
     component_sum: Counter[str] = Counter()
     base_failure_sum: Counter[str] = Counter()
     action_sum: Counter[str] = Counter()
+    decision_sum: Counter[str] = Counter()
     for diag in diagnostics:
         component_sum.update(diag.get("reward_components", {}))
         base_failure_sum.update(diag.get("base_failure_classes", {}))
         action_sum.update(diag.get("action_counts", {}))
+        decision_sum.update(diag.get("decision_counts", {}))
 
     def _mean_diag(key: str) -> float:
         values = [float(d.get(key, 0.0)) for d in diagnostics]
@@ -526,6 +557,7 @@ def run_simulation(
             "reward_component_sum": dict(component_sum),
             "base_failure_classes": dict(base_failure_sum),
             "action_counts": dict(action_sum),
+            "decision_counts": dict(decision_sum),
         },
     }
 
@@ -546,11 +578,13 @@ def main(argv: list[str] | None = None) -> int:
         default="cloudsuite",
         help=(
             "opponent set: 'mixed', 'library', 'cloudsuite', 'pressure2', legacy 'random', "
-            "or 5 comma-separated names from " + ",".join(OPPONENT_NAMES)
+            "new furnished suites "
+            + ",".join(sorted(k for k in OPPONENT_SUITES if k not in {"random", "mixed", "library", "cloudsuite", "pressure2"}))
+            + ", or 5 comma-separated names from " + ",".join(OPPONENT_NAMES)
         ),
     )
     p.add_argument("--our", type=str, default="heuristic",
-                   help="which agent to control in slot 0 (heuristic, option_v2, hybrid)")
+                   help="which agent to control in slot 0 (heuristic, option_v2, hybrid, option_hybrid, or opponent:<name>)")
     p.add_argument("--out", type=Path, default=None,
                    help="optional .npz to dump trajectories into")
     p.add_argument("--summary-out", type=Path, default=None,

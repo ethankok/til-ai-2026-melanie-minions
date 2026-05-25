@@ -439,6 +439,207 @@ class BaseBomber(BaseRusher):
         return False
 
 
+class ScriptedBaseAttack(BaseBomber):
+    """Aggressive scripted-first base attacker.
+
+    This approximates the opponent family we care about for semifinals:
+    deterministic base pressure, frequent safe bomb attempts, and only a tiny
+    item appetite when the base route is not immediately productive.
+    """
+
+    name = "scripted_base_attack"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.period = 3
+        self.ENEMY_BASE_VALUE = 230.0
+        self.DIST_PENALTY = 0.45
+        self.PATH_THREAT_PENALTY = 1.0
+        self.CELL_THREAT_PENALTY = 3.0
+        self.ITEM_VALUES = {"mission": 4.0, "resource": 1.5, "recon": 0.5}
+        self.ENEMY_CHASE_VALUE = 10.0
+        self.ENEMY_CHASE_RADIUS = 2
+
+
+class SpawnRusher(BaseBomber):
+    """Fixed-map rusher that commits to one nearby enemy base per game."""
+
+    name = "spawn_rusher"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.period = 4
+        self.ENEMY_BASE_VALUE = 205.0
+        self.DIST_PENALTY = 0.55
+        self.ITEM_VALUES = {"mission": 5.0, "resource": 2.0, "recon": 1.0}
+        self._preferred_base: tuple[int, int] | None = None
+
+    def _choose_target(self, start, danger, low_health=False):
+        if self.enemy_bases and not low_health:
+            if self._preferred_base not in self.enemy_bases:
+                anchor = self.base_location or start
+                self._preferred_base = min(
+                    self.enemy_bases,
+                    key=lambda p: (self._manhattan(anchor, p), self._manhattan(start, p)),
+                )
+            distance, parent = self._dijkstra_distance_map(start, danger)
+            best = None
+            best_score = float("-inf")
+            for cell in self._attack_cells_for(self._preferred_base):
+                if cell not in distance:
+                    continue
+                score = 210.0 - distance[cell] - 0.15 * self.visit_count.get(cell, 0)
+                if score > best_score:
+                    best_score = score
+                    best = cell
+            if best is not None:
+                return best, self._reconstruct_path(parent, start, best)
+        return super()._choose_target(start, danger, low_health)
+
+
+class OurBaseSieger(BaseBomber):
+    """Stress opponent that targets team 0's Novice base when known."""
+
+    name = "our_base_sieger"
+    TEAM0_BASE = (13, 9)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.period = 3
+        self.ENEMY_BASE_VALUE = 240.0
+        self.DIST_PENALTY = 0.50
+        self.PATH_THREAT_PENALTY = 0.8
+        self.CELL_THREAT_PENALTY = 2.5
+        self.ITEM_VALUES = {"mission": 3.0, "resource": 1.0, "recon": 0.5}
+
+    def _choose_target(self, start, danger, low_health=False):
+        if self.TEAM0_BASE in self.enemy_bases and not low_health:
+            distance, parent = self._dijkstra_distance_map(start, danger)
+            best = None
+            best_score = float("-inf")
+            for cell in self._attack_cells_for(self.TEAM0_BASE):
+                if cell not in distance:
+                    continue
+                score = 240.0 - distance[cell] - 0.10 * self.visit_count.get(cell, 0)
+                if score > best_score:
+                    best_score = score
+                    best = cell
+            if best is not None:
+                return best, self._reconstruct_path(parent, start, best)
+        return super()._choose_target(start, danger, low_health)
+
+
+class SafeBaseBomber(BaseBomber):
+    """Base bomber that keeps strong pressure without ignoring bomb danger."""
+
+    name = "safe_base_bomber"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.period = 4
+        self.ENEMY_BASE_VALUE = 185.0
+        self.DIST_PENALTY = 0.80
+        self.PATH_THREAT_PENALTY = 5.0
+        self.CELL_THREAT_PENALTY = 12.0
+        self.ITEM_VALUES = {"mission": 10.0, "resource": 4.0, "recon": 1.0}
+
+
+class ClusterHunter(StickyHunter):
+    """Sticky hunter biased toward bombing remembered enemy clusters."""
+
+    name = "cluster_hunter"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ENEMY_STALENESS = 12
+        self.ENEMY_CHASE_VALUE = 42.0
+        self.ENEMY_CHASE_RADIUS = 10
+        self.PREDICTIVE_BOMB_RANGE = 2
+        self.PREDICTIVE_WALK_HORIZON = 5
+        self.opponent_walk_scale = 1.5
+
+
+class CounterDefender(Defender):
+    """Home-base defender that counter-chases nearby attackers."""
+
+    name = "counter_defender"
+    DEFEND_RADIUS = 7
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.BASE_DEFENSE_RADIUS = 8
+        self.BASE_DEFENSE_HEALTH = 100
+        self.ENEMY_CHASE_VALUE = 35.0
+        self.ENEMY_CHASE_RADIUS = 8
+        self.PATH_THREAT_PENALTY = 3.0
+        self.CELL_THREAT_PENALTY = 8.0
+
+    def _choose_target(self, start, danger, low_health=False):
+        if self.base_location is not None and self.enemy_agents and not low_health:
+            step = self.last_step if self.last_step is not None else 0
+            nearby = [
+                pos for pos, seen in self.enemy_agents.items()
+                if step - int(seen) <= self.ENEMY_STALENESS
+                and self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS
+            ]
+            if nearby:
+                target = min(nearby, key=lambda p: self._manhattan(start, p))
+                distance, parent = self._bfs_distance_map(start, danger)
+                if target in distance:
+                    return target, self._reconstruct_path(parent, start, target)
+        return super()._choose_target(start, danger, low_health)
+
+
+class HybridCollectorAttacker(BaseRusher):
+    """Cloud-like hybrid: collect on the route, then pressure bases."""
+
+    name = "hybrid_collector"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ENEMY_BASE_VALUE = 165.0
+        self.DIST_PENALTY = 0.90
+        self.PATH_THREAT_PENALTY = 2.0
+        self.CELL_THREAT_PENALTY = 5.0
+        self.item_mission_value = 55.0
+        self.item_resource_value = 20.0
+        self.item_recon_value = 8.0
+        self.ITEM_VALUES = {
+            "mission": self.item_mission_value,
+            "resource": self.item_resource_value,
+            "recon": self.item_recon_value,
+        }
+
+
+class StrongMixedOpponent:
+    """Per-game random switch among stronger semifinal proxy opponents."""
+
+    name = "mixed_strong"
+
+    def __init__(self, seed: int | None = None) -> None:
+        self.rng = random.Random(seed)
+        self._inner: object | None = None
+        self._inner_name = "scripted_base_attack"
+
+    def reset_for_game(self) -> None:
+        choice = self.rng.choice((
+            "scripted_base_attack",
+            "spawn_rusher",
+            "our_base_sieger",
+            "safe_base_bomber",
+            "cluster_hunter",
+            "counter_defender",
+            "hybrid_collector",
+        ))
+        self._inner_name = choice
+        self._inner = make_opponent(choice, seed=self.rng.randint(0, 1 << 30))
+
+    def __call__(self, obs: dict) -> int:
+        if self._inner is None:
+            self.reset_for_game()
+        return self._inner(obs)
+
+
 class MixedOpponent:
     """Picks one non-random scripted opponent at the start of each game."""
 
@@ -487,8 +688,77 @@ OPPONENT_NAMES = (
     "rusher_fast",
     "rusher_safe",
     "base_bomber",
+    "scripted_base_attack",
+    "spawn_rusher",
+    "our_base_sieger",
+    "safe_base_bomber",
+    "cluster_hunter",
+    "counter_defender",
+    "hybrid_collector",
+    "mixed_strong",
     "mixed",
 )
+
+
+OPPONENT_SUITES = {
+    "random": ["random"] * 5,
+    "mixed": ["mixed"] * 5,
+    "library": ["greedy", "bomber", "defender", "hunter", "rusher"],
+    "cloudsuite": ["rusher", "hunter_sticky", "bomber_fast", "defender", "mixed"],
+    "pressure2": ["rusher_fast", "rusher_safe", "hunter_sticky", "bomber_fast", "base_bomber"],
+    "strong_realistic": [
+        "scripted_base_attack",
+        "spawn_rusher",
+        "safe_base_bomber",
+        "cluster_hunter",
+        "hybrid_collector",
+    ],
+    "base_rush_exploit": [
+        "our_base_sieger",
+        "scripted_base_attack",
+        "spawn_rusher",
+        "base_bomber",
+        "rusher_fast",
+    ],
+    "bracket_proxy": [
+        "scripted_base_attack",
+        "safe_base_bomber",
+        "counter_defender",
+        "hybrid_collector",
+        "mixed_strong",
+    ],
+    "top_seed_proxy": [
+        "our_base_sieger",
+        "scripted_base_attack",
+        "cluster_hunter",
+        "safe_base_bomber",
+        "hybrid_collector",
+    ],
+    "defense_trap": [
+        "counter_defender",
+        "cluster_hunter",
+        "hunter_sticky",
+        "defender",
+        "safe_base_bomber",
+    ],
+}
+
+
+def resolve_opponent_spec(spec: str) -> list[str]:
+    """Resolve a named suite or explicit comma-separated opponent list."""
+
+    key = spec.lower().strip()
+    if key in OPPONENT_SUITES:
+        return list(OPPONENT_SUITES[key])
+    names = [n.strip().lower() for n in spec.split(",") if n.strip()]
+    if len(names) == 1:
+        names = names * 5
+    if len(names) != 5:
+        raise ValueError(f"need 5 opponent names (got {len(names)}): {names}")
+    unknown = [n for n in names if n not in OPPONENT_NAMES]
+    if unknown:
+        raise ValueError(f"unknown opponent names: {unknown}")
+    return names
 
 
 def make_opponent(name: str, seed: int | None = None) -> OpponentFn:
@@ -518,6 +788,22 @@ def make_opponent(name: str, seed: int | None = None) -> OpponentFn:
         return SafeRusher()
     if name == "base_bomber":
         return BaseBomber()
+    if name == "scripted_base_attack":
+        return ScriptedBaseAttack()
+    if name == "spawn_rusher":
+        return SpawnRusher()
+    if name == "our_base_sieger":
+        return OurBaseSieger()
+    if name == "safe_base_bomber":
+        return SafeBaseBomber()
+    if name == "cluster_hunter":
+        return ClusterHunter()
+    if name == "counter_defender":
+        return CounterDefender()
+    if name == "hybrid_collector":
+        return HybridCollectorAttacker()
+    if name == "mixed_strong":
+        return StrongMixedOpponent(seed)
     if name == "mixed":
         return MixedOpponent(seed)
     raise ValueError(f"unknown opponent name: {name!r}")

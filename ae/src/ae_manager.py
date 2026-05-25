@@ -9,7 +9,7 @@ baseline.
 
 from __future__ import annotations
 
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 from math import inf
 import os
@@ -249,6 +249,10 @@ class AEManager:
     # ------------------------------------------------------------------
     # Public policy
     # ------------------------------------------------------------------
+    def _count_decision(self, key: str) -> None:
+        self.last_decision = key
+        self.decision_counts[key] += 1
+
     def ae(self, observation: dict) -> int:
         """Choose the next action for the controlled agent."""
 
@@ -309,9 +313,11 @@ class AEManager:
                 self.recent_locations.pop(0)
 
         if frozen_ticks > 0:
+            self._count_decision("frozen")
             return self._first_legal(observation, [self.STAY, self.LEFT, self.RIGHT, self.FORWARD, self.BACKWARD])
 
         if location is None:
+            self._count_decision("fallback_no_location")
             return self._fallback_action(observation, None, direction, None)
 
         # Tier-1 #1: playbook override. After belief is updated and frozen-
@@ -346,8 +352,10 @@ class AEManager:
                                 }
                                 self.escape_target = escape
                                 self.escape_until_step = step + self.BOMB_TIMER
+                                self._count_decision("playbook_bomb")
                                 return self.PLACE_BOMB
                 else:
+                    self._count_decision("playbook_action")
                     return pb_action
 
         danger = self._danger_cells()
@@ -360,19 +368,24 @@ class AEManager:
             # Fast path: an obviously-dominant action skips full candidate scoring.
             dominant = self._try_dominant_action(observation, location, direction, danger, low_health)
             if dominant is not None:
+                self._count_decision(f"dominant_{self.last_dominant_reason}")
                 return dominant
             lookahead = self._tactical_lookahead_action(observation, location, direction)
             if lookahead is not None:
+                self._count_decision("tactical_lookahead")
                 return lookahead
             target, path = self._choose_target(location, danger, low_health)
 
         if escape_path is None and self._should_place_bomb(observation, location, target, danger):
+            self._count_decision(f"bomb_{self.last_bomb_reason}")
             return self.PLACE_BOMB
 
         preferred = self._action_for_path(location, direction, path)
         if preferred is not None and self._legal(observation, preferred):
+            self._count_decision(f"path_{self.last_target_kind}")
             return preferred
 
+        self._count_decision("fallback")
         return self._fallback_action(observation, location, direction, target)
 
     # ------------------------------------------------------------------
@@ -461,6 +474,12 @@ class AEManager:
         self.last_step = None
         self.is_fixed_novice_map = False
         self.fixed_team_idx = None
+        self.current_path = None
+        self.last_target_kind = "none"
+        self.last_bomb_reason = "unknown"
+        self.last_dominant_reason = "unknown"
+        self.last_decision = "reset"
+        self.decision_counts: Counter[str] = Counter()
         self.dijkstra_bomb_cost = _env_float("AE_DIJKSTRA_BOMB_COST", 5.0)
         # Hail-mary A* tie-breaker: when enabled, equal-cost paths in
         # `_dijkstra_distance_map` get expanded toward enemy-base centroid
@@ -630,7 +649,7 @@ class AEManager:
         else:
             distance, parent = self._bfs_distance_map(start, danger)
 
-        candidates: list[tuple[float, tuple[int, int]]] = []
+        candidates: list[tuple[float, tuple[int, int], str]] = []
         # Defensive emergency logic (disabled on fixed novice map, optional on general maps)
         defense_emergency = False
         if not getattr(self, "is_fixed_novice_map", False):
@@ -644,7 +663,7 @@ class AEManager:
                         continue
                     if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
                         defense_emergency = True
-                        candidates.append((150.0, pos))
+                        candidates.append((150.0, pos, "defense_emergency"))
 
         # When health is low, avoid aggressive targets and stick to items/exploration
         if not low_health and not defense_emergency:
@@ -653,45 +672,46 @@ class AEManager:
                     value = 130.0
                 else:
                     value = 35.0 if self.tier1_shared_credit else self.ENEMY_BASE_VALUE
-                candidates.append((value, pos))
+                candidates.append((value, pos, "enemy_base"))
             # Base defense: target enemies near our base (active attack/defense)
             if self.base_location is not None:
                 for pos, last_seen in self.enemy_agents.items():
                     if step - int(last_seen) > self.ENEMY_STALENESS:
                         continue
                     if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
-                        candidates.append((60.0, pos))
+                        candidates.append((60.0, pos, "base_defense"))
             # Target nearby enemy agents aggressively (chase & kill) if enabled
             if self.ENEMY_CHASE_VALUE > 0.0:
                 for pos, last_seen in self.enemy_agents.items():
                     if step - int(last_seen) > 1:
                         continue
                     if self._manhattan(start, pos) <= self.ENEMY_CHASE_RADIUS:
-                        candidates.append((self.ENEMY_CHASE_VALUE, pos))
+                        candidates.append((self.ENEMY_CHASE_VALUE, pos, "enemy_chase"))
 
         for pos, (kind, _step) in self.last_seen_items.items():
-            candidates.append((self.ITEM_VALUES.get(kind, 1.0), pos))
+            candidates.append((self.ITEM_VALUES.get(kind, 1.0), pos, f"item_{kind}"))
 
         # Respawn awareness: items we saw get collected become candidates
         # again once tile_respawn_steps have elapsed. Slight discount because
         # the respawn is probabilistic, not guaranteed.
         for pos, (kind, collected_step) in self.collected_items.items():
             if step - collected_step >= self.TILE_RESPAWN_STEPS:
-                candidates.append((0.5 * self.ITEM_VALUES.get(kind, 1.0), pos))
+                candidates.append((0.5 * self.ITEM_VALUES.get(kind, 1.0), pos, f"respawn_{kind}"))
 
         # Weight frontier cells by how much new area they likely reveal.
         for pos in self._frontier_cells():
             unseen_neighbors = sum(1 for n in self._raw_neighbors(pos) if n not in self.seen)
-            candidates.append((4.0 + 1.0 * unseen_neighbors, pos))
+            candidates.append((4.0 + 1.0 * unseen_neighbors, pos, "frontier"))
 
         # Anti-stall fallback: known safe low-visit cells.
         for pos in self.seen:
             if pos != start:
-                candidates.append((2.0 - 0.08 * self.visit_count.get(pos, 0), pos))
+                candidates.append((2.0 - 0.08 * self.visit_count.get(pos, 0), pos, "low_visit"))
 
         best_target = None
+        best_kind = "none"
         best_score = -inf
-        for base_value, pos in candidates:
+        for base_value, pos, kind in candidates:
             if pos == start or pos not in distance:
                 continue
             dist = distance[pos]
@@ -712,12 +732,15 @@ class AEManager:
             if score > best_score:
                 best_score = score
                 best_target = pos
+                best_kind = kind
 
         if best_target is None:
             self.current_path = None
+            self.last_target_kind = "none"
             return None, None
         path = self._reconstruct_path(parent, start, best_target)
         self.current_path = path
+        self.last_target_kind = best_kind
         return best_target, path
 
     def _bfs(
@@ -958,6 +981,7 @@ class AEManager:
                         for pos, last_seen in self.enemy_agents.items():
                             if int(last_seen) == step and pos in bomb_blast:
                                 self.recent_kills.append((pos, unfreeze))
+                    self.last_dominant_reason = "bomb_enemy_base" if enemy_base_hit else "bomb_enemy_agent"
                     return self.PLACE_BOMB
 
         # Adjacent mission grab — purely a speed optimization, not a behavior
@@ -973,6 +997,7 @@ class AEManager:
                 continue
             preferred = self._action_for_path(location, direction, [location, nxt])
             if preferred is not None and self._legal(observation, preferred):
+                self.last_dominant_reason = "adjacent_mission"
                 return preferred
         return None
 
@@ -1657,12 +1682,14 @@ class AEManager:
         step = self.last_step if self.last_step is not None else 0
         # Direct hits: enemy base, or a fresh enemy-agent sighting already in blast.
         tactical_target = any(pos in bomb_blast for pos in self.enemy_bases)
+        bomb_reason = "enemy_base" if tactical_target else ""
         if not tactical_target:
             for pos, last_seen in self.enemy_agents.items():
                 if step - int(last_seen) > 1 and pos not in bomb_blast:
                     continue
                 if pos in bomb_blast:
                     tactical_target = True
+                    bomb_reason = "enemy_agent"
                     break
 
         base_location = self.base_location or self._location(observation.get("base_location"))
@@ -1683,6 +1710,7 @@ class AEManager:
                     nearby += 1
             if nearby >= 2:
                 tactical_target = True
+                bomb_reason = "enemy_cluster"
 
         # Tier-1 #7: predictive random-walk bomb. If there is at least one
         # fresh enemy sighting within PREDICTIVE_WALK_HORIZON of the blast,
@@ -1704,6 +1732,7 @@ class AEManager:
                 expected_damage += 20.0 * p_hit  # 20 damage per blast hit
             if expected_damage >= 8.0:
                 tactical_target = True
+                bomb_reason = "predictive_walk"
 
         # Tier-1 #3: respawn-camp predictive bomb. If a kill cell falls in
         # our blast and the enemy unfreeze step lines up with this bomb's
@@ -1713,6 +1742,7 @@ class AEManager:
             for kpos, unfreeze in self.recent_kills:
                 if kpos in bomb_blast and abs(detonation_step - unfreeze) <= 1:
                     tactical_target = True
+                    bomb_reason = "repeat_kill"
                     break
 
         wall_to_open = False
@@ -1725,8 +1755,12 @@ class AEManager:
                 target_kind = self.last_seen_items.get(target, (None, None))[0]
                 if target in self.enemy_bases or target_kind == "mission":
                     wall_to_open = True
+                    if not bomb_reason:
+                        bomb_reason = "wall_to_high_value"
                 elif target not in self.enemy_bases:
                     wall_to_open = self._stuck_recently()
+                    if wall_to_open and not bomb_reason:
+                        bomb_reason = "wall_unstuck"
 
         # Novice fixed map custom wall opening:
         if not wall_to_open and getattr(self, "is_fixed_novice_map", False) and getattr(self, "current_path", None) is not None:
@@ -1736,6 +1770,8 @@ class AEManager:
                 d = self._direction_for_delta(nxt[0] - location[0], nxt[1] - location[1])
                 if d is not None and (location[0], location[1], d) in self.destructible:
                     wall_to_open = True
+                    if not bomb_reason:
+                        bomb_reason = "fixed_map_wall"
 
         # Bomb-chain heuristic disabled in v3b: in random-opponent local it
         # was wasting bombs on speculative wall breaks. Helper kept for future
@@ -1750,6 +1786,7 @@ class AEManager:
         self.known_bombs[location] = {"timer": self.BOMB_TIMER, "own": True, "last_step": self.last_step or 0}
         self.escape_target = escape_target
         self.escape_until_step = (self.last_step or 0) + self.BOMB_TIMER
+        self.last_bomb_reason = bomb_reason or "unknown"
         return True
 
     def _safe_escape_within(
