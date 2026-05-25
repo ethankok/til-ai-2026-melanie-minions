@@ -9,6 +9,8 @@ Mode selection is controlled by the ``AE_MODE`` env var:
   checkpoint is present.
 - ``option_hybrid``: neural 8-way option selector plus heuristic planner
   execution. Falls back to heuristic if no option checkpoint is present.
+- ``tactical_hybrid``: neural 12-way tactical option selector plus planner
+  execution. Falls back to heuristic if no tactical checkpoint is present.
 - ``heuristic``: pure rule-based planner. No torch import, no model
   load, cheapest possible per-call latency.
 
@@ -80,6 +82,17 @@ def _make_manager():
             print(f"AE: mode=option_hybrid but no option checkpoint — using heuristic ({exc})")
         except Exception as exc:  # noqa: BLE001
             print(f"AE: mode=option_hybrid init failed — using heuristic ({exc!r})")
+        return AEManager()
+
+    if mode == "tactical_hybrid":
+        try:
+            from tactical_hybrid_manager import TacticalHybridAEManager  # noqa: WPS433
+            print("AE: mode=tactical_hybrid — tactical option policy + planner execution")
+            return TacticalHybridAEManager()
+        except FileNotFoundError as exc:
+            print(f"AE: mode=tactical_hybrid but no tactical checkpoint — using heuristic ({exc})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"AE: mode=tactical_hybrid init failed — using heuristic ({exc!r})")
         return AEManager()
 
     # Default: hybrid.

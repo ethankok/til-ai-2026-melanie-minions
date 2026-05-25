@@ -314,6 +314,24 @@ class OptionExecutor:
             self.decision_counts[f"forced_{option_label}"] += 1
             return heuristic_action, {"option": option_label, "executed": "heuristic", "veto": "forced"}
 
+        if option == OPTION_ESCAPE:
+            candidate = self._escape_action(observation, heuristic_action)
+            self.decision_counts["option_escape"] += 1
+            return candidate, {"option": option_label, "executed": "escape", "veto": ""}
+
+        if option == OPTION_DEFEND_BASE:
+            candidate = self._defend_action(observation, heuristic_action)
+            veto_reason = self._veto_reason(observation, candidate, heuristic_action)
+            if veto_reason:
+                self.veto_counts[veto_reason] += 1
+                self.decision_counts[f"veto_{option_label}_{veto_reason}"] += 1
+                self._restore_hypothetical_heuristic_bomb(suspended_bomb)
+                return heuristic_action, {"option": option_label, "executed": "heuristic", "veto": veto_reason}
+            if candidate == self.PLACE_BOMB:
+                self._adopt_local_bomb(observation)
+            self.decision_counts["option_defend_base"] += 1
+            return candidate, {"option": option_label, "executed": "defend_base", "veto": ""}
+
         manager = self._managers.get(option)
         if manager is None:
             self.decision_counts[f"heuristic_{option_label}"] += 1
@@ -407,6 +425,135 @@ class OptionExecutor:
             return int(action)
         return None
 
+    def _escape_action(self, observation: dict, fallback: int) -> int:
+        forced = self._forced_escape_action(observation)
+        if forced is not None:
+            return forced
+        location = self.heuristic._location(observation.get("location"))
+        if location is None:
+            return fallback
+        direction = self.heuristic._as_int(observation.get("direction"), default=0) % 4
+        legal = [
+            action for action in (self.FORWARD, self.BACKWARD, self.LEFT, self.RIGHT, self.STAY)
+            if self.heuristic._legal(observation, action)
+        ]
+        if not legal:
+            return fallback
+        danger = self.heuristic._danger_cells()
+        threats = self.heuristic._enemy_threat_cells()
+        best_action = legal[0]
+        best_score = -float("inf")
+        base = self.heuristic.base_location
+        for action in legal:
+            new_pos, _new_dir = self.heuristic._simulate_action(location, direction, action)
+            score = 0.0
+            if new_pos in danger:
+                score -= 200.0
+            if new_pos in threats:
+                score -= 30.0
+            score += 2.0 * sum(1 for neighbor in self.heuristic._raw_neighbors(new_pos) if neighbor not in danger)
+            score -= 0.3 * self.heuristic.visit_count.get(new_pos, 0)
+            if base is not None:
+                score += 0.05 * self.heuristic._manhattan(new_pos, base)
+            if action == self.STAY:
+                score -= 2.0
+            if score > best_score:
+                best_score = score
+                best_action = action
+        return int(best_action)
+
+    def _defend_action(self, observation: dict, fallback: int) -> int:
+        location = self.heuristic._location(observation.get("location"))
+        if location is None:
+            return fallback
+        direction = self.heuristic._as_int(observation.get("direction"), default=0) % 4
+        base = self.heuristic.base_location or self.heuristic._location(observation.get("base_location"))
+        if base is None:
+            return fallback
+
+        danger = self.heuristic._danger_cells()
+        step = self.heuristic.last_step if self.heuristic.last_step is not None else 0
+        fresh_enemies = [
+            pos for pos, last_seen in self.heuristic.enemy_agents.items()
+            if step - int(last_seen) <= max(8, self.heuristic.ENEMY_STALENESS)
+            and self.heuristic._manhattan(pos, base) <= 10
+        ]
+        if self.heuristic._legal(observation, self.PLACE_BOMB):
+            blast = self.heuristic._blast_cells(location)
+            if any(pos in blast for pos in fresh_enemies) and self._bomb_has_escape(observation):
+                return self.PLACE_BOMB
+
+        target = self._defense_target(location, base, fresh_enemies, danger)
+        if target is not None and target != location:
+            if getattr(self.heuristic, "is_fixed_novice_map", False):
+                _distance, parent = self.heuristic._dijkstra_distance_map(location, danger)
+            else:
+                _distance, parent = self.heuristic._bfs_distance_map(location, danger)
+            path = self.heuristic._reconstruct_path(parent, location, target)
+            action = self.heuristic._action_for_path(location, direction, path)
+            if action is not None and self.heuristic._legal(observation, action):
+                return int(action)
+        return self._base_guard_action(observation, location, direction, base, danger)
+
+    def _defense_target(
+        self,
+        location: tuple[int, int],
+        base: tuple[int, int],
+        fresh_enemies: list[tuple[int, int]],
+        danger: set[tuple[int, int]],
+    ) -> tuple[int, int] | None:
+        if getattr(self.heuristic, "is_fixed_novice_map", False):
+            distance, parent = self.heuristic._dijkstra_distance_map(location, danger)
+        else:
+            distance, parent = self.heuristic._bfs_distance_map(location, danger)
+        candidates: list[tuple[float, tuple[int, int]]] = []
+        for enemy in fresh_enemies:
+            for cell in (enemy, *tuple(self.heuristic._raw_neighbors(enemy))):
+                if cell in distance:
+                    score = 140.0 - 2.0 * self.heuristic._manhattan(cell, enemy) - distance[cell]
+                    score -= 0.3 * self.heuristic._manhattan(cell, base)
+                    candidates.append((score, cell))
+        guard_cells = [base, *list(self.heuristic._raw_neighbors(base))]
+        for cell in guard_cells:
+            if cell in distance:
+                score = 70.0 - distance[cell] - 0.5 * self.heuristic._manhattan(cell, base)
+                candidates.append((score, cell))
+        if not candidates:
+            return None
+        return max(candidates, key=lambda item: item[0])[1]
+
+    def _base_guard_action(
+        self,
+        observation: dict,
+        location: tuple[int, int],
+        direction: int,
+        base: tuple[int, int],
+        danger: set[tuple[int, int]],
+    ) -> int:
+        legal = [
+            action for action in (self.FORWARD, self.BACKWARD, self.LEFT, self.RIGHT, self.STAY)
+            if self.heuristic._legal(observation, action)
+        ]
+        if not legal:
+            return self.STAY
+        threats = self.heuristic._enemy_threat_cells()
+        best_action = legal[0]
+        best_score = -float("inf")
+        for action in legal:
+            new_pos, _new_dir = self.heuristic._simulate_action(location, direction, action)
+            score = -self.heuristic._manhattan(new_pos, base)
+            if new_pos in danger:
+                score -= 200.0
+            if new_pos in threats:
+                score -= 15.0
+            score -= 0.2 * self.heuristic.visit_count.get(new_pos, 0)
+            if action == self.STAY:
+                score -= 0.5
+            if score > best_score:
+                best_score = score
+                best_action = action
+        return int(best_action)
+
     def _veto_reason(self, observation: dict, action: int, heuristic_action: int) -> str:
         if not self._action_legal(observation, action):
             return "illegal"
@@ -467,6 +614,27 @@ class OptionExecutor:
             for manager in self._managers.values():
                 manager.escape_target = source.escape_target
                 manager.escape_until_step = source.escape_until_step
+
+    def _adopt_local_bomb(self, observation: dict) -> None:
+        location = self.heuristic._location(observation.get("location"))
+        if location is None:
+            return
+        blast = self.heuristic._blast_cells(location)
+        escape = self.heuristic._safe_escape_within(location, blast, self.heuristic.BOMB_TIMER)
+        if escape is None:
+            return
+        bomb_state = {
+            "timer": self.heuristic.BOMB_TIMER,
+            "own": True,
+            "last_step": self.heuristic.last_step or 0,
+        }
+        self.heuristic.known_bombs[location] = bomb_state
+        self.heuristic.escape_target = escape
+        self.heuristic.escape_until_step = (self.heuristic.last_step or 0) + self.heuristic.BOMB_TIMER
+        for manager in self._managers.values():
+            manager.known_bombs[location] = dict(bomb_state)
+            manager.escape_target = escape
+            manager.escape_until_step = self.heuristic.escape_until_step
 
 
 class OptionHybridAEManager:

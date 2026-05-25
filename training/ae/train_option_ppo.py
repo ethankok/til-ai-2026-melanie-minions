@@ -46,6 +46,17 @@ DEFAULT_TRAIN_SUITES = [
     "pressure2",
 ]
 
+FURNISHED_WEIGHTS = {
+    "cloudsuite": 0.18,
+    "pressure2": 0.18,
+    "strong_realistic": 0.20,
+    "base_rush_exploit": 0.18,
+    "bracket_proxy": 0.14,
+    "top_seed_proxy": 0.08,
+    "defense_trap": 0.04,
+    "mixed": 0.04,
+}
+
 
 @dataclass
 class Transition:
@@ -56,6 +67,8 @@ class Transition:
     option: int
     logprob: float
     value: float
+    health: float | None = None
+    base_health: float | None = None
     reward: float = 0.0
     done: bool = False
 
@@ -123,6 +136,21 @@ def _obs_to_python(obs) -> dict:
     return out
 
 
+def _safe_float(value) -> float | None:
+    try:
+        if value is None:
+            return None
+        if hasattr(value, "item"):
+            return float(value.item())
+        if isinstance(value, (list, tuple, np.ndarray)):
+            if len(value) == 0:
+                return None
+            return float(value[0])
+        return float(value)
+    except Exception:
+        return None
+
+
 def _device(name: str) -> torch.device:
     if name != "auto":
         return torch.device(name)
@@ -184,6 +212,8 @@ def select_option(
     device: torch.device,
     use_belief: bool,
     greedy: bool = False,
+    temperature: float = 1.0,
+    epsilon: float = 0.0,
 ) -> tuple[int, float, float, dict, np.ndarray | None]:
     belief = _memory_only_belief(belief_manager, obs_py, use_belief=use_belief)
     stacked, agent_v, base_v, scalars, belief_t = _stacked_tensors(stacker, obs_py, belief, device)
@@ -205,11 +235,36 @@ def select_option(
             option = int(logits.argmax().item())
             logprob = torch.log_softmax(logits, dim=-1)[option]
         else:
-            dist = Categorical(logits=logits)
+            temp = max(float(temperature), 1e-3)
+            dist = Categorical(logits=logits / temp)
             sampled = dist.sample()
+            if epsilon > 0.0 and random.random() < epsilon:
+                sampled = torch.tensor(random.randrange(NUM_OPTIONS), device=logits.device)
             option = int(sampled.item())
             logprob = dist.log_prob(sampled)
     return option, float(logprob.item()), float(value.item()), stacked, belief
+
+
+def _shaped_reward(
+    raw_reward: float,
+    previous: Transition,
+    obs_py: dict,
+    done: bool,
+    args: argparse.Namespace,
+) -> float:
+    shaped = float(raw_reward) / args.reward_scale
+    health = _safe_float(obs_py.get("health"))
+    if health is not None and previous.health is not None:
+        shaped += args.health_delta_coef * (health - previous.health) / 60.0
+    base_health = _safe_float(obs_py.get("base_health"))
+    if base_health is not None and previous.base_health is not None:
+        shaped += args.base_health_delta_coef * (base_health - previous.base_health) / 100.0
+    if done and base_health is not None:
+        if base_health > 0.0:
+            shaped += args.base_survival_bonus
+        else:
+            shaped -= args.base_destroyed_penalty
+    return shaped
 
 
 def collect_rollouts(
@@ -247,8 +302,15 @@ def collect_rollouts(
 
         for agent in env.agent_iter():
             obs, reward, termination, truncation, _info = env.last()
+            obs_py_for_reward = _obs_to_python(obs) if agent == our_agent else None
             if agent == our_agent and pending_idx is not None:
-                shaped = float(reward) / args.reward_scale
+                shaped = _shaped_reward(
+                    float(reward),
+                    transitions[pending_idx],
+                    obs_py_for_reward or {},
+                    bool(termination or truncation),
+                    args,
+                )
                 transitions[pending_idx].reward += shaped
                 total_reward += float(reward)
                 if termination or truncation:
@@ -266,7 +328,8 @@ def collect_rollouts(
                     belief_manager = AEManager()
                     executor = OptionExecutor()
                 option, logprob, value, stacked, belief = select_option(
-                    actor, critic, stacker, belief_manager, obs_py, device, use_belief, greedy=False,
+                    actor, critic, stacker, belief_manager, obs_py, device, use_belief,
+                    greedy=False, temperature=args.option_temperature, epsilon=args.option_epsilon,
                 )
                 action = executor.act(option, obs_py)
                 transitions.append(Transition(
@@ -277,6 +340,8 @@ def collect_rollouts(
                     option=option,
                     logprob=logprob,
                     value=value,
+                    health=_safe_float(obs_py.get("health")),
+                    base_health=_safe_float(obs_py.get("base_health")),
                 ))
                 pending_idx = len(transitions) - 1
             else:
@@ -334,6 +399,7 @@ def ppo_update(
     optimizer: optim.Optimizer,
     args: argparse.Namespace,
     device: torch.device,
+    entropy_coef: float,
 ) -> dict[str, float]:
     use_belief = bool(getattr(actor, "use_belief", False))
     agent_v, base_v, scalars, beliefs, options, old_logprobs, old_values, rewards, dones = _encode_transitions(
@@ -361,7 +427,7 @@ def ppo_update(
             pg_loss2 = -advantages[mb] * torch.clamp(ratio, 1.0 - args.clip_coef, 1.0 + args.clip_coef)
             policy_loss = torch.max(pg_loss1, pg_loss2).mean()
             value_loss = 0.5 * (returns[mb] - new_value).pow(2).mean()
-            loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy
+            loss = policy_loss + args.value_coef * value_loss - entropy_coef * entropy
 
             optimizer.zero_grad()
             loss.backward()
@@ -380,12 +446,19 @@ def ppo_update(
     return stats
 
 
-def evaluate(actor: PolicyNetwork, critic: ValueNetwork, args: argparse.Namespace, device: torch.device) -> tuple[float, dict[str, float]]:
+def evaluate(
+    actor: PolicyNetwork,
+    critic: ValueNetwork,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> tuple[float, dict[str, float], dict[str, float]]:
     env = _make_env(novice=not args.non_novice)
     our_agent = env.possible_agents[0]
     other_ids = list(env.possible_agents[1:])
     use_belief = bool(getattr(actor, "use_belief", False))
     suite_scores: dict[str, list[float]] = {suite: [] for suite in args.eval_suites}
+    suite_base: dict[str, list[float]] = {suite: [] for suite in args.eval_suites}
+    option_counts = np.zeros(NUM_OPTIONS, dtype=np.int64)
 
     for game in range(args.eval_games):
         seed = args.eval_seed + game
@@ -401,10 +474,15 @@ def evaluate(actor: PolicyNetwork, critic: ValueNetwork, args: argparse.Namespac
         belief_manager = AEManager()
         executor = OptionExecutor()
         total = 0.0
+        final_base = 0.0
         for agent in env.agent_iter():
             obs, reward, termination, truncation, _info = env.last()
             if agent == our_agent:
                 total += float(reward)
+                obs_tmp = _obs_to_python(obs)
+                base_health = _safe_float(obs_tmp.get("base_health"))
+                if base_health is not None:
+                    final_base = base_health
             if termination or truncation:
                 env.step(None)
                 continue
@@ -417,6 +495,8 @@ def evaluate(actor: PolicyNetwork, critic: ValueNetwork, args: argparse.Namespac
                 option, _logprob, _value, _stacked, _belief = select_option(
                     actor, critic, stacker, belief_manager, obs_py, device, use_belief, greedy=True,
                 )
+                if 0 <= option < NUM_OPTIONS:
+                    option_counts[option] += 1
                 action = executor.act(option, obs_py)
             else:
                 slot = other_ids.index(agent)
@@ -424,12 +504,43 @@ def evaluate(actor: PolicyNetwork, critic: ValueNetwork, args: argparse.Namespac
                 action = _legalize_action(env, agent, obs_py, action)
             env.step(action)
         suite_scores[suite].append(total / 1000.0)
+        suite_base[suite].append(final_base)
     env.close()
     parts = {suite: float(np.mean(values)) for suite, values in suite_scores.items() if values}
-    return float(np.mean(list(parts.values()))) if parts else 0.0, parts
+    score = _weighted_eval(parts, args)
+    diagnostics = {
+        "mean_final_base_health": float(np.mean([v for values in suite_base.values() for v in values])) if suite_base else 0.0,
+        "worst_suite_score": min(parts.values()) if parts else 0.0,
+    }
+    for i, name in enumerate(OPTION_NAMES):
+        diagnostics[f"option_{name}"] = float(option_counts[i])
+    return score, parts, diagnostics
 
 
-def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNetwork, bool]:
+def _weighted_eval(parts: dict[str, float], args: argparse.Namespace) -> float:
+    if not parts:
+        return 0.0
+    if not args.use_furnished_weights:
+        return float(np.mean(list(parts.values())))
+    weighted = 0.0
+    total_weight = 0.0
+    for suite, score in parts.items():
+        weight = FURNISHED_WEIGHTS.get(suite, 1.0)
+        weighted += weight * score
+        total_weight += weight
+    return weighted / total_weight if total_weight else 0.0
+
+
+def _required_suites_ok(parts: dict[str, float], args: argparse.Namespace) -> bool:
+    if args.min_required_suite_score <= 0:
+        return True
+    for suite in args.required_suites:
+        if suite in parts and parts[suite] < args.min_required_suite_score:
+            return False
+    return True
+
+
+def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNetwork, bool, dict | None]:
     ckpt_path = Path(args.bc_checkpoint)
     ckpt = None
     n_frames = args.n_frames
@@ -446,7 +557,7 @@ def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNe
         print(f"warm-started actor from {ckpt_path} (epoch={ckpt.get('epoch')}, val_acc={ckpt.get('val_acc')})")
     else:
         print(f"no BC checkpoint at {ckpt_path}; training option actor from scratch")
-    return actor, use_belief
+    return actor, use_belief, ckpt
 
 
 def save_checkpoint(
@@ -480,8 +591,14 @@ def train(args: argparse.Namespace) -> None:
     random.seed(args.seed)
     np.random.seed(args.seed % (2 ** 32 - 1))
     torch.manual_seed(args.seed)
-    actor, use_belief = load_actor(args, device)
+    actor, use_belief, actor_ckpt = load_actor(args, device)
     critic = ValueNetwork(n_frames=args.n_frames, use_belief=use_belief).to(device)
+    if actor_ckpt is not None and actor_ckpt.get("critic_state_dict") is not None:
+        try:
+            critic.load_state_dict(actor_ckpt["critic_state_dict"])
+            print("warm-started critic from checkpoint")
+        except Exception as exc:
+            print(f"WARN: critic warm-start skipped ({exc})")
     optimizer = optim.AdamW(
         list(actor.parameters()) + list(critic.parameters()),
         lr=args.lr,
@@ -502,28 +619,47 @@ def train(args: argparse.Namespace) -> None:
         transitions, rollout_score = collect_rollouts(actor, critic, args, device, update)
         if not transitions:
             raise SystemExit("No transitions collected.")
-        stats = ppo_update(actor, critic, transitions, optimizer, args, device)
+        progress = (update - 1) / max(args.updates - 1, 1)
+        entropy_coef = args.entropy_coef + (
+            (args.entropy_final_coef - args.entropy_coef) * min(1.0, max(0.0, progress))
+        )
+        stats = ppo_update(actor, critic, transitions, optimizer, args, device, entropy_coef)
         eval_score = float("nan")
         eval_parts: dict[str, float] = {}
+        eval_diag: dict[str, float] = {}
         if update == 1 or update % args.eval_every == 0:
             actor.eval()
             critic.eval()
-            eval_score, eval_parts = evaluate(actor, critic, args, device)
+            eval_score, eval_parts, eval_diag = evaluate(actor, critic, args, device)
             if latest_path is not None:
                 save_checkpoint(actor, critic, args, latest_path, update, eval_score, eval_parts)
-            if eval_score >= args.save_floor and eval_score > best_eval:
+            required_ok = _required_suites_ok(eval_parts, args)
+            if eval_score >= args.save_floor and required_ok and eval_score > best_eval:
                 best_eval = eval_score
                 save_checkpoint(actor, critic, args, out_path, update, eval_score, eval_parts)
                 print(f"  best option PPO eval {best_eval:.4f} -> saved {out_path}")
             else:
-                print(f"  gate not met: eval={eval_score:.4f} save_floor={args.save_floor:.4f} best={best_eval:.4f}")
+                print(
+                    f"  gate not met: eval={eval_score:.4f} save_floor={args.save_floor:.4f} "
+                    f"required_ok={required_ok} best={best_eval:.4f}"
+                )
         part_tag = " ".join(f"{k}={v:.4f}" for k, v in eval_parts.items())
+        diag_tag = ""
+        if eval_diag:
+            top_options = sorted(
+                ((name, eval_diag.get(f"option_{name}", 0.0)) for name in OPTION_NAMES),
+                key=lambda item: -item[1],
+            )[:4]
+            diag_tag = (
+                f" base={eval_diag.get('mean_final_base_health', 0.0):.1f} "
+                + " ".join(f"opt_{name}={count:.0f}" for name, count in top_options)
+            )
         print(
             f"update {update:>4}/{args.updates} samples={len(transitions):>5} "
-            f"rollout={rollout_score:.4f} eval={eval_score:.4f} {part_tag} "
+            f"rollout={rollout_score:.4f} eval={eval_score:.4f} {part_tag}{diag_tag} "
             f"pi_loss={stats['policy_loss']:.4f} v_loss={stats['value_loss']:.4f} "
             f"entropy={stats['entropy']:.3f} kl={stats['approx_kl']:.4f} "
-            f"elapsed={(time.time() - t0) / 60:.1f}m"
+            f"entcoef={entropy_coef:.3f} elapsed={(time.time() - t0) / 60:.1f}m"
         )
     print(f"\nBest saved eval score: {best_eval:.4f}")
 
@@ -543,21 +679,34 @@ def main() -> None:
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip-coef", type=float, default=0.20)
     parser.add_argument("--entropy-coef", type=float, default=0.01)
+    parser.add_argument("--entropy-final-coef", type=float, default=0.003)
     parser.add_argument("--value-coef", type=float, default=0.50)
     parser.add_argument("--max-grad-norm", type=float, default=0.50)
     parser.add_argument("--reward-scale", type=float, default=50.0)
     parser.add_argument("--return-clip", type=float, default=10.0)
+    parser.add_argument("--health-delta-coef", type=float, default=0.15)
+    parser.add_argument("--base-health-delta-coef", type=float, default=1.25)
+    parser.add_argument("--base-survival-bonus", type=float, default=0.35)
+    parser.add_argument("--base-destroyed-penalty", type=float, default=0.75)
+    parser.add_argument("--option-temperature", type=float, default=1.35)
+    parser.add_argument("--option-epsilon", type=float, default=0.05)
     parser.add_argument("--n-frames", type=int, default=4)
     parser.add_argument("--no-belief", action="store_true")
     parser.add_argument("--non-novice", action="store_true")
     parser.add_argument("--opponent-suites", nargs="+", default=DEFAULT_TRAIN_SUITES)
     parser.add_argument("--eval-suites", nargs="+", default=[
-        "strong_realistic", "base_rush_exploit", "bracket_proxy", "top_seed_proxy", "cloudsuite", "pressure2",
+        "cloudsuite", "pressure2", "strong_realistic", "base_rush_exploit",
+        "bracket_proxy", "top_seed_proxy", "defense_trap", "mixed",
     ])
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--eval-games", type=int, default=12)
     parser.add_argument("--eval-seed", type=int, default=137)
-    parser.add_argument("--save-floor", type=float, default=0.0)
+    parser.add_argument("--save-floor", type=float, default=0.285)
+    parser.add_argument("--use-furnished-weights", dest="use_furnished_weights", action="store_true")
+    parser.add_argument("--uniform-eval-weights", dest="use_furnished_weights", action="store_false")
+    parser.set_defaults(use_furnished_weights=True)
+    parser.add_argument("--required-suites", nargs="+", default=["top_seed_proxy", "base_rush_exploit"])
+    parser.add_argument("--min-required-suite-score", type=float, default=0.16)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     train(parser.parse_args())

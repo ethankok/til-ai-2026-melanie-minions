@@ -22,6 +22,7 @@ training/ae/checkpoints/ppo-scripted.pt  PPO trained vs scripted pool   Tier-2 #
 training/ae/checkpoints/ppo-full-rl-v1.pt Full-RL PPO candidate         historical; cloud did not prove PPO lift
 training/ae/checkpoints/option_policy.pt Option-selector BC checkpoint  semifinals option path
 training/ae/checkpoints/option_policy_ppo.pt Option-selector PPO checkpoint gated candidate
+training/ae/checkpoints/tactical_policy.pt Outcome-weighted tactical selector checkpoint
 training/ae/data/knob-*.json             heuristic sweep summaries      local-only, no baked winner yet
 training/ae/data/option-v2-*.json        option-v2 sweep summaries      local-only, rejected
 ```
@@ -39,6 +40,8 @@ training/ae/data/option-v2-*.json        option-v2 sweep summaries      local-on
 - `collect_option_bc.py` — logs planner intent labels (`escape`, `rush_base`, `base_bomb`, `defend_base`, `collect_mission`, `collect_resource`, `hunt_enemy`, `explore`) for the option selector.
 - `train_option_bc.py` — supervised warm-start for the 8-way option selector.
 - `train_option_ppo.py` — PPO fine-tune for option choice only; movement/bomb execution remains planner-backed through `OptionExecutor`.
+- `collect_tactical_outcome.py` — full-game terminal-outcome collector for the 12-way tactical selector. It runs heuristic baseline and tactical exploration on the same seed/suite, then labels tactical choices by score delta versus baseline.
+- `train_tactical_bc.py` — outcome-weighted BC trainer for the 12-way tactical selector.
 - `eval_policy.py` — runs a checkpoint against the env for N games, reports the same `score = total_reward / games / 1000` as `test/test_ae.py`.
 - `train_ppo.py` — pure-PyTorch PPO fine-tune. Warm-starts from `bc.pt`/PPO checkpoints, trains agent 0 against scripted/cloudsuite/league/per-game mixed pools, saves a deployment-compatible actor checkpoint.
 - `run_full_rl_v1.py` — Mac-first launcher for the current full-RL attempt. Wraps `train_ppo.py --preset full-rl` and streams logs to `training/ae/checkpoints/ppo-full-rl-v1.log`.
@@ -106,6 +109,7 @@ The inference path in [../../ae/src/ae_server.py](../../ae/src/ae_server.py) sup
 
 - `hybrid` (current Dockerfile default, matching the `fixed-map-v5` build source shape) — policy chooses, heuristic vetoes illegal / unsafe-bomb / step-into-blast / frozen-stay actions. See [../../ae/src/hybrid_manager.py](../../ae/src/hybrid_manager.py).
 - `option_hybrid` — 8-way option policy chooses the strategic intent; planner variants execute the option with legality and bomb-safety guardrails. Requires `AE_OPTION_POLICY_CHECKPOINT` or `ae/models/option_policy.pt`.
+- `tactical_hybrid` — 12-way tactical option policy chooses sharper macros such as `intercept_base_threat`, `bomb_base_threat`, and `stall_when_winning`; planner execution remains legality/bomb-safety guarded. Requires `AE_TACTICAL_POLICY_CHECKPOINT` or `ae/models/tactical_policy.pt`.
 - `policy` — pure `PolicyAEManager`.
 - `heuristic` — pure rule-based `AEManager` (no torch needed in the image at all).
 
@@ -232,12 +236,26 @@ Fine-tune option choice with PPO:
 
 ```bash
 PYTHONHASHSEED=0 .venv/bin/python training/ae/train_option_ppo.py \
-  --bc-checkpoint training/ae/checkpoints/option_policy.pt \
+  --bc-checkpoint training/ae/checkpoints/option_policy_defense.pt \
   --out training/ae/checkpoints/option_policy_ppo.pt \
   --latest-out training/ae/checkpoints/option_policy_ppo_latest.pt \
-  --updates 50 --games-per-update 8 --eval-every 5 --eval-games 12 \
-  --save-floor 0.281
+  --updates 50 --games-per-update 8 --eval-every 5 --eval-games 16 \
+  --opponent-suites base_rush_exploit top_seed_proxy defense_trap bracket_proxy base_rush_exploit top_seed_proxy strong_realistic cloudsuite pressure2 \
+  --eval-suites cloudsuite pressure2 strong_realistic base_rush_exploit bracket_proxy top_seed_proxy defense_trap mixed \
+  --option-temperature 1.35 --option-epsilon 0.05 \
+  --base-health-delta-coef 1.25 --base-survival-bonus 0.35 --base-destroyed-penalty 0.75 \
+  --required-suites top_seed_proxy base_rush_exploit --min-required-suite-score 0.16 \
+  --save-floor 0.285
 ```
+
+If you did not collect the defense-weighted warm start, replace
+`option_policy_defense.pt` with `option_policy.pt`. The PPO saver now uses the
+weighted furnished eval, restores critic state on resume, keeps `latest` for
+analysis, and only promotes `out` when the weak bracket-critical suites clear
+the required-suite floor. The floor is intentionally above the current
+heuristic furnished baseline (`0.2806` weighted in
+`training/ae/data/ae-furnished-baseline-8r.json`); option PPO checkpoints below
+that are analysis artifacts, not deployment candidates.
 
 Gate it against the furnished eval before touching deploy artifacts:
 
@@ -251,6 +269,70 @@ PYTHONHASHSEED=0 .venv/bin/python training/ae/validate_cloud_suite.py \
 Promotion rule: only consider submission if the weighted furnished mean clears
 the current heuristic baseline by a visible margin and does not trade away
 `base_rush_exploit`/`top_seed_proxy`.
+
+### Semifinals tactical outcome path
+
+This is the preferred next RL route after the 8-way option PPO failed to beat
+the furnished heuristic baseline. It uses terminal score delta as the main
+learning signal, but keeps the executor tactical enough that a learned policy
+can express anti-rush behavior.
+
+Collect full-game outcome-weighted tactical data:
+
+```bash
+PYTHONHASHSEED=0 .venv/bin/python training/ae/collect_tactical_outcome.py \
+  --games 400 \
+  --suite-cycle base_rush_exploit top_seed_proxy defense_trap bracket_proxy base_rush_exploit top_seed_proxy strong_realistic cloudsuite pressure2 \
+  --out training/ae/data/tactical_outcome_400.npz \
+  2>&1 | tee training/ae/logs/tactical_outcome_collect_400.log
+```
+
+Train the tactical selector:
+
+```bash
+.venv/bin/python training/ae/train_tactical_bc.py \
+  --data training/ae/data/tactical_outcome_400.npz \
+  --out training/ae/checkpoints/tactical_policy.pt \
+  --epochs 20 --num-workers 0 \
+  2>&1 | tee training/ae/logs/tactical_bc_train.log
+```
+
+The runtime is conservative by default. `AE_MODE=tactical_hybrid` loads the
+policy, but learned deviations only execute when the support/confidence gates
+allow them. Set `AE_TACTICAL_PROFILE=bracket` to enable the current
+bracket-focused residual defaults (`min_delta_support=3`,
+`delta_conf=0.60`). Leave the profile unset for a safe heuristic-equivalent
+shadow run, or set explicit gates for controlled probes:
+
+```bash
+AE_TACTICAL_PROFILE=bracket \
+AE_TACTICAL_POLICY_CHECKPOINT=training/ae/checkpoints/tactical_policy.pt \
+PYTHONHASHSEED=0 .venv/bin/python training/ae/validate_cloud_suite.py \
+  --suites bracket_proxy --rounds 12 --seeds 42 137 --our tactical_hybrid
+```
+
+Gate it before touching deploy artifacts:
+
+```bash
+AE_TACTICAL_PROFILE=bracket \
+AE_TACTICAL_POLICY_CHECKPOINT=training/ae/checkpoints/tactical_policy.pt \
+PYTHONHASHSEED=0 .venv/bin/python training/ae/validate_cloud_suite.py \
+  --preset furnished --rounds 12 --seeds 42 137 --our tactical_hybrid \
+  --summary-out training/ae/data/tactical_hybrid_furnished_eval.json
+```
+
+Promotion rule for global deployment is still strict: weighted furnished mean
+must clear the heuristic baseline by a visible margin, with no
+`base_rush_exploit`/`top_seed_proxy` regression. The 25 May 120-game pilot
+proved that the model can learn a real bracket residual, but not that it is a
+global replacement:
+
+- `tactical_policy_elite120_supported.pt`, `AE_TACTICAL_PROFILE=bracket`:
+  `bracket_proxy` 4-round seed-42 mean `0.3080` versus heuristic `0.2470`.
+- Same checkpoint on furnished 4-round seed-42: weighted `0.2723` versus
+  heuristic `0.2812`, mainly because `strong_realistic` regressed.
+- Conclusion: bracket profile is an experimental semifinals lever; do not bake
+  it as the furnished/global default without a stronger multi-seed gate.
 
 ### 19 May immediate handoff: speedcheck before more AE code
 

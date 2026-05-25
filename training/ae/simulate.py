@@ -128,6 +128,7 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
       heuristic — `AEManager` legacy planner (default)
       option_v2 — `AEManager` with the option-style decision core enabled
       option_hybrid — learned option selector with planner execution
+      tactical_hybrid — learned 12-way tactical selector with planner execution
 
     Easy to extend: drop a new branch here and pass the matching --our flag.
     """
@@ -152,6 +153,9 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
     if name == "option_hybrid":
         from option_hybrid_manager import OptionHybridAEManager
         return OptionHybridAEManager(**kwargs)
+    if name == "tactical_hybrid":
+        from tactical_hybrid_manager import TacticalHybridAEManager
+        return TacticalHybridAEManager(**kwargs)
     if name.startswith("opponent:"):
         opponent_name = name.split(":", 1)[1].strip()
         if opponent_name not in OPPONENT_NAMES:
@@ -584,7 +588,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     p.add_argument("--our", type=str, default="heuristic",
-                   help="which agent to control in slot 0 (heuristic, option_v2, hybrid, option_hybrid, or opponent:<name>)")
+                   help="which agent to control in slot 0 (heuristic, option_v2, hybrid, option_hybrid, tactical_hybrid, or opponent:<name>)")
     p.add_argument("--out", type=Path, default=None,
                    help="optional .npz to dump trajectories into")
     p.add_argument("--summary-out", type=Path, default=None,
