@@ -674,6 +674,7 @@ def save_checkpoint(
         "training_mode": "planner_first_macro_ppo",
         "eval_mode": "macro_hybrid_wrapper",
         "harm_stats_source": "cumulative_training_rollouts",
+        "macro_gate_settings": _macro_gate_settings(),
         "baseline_profile": args.baseline_profile,
         "opponent_suites": args.opponent_suites,
         "eval_suites": args.eval_suites,
@@ -694,6 +695,21 @@ def _required_suites_ok(parts: dict[str, float], args: argparse.Namespace) -> bo
     if args.min_required_suite_score <= 0:
         return True
     return all(parts.get(suite, 0.0) >= args.min_required_suite_score for suite in args.required_suites)
+
+
+def _macro_gate_settings() -> dict[str, str]:
+    keys = [
+        "AE_MACRO_BASELINE_PROFILE",
+        "AE_MACRO_TOP_K",
+        "AE_MACRO_DELTA_MARGIN",
+        "AE_TACTICAL_REQUIRE_DELTA_SUPPORT",
+        "AE_TACTICAL_MIN_DELTA_SUPPORT",
+        "AE_TACTICAL_MIN_ATTEMPTED",
+        "AE_TACTICAL_MIN_POSITIVE_RATE",
+        "AE_TACTICAL_MIN_NET_DELTA",
+        "AE_TACTICAL_ALLOWED_DELTA_OPTIONS",
+    ]
+    return {key: os.environ.get(key, "") for key in keys}
 
 
 def train(args: argparse.Namespace) -> None:
@@ -749,7 +765,8 @@ def train(args: argparse.Namespace) -> None:
         eval_deltas: dict[str, float] = {}
         eval_diag: dict[str, float] = {}
         ungated_eval: dict[str, float] = {}
-        if update == 1 or update % args.eval_every == 0:
+        should_eval = update % args.eval_every == 0 or (args.eval_first and update == 1)
+        if should_eval:
             actor.eval()
             critic.eval()
             eval_score, eval_parts, eval_deltas, eval_diag = evaluate_macro_hybrid(
@@ -887,6 +904,8 @@ def main() -> None:
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--eval-games", type=int, default=16)
     parser.add_argument("--eval-seed", type=int, default=137)
+    parser.add_argument("--eval-first", action="store_true",
+                        help="run wrapper eval after update 1; useful for smoke tests, slow for real PPO")
     parser.add_argument("--eval-ungated-policy", action="store_true",
                         help="also print the old standalone policy/executor eval as a diagnostic")
     parser.add_argument("--save-floor", type=float, default=0.285)

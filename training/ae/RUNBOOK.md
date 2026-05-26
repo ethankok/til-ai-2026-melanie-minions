@@ -170,14 +170,16 @@ mkdir -p ae/models
 cp training/ae/checkpoints/tactical_policy_ppo.pt ae/models/tactical_policy.pt
 echo macro_hybrid > ae/src/.ae_mode
 
-# Optional explicit gate overrides. Defaults are already strict.
+# Optional explicit gate overrides. Defaults match the training gate.
 export AE_MACRO_BASELINE_PROFILE=combo_c_bomb7
-export AE_MACRO_TOP_K=3
-export AE_MACRO_DELTA_MARGIN=0.02
-export AE_TACTICAL_MIN_DELTA_SUPPORT=8
-export AE_TACTICAL_MIN_ATTEMPTED=20
-export AE_TACTICAL_MIN_POSITIVE_RATE=0.50
-export AE_TACTICAL_MIN_NET_DELTA=0.0
+export AE_MACRO_TOP_K=4
+export AE_MACRO_DELTA_MARGIN=-0.01
+export AE_TACTICAL_REQUIRE_DELTA_SUPPORT=1
+export AE_TACTICAL_MIN_DELTA_SUPPORT=1
+export AE_TACTICAL_MIN_ATTEMPTED=0
+export AE_TACTICAL_MIN_POSITIVE_RATE=0.0
+export AE_TACTICAL_MIN_NET_DELTA=-999.0
+export AE_TACTICAL_ALLOWED_DELTA_OPTIONS=rush_enemy_base,bomb_enemy_base,collect_mission_safe,collect_resource_safe,counter_rush
 
 til build ae macro-hybrid-v1
 til test  ae macro-hybrid-v1
@@ -267,6 +269,20 @@ will be written into the checkpoint. The old standalone score can be printed
 with `--eval-ungated-policy`, but it is diagnostic only and must not decide
 promotion.
 
+Important correction from the first repaired run: a gate with
+`support=8`, `attempted=20`, `positive_rate=0.50`, `mean_delta>=0`, and
+`margin=0.02` deadlocked training. `wrapper_eval` stayed equal to heuristic
+fallback with `accept_rate=0.000`, so PPO had no way to affect the promoted
+metric. There was also a top-k bug: if the BC-warm-start policy ranked the
+heuristic option first, the wrapper returned immediately and never tried
+runner-up deviations. Executor-only admission was also tested and was too
+broad. The current default candidate gate uses `top_k=4`, `margin=-0.01`,
+requires at least one positive same-seed episode sample for the prior->option
+transition, and only admits scoring/collection/counter-rush deltas
+(`rush_enemy_base`, `bomb_enemy_base`, `collect_mission_safe`,
+`collect_resource_safe`, `counter_rush`). The outer save gate below is still
+the real protection.
+
 The default fallback planner profile is the latest calibrated heuristic combo:
 
 ```bash
@@ -297,7 +313,7 @@ PYTHONHASHSEED=0 .venv/bin/python training/ae/train_tactical_ppo.py \
   --out training/ae/checkpoints/tactical_policy_ppo.pt \
   --latest-out training/ae/checkpoints/tactical_policy_ppo_latest.pt \
   --baseline-profile combo_c_bomb7 \
-  --updates 80 --games-per-update 8 --eval-every 5 --eval-games 16 \
+  --updates 80 --games-per-update 8 --eval-every 10 --eval-games 8 \
   --opponent-suites base_rush_exploit top_seed_proxy bracket_proxy strong_realistic cloudsuite pressure2 defense_trap mixed \
   --eval-suites cloudsuite pressure2 strong_realistic base_rush_exploit bracket_proxy top_seed_proxy defense_trap mixed \
   --save-floor 0.285 --min-eval-delta 0.005 \
@@ -309,6 +325,15 @@ For debugging only, append `--eval-ungated-policy` to see the old standalone
 macro-controller score next to `wrapper_eval`. A low ungated score is not a
 reject by itself; promotion is based on `wrapper_eval`, `wrapper_delta`,
 required-suite floors, and the post-training `multi_seed_eval.py` gate below.
+Wrapper eval is intentionally skipped at update 1 for real PPO runs; add
+`--eval-first` only for short smoke tests.
+
+27 May diagnostic result: the repaired trainer completes, but the current
+warm-started tactical policy is not yet useful. Broad executor-only admission
+accepted too many deltas and collapsed score. A scoring-only allowed set
+bounded acceptance, but still lost to fallback on the short MPS screen. Treat
+`tactical_policy_ppo_latest.pt` as analysis-only unless a later run creates
+`tactical_policy_ppo.pt` and then clears the full multi-seed gate below.
 
 Evaluate the deployed wrapper with the produced checkpoint:
 

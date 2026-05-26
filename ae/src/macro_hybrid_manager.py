@@ -70,10 +70,20 @@ def _apply_baseline_profile() -> None:
     os.environ.setdefault("AE_TACTICAL_PROFILE", "macro")
     os.environ.setdefault("AE_TACTICAL_ALLOW_MAPPED_DELTAS", "1")
     os.environ.setdefault("AE_TACTICAL_REQUIRE_DELTA_SUPPORT", "1")
-    os.environ.setdefault("AE_TACTICAL_MIN_DELTA_SUPPORT", "8")
-    os.environ.setdefault("AE_TACTICAL_MIN_ATTEMPTED", "20")
-    os.environ.setdefault("AE_TACTICAL_MIN_POSITIVE_RATE", "0.50")
-    os.environ.setdefault("AE_TACTICAL_MIN_NET_DELTA", "0.0")
+    # Candidate PPO needs the wrapper to actually try safe alternatives from a
+    # BC-warm-start policy, but executor-only acceptance is too broad. Require
+    # at least one positive same-seed episode sample for the prior->option
+    # transition, then let the outer wrapper-vs-baseline eval gate decide
+    # whether the admitted deltas are worth saving.
+    os.environ.setdefault("AE_TACTICAL_REQUIRE_DELTA_SUPPORT", "1")
+    os.environ.setdefault("AE_TACTICAL_MIN_DELTA_SUPPORT", "1")
+    os.environ.setdefault("AE_TACTICAL_MIN_ATTEMPTED", "0")
+    os.environ.setdefault("AE_TACTICAL_MIN_POSITIVE_RATE", "0.0")
+    os.environ.setdefault("AE_TACTICAL_MIN_NET_DELTA", "-999.0")
+    os.environ.setdefault(
+        "AE_TACTICAL_ALLOWED_DELTA_OPTIONS",
+        "rush_enemy_base,bomb_enemy_base,collect_mission_safe,collect_resource_safe,counter_rush",
+    )
     os.environ.setdefault("AE_TACTICAL_HYBRID_CONF", "0.0")
 
 
@@ -83,8 +93,8 @@ class MacroHybridAEManager(TacticalHybridAEManager):
     def __init__(self, policy: TacticalPolicyAEManager | None = None, shadow: bool | None = None):
         _apply_baseline_profile()
         super().__init__(policy=policy)
-        self.top_k = max(1, _env_int("AE_MACRO_TOP_K", 3))
-        self.delta_margin = _env_float("AE_MACRO_DELTA_MARGIN", 0.02)
+        self.top_k = max(1, _env_int("AE_MACRO_TOP_K", 4))
+        self.delta_margin = _env_float("AE_MACRO_DELTA_MARGIN", -0.01)
         self.shadow = _env_bool("AE_MACRO_SHADOW", False) if shadow is None else bool(shadow)
         self.accept_counts: Counter[str] = Counter()
         self.shadow_counts: Counter[str] = Counter()
@@ -115,8 +125,7 @@ class MacroHybridAEManager(TacticalHybridAEManager):
         for rank, option in enumerate(ranked_options):
             if option == prior_option:
                 if rank == 0:
-                    self.decision_counts[f"macro_exact_heuristic_{tactical_option_name(prior_option)}"] += 1
-                    return heuristic_action
+                    self.decision_counts[f"macro_prior_top_{tactical_option_name(prior_option)}"] += 1
                 continue
 
             ok, reason = self._macro_delta_allowed(prior_option, option, bucket)

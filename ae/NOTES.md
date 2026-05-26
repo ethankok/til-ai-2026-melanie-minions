@@ -14,7 +14,30 @@ is supposed to use heuristic-first fallback gates. Smoke test passed:
 one-update CPU PPO saved `/tmp/tactical_macro_ppo_fix_smoke.pt` with
 `wrapper_eval=0.3870`, `wrapper_delta=+0.0000`, `accept_rate=0.000`, and
 `ungated=0.1090`; the zero accept rate is expected for a one-game smoke and
-confirms the wrapper safely fell back instead of deploying harmful deltas.**
+confirms the wrapper safely fell back instead of deploying harmful deltas.
+Follow-up diagnosis from the first full repaired run: the original strict
+macro gate (`support=8`, `attempted=20`, `positive_rate=0.50`,
+`mean_delta>=0`, `margin=0.02`) deadlocked at `accept_rate=0.000` and constant
+fallback `wrapper_eval=0.2928`. A second bug made top-k ineffective: when the
+BC-warm-start policy ranked the heuristic macro first, the wrapper returned
+immediately instead of trying runner-up deviations. Defaults are now
+`top_k=4`, `margin=-0.01`, and at least one positive same-seed episode sample
+for the prior->option transition before executor safety can admit it. The
+default allowed-delta set is now limited to scoring/collection/counter-rush
+macros (`rush_enemy_base`, `bomb_enemy_base`, `collect_mission_safe`,
+`collect_resource_safe`, `counter_rush`); executor-only admission and broad
+guard/intercept/hunt deltas were tested and were too destructive. The outer
+save gate remains strict
+(`wrapper_delta>=0.005` plus required-suite floors), so bad deltas can move eval
+but still cannot save as a candidate. MPS probes after the fix: broad
+executor-only admission hit `accept_rate~0.80-0.89` and collapsed wrapper eval
+near zero; adding guard/intercept/hunt restrictions but allowing guard still
+collapsed (`accept_rate~0.31`, negative wrapper eval); the scoring-only
+candidate set was bounded (`accept_rate~0.18-0.20`) but still below fallback
+(`wrapper_delta` roughly `-0.07` to `-0.08`). A CPU 5-update end-to-end screen
+completed cleanly but found no positive support and fell back to heuristic
+(`wrapper_eval=0.2990`, `wrapper_delta=0`, `accept_rate=0`). Net: mechanics are
+fixed, but this warm-started tactical PPO line is not promotable yet.**
 
 Prior update: 26 May 2026 (proper hybrid implementation) —
 **Implemented the next serious AE direction as a real planner-first hybrid
