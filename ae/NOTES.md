@@ -1,6 +1,22 @@
 # AE — notes & history
 
-Last updated: 27 May 2026 (macro-hybrid PPO trainer repair) —
+Last updated: 27 May 2026 (C+bomb7 cloud check) —
+**Submitted `heuristic-c-bomb7-v1` after baking the calibrated
+`heuristic-C + bomb_cost=7.0` profile into the AE Docker image
+(`AE_MODE=heuristic`, `AE_ITEM_MISSION_VALUE=80`,
+`AE_ITEM_RESOURCE_VALUE=40`, `AE_ENEMY_BASE_VALUE=100`,
+`AE_DIJKSTRA_BOMB_COST=7.0`). Workbench packaging passed
+`til test ae heuristic-c-bomb7-v1` at `0.8031666666666666`; the cloud result
+was `0.590 / 0.845` with 0/30 errors. Interpretation: neutral draw, not a
+promotion. It lands in the expected variance band for the local mean estimate
+and is not meaningfully worse than explicit heuristic runs, but it does not
+beat `heuristic-A-vf1` (`0.613 / 0.845`) or the protected max-score artifact
+`ppo-full-rl-v1-hybrid` (`0.638 / 0.847`, later shown to be heuristic-fallback
+provenance rather than PPO evidence). Do not promote C+bomb7 as the repo
+default based on this single cloud draw. After logging the result, the
+Dockerfile was restored off the non-promoted C+bomb7 build config.**
+
+Prior update: 27 May 2026 (macro-hybrid PPO trainer repair) —
 **The tactical PPO trainer now gates and saves on the deployed
 `macro_hybrid` wrapper score, not the old standalone policy/executor score.
 `training/ae/train_tactical_ppo.py` evaluates the current in-memory actor
@@ -267,6 +283,10 @@ Per-suite vs baseline for the winning combo:
 For any future cloud variance-farming round, use the C + bomb=7.0 combo. With
 cloud per-config σ ≈ 0.024 and the local +1.13σ gap, expected cloud mean is
 ~0.59–0.60 with upper-tail draws plausibly hitting 0.64+ within ~5 submits.
+First cloud check on 27 May (`heuristic-c-bomb7-v1`) returned `0.590 / 0.845`
+with 0/30 errors, exactly in the expected mean band. That is a neutral result:
+useful calibration, but not a promotion over `heuristic-A-vf1` or the protected
+max-score artifact.
 
 Per-suite top-3 contributors are diverse — if anyone wants to spread
 variance further, the bomb_cost=7.0 alone owns bracket/defense; heuristic-C
@@ -1254,6 +1274,7 @@ Operational stance unchanged after this session: `ppo-full-rl-v1-hybrid` at `0.6
 | **ppo-full-rl-v1-hybrid** | **0.638 best of 4** | **0.847** | **Current AE high by max cloud score. Shortcut off, so PPO is active and heuristic is fallback/veto. Cloud runs: `0.564`, `0.638`, `0.599`, `0.552`; mean `0.588`.** |
 | **ppo-full-rl-v1-hybrid-shortcut** | **0.637 best of 3** | **0.845** | **Shortcut on, so fixed-map heuristic mostly controls detected Novice games before PPO logits are queried. Runs: `0.521`, `0.637`, `0.582`; mean `0.580`. Nearly tied the high; evidence that cloud variance dominates the wrapper/shortcut distinction.** |
 | **fixed-map-v5** | **0.630** | **0.858** | **Former high. Fixed-map-v3-era runtime source plus restored `deployed-bc-v1.pt`; still the speed high among competitive AE tags.** |
+| heuristic-c-bomb7-v1 | 0.590 | 0.845 | Neutral 27 May cloud check. Baked `AE_MODE=heuristic`, `AE_ITEM_MISSION_VALUE=80`, `AE_ITEM_RESOURCE_VALUE=40`, `AE_ENEMY_BASE_VALUE=100`, `AE_DIJKSTRA_BOMB_COST=7.0`; Workbench `til test` was `0.8031666666666666`. Landed in expected mean band, not promoted. |
 | fixed-map-v5-finetune-v1 | 0.587 | 0.848 | FAILED. True legacy-policy fine-tune; local Docker `0.85025`, checkpoint eval `0.6678`, cloud regressed. Do not continue PPO as default. |
 | ppo-qualifier-best-v4-balanced | 0.602 / 0.578 | 0.846 / 0.845 | Same tag accidentally submitted twice; best local PPO checkpoint at epoch 75 scored weighted eval `0.6881` and Docker `0.7507`, but hidden eval stayed below `fixed-map-v5`. |
 | ppo-qualifier-best-v2 | 0.598 | 0.845 | Cloudsuite-focused continuation; best local weighted eval `0.6576`, cloudsuite `0.6575`, Docker `0.7185`; proxy overfit. |

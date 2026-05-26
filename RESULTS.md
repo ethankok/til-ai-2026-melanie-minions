@@ -66,9 +66,18 @@ aggregation with per-suite SE; `PYTHONHASHSEED=0` auto-pin in 6 entry points
 corrections: `heuristic-A` (`0.613/0.845` leaderboard tag) ranks 7th here at
 -0.28σ — its cloud lift was variance, not stable mean. `heuristic-C`
 (dismissed last week as "3rd of 3" on 3 cloud submissions) is now #2 alone
-and #1 in combo. Operational recommendation for next cloud round: variance-
-farm `C + bomb=7.0`. See [ae/NOTES.md](ae/NOTES.md) "26 May 2026 (late)"
+and #1 in combo. This made `C + bomb=7.0` the only reasonable cloud
+variance-farm candidate; see [ae/NOTES.md](ae/NOTES.md) "26 May 2026 (late)"
 for full breakdown.
+
+AE 27 May cloud check: `heuristic-c-bomb7-v1` baked the C+bomb7 profile
+(`AE_MODE=heuristic`, `AE_ITEM_MISSION_VALUE=80`, `AE_ITEM_RESOURCE_VALUE=40`,
+`AE_ENEMY_BASE_VALUE=100`, `AE_DIJKSTRA_BOMB_COST=7.0`) and passed Workbench
+`til test` at `0.8031666666666666`. Cloud returned `0.590 / 0.845` with 0/30
+errors. Treat as neutral calibration: it matches the expected 0.59-0.60 mean
+band but does not beat `heuristic-A-vf1` (`0.613 / 0.845`) or the protected
+`ppo-full-rl-v1-hybrid` max artifact (`0.638 / 0.847`). Not promoted; Dockerfile
+restored off the C+bomb7 build config after logging.
 
 AE 26 May semifinals local update: after landing 15th on the Novice path
 leaderboard, expected semifinals Match 1 is seeds 3/8/9/14/15/20, so AE is the
@@ -483,6 +492,7 @@ Noise (prior high) melanie-minions-noise level9 24/05/2026 06:18:59 0 / 500 1.00
 Noise (prior baseline)  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970  ← Plain JPEG re-encode baseline; superseded by `level9` and then `level10-detector-stress`.
 AE (current high by max score) melanie-minions-ae ppo-full-rl-v1-hybrid 22/05/2026 23:40:11 0 / 30 0.638 0.847 ← PROTECTED LEADERBOARD MAX, but 24 May forensic review showed this tag served pure heuristic through silent policy-load fallback; not PPO evidence. Duplicate submits were 0.564/0.843, 0.599/0.848, and 0.552/0.841, so the mean is only ~0.588.
 AE (best intentional heuristic) melanie-minions-ae heuristic-A-vf1 24/05/2026 0 / 30 0.613 0.845 ← `AE_MODE=heuristic`, `AE_ENEMY_BASE_VALUE=160`, `AE_DIST_PENALTY=0.9`. Duplicate submits were 0.579/~0.849 and 0.606/~0.852, mean 0.599. Best explicit heuristic cloud tag, but still below protected max.
+AE (neutral C+bomb7 cloud check) melanie-minions-ae heuristic-c-bomb7-v1 27/05/2026 03:59:13 0 / 30 0.590 0.845 ← `AE_MODE=heuristic`, `AE_ITEM_MISSION_VALUE=80`, `AE_ITEM_RESOURCE_VALUE=40`, `AE_ENEMY_BASE_VALUE=100`, `AE_DIJKSTRA_BOMB_COST=7.0`. Workbench `til test` was 0.8031666666666666; cloud landed in expected 0.59-0.60 band, so not promoted.
 AE (heuristic defense-first) melanie-minions-ae heuristic-B-vf1..vf4 24/05/2026 0 / 30 0.581 best ~0.85 ← `AE_TIER1_DEFENSE=1`, `AE_BASE_DEFENSE_HEALTH=80`, `AE_BASE_DEFENSE_RADIUS=6`; mean 0.563. Rejected.
 AE (heuristic item-farming) melanie-minions-ae heuristic-C-vf1..vf3 24/05/2026 0 / 30 0.559 best ~0.85 ← `AE_ITEM_MISSION_VALUE=80`, `AE_ITEM_RESOURCE_VALUE=40`, `AE_ENEMY_BASE_VALUE=100`; mean 0.553. Rejected.
 AE (Elo / policy actually active) melanie-minions-ae elo-v1-vf1..vf4 24/05/2026 0 / 30 0.433 best ~0.84 ← Re-adding legacy-small support made the policy actually load; cloud collapsed to ~0.41. Do not bake Elo checkpoint.

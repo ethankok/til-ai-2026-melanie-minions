@@ -22,7 +22,7 @@ WORKDIR /workspace
 # uses the right mode. Edit this line before each `til build` to switch
 # modes, OR write the mode into `ae/src/.ae_mode` (the server reads that
 # file at startup if AE_MODE is unset in the container env).
-ENV AE_MODE=heuristic
+ENV AE_MODE=hybrid
 # MCTS-light is a known-regressed experiment, so keep it opt-in. See
 # ae/NOTES.md for the speed budget math and the v1/v2 cloud failures.
 # v1 used DEPTH=5 WIDTH=96 with no gate / no latency cap; cloud killed it after
@@ -74,10 +74,7 @@ ENV AE_USE_OPPONENT_MODEL=0
 #   AE_ASTAR_TIEBREAK — when =1, secondary heap key in _dijkstra_distance_map
 #     is Manhattan distance to enemy-base centroid, biasing equal-cost path
 #     reconstruction toward enemy territory. Optimal distances unchanged.
-ENV AE_ITEM_MISSION_VALUE=80
-ENV AE_ITEM_RESOURCE_VALUE=40
-ENV AE_ENEMY_BASE_VALUE=100
-ENV AE_DIJKSTRA_BOMB_COST=7.0
+ENV AE_DIJKSTRA_BOMB_COST=5.0
 ENV AE_ASTAR_TIEBREAK=0
 
 # W2.1a — M5 spawn-aware first-target table. When AE_FIRST_TARGET_TABLE=1,
