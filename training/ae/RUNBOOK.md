@@ -123,6 +123,16 @@ with heuristic-fallback provenance, not as proof that PPO/hybrid is better.
 The best intentional heuristic cloud tag is `heuristic-A-vf1` at
 `0.613 / 0.845`.
 
+External Pandemonium plan note (26 May 2026): the user shared four downloaded
+plan files for a user-reported `0.731` AE score. Three of the four are generic
+CNN+MLP Stable-Baselines PPO guidance (10M Novice fixed-map steps, self-play,
+random maps/ICM for Advanced). The useful detail is `pandemonium3.png`: it
+describes "PPO + BFS rule-based fallback", with an immediate BFS manager path
+and `/reset` sanity checks. Do not treat this as a new raw-PPO recipe. If
+revisiting Pandemonium-style work, prioritize fallback arbitration rules,
+fixed-map route tables, bomb/escape safety, and opponent curriculum, then test
+through the furnished/bracket gates below.
+
 Deploy a new policy checkpoint by copying it into the model slot:
 
 ```bash

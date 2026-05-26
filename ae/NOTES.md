@@ -1,6 +1,7 @@
 # AE — notes & history
 
-Last updated: 26 May 2026 (semifinals local tactical learning) — **Qualifier
+Last updated: 26 May 2026 (semifinals tactical learning + Pandemonium plan
+review) — **Qualifier
 AE remains closed with protected max `ppo-full-rl-v1-hybrid 0.638/0.847`
 (heuristic fallback) and best intentional heuristic `heuristic-A-vf1
 0.613/0.845`. Semifinals work moved to the opt-in `tactical_hybrid` path. The
@@ -14,7 +15,12 @@ heuristic `0.1633`. The larger 800-game checkpoint
 weighted after collapsing base/top/bracket suites; support `100` rescued the
 collapse on a quick screen but only reached `0.2798`. Next AE implementation
 should add harm-aware tactical gates based on attempted transitions,
-positive-rate, and net delta before collecting more BC.**
+positive-rate, and net delta before collecting more BC. External Pandemonium
+plan docs/screenshots (`til26_model_plan (1).md`, `pandemonium1.png`,
+`pandemonium2.png`, `pandemonium3.png`; user-reported AE score `0.731`) point
+to PPO+CNN/MLP plus a BFS/rule fallback, but the durable takeaway is
+scripted/planner-first arbitration with learned high-level choices, not another
+generic Stable-Baselines PPO run.**
 
 Prior update: 25 May 2026 (deadline) — **AE FINAL. Qualifier deadline reached.
 Protected leaderboard max stays `ppo-full-rl-v1-hybrid 0.638/0.847`
@@ -139,6 +145,49 @@ delta, and perhaps distance/suite-like pressure buckets. Do that before
 collecting more data or training another checkpoint. Current best local
 semifinals candidate remains `tactical_policy.pt` with the explicit `0.85/50`
 gate.
+
+## 26 May 2026 — Pandemonium external plan review
+
+Reviewed the four newest Downloads files shared as Team Pandemonium AE
+implementation plans:
+
+- `pandemonium1.png`: PPO with CNN over `viewcone`, MLP over scalar state
+  (`direction/location/step`), actor/critic heads, `gamma=0.99`,
+  `gae_lambda=0.95`, `ent_coef=0.01`, 10M Novice fixed-map steps, 5M
+  self-play fine-tune, and Advanced random-map/ICM notes.
+- `pandemonium2.png`: same summary in prose; CNN+MLP Stable-Baselines PPO,
+  10M fixed Novice, self-play, random-map domain randomization plus ICM for
+  Advanced.
+- `pandemonium3.png`: important extra detail — "PPO + BFS rule-based fallback",
+  an immediate no-training BFS manager copy into `ae/src/`, then PPO training
+  and checkpoint copy, with reset/action sanity checks.
+- `til26_model_plan (1).md`: generic all-model implementation plan. Its AE
+  section is plain PPO boilerplate: CNN+MLP policy, Stable-Baselines3, reward
+  shaping, 10M Novice, 5M self-play, random maps/ICM for Advanced.
+
+Read: the reported `0.731` is very unlikely to come from this generic PPO
+recipe alone. The files omit the implementation details that determine AE
+score: observation encoding, action masking, exact reward wrapper, opponent
+curriculum, checkpoint, BFS fallback arbitration, bomb safety, fixed-map
+routing, and reset/state handling. The useful signal is architectural: their
+strong path is probably scripted/BFS-first with PPO as a learned selector or
+fallback, not raw neural control.
+
+Impact on our plan:
+
+- Do **not** restart a broad Stable-Baselines PPO line just because the plan
+  names PPO. Our policy-loaded cloud runs repeatedly collapsed to the
+  `~0.41-0.47` band, while heuristic/scripted paths stayed higher.
+- The portable direction is to improve planner-first arbitration:
+  `tactical_hybrid` / scripted macros / BFS-safe execution, then gate learned
+  deviations by measured harm rate and net delta.
+- If more Pandemonium details become available, extract the fallback/arbitration
+  rules first: when does BFS override policy, what are the fixed-map base-route
+  tables, what bomb/escape checks are used, and what opponent curriculum
+  produced the checkpoint.
+- Treat the `0.731` as externally reported until backed by code, logs, or
+  replay evidence. Do not bake changes from this plan without the furnished
+  `cloudsuite`/`pressure2`/bracket gates.
 
 ## 25 May 2026 (deadline-eve hail-mary) — restored 747b1e1 + A* tiebreak + bomb-cost env var (no new high)
 
@@ -1451,6 +1500,14 @@ Speed is within striking distance with uvicorn/Docker tuning. **Score is the har
 **Tier 3 hierarchical goal selector** is now implemented as the opt-in `option_hybrid` path (25 May 2026). It operates on coarser strategy labels (`escape`, `rush_base`, `base_bomb`, `defend_base`, `collect_mission`, `collect_resource`, `hunt_enemy`, `explore`) and leaves movement/bomb safety to planner variants. The training path is `collect_option_bc.py` -> `train_option_bc.py` -> `train_option_ppo.py`; only consider it for submission if it clears the furnished/bracket eval gate in `training/ae/RUNBOOK.md`. The 25 May PPO revision gives `escape` and `defend_base` dedicated executor behavior, adds base-health shaping plus exploration temperature/epsilon, and gates saves on the furnished proxy instead of a narrow local mean.
 
 **Tier 4 tactical outcome selector** is now available as the opt-in `tactical_hybrid` path (25 May 2026; updated 26 May). It replaces the broad 8-way option labels with 12 tactical macros (`intercept_base_threat`, `guard_base_lane`, `bomb_base_threat`, `counter_rush`, etc.) and trains from full-game score delta versus a same-seed heuristic baseline via `collect_tactical_outcome.py` -> `train_tactical_bc.py`. The runtime supports support/confidence/transition/distance gates and defaults to safe shadow mode unless `AE_TACTICAL_PROFILE=bracket` or explicit gates are set. Current best local candidate is the 400-game `tactical_policy.pt` with `AE_TACTICAL_DELTA_CONF=0.85` and `AE_TACTICAL_MIN_DELTA_SUPPORT=50`: furnished 12-round x seeds 42/137 weighted `0.2932` versus heuristic `0.2825`, worst suite `0.2305` versus heuristic `0.1633`. The 800-game checkpoint overfit/over-admitted harmful transitions under the same raw-support gate (`0.2593` weighted; base/top/bracket collapse), and support `100` only recovered to `0.2798` on a short screen. Next work should be harm-aware gating, not more blind BC.
+
+**External Pandemonium plan review** (26 May 2026): user-reported `0.731`
+AE score came with generic PPO+CNN/MLP screenshots plus one key line:
+PPO with a BFS rule-based fallback. Treat this as evidence for
+scripted/planner-first arbitration, not evidence that plain Stable-Baselines
+PPO is an untried silver bullet. If revisiting it, ask for or reconstruct the
+fallback logic, fixed-map route tables, bomb-safety rules, and training
+curriculum before touching deployment.
 
 What to avoid (lessons learned):
 - Bigger BC networks with rich state inputs against random opponents (overfits transfer).

@@ -1,8 +1,9 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 26 May 2026 (semifinals AE local training update; qualifier final
-status preserved) — **Qualifier closed. AE official max remains
+Last updated: 26 May 2026 (semifinals AE tactical update + external
+Pandemonium plan review; qualifier final status preserved) — **Qualifier closed.
+AE official max remains
 `ppo-full-rl-v1-hybrid 0.638 / 0.847` via heuristic fallback, and best
 intentional heuristic remains `heuristic-A-vf1 0.613 / 0.845`. For semifinals
 work, the current local tactical candidate is the 400-game checkpoint
@@ -14,9 +15,12 @@ heuristic `0.1633`. The larger 800-game checkpoint is not promotable yet:
 `tactical_policy_800_more.pt` at the same gate scored only `0.2593` weighted
 because `base_rush_exploit`, `bracket_proxy`, and `top_seed_proxy` collapsed;
 raising raw support to 100 rescued the worst failures but only reached `0.2798`.
-Next AE work should be harm-aware tactical gating, not blind larger BC. ASR
-final: `nemo-ft-v1` at `0.969 / 0.946`; NLP: `v28-optimized-bm25` blended
-`0.98425`; CV: `yolo11l-1280-alldata-final-v2` local mAP `0.988`; Noise:
+Pandemonium external plan docs for a user-reported `0.731` AE score were
+reviewed: they describe generic CNN+MLP PPO, but the actionable clue is a
+BFS/rule-based fallback. Next AE work should be harm-aware tactical gating and
+planner-first arbitration, not blind larger BC or generic PPO. ASR final:
+`nemo-ft-v1` at `0.969 / 0.946`; NLP: `v28-optimized-bm25` blended `0.98425`;
+CV: `yolo11l-1280-alldata-final-v2` local mAP `0.988`; Noise:
 `level10-detector-stress` at `1.000 / 0.947`.**
 
 ## Final Qualifier Status
@@ -66,6 +70,20 @@ eval score. The gate currently counts positive support but not harm rate, so
 more data can make bad transitions look "supported." Next step is a harm-aware
 gate using attempted transition counts, positive rate, and net delta. See
 [ae/NOTES.md](ae/NOTES.md) and [training/ae/RUNBOOK.md](training/ae/RUNBOOK.md).
+
+AE 26 May external Pandemonium plan review: the four newest downloaded files
+(`til26_model_plan (1).md`, `pandemonium1.png`, `pandemonium2.png`,
+`pandemonium3.png`) were reviewed after a user-reported Team Pandemonium AE
+score of `0.731`. The markdown and first two screenshots are generic
+Stable-Baselines PPO guidance: CNN over `viewcone`, MLP over scalar state,
+10M fixed-Novice steps, self-play, and Advanced random-map/ICM ideas. The
+important screenshot is `pandemonium3.png`, which says "PPO + BFS rule-based
+fallback" and emphasizes immediate BFS manager deployment plus `/reset` sanity.
+Conclusion: the score is not reproducible from the generic PPO plan alone; the
+missing value likely sits in fallback arbitration, scripted route tables, bomb
+safety, opponent curriculum, and checkpoint details. Treat it as support for
+our `tactical_hybrid` / planner-first direction, not as a reason to restart raw
+PPO.
 
 AE 24 May session — full submission log (17 new submits, best intentional heuristic tag found):
 
