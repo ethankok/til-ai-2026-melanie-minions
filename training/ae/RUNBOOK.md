@@ -23,6 +23,7 @@ training/ae/checkpoints/ppo-full-rl-v1.pt Full-RL PPO candidate         historic
 training/ae/checkpoints/option_policy.pt Option-selector BC checkpoint  semifinals option path
 training/ae/checkpoints/option_policy_ppo.pt Option-selector PPO checkpoint gated candidate
 training/ae/checkpoints/tactical_policy.pt Outcome-weighted tactical selector checkpoint
+training/ae/checkpoints/tactical_policy_ppo.pt Planner-first 12-way macro PPO candidate
 training/ae/data/knob-*.json             heuristic sweep summaries      local-only, no baked winner yet
 training/ae/data/option-v2-*.json        option-v2 sweep summaries      local-only, rejected
 ```
@@ -42,6 +43,7 @@ training/ae/data/option-v2-*.json        option-v2 sweep summaries      local-on
 - `train_option_ppo.py` — PPO fine-tune for option choice only; movement/bomb execution remains planner-backed through `OptionExecutor`.
 - `collect_tactical_outcome.py` — full-game terminal-outcome collector for the 12-way tactical selector. It runs heuristic baseline and tactical exploration on the same seed/suite, then labels tactical choices by score delta versus baseline.
 - `train_tactical_bc.py` — outcome-weighted BC trainer for the 12-way tactical selector.
+- `train_tactical_ppo.py` — planner-first PPO for the 12-way tactical selector. The actor chooses tactical macros only; `TacticalExecutor` converts macros to safe raw actions. Each rollout is paired with a same-seed heuristic baseline and saved checkpoints include harm-aware transition matrices for runtime gates.
 - `eval_policy.py` — runs a checkpoint against the env for N games, reports the same `score = total_reward / games / 1000` as `test/test_ae.py`.
 - `train_ppo.py` — pure-PyTorch PPO fine-tune. Warm-starts from `bc.pt`/PPO checkpoints, trains agent 0 against scripted/cloudsuite/league/per-game mixed pools, saves a deployment-compatible actor checkpoint.
 - `run_full_rl_v1.py` — Mac-first launcher for the current full-RL attempt. Wraps `train_ppo.py --preset full-rl` and streams logs to `training/ae/checkpoints/ppo-full-rl-v1.log`.
@@ -68,6 +70,7 @@ training/ae/data/option-v2-*.json        option-v2 sweep summaries      local-on
 | Local policy evaluator    | implemented |
 | PPO fine-tune             | implemented; old scripted/self-play/full-RL runs regressed once policy actually loaded; keep only for analysis |
 | Option-selector RL        | implemented as opt-in `option_hybrid`; must beat furnished eval before any submission |
+| Tactical macro RL         | implemented as opt-in `macro_hybrid` + `train_tactical_ppo.py`; smoke-tested only, needs real training/eval before submission |
 | Tier 1+2 artifact builders| implemented |
 | Deployment into `ae/src/` | implemented; current protected path is legacy heuristic / historical heuristic-fallback max |
 
@@ -110,6 +113,7 @@ The inference path in [../../ae/src/ae_server.py](../../ae/src/ae_server.py) sup
 - `hybrid` (current Dockerfile default, matching the `fixed-map-v5` build source shape) — policy chooses, heuristic vetoes illegal / unsafe-bomb / step-into-blast / frozen-stay actions. See [../../ae/src/hybrid_manager.py](../../ae/src/hybrid_manager.py).
 - `option_hybrid` — 8-way option policy chooses the strategic intent; planner variants execute the option with legality and bomb-safety guardrails. Requires `AE_OPTION_POLICY_CHECKPOINT` or `ae/models/option_policy.pt`.
 - `tactical_hybrid` — 12-way tactical option policy chooses sharper macros such as `intercept_base_threat`, `bomb_base_threat`, and `stall_when_winning`; planner execution remains legality/bomb-safety guarded. Requires `AE_TACTICAL_POLICY_CHECKPOINT` or `ae/models/tactical_policy.pt`.
+- `macro_hybrid` — stricter planner-first 12-way macro policy for the "proper hybrid" path. Defaults the fallback planner to the calibrated `heuristic-C + bomb_cost=7.0` profile, tries top-k learned tactical macros, and only accepts deviations that pass confidence/support/harm-aware gates. Requires `AE_TACTICAL_POLICY_CHECKPOINT` or `ae/models/tactical_policy.pt`; falls back to the heuristic if missing.
 - `policy` — pure `PolicyAEManager`.
 - `heuristic` — pure rule-based `AEManager` (no torch needed in the image at all).
 
@@ -155,6 +159,29 @@ echo option_hybrid > ae/src/.ae_mode
 til build ae <tag>
 til test ae <tag>
 til submit ae <tag>
+```
+
+For macro-hybrid deployment, copy a tactical checkpoint and select the new
+mode. This path is intended for PPO-trained 12-way tactical checkpoints from
+`train_tactical_ppo.py`, not raw-action PPO weights:
+
+```bash
+mkdir -p ae/models
+cp training/ae/checkpoints/tactical_policy_ppo.pt ae/models/tactical_policy.pt
+echo macro_hybrid > ae/src/.ae_mode
+
+# Optional explicit gate overrides. Defaults are already strict.
+export AE_MACRO_BASELINE_PROFILE=combo_c_bomb7
+export AE_MACRO_TOP_K=3
+export AE_MACRO_DELTA_MARGIN=0.02
+export AE_TACTICAL_MIN_DELTA_SUPPORT=8
+export AE_TACTICAL_MIN_ATTEMPTED=20
+export AE_TACTICAL_MIN_POSITIVE_RATE=0.50
+export AE_TACTICAL_MIN_NET_DELTA=0.0
+
+til build ae macro-hybrid-v1
+til test  ae macro-hybrid-v1
+til submit ae macro-hybrid-v1
 ```
 
 **Important**: `AE_MODE=foo til build …` does NOT work — `docker build` doesn't inherit the shell env, so the cloud container would default to hybrid regardless. Either edit the `ENV AE_MODE=…` line in `ae/Dockerfile` or write the mode into `ae/src/.ae_mode` (gitignored) before each build.
@@ -223,6 +250,79 @@ This is the current logical RL route for fixed Novice maps. Do not replace
 Dijkstra globally; the manager already has an opt-in `AE_ASTAR_TIEBREAK` that
 only changes tied parent reconstruction. Keep Dijkstra as the default for exact
 weighted costs, and use the option policy to decide intent.
+
+### Planner-first tactical macro PPO path
+
+This is the current "proper hybrid" implementation. It does not train a raw
+Bomberman action policy. The model chooses one of the 12 tactical macros from
+`ae/src/tactical_policy.py`; `TacticalExecutor` handles pathing, action-mask
+legality, bomb safety, own-base blast checks, and escape mechanics.
+
+As of 27 May 2026, `train_tactical_ppo.py` gates checkpoints on the actual
+deployed `macro_hybrid` wrapper, not the standalone policy/executor score.
+Rollouts still explore sampled tactical macros to gather PPO signal and
+transition evidence, but every eval/save pass runs the current in-memory actor
+through `MacroHybridAEManager` with the cumulative harm-aware matrices that
+will be written into the checkpoint. The old standalone score can be printed
+with `--eval-ungated-policy`, but it is diagnostic only and must not decide
+promotion.
+
+The default fallback planner profile is the latest calibrated heuristic combo:
+
+```bash
+AE_ITEM_MISSION_VALUE=80
+AE_ITEM_RESOURCE_VALUE=40
+AE_ENEMY_BASE_VALUE=100
+AE_DIJKSTRA_BOMB_COST=7.0
+```
+
+One-update smoke test:
+
+```bash
+.venv/bin/python training/ae/train_tactical_ppo.py \
+  --updates 1 --games-per-update 1 --eval-every 1 --eval-games 1 \
+  --device cpu \
+  --out /tmp/tactical_macro_ppo_smoke.pt \
+  --latest-out /tmp/tactical_macro_ppo_latest.pt \
+  --save-floor -999 --min-eval-delta -999 --min-required-suite-score -999 \
+  --opponent-suites cloudsuite --eval-suites cloudsuite \
+  --batch-size 128 --ppo-epochs 1
+```
+
+Real training starter command:
+
+```bash
+PYTHONHASHSEED=0 .venv/bin/python training/ae/train_tactical_ppo.py \
+  --bc-checkpoint training/ae/checkpoints/tactical_policy.pt \
+  --out training/ae/checkpoints/tactical_policy_ppo.pt \
+  --latest-out training/ae/checkpoints/tactical_policy_ppo_latest.pt \
+  --baseline-profile combo_c_bomb7 \
+  --updates 80 --games-per-update 8 --eval-every 5 --eval-games 16 \
+  --opponent-suites base_rush_exploit top_seed_proxy bracket_proxy strong_realistic cloudsuite pressure2 defense_trap mixed \
+  --eval-suites cloudsuite pressure2 strong_realistic base_rush_exploit bracket_proxy top_seed_proxy defense_trap mixed \
+  --save-floor 0.285 --min-eval-delta 0.005 \
+  --required-suites top_seed_proxy base_rush_exploit bracket_proxy \
+  --min-required-suite-score 0.16
+```
+
+For debugging only, append `--eval-ungated-policy` to see the old standalone
+macro-controller score next to `wrapper_eval`. A low ungated score is not a
+reject by itself; promotion is based on `wrapper_eval`, `wrapper_delta`,
+required-suite floors, and the post-training `multi_seed_eval.py` gate below.
+
+Evaluate the deployed wrapper with the produced checkpoint:
+
+```bash
+AE_TACTICAL_POLICY_CHECKPOINT=training/ae/checkpoints/tactical_policy_ppo.pt \
+.venv/bin/python training/ae/multi_seed_eval.py \
+  --rounds 6 --our macro_hybrid --preset furnished \
+  --hash-seeds 0 1 2 3 4 --sim-seeds 42 \
+  --summary-out training/ae/data/macro_hybrid_n5.json
+```
+
+Only consider cloud if `macro_hybrid` beats the direct
+`heuristic-C + bomb_cost=7.0` gate. If it only beats the old baseline, it is
+not enough.
 
 Collect supervised option labels against the furnished semifinal proxy suites:
 

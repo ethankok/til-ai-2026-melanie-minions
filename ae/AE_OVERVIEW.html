@@ -344,6 +344,9 @@ PYTHONHASHSEED=0</code></pre>
       <dt>Tactical hybrid</dt>
       <dd>A sharper 12-way tactical selector for semifinals. It chooses macros such as counter-rush, guard base lane, intercept base threat, bomb base threat, and stall when winning. The 400-game checkpoint looked locally useful under a gate; the 800-game follow-up exposed harmful transitions.</dd>
 
+      <dt>Macro hybrid</dt>
+      <dd>The new proper-hybrid implementation. It is planner-first: the fallback is the calibrated heuristic-C + bomb_cost=7.0 planner, while RL chooses 12-way tactical macros only. Runtime accepts a learned macro deviation only after confidence, transition-support, executor-safety, and harm-aware checks pass. The PPO trainer now evaluates and saves using this wrapper score, not the standalone policy score.</dd>
+
       <dt>Harm-aware gate</dt>
       <dd>A tactical-hybrid safety gate that considers attempted count, positive rate, and net score delta, not just positive support count. The harm-aware 800-game analysis found zero positive-EV transition pairs under even permissive thresholds.</dd>
 
@@ -374,6 +377,7 @@ PYTHONHASHSEED=0</code></pre>
       <tr><td><code>policy</code></td><td><code>PolicyAEManager</code></td><td>Pure raw-action neural policy.</td><td><span class="pill">rejected for cloud</span></td></tr>
       <tr><td><code>option_hybrid</code></td><td><code>OptionHybridAEManager</code></td><td>8-way learned option selector with heuristic execution.</td><td><span class="pill">experimental</span></td></tr>
       <tr><td><code>tactical_hybrid</code></td><td><code>TacticalHybridAEManager</code></td><td>12-way tactical selector with support/confidence/harm gates.</td><td><span class="pill">semifinals research</span></td></tr>
+      <tr><td><code>macro_hybrid</code></td><td><code>MacroHybridAEManager</code></td><td>Planner-first 12-way macro policy. Defaults to C+bomb7 heuristic fallback and tries top-k learned tactical deviations through strict gates.</td><td><span class="pill">trainer gate repaired</span></td></tr>
       <tr><td><code>scripted_hybrid</code></td><td><code>ScriptedHybridAEManager</code></td><td>M5-style scripted base attack first, heuristic fallback.</td><td><span class="pill">calibrated loss</span></td></tr>
     </table>
 
@@ -438,6 +442,12 @@ PYTHONHASHSEED=0</code></pre>
         <td>Semifinals tactical BC, Pandemonium review, harm-aware tactical metadata, M5 primitive ports, full <code>scripted_hybrid</code>, deterministic multi-seed eval, calibrated config ranking.</td>
         <td>400-game tactical checkpoint looked locally useful under <code>0.85/50</code>; 800-game and harm-aware analysis falsified the line. M5 full script lost -3.35 sigma. Calibrated ranking found <code>C + bomb=7.0</code> as best current mean.</td>
         <td>Future cloud round should variance-farm <code>heuristic-C + bomb_cost=7.0</code>, not PPO or scripted ports.</td>
+      </tr>
+      <tr>
+        <td>27 May</td>
+        <td>Repaired the planner-first PPO training gate after an 80-update run exposed that <code>eval</code> was measuring the standalone macro controller.</td>
+        <td>Trainer now saves by <code>wrapper_eval</code> through <code>MacroHybridAEManager</code>, accumulates harm/support matrices across rollouts, and keeps ungated policy eval as optional diagnostics.</td>
+        <td>Rerun training before judging macro RL; do not promote a checkpoint unless the wrapper beats direct C+bomb7.</td>
       </tr>
     </table>
   </div>
@@ -561,6 +571,7 @@ PYTHONHASHSEED=0</code></pre>
     </div>
     <p>This configuration is not magic. It is a calibrated mean-improver in our latest local furnished gate, not a guaranteed cloud winner. The operational reason it is the best current bet is simple: it combines two independently positive local directions, preserved 82% additivity, and wins on <code>bracket_proxy</code>, <code>top_seed_proxy</code>, and <code>defense_trap</code>. It loses <code>pressure2</code>, so it is targeted at semifinals-like bracket scenarios rather than chaotic mass-bomb pressure.</p>
     <p>The qualifier official result is closed. Do not rewrite that history: the protected max remains <code>0.638 / 0.847</code>. The future-facing change is that we now know which config has the best measured local mean if AE opens again.</p>
+    <p>The proper-hybrid path is now implemented as <code>AE_MODE=macro_hybrid</code> plus <code>training/ae/train_tactical_ppo.py</code>. On 27 May, the trainer was repaired so <code>wrapper_eval</code> means the deployed heuristic-first macro wrapper, while the old standalone policy score is diagnostic only via <code>--eval-ungated-policy</code>. It still does not have a promotable trained checkpoint; treat it as the next engineering line to train and gate against the direct C+bomb7 heuristic.</p>
   </div>
 
   <div class="section" id="reproduce">

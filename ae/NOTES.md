@@ -1,6 +1,44 @@
 # AE — notes & history
 
-Last updated: 26 May 2026 (methodology + calibration session) —
+Last updated: 27 May 2026 (macro-hybrid PPO trainer repair) —
+**The tactical PPO trainer now gates and saves on the deployed
+`macro_hybrid` wrapper score, not the old standalone policy/executor score.
+`training/ae/train_tactical_ppo.py` evaluates the current in-memory actor
+through `MacroHybridAEManager`, compares that wrapper score against the
+same-seed `heuristic-C + bomb_cost=7.0` baseline, and stores cumulative
+attempted/positive/negative/net-delta transition matrices in the checkpoint.
+The old ungated policy score is available only as `--eval-ungated-policy`
+diagnostics. This fixes the 27 May failure mode where an 80-update run looked
+bad because `eval=` was measuring the policy by itself, while the real runtime
+is supposed to use heuristic-first fallback gates. Smoke test passed:
+one-update CPU PPO saved `/tmp/tactical_macro_ppo_fix_smoke.pt` with
+`wrapper_eval=0.3870`, `wrapper_delta=+0.0000`, `accept_rate=0.000`, and
+`ungated=0.1090`; the zero accept rate is expected for a one-game smoke and
+confirms the wrapper safely fell back instead of deploying harmful deltas.**
+
+Prior update: 26 May 2026 (proper hybrid implementation) —
+**Implemented the next serious AE direction as a real planner-first hybrid
+instead of raw-action RL. New runtime mode: `AE_MODE=macro_hybrid`
+([src/macro_hybrid_manager.py](src/macro_hybrid_manager.py)), wired through
+[src/ae_server.py](src/ae_server.py), `simulate.py`, and
+`validate_cloud_suite.py`. It defaults the fallback planner to the calibrated
+`heuristic-C + bomb_cost=7.0` profile, loads a 12-way tactical checkpoint, tries
+top-k learned tactical macros, and only accepts deviations that pass
+confidence/support/harm-aware gates; otherwise it returns the heuristic action.
+New trainer: [../training/ae/train_tactical_ppo.py](../training/ae/train_tactical_ppo.py).
+It trains PPO over the 12 tactical macros, not raw actions; `TacticalExecutor`
+still owns movement, action-mask legality, bomb safety, own-base blast checks,
+and escape. Each rollout is paired with a same-seed heuristic baseline and the
+checkpoint stores attempted/positive/negative/net-delta transition matrices for
+the runtime gate. Smoke tests passed: `py_compile`, trainer CLI in `.venv`, a
+one-update/one-game PPO smoke saved `/tmp/tactical_macro_ppo_smoke.pt`, the
+macro runtime loaded that checkpoint with `harm_aware_attempted_total=200`, and
+`simulate.py --our macro_hybrid --rounds 1 --opponents cloudsuite` completed.
+No promotable checkpoint has been trained yet; next real gate is n=5
+`multi_seed_eval.py` against `macro_hybrid` versus direct `heuristic-C +
+bomb_cost=7.0`.**
+
+Prior update: 26 May 2026 (methodology + calibration session) —
 **Infrastructure-heavy session. Built reproducible AE evaluation
 (`PYTHONHASHSEED=0` auto-pin in 6 entry points + Dockerfile;
 `training/ae/multi_seed_eval.py` for n×hash×sim aggregation with proper SE);

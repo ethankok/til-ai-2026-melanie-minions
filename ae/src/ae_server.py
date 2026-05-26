@@ -11,6 +11,9 @@ Mode selection is controlled by the ``AE_MODE`` env var:
   execution. Falls back to heuristic if no option checkpoint is present.
 - ``tactical_hybrid``: neural 12-way tactical option selector plus planner
   execution. Falls back to heuristic if no tactical checkpoint is present.
+- ``macro_hybrid``: planner-first 12-way tactical macro policy. Defaults the
+  heuristic baseline to the calibrated C+bomb7 profile and only accepts learned
+  macro deviations through confidence/support/harm gates.
 - ``scripted_hybrid``: M5-style ScriptedBaseAttackPolicy (attack-plan
   commitment, bomb-from-attack-square) plus AEManager fallback. No
   checkpoint required.
@@ -96,6 +99,17 @@ def _make_manager():
             print(f"AE: mode=tactical_hybrid but no tactical checkpoint — using heuristic ({exc})")
         except Exception as exc:  # noqa: BLE001
             print(f"AE: mode=tactical_hybrid init failed — using heuristic ({exc!r})")
+        return AEManager()
+
+    if mode == "macro_hybrid":
+        try:
+            from macro_hybrid_manager import MacroHybridAEManager  # noqa: WPS433
+            print("AE: mode=macro_hybrid — gated tactical macro policy + C/bomb7 planner fallback")
+            return MacroHybridAEManager()
+        except FileNotFoundError as exc:
+            print(f"AE: mode=macro_hybrid but no tactical checkpoint — using heuristic ({exc})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"AE: mode=macro_hybrid init failed — using heuristic ({exc!r})")
         return AEManager()
 
     if mode == "scripted_hybrid":
