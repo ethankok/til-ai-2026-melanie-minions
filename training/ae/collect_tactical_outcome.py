@@ -14,11 +14,21 @@ classifier before attempting PPO.
 
 from __future__ import annotations
 
+# Pin PYTHONHASHSEED=0 so the labels we collect are reproducible. AEManager
+# and TacticalExecutor both have hash-order-dependent branches in candidate
+# scoring; unpinned hash seeds make repeated collection runs produce different
+# labels for the same (suite, seed, game) triple.
+import os
+import sys
+
+if os.environ.get("PYTHONHASHSEED") is None:
+    os.environ["PYTHONHASHSEED"] = "0"
+    os.execvp(sys.executable, [sys.executable, *sys.argv])
+
 import argparse
 from dataclasses import dataclass
 from collections import Counter, defaultdict
 import random
-import sys
 import time
 from pathlib import Path
 
@@ -67,6 +77,40 @@ DEFAULT_SUITES = [
 ]
 
 
+DISTANCE_BUCKET_NEAR = 0
+DISTANCE_BUCKET_MID = 1
+DISTANCE_BUCKET_FAR = 2
+DISTANCE_BUCKET_UNKNOWN = 3
+NUM_DISTANCE_BUCKETS = 3
+DISTANCE_BUCKET_NAMES = ("near", "mid", "far")
+
+
+def _location_tuple(value) -> tuple[int, int] | None:
+    if value is None:
+        return None
+    try:
+        return (int(value[0]), int(value[1]))
+    except Exception:
+        return None
+
+
+def _distance_bucket(obs_py: dict, heuristic_manager) -> int:
+    """Mirror tactical_hybrid_manager._distance_bucket (near/mid/far)."""
+    location = _location_tuple(obs_py.get("location"))
+    base = (
+        getattr(heuristic_manager, "base_location", None)
+        or _location_tuple(obs_py.get("base_location"))
+    )
+    if location is None or base is None:
+        return DISTANCE_BUCKET_UNKNOWN
+    dist = abs(location[0] - base[0]) + abs(location[1] - base[1])
+    if dist <= 4:
+        return DISTANCE_BUCKET_NEAR
+    if dist <= 8:
+        return DISTANCE_BUCKET_MID
+    return DISTANCE_BUCKET_FAR
+
+
 @dataclass
 class TacticalExample:
     agent_view: np.ndarray
@@ -80,6 +124,7 @@ class TacticalExample:
     step: int
     base_before: float
     health_before: float
+    distance_bucket: int = DISTANCE_BUCKET_UNKNOWN
     base_after: float | None = None
     health_after: float | None = None
 
@@ -234,6 +279,7 @@ def _run_baseline_episode(
                 step=int(_safe_float(obs_py.get("step"), 0.0)),
                 base_before=_safe_float(obs_py.get("base_health"), 100.0),
                 health_before=_safe_float(obs_py.get("health"), 60.0),
+                distance_bucket=_distance_bucket(obs_py, planner),
             ))
             pending_idx = len(examples) - 1
         else:
@@ -316,6 +362,7 @@ def _run_tactical_episode(
                 step=int(_safe_float(obs_py.get("step"), 0.0)),
                 base_before=_safe_float(obs_py.get("base_health"), 100.0),
                 health_before=_safe_float(obs_py.get("health"), 60.0),
+                distance_bucket=_distance_bucket(obs_py, executor.heuristic),
             ))
             pending_idx = len(examples) - 1
         else:
@@ -378,6 +425,7 @@ def _append_example(
     buffers["baseline_scores"].append(float(baseline_score))
     buffers["suites"].append(ex.suite)
     buffers["is_baseline"].append(1 if is_baseline else 0)
+    buffers["distance_buckets"].append(int(ex.distance_bucket))
 
 
 def collect_dataset(args: argparse.Namespace) -> None:
@@ -400,6 +448,7 @@ def collect_dataset(args: argparse.Namespace) -> None:
         "baseline_scores": [],
         "suites": [],
         "is_baseline": [],
+        "distance_buckets": [],
     }
 
     rng = random.Random(args.seed)
@@ -407,6 +456,25 @@ def collect_dataset(args: argparse.Namespace) -> None:
     suite_episode_counts: Counter[str] = Counter()
     suite_positive_counts: Counter[str] = Counter()
     suite_delta_sum: defaultdict[str, float] = defaultdict(float)
+    # W1.1 harm-aware accumulators. The collector already tracked positive
+    # transitions only; here we add the denominator (attempted) plus negatives
+    # and signed net-delta so the inference gate can require:
+    #   positive_rate = positive / attempted >= T1
+    #   mean_net_delta = net_delta_sum / attempted >= T2
+    #   attempted >= T3
+    # per (prior_option, option) and optionally per distance bucket.
+    transition_shape = (NUM_TACTICAL_OPTIONS, NUM_TACTICAL_OPTIONS)
+    bucket_shape = (NUM_TACTICAL_OPTIONS, NUM_TACTICAL_OPTIONS, NUM_DISTANCE_BUCKETS)
+    attempted_transition_counts = np.zeros(transition_shape, dtype=np.int64)
+    positive_transition_counts_mat = np.zeros(transition_shape, dtype=np.int64)
+    negative_transition_counts = np.zeros(transition_shape, dtype=np.int64)
+    transition_net_delta_sum = np.zeros(transition_shape, dtype=np.float64)
+    transition_weight_sum = np.zeros(transition_shape, dtype=np.float64)
+    transition_weighted_delta_sum = np.zeros(transition_shape, dtype=np.float64)
+    bucket_attempted = np.zeros(bucket_shape, dtype=np.int64)
+    bucket_positive = np.zeros(bucket_shape, dtype=np.int64)
+    bucket_net_delta_sum = np.zeros(bucket_shape, dtype=np.float64)
+    # Legacy single-key counter kept for the existing console summary.
     positive_transition_counts: Counter[tuple[int, int]] = Counter()
     print(
         f"Collecting tactical outcome data; games={args.games}; n_frames={args.n_frames}; "
@@ -424,10 +492,28 @@ def collect_dataset(args: argparse.Namespace) -> None:
             suite_positive_counts[suite] += 1
         for ex in examples:
             weight = _example_weight(ex, delta, args)
+            # Harm-aware accounting: log EVERY explored transition, including
+            # those with weight==0 (negative-delta episodes) and same-as-prior
+            # picks. The training dataset still drops weight==0 examples, but
+            # the gate denominator needs to see them.
+            attempted_transition_counts[ex.prior_option, ex.option] += 1
+            transition_net_delta_sum[ex.prior_option, ex.option] += float(delta)
+            transition_weight_sum[ex.prior_option, ex.option] += float(max(weight, 0.0))
+            transition_weighted_delta_sum[ex.prior_option, ex.option] += float(delta) * float(max(weight, 0.0))
+            bucket = int(ex.distance_bucket)
+            if 0 <= bucket < NUM_DISTANCE_BUCKETS:
+                bucket_attempted[ex.prior_option, ex.option, bucket] += 1
+                bucket_net_delta_sum[ex.prior_option, ex.option, bucket] += float(delta)
+            if delta > args.min_positive_delta:
+                positive_transition_counts_mat[ex.prior_option, ex.option] += 1
+                if 0 <= bucket < NUM_DISTANCE_BUCKETS:
+                    bucket_positive[ex.prior_option, ex.option, bucket] += 1
+                if ex.option != ex.prior_option:
+                    positive_transition_counts[(ex.prior_option, ex.option)] += 1
+            else:
+                negative_transition_counts[ex.prior_option, ex.option] += 1
             if weight <= 0.0:
                 continue
-            if delta > args.min_positive_delta and ex.option != ex.prior_option:
-                positive_transition_counts[(ex.prior_option, ex.option)] += 1
             _append_example(
                 ex,
                 weight=weight,
@@ -469,9 +555,23 @@ def collect_dataset(args: argparse.Namespace) -> None:
         "baseline_scores": np.asarray(buffers["baseline_scores"], dtype=np.float32),
         "suites": np.asarray(buffers["suites"]),
         "is_baseline": np.asarray(buffers["is_baseline"], dtype=np.int8),
+        "distance_buckets": np.asarray(buffers["distance_buckets"], dtype=np.int8),
         "option_names": np.asarray(TACTICAL_OPTION_NAMES),
+        "distance_bucket_names": np.asarray(DISTANCE_BUCKET_NAMES),
         "n_frames": np.asarray(args.n_frames, dtype=np.int32),
         "with_belief": np.asarray(int(args.with_belief), dtype=np.int32),
+        # W1.1 harm-aware accumulators. These count every explored transition,
+        # not just kept-weight samples, so the inference gate denominator is
+        # honest. See tactical_hybrid_manager._delta_is_supported.
+        "attempted_transition_counts": attempted_transition_counts.astype(np.int64),
+        "positive_transition_counts": positive_transition_counts_mat.astype(np.int64),
+        "negative_transition_counts": negative_transition_counts.astype(np.int64),
+        "transition_net_delta_sum": transition_net_delta_sum.astype(np.float64),
+        "transition_weight_sum": transition_weight_sum.astype(np.float64),
+        "transition_weighted_delta_sum": transition_weighted_delta_sum.astype(np.float64),
+        "bucket_attempted": bucket_attempted.astype(np.int64),
+        "bucket_positive": bucket_positive.astype(np.int64),
+        "bucket_net_delta_sum": bucket_net_delta_sum.astype(np.float64),
     }
     if args.with_belief:
         save_kwargs["beliefs"] = np.stack(buffers["beliefs"]).astype(np.float32)
@@ -511,11 +611,31 @@ def collect_dataset(args: argparse.Namespace) -> None:
         positives = int(suite_positive_counts[suite])
         mean_delta = suite_delta_sum[suite] / max(games, 1)
         print(f"  {suite:24s} games={games:>4d} positive={positives:>4d} mean_delta={mean_delta:+.4f}")
-    print("Positive intervention transitions:")
+    print("Positive intervention transitions (delta>0, option!=prior):")
     if positive_transition_counts:
         for (prior, option), count in positive_transition_counts.most_common():
             print(f"  {TACTICAL_OPTION_NAMES[prior]:24s} -> {TACTICAL_OPTION_NAMES[option]:24s} {count:>7d}")
     else:
+        print("  none")
+
+    print("Harm-aware per-transition stats (attempted, positive, neg, pos_rate, mean_net_delta):")
+    any_row = False
+    for prior in range(NUM_TACTICAL_OPTIONS):
+        for option in range(NUM_TACTICAL_OPTIONS):
+            attempted = int(attempted_transition_counts[prior, option])
+            if attempted <= 0:
+                continue
+            positive = int(positive_transition_counts_mat[prior, option])
+            negative = int(negative_transition_counts[prior, option])
+            pos_rate = positive / attempted
+            mean_delta = float(transition_net_delta_sum[prior, option]) / max(attempted, 1)
+            print(
+                f"  {TACTICAL_OPTION_NAMES[prior]:24s} -> {TACTICAL_OPTION_NAMES[option]:24s} "
+                f"att={attempted:>5d} pos={positive:>5d} neg={negative:>5d} "
+                f"pos_rate={pos_rate:.3f} mean_delta={mean_delta:+.4f}"
+            )
+            any_row = True
+    if not any_row:
         print("  none")
 
 

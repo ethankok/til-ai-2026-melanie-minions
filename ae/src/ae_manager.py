@@ -244,6 +244,31 @@ class AEManager:
             "resource": self.item_resource_value,
             "recon": self.item_recon_value,
         }
+        # W2.1a: spawn-aware FIRST_TARGET_BY_OWN_BASE boost. Default OFF (the
+        # boost contribution is zero unless the env flag is set). When ON, we
+        # add `boost * decay**rank` to each enemy_base candidate's value where
+        # rank comes from spawn_first_targets.get_first_target_rank(). Three
+        # of six Novice spawn slots have explicit priorities; the other three
+        # see no change.
+        self.first_target_table_enabled = _env_int("AE_FIRST_TARGET_TABLE", 0) > 0
+        self.first_target_boost = _env_float("AE_FIRST_TARGET_BOOST", 60.0)
+        self.first_target_decay = _env_float("AE_FIRST_TARGET_DECAY", 0.55)
+        # W2.1b: enemy-bomb-only escape override. When ON, before any normal
+        # action selection we check whether a visible enemy bomb (own==False)
+        # with timer <= 2 has us in its blast cells. If yes, force an escape
+        # action chosen by the M5 scoring (leave danger first, max distance
+        # from bomb, more open neighbors, fewer turns). Default OFF.
+        self.enemy_bomb_escape_enabled = _env_int("AE_ENEMY_BOMB_OVERRIDE", 0) > 0
+        self.enemy_bomb_escape_turn_penalty = _env_float("AE_ENEMY_BOMB_ESCAPE_TURN_PENALTY", 0.2)
+        self.enemy_bomb_escape_visit_penalty = _env_float("AE_ENEMY_BOMB_ESCAPE_VISIT_PENALTY", 0.3)
+        # W2.1c: orientation-aware A* over (x, y, facing) states. Real per-tick
+        # cost includes LEFT/RIGHT turns (1.0 each). Existing Dijkstra treats
+        # turns as free, so paths with many turns get artificially short
+        # distances. Default OFF — enable with AE_ORIENTATION_AWARE_PATH=1.
+        # AE_ORIENTATION_AWARE_TURN_COST controls cost-per-turn (1.0 = real
+        # ticks; lower values bias toward shorter cell paths even when turny).
+        self.orientation_aware_path_enabled = _env_int("AE_ORIENTATION_AWARE_PATH", 0) > 0
+        self.orientation_aware_turn_cost = _env_float("AE_ORIENTATION_AWARE_TURN_COST", 1.0)
         self._reset_memory()
 
     # ------------------------------------------------------------------
@@ -361,6 +386,14 @@ class AEManager:
         danger = self._danger_cells()
         low_health = self.health < self.LOW_HEALTH_THRESHOLD
 
+        # W2.1b enemy-bomb-only escape override. Default OFF. Fires before the
+        # dominant-action fast path because the M5 spec treats enemy-bomb
+        # escape as the highest-priority override.
+        enemy_bomb_escape = self._enemy_bomb_only_escape(observation, location, direction)
+        if enemy_bomb_escape is not None:
+            self._count_decision("enemy_bomb_escape")
+            return enemy_bomb_escape
+
         escape_path = None
         if False:
             target, path = self.escape_target, escape_path
@@ -374,7 +407,7 @@ class AEManager:
             if lookahead is not None:
                 self._count_decision("tactical_lookahead")
                 return lookahead
-            target, path = self._choose_target(location, danger, low_health)
+            target, path = self._choose_target(location, danger, low_health, direction=direction)
 
         if escape_path is None and self._should_place_bomb(observation, location, target, danger):
             self._count_decision(f"bomb_{self.last_bomb_reason}")
@@ -638,13 +671,23 @@ class AEManager:
         start: tuple[int, int],
         danger: set[tuple[int, int]],
         low_health: bool = False,
+        direction: int | None = None,
     ) -> tuple[tuple[int, int] | None, list[tuple[int, int]] | None]:
         threats = self._enemy_threat_cells()
         step = self.last_step if self.last_step is not None else 0
 
         # Single multi-source BFS gives distance to every reachable cell at
         # roughly the cost of one of the old per-target BFS calls.
-        if getattr(self, "is_fixed_novice_map", False):
+        # W2.1c: orientation-aware A* opt-in. Only available on fixed novice
+        # map (general-map BFS path stays untouched) AND requires a known
+        # direction. Falls back to plain Dijkstra otherwise.
+        if (
+            self.orientation_aware_path_enabled
+            and getattr(self, "is_fixed_novice_map", False)
+            and direction is not None
+        ):
+            distance, parent = self._orientation_aware_distance_map(start, int(direction), danger)
+        elif getattr(self, "is_fixed_novice_map", False):
             distance, parent = self._dijkstra_distance_map(start, danger)
         else:
             distance, parent = self._bfs_distance_map(start, danger)
@@ -672,6 +715,15 @@ class AEManager:
                     value = 130.0
                 else:
                     value = 35.0 if self.tier1_shared_credit else self.ENEMY_BASE_VALUE
+                # W2.1a spawn-aware first-target boost. Lazy import keeps the
+                # symbol off the hot path until enabled; the function is a
+                # ~5-line dict lookup. None rank -> 0.0 boost (no change).
+                if self.first_target_table_enabled:
+                    from spawn_first_targets import get_first_target_rank, rank_boost  # noqa: WPS433
+                    rank = get_first_target_rank(self.base_location, pos)
+                    boost = rank_boost(rank, self.first_target_boost, self.first_target_decay)
+                    if boost > 0.0:
+                        value += boost
                 candidates.append((value, pos, "enemy_base"))
             # Base defense: target enemies near our base (active attack/defense)
             if self.base_location is not None:
@@ -876,6 +928,92 @@ class AEManager:
                     parent[nxt] = current
                     heapq.heappush(pq, (new_cost, _h(nxt), nxt))
         return distance, parent
+
+    def _orientation_aware_distance_map(
+        self,
+        start: tuple[int, int],
+        start_facing: int,
+        danger: set[tuple[int, int]] | None = None,
+    ) -> tuple[dict[tuple[int, int], float], dict[tuple[int, int], tuple[int, int] | None]]:
+        """W2.1c: Dijkstra over (x, y, facing) states.
+
+        Plain `_dijkstra_distance_map` treats LEFT/RIGHT as free, so a path
+        with 3 turns + 5 forward steps is reported as 5 cost when it actually
+        takes 8 ticks. This version counts each turn as `turn_cost` (default
+        1.0 = real ticks). Returns the SAME shape as the plain version
+        (cell -> cost, cell -> parent cell) so downstream `_action_for_path`
+        and `_reconstruct_path` work unchanged. Cell distance is the minimum
+        over all facings at that cell.
+
+        Search expansions:
+          - LEFT (facing - 1 mod 4): no move, cost turn_cost
+          - RIGHT (facing + 1 mod 4): no move, cost turn_cost
+          - FORWARD: move 1 in current facing; cost 1.0 (+ bomb_cost if
+            edge is destructible-wall); facing unchanged
+          - BACKWARD: move 1 in opposite facing; same cost rules; facing
+            unchanged
+
+        Bounds / walls / danger: same as plain Dijkstra. Cells outside
+        `self.seen` are not expanded (fixed novice map pre-populates this).
+        """
+        import heapq
+        danger = danger or set()
+        turn_cost = float(self.orientation_aware_turn_cost)
+
+        # state_cost: (x, y, facing) -> min cost
+        # cell_distance / cell_parent: aggregated over best facing at each cell
+        start_state = (start[0], start[1], int(start_facing))
+        state_cost: dict[tuple[int, int, int], float] = {start_state: 0.0}
+        cell_distance: dict[tuple[int, int], float] = {start: 0.0}
+        cell_parent: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
+        pq: list[tuple[float, int, int, int]] = [(0.0, start[0], start[1], int(start_facing))]
+
+        while pq:
+            cost, cx, cy, cf = heapq.heappop(pq)
+            cur_state = (cx, cy, cf)
+            if cost > state_cost.get(cur_state, float("inf")):
+                continue
+            cur_cell = (cx, cy)
+
+            # Turn actions: facing changes, cell does not.
+            for new_facing in ((cf + 3) % 4, (cf + 1) % 4):
+                new_state = (cx, cy, new_facing)
+                new_cost = cost + turn_cost
+                if new_cost < state_cost.get(new_state, float("inf")):
+                    state_cost[new_state] = new_cost
+                    heapq.heappush(pq, (new_cost, cx, cy, new_facing))
+                    # Cell didn't change, no cell-level update needed.
+
+            # Move actions: FORWARD uses facing direction; BACKWARD uses
+            # opposite facing direction. Both leave facing unchanged.
+            for move_dir in (cf, self.OPPOSITE[cf]):
+                dx, dy = self.DIR_DELTAS[move_dir]
+                nx, ny = cx + dx, cy + dy
+                new_cell = (nx, ny)
+                if not self._in_bounds(new_cell):
+                    continue
+                if new_cell in danger:
+                    continue
+                if new_cell not in self.seen:
+                    continue
+
+                if not self._edge_blocked(cur_cell, move_dir):
+                    step_cost = 1.0
+                elif self._edge_destructible(cur_cell, move_dir):
+                    step_cost = 1.0 + self.dijkstra_bomb_cost
+                else:
+                    continue
+
+                new_state = (nx, ny, cf)
+                new_cost = cost + step_cost
+                if new_cost < state_cost.get(new_state, float("inf")):
+                    state_cost[new_state] = new_cost
+                    heapq.heappush(pq, (new_cost, nx, ny, cf))
+                    if new_cost < cell_distance.get(new_cell, float("inf")):
+                        cell_distance[new_cell] = new_cost
+                        cell_parent[new_cell] = cur_cell
+
+        return cell_distance, cell_parent
 
     def _reconstruct_path(
         self,
@@ -1575,6 +1713,88 @@ class AEManager:
                 continue
             danger.update(self._blast_cells(bomb_pos))
         return danger
+
+    def _enemy_bomb_only_escape(
+        self,
+        observation: dict,
+        location: tuple[int, int],
+        direction: int,
+    ) -> int | None:
+        """M5 enemy-bomb-only escape override.
+
+        When AE_ENEMY_BOMB_OVERRIDE=1, if our cell is in the blast of a
+        VISIBLE ENEMY bomb (own==False) with timer <= 2, force a non-bomb
+        action chosen by the M5 scoring:
+          - leave danger first (big additive bonus when next cell is safe);
+          - greater distance from nearest enemy bomb;
+          - more open (non-threat) neighbors of the destination;
+          - less revisited cells;
+          - fewer unnecessary turns.
+
+        Returns None when feature is OFF, when no enemy bomb threatens us,
+        or when no legal escape action exists (let normal flow handle it).
+        """
+        if not self.enemy_bomb_escape_enabled:
+            return None
+        threat_bombs: list[tuple[tuple[int, int], set[tuple[int, int]]]] = []
+        for bomb_pos, data in self.known_bombs.items():
+            if data.get("own"):
+                continue
+            timer = int(data.get("timer", self.BOMB_TIMER))
+            if timer > 2:
+                continue
+            blast = self._blast_cells(bomb_pos)
+            if location in blast:
+                threat_bombs.append((bomb_pos, blast))
+        if not threat_bombs:
+            return None
+
+        # Union of all current-threat blast cells; "leaving danger" means
+        # exiting this union.
+        threat_cells: set[tuple[int, int]] = set()
+        for _bp, blast in threat_bombs:
+            threat_cells.update(blast)
+
+        def _nearest_bomb_dist(cell: tuple[int, int]) -> int:
+            return min(self._manhattan(cell, bp) for bp, _ in threat_bombs)
+
+        # Evaluate every legal non-bomb action. STAY counts as a candidate
+        # but with no leave-danger bonus (we're already in the blast).
+        best_action: int | None = None
+        best_score = -inf
+        for action in (self.FORWARD, self.BACKWARD, self.LEFT, self.RIGHT, self.STAY):
+            if not self._legal(observation, action):
+                continue
+            next_cell, next_dir = self._simulate_action(location, direction, action)
+            # Refuse to step onto a bomb cell (solid). next_cell can equal
+            # location for turns and STAY.
+            if next_cell != location and next_cell in self.known_bombs:
+                continue
+            # Refuse out-of-bounds moves (also caught by action_mask in
+            # practice, defensive).
+            if not self._in_bounds(next_cell):
+                continue
+            score = 0.0
+            if next_cell not in threat_cells:
+                score += 100.0
+            score += float(_nearest_bomb_dist(next_cell))
+            open_neighbors = 0
+            for n in self._raw_neighbors(next_cell):
+                if not self._in_bounds(n):
+                    continue
+                if n in threat_cells:
+                    continue
+                if n in self.known_bombs:
+                    continue
+                open_neighbors += 1
+            score += 0.5 * float(open_neighbors)
+            score -= self.enemy_bomb_escape_visit_penalty * float(self.visit_count.get(next_cell, 0))
+            if next_dir != direction and action in (self.LEFT, self.RIGHT):
+                score -= self.enemy_bomb_escape_turn_penalty
+            if score > best_score:
+                best_score = score
+                best_action = action
+        return best_action
 
     def _enemy_threat_cells(self) -> set[tuple[int, int]]:
         """Recently-seen enemy positions plus their 4-neighbors.

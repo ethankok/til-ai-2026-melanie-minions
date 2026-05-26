@@ -1,8 +1,8 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 26 May 2026 (semifinals AE tactical update + external
-Pandemonium plan review; qualifier final status preserved) — **Qualifier closed.
+Last updated: 26 May 2026 (methodology + calibration session; semifinals AE
+candidate revised to combo `C + bomb=7.0`) — **Qualifier closed.
 AE official max remains
 `ppo-full-rl-v1-hybrid 0.638 / 0.847` via heuristic fallback, and best
 intentional heuristic remains `heuristic-A-vf1 0.613 / 0.845`. For semifinals
@@ -36,6 +36,33 @@ history stays in this file.
 | NLP | `v28-optimized-bm25` | 0.984 | 0.985 | Final blended and accuracy high. Tuned document-level plus passage-level BM25 bypasses neural models for high speed and reached blended `0.98425`. | [nlp/NOTES.md](nlp/NOTES.md) |
 | CV | `yolo11l-1280-alldata-final-v2` | pending | pending | All-data 1280px YOLO11l candidate. Fine-tuned on all data for 36 epochs; local validation mAP is 0.988, but official score was still pending in the deadline notes. | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `level10-detector-stress` | 1.000 | 0.947 | Shipped for Semifinals/Finals CV disruption. No direct Qualifier reward, but passed fairness locally and scored 1.000 cloud. | [noise/NOTES.md](noise/NOTES.md) |
+
+AE 26 May late-session (methodology + calibration update): nine independent
+structural attempts to lift the heuristic — three M5-primitive bolt-ons
+(spawn first-target, enemy-bomb-only escape, orientation-aware A*) and a full
+M5 ScriptedBaseAttackPolicy port behind `AE_MODE=scripted_hybrid` — came up
+negative or noise. The full M5 stack lost at -3.35σ on furnished gate,
+decisively answering that the reported `0.731` is codebase-specific not
+primitive-additive. Harm-aware tactical data (800 fresh games × 12-way macro
+labels = 160k samples across 90 distinct prior/option pairs) shows ZERO
+positive-EV transitions — falsifies the random-exploration tactical-hybrid
+line. Then ranked 11 configs at n=5 hash × 1 sim × 6 rounds and found a
+positive composition: `C + bomb=7.0`
+(`AE_ITEM_MISSION_VALUE=80 AE_ITEM_RESOURCE_VALUE=40 AE_ENEMY_BASE_VALUE=100 AE_DIJKSTRA_BOMB_COST=7.0`)
+at weighted_mean **0.2842 ± 0.0074, Δ +0.020 vs baseline (+1.13σ)**.
+Composed 82% additively from C alone (+0.016) and bomb=7 alone (+0.009).
+Wins on every semifinals-relevant suite: bracket_proxy +0.075, top_seed_proxy
++0.088, defense_trap +0.070; only regression pressure2 -0.062 (mass-bomb
+chaos, less relevant for our 15th-seed bracket). New shipped infrastructure:
+[multi_seed_eval.py](training/ae/multi_seed_eval.py) for K-hash × M-sim
+aggregation with per-suite SE; `PYTHONHASHSEED=0` auto-pin in 6 entry points
++ Dockerfile (cloud submissions now deterministic). Two historical
+corrections: `heuristic-A` (`0.613/0.845` leaderboard tag) ranks 7th here at
+-0.28σ — its cloud lift was variance, not stable mean. `heuristic-C`
+(dismissed last week as "3rd of 3" on 3 cloud submissions) is now #2 alone
+and #1 in combo. Operational recommendation for next cloud round: variance-
+farm `C + bomb=7.0`. See [ae/NOTES.md](ae/NOTES.md) "26 May 2026 (late)"
+for full breakdown.
 
 AE 26 May semifinals local update: after landing 15th on the Novice path
 leaderboard, expected semifinals Match 1 is seeds 3/8/9/14/15/20, so AE is the

@@ -11,6 +11,9 @@ Mode selection is controlled by the ``AE_MODE`` env var:
   execution. Falls back to heuristic if no option checkpoint is present.
 - ``tactical_hybrid``: neural 12-way tactical option selector plus planner
   execution. Falls back to heuristic if no tactical checkpoint is present.
+- ``scripted_hybrid``: M5-style ScriptedBaseAttackPolicy (attack-plan
+  commitment, bomb-from-attack-square) plus AEManager fallback. No
+  checkpoint required.
 - ``heuristic``: pure rule-based planner. No torch import, no model
   load, cheapest possible per-call latency.
 
@@ -93,6 +96,15 @@ def _make_manager():
             print(f"AE: mode=tactical_hybrid but no tactical checkpoint — using heuristic ({exc})")
         except Exception as exc:  # noqa: BLE001
             print(f"AE: mode=tactical_hybrid init failed — using heuristic ({exc!r})")
+        return AEManager()
+
+    if mode == "scripted_hybrid":
+        try:
+            from scripted_hybrid_manager import ScriptedHybridAEManager  # noqa: WPS433
+            print("AE: mode=scripted_hybrid — M5 scripted attack policy + AEManager fallback")
+            return ScriptedHybridAEManager()
+        except Exception as exc:  # noqa: BLE001
+            print(f"AE: mode=scripted_hybrid init failed — using heuristic ({exc!r})")
         return AEManager()
 
     # Default: hybrid.

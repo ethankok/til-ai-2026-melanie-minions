@@ -125,6 +125,52 @@ def _positive_delta_metadata(dataset: TacticalDataset) -> tuple[np.ndarray, np.n
     return counts, weights
 
 
+def _harm_aware_metadata(data_path: Path) -> dict:
+    """Pull the W1.1 harm-aware matrices from the collector npz.
+
+    For npz files produced before W1.1 these keys don't exist; we return
+    empty arrays so older datasets still train cleanly. The inference manager
+    sees zero attempted counts and falls back to the legacy positive-only
+    support check.
+    """
+    transition_shape = (NUM_TACTICAL_OPTIONS, NUM_TACTICAL_OPTIONS)
+    bucket_shape = (NUM_TACTICAL_OPTIONS, NUM_TACTICAL_OPTIONS, 3)
+    out = {
+        "attempted_transition_counts": np.zeros(transition_shape, dtype=np.int64),
+        "positive_transition_counts_full": np.zeros(transition_shape, dtype=np.int64),
+        "negative_transition_counts": np.zeros(transition_shape, dtype=np.int64),
+        "transition_net_delta_sum": np.zeros(transition_shape, dtype=np.float64),
+        "transition_weight_sum": np.zeros(transition_shape, dtype=np.float64),
+        "transition_weighted_delta_sum": np.zeros(transition_shape, dtype=np.float64),
+        "bucket_attempted": np.zeros(bucket_shape, dtype=np.int64),
+        "bucket_positive": np.zeros(bucket_shape, dtype=np.int64),
+        "bucket_net_delta_sum": np.zeros(bucket_shape, dtype=np.float64),
+    }
+    with np.load(data_path, allow_pickle=True) as data:
+        files = set(data.files)
+        if "attempted_transition_counts" in files:
+            out["attempted_transition_counts"] = np.asarray(data["attempted_transition_counts"], dtype=np.int64)
+        if "positive_transition_counts" in files:
+            arr = np.asarray(data["positive_transition_counts"])
+            if arr.shape == transition_shape:
+                out["positive_transition_counts_full"] = arr.astype(np.int64)
+        if "negative_transition_counts" in files:
+            out["negative_transition_counts"] = np.asarray(data["negative_transition_counts"], dtype=np.int64)
+        if "transition_net_delta_sum" in files:
+            out["transition_net_delta_sum"] = np.asarray(data["transition_net_delta_sum"], dtype=np.float64)
+        if "transition_weight_sum" in files:
+            out["transition_weight_sum"] = np.asarray(data["transition_weight_sum"], dtype=np.float64)
+        if "transition_weighted_delta_sum" in files:
+            out["transition_weighted_delta_sum"] = np.asarray(data["transition_weighted_delta_sum"], dtype=np.float64)
+        if "bucket_attempted" in files:
+            out["bucket_attempted"] = np.asarray(data["bucket_attempted"], dtype=np.int64)
+        if "bucket_positive" in files:
+            out["bucket_positive"] = np.asarray(data["bucket_positive"], dtype=np.int64)
+        if "bucket_net_delta_sum" in files:
+            out["bucket_net_delta_sum"] = np.asarray(data["bucket_net_delta_sum"], dtype=np.float64)
+    return out
+
+
 def _weighted_loss(logits: torch.Tensor, options: torch.Tensor, weights: torch.Tensor, criterion: nn.Module) -> torch.Tensor:
     losses = criterion(logits, options)
     return (losses * weights).sum() / weights.sum().clamp(min=1e-6)
@@ -229,6 +275,29 @@ def train(args: argparse.Namespace) -> None:
     if not any_delta:
         print("  none")
 
+    harm_aware = _harm_aware_metadata(data_path)
+    attempted_total = int(np.sum(harm_aware["attempted_transition_counts"]))
+    if attempted_total > 0:
+        print("harm_aware_transitions (attempted/positive/positive_rate/mean_delta):")
+        attempted_mat = harm_aware["attempted_transition_counts"]
+        positive_mat = harm_aware["positive_transition_counts_full"]
+        net_delta_mat = harm_aware["transition_net_delta_sum"]
+        for prior in range(NUM_TACTICAL_OPTIONS):
+            for option in range(NUM_TACTICAL_OPTIONS):
+                attempted = int(attempted_mat[prior, option])
+                if attempted <= 0:
+                    continue
+                positive = int(positive_mat[prior, option])
+                pos_rate = positive / attempted if attempted else 0.0
+                mean_delta = float(net_delta_mat[prior, option]) / max(attempted, 1)
+                marker = "  " if prior == option else "* "  # * highlights actual deltas
+                print(
+                    f"  {marker}{TACTICAL_OPTION_NAMES[prior]:24s} -> {TACTICAL_OPTION_NAMES[option]:24s} "
+                    f"att={attempted:>5d} pos={positive:>5d} pos_rate={pos_rate:.3f} mean_delta={mean_delta:+.4f}"
+                )
+    else:
+        print("harm_aware_transitions: dataset has no attempted_transition_counts (pre-W1.1 npz)")
+
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     best_score = -float("inf")
@@ -282,6 +351,19 @@ def train(args: argparse.Namespace) -> None:
                 "loss_penalty": args.loss_penalty,
                 "positive_delta_transition_counts": positive_delta_counts,
                 "positive_delta_transition_weights": positive_delta_weights,
+                # W1.1 harm-aware metadata; consumed by
+                # tactical_hybrid_manager._delta_is_supported at inference.
+                # Empty for pre-W1.1 npz files; inference manager treats that
+                # as "no harm-aware data, fall back to legacy gate".
+                "attempted_transition_counts": harm_aware["attempted_transition_counts"],
+                "positive_transition_counts_full": harm_aware["positive_transition_counts_full"],
+                "negative_transition_counts": harm_aware["negative_transition_counts"],
+                "transition_net_delta_sum": harm_aware["transition_net_delta_sum"],
+                "transition_weight_sum": harm_aware["transition_weight_sum"],
+                "transition_weighted_delta_sum": harm_aware["transition_weighted_delta_sum"],
+                "bucket_attempted": harm_aware["bucket_attempted"],
+                "bucket_positive": harm_aware["bucket_positive"],
+                "bucket_net_delta_sum": harm_aware["bucket_net_delta_sum"],
                 "weighted_delta_mean": float(dataset.advantages.mul(dataset.weights).sum() / dataset.weights.sum().clamp(min=1e-6)),
             }, out_path)
             print(f"  best so far -> saved {out_path}")

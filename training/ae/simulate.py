@@ -33,10 +33,20 @@ oracle target for BC training and as the value table for playbook lookup.)
 
 from __future__ import annotations
 
-import argparse
-import json
+# Force-pin PYTHONHASHSEED=0 when invoked as a script. AEManager has
+# hash-order-dependent code paths; identical (env, seed) configs have drifted
+# by 0.10+ on cloudsuite mean across runs of unpinned interpreters. Setting
+# this from inside the live interpreter is a no-op (PYTHONHASHSEED is read
+# once at startup), so we re-exec instead.
 import os
 import sys
+
+if __name__ == "__main__" and os.environ.get("PYTHONHASHSEED") is None:
+    os.environ["PYTHONHASHSEED"] = "0"
+    os.execvp(sys.executable, [sys.executable, *sys.argv])
+
+import argparse
+import json
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -156,6 +166,9 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
     if name == "tactical_hybrid":
         from tactical_hybrid_manager import TacticalHybridAEManager
         return TacticalHybridAEManager(**kwargs)
+    if name == "scripted_hybrid":
+        from scripted_hybrid_manager import ScriptedHybridAEManager
+        return ScriptedHybridAEManager(**kwargs)
     if name.startswith("opponent:"):
         opponent_name = name.split(":", 1)[1].strip()
         if opponent_name not in OPPONENT_NAMES:

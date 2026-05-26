@@ -222,9 +222,9 @@ class Defender(AEManager):
     def __call__(self, obs: dict) -> int:
         return self.ae(obs)
 
-    def _choose_target(self, start, danger, low_health=False):
+    def _choose_target(self, start, danger, low_health=False, direction=None):
         # Override target selection: prefer cells near our base.
-        target_pos, path = super()._choose_target(start, danger, low_health)
+        target_pos, path = super()._choose_target(start, danger, low_health, direction=direction)
         if self.base_location is None:
             return target_pos, path
         # Stay close — if heuristic chose a far target, override with
@@ -260,7 +260,7 @@ class Hunter(AEManager):
     def __call__(self, obs: dict) -> int:
         return self.ae(obs)
 
-    def _choose_target(self, start, danger, low_health=False):
+    def _choose_target(self, start, danger, low_health=False, direction=None):
         if self.enemy_agents and not low_health:
             step = self.last_step if self.last_step is not None else 0
             fresh = [
@@ -273,7 +273,7 @@ class Hunter(AEManager):
                 if target in distance:
                     path = self._reconstruct_path(parent, start, target)
                     return target, path
-        return super()._choose_target(start, danger, low_health)
+        return super()._choose_target(start, danger, low_health, direction=direction)
 
 
 class StickyHunter(Hunter):
@@ -287,7 +287,7 @@ class StickyHunter(Hunter):
         self.ENEMY_CHASE_VALUE = 28.0
         self.ENEMY_CHASE_RADIUS = 8
 
-    def _choose_target(self, start, danger, low_health=False):
+    def _choose_target(self, start, danger, low_health=False, direction=None):
         if self.enemy_agents and not low_health:
             step = self.last_step if self.last_step is not None else 0
             remembered = [
@@ -300,7 +300,7 @@ class StickyHunter(Hunter):
                 if target in distance:
                     path = self._reconstruct_path(parent, start, target)
                     return target, path
-        return super()._choose_target(start, danger, low_health)
+        return super()._choose_target(start, danger, low_health, direction=direction)
 
 
 class BaseRusher(AEManager):
@@ -327,7 +327,7 @@ class BaseRusher(AEManager):
     def __call__(self, obs: dict) -> int:
         return self.ae(obs)
 
-    def _choose_target(self, start, danger, low_health=False):
+    def _choose_target(self, start, danger, low_health=False, direction=None):
         if self.enemy_bases and not low_health:
             distance, parent = self._dijkstra_distance_map(start, danger)
             best = None
@@ -342,7 +342,7 @@ class BaseRusher(AEManager):
                         best = cell
             if best is not None:
                 return best, self._reconstruct_path(parent, start, best)
-        return super()._choose_target(start, danger, low_health)
+        return super()._choose_target(start, danger, low_health, direction=direction)
 
     def _attack_cells_for(self, base: tuple[int, int]) -> list[tuple[int, int]]:
         """Cells adjacent to ``base`` (or the base itself) that are inside the
@@ -474,7 +474,7 @@ class SpawnRusher(BaseBomber):
         self.ITEM_VALUES = {"mission": 5.0, "resource": 2.0, "recon": 1.0}
         self._preferred_base: tuple[int, int] | None = None
 
-    def _choose_target(self, start, danger, low_health=False):
+    def _choose_target(self, start, danger, low_health=False, direction=None):
         if self.enemy_bases and not low_health:
             if self._preferred_base not in self.enemy_bases:
                 anchor = self.base_location or start
@@ -494,7 +494,7 @@ class SpawnRusher(BaseBomber):
                     best = cell
             if best is not None:
                 return best, self._reconstruct_path(parent, start, best)
-        return super()._choose_target(start, danger, low_health)
+        return super()._choose_target(start, danger, low_health, direction=direction)
 
 
 class OurBaseSieger(BaseBomber):
@@ -512,7 +512,7 @@ class OurBaseSieger(BaseBomber):
         self.CELL_THREAT_PENALTY = 2.5
         self.ITEM_VALUES = {"mission": 3.0, "resource": 1.0, "recon": 0.5}
 
-    def _choose_target(self, start, danger, low_health=False):
+    def _choose_target(self, start, danger, low_health=False, direction=None):
         if self.TEAM0_BASE in self.enemy_bases and not low_health:
             distance, parent = self._dijkstra_distance_map(start, danger)
             best = None
@@ -526,7 +526,7 @@ class OurBaseSieger(BaseBomber):
                     best = cell
             if best is not None:
                 return best, self._reconstruct_path(parent, start, best)
-        return super()._choose_target(start, danger, low_health)
+        return super()._choose_target(start, danger, low_health, direction=direction)
 
 
 class SafeBaseBomber(BaseBomber):
@@ -574,7 +574,7 @@ class CounterDefender(Defender):
         self.PATH_THREAT_PENALTY = 3.0
         self.CELL_THREAT_PENALTY = 8.0
 
-    def _choose_target(self, start, danger, low_health=False):
+    def _choose_target(self, start, danger, low_health=False, direction=None):
         if self.base_location is not None and self.enemy_agents and not low_health:
             step = self.last_step if self.last_step is not None else 0
             nearby = [
@@ -587,7 +587,7 @@ class CounterDefender(Defender):
                 distance, parent = self._bfs_distance_map(start, danger)
                 if target in distance:
                     return target, self._reconstruct_path(parent, start, target)
-        return super()._choose_target(start, danger, low_health)
+        return super()._choose_target(start, danger, low_health, direction=direction)
 
 
 class HybridCollectorAttacker(BaseRusher):

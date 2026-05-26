@@ -151,6 +151,53 @@ _DEVICE_CACHE: torch.device | None = None
 _N_FRAMES_CACHE: int | None = None
 _USE_BELIEF_CACHE: bool = False
 _DELTA_TRANSITION_COUNTS_CACHE: np.ndarray | None = None
+_HARM_AWARE_CACHE: dict[str, np.ndarray] | None = None
+
+
+def _harm_aware_from_checkpoint(ckpt: dict) -> dict[str, np.ndarray]:
+    """Pull W1.1 harm-aware matrices from a tactical checkpoint.
+
+    Pre-W1.1 checkpoints lack these keys; we return zeros so the gate sees
+    `attempted == 0` everywhere and skips the new harm-rate / net-delta
+    checks. The legacy `positive_delta_transition_counts >= min_delta_support`
+    check still applies in that fallback path.
+    """
+    shape_2d = (NUM_TACTICAL_OPTIONS, NUM_TACTICAL_OPTIONS)
+    shape_3d = (NUM_TACTICAL_OPTIONS, NUM_TACTICAL_OPTIONS, 3)
+    keys_2d_int = [
+        "attempted_transition_counts",
+        "positive_transition_counts_full",
+        "negative_transition_counts",
+    ]
+    keys_2d_float = [
+        "transition_net_delta_sum",
+        "transition_weight_sum",
+        "transition_weighted_delta_sum",
+    ]
+    keys_3d_int = ["bucket_attempted", "bucket_positive"]
+    keys_3d_float = ["bucket_net_delta_sum"]
+    out: dict[str, np.ndarray] = {}
+    for key in keys_2d_int:
+        arr = ckpt.get(key)
+        out[key] = np.asarray(arr, dtype=np.int64) if arr is not None else np.zeros(shape_2d, dtype=np.int64)
+        if out[key].shape != shape_2d:
+            out[key] = np.zeros(shape_2d, dtype=np.int64)
+    for key in keys_2d_float:
+        arr = ckpt.get(key)
+        out[key] = np.asarray(arr, dtype=np.float64) if arr is not None else np.zeros(shape_2d, dtype=np.float64)
+        if out[key].shape != shape_2d:
+            out[key] = np.zeros(shape_2d, dtype=np.float64)
+    for key in keys_3d_int:
+        arr = ckpt.get(key)
+        out[key] = np.asarray(arr, dtype=np.int64) if arr is not None else np.zeros(shape_3d, dtype=np.int64)
+        if out[key].shape != shape_3d:
+            out[key] = np.zeros(shape_3d, dtype=np.int64)
+    for key in keys_3d_float:
+        arr = ckpt.get(key)
+        out[key] = np.asarray(arr, dtype=np.float64) if arr is not None else np.zeros(shape_3d, dtype=np.float64)
+        if out[key].shape != shape_3d:
+            out[key] = np.zeros(shape_3d, dtype=np.float64)
+    return out
 
 
 def _checkpoint_action_dim(state_dict: dict[str, torch.Tensor], fallback: int) -> int:
@@ -170,7 +217,9 @@ def _warmup(model: PolicyNetwork, device: torch.device, n_frames: int, use_belie
         model(agent_view, base_view, scalars, belief_map=belief)
 
 
-def _load_model(checkpoint_path: Path) -> tuple[PolicyNetwork, torch.device, int, bool, np.ndarray]:
+def _load_model(
+    checkpoint_path: Path,
+) -> tuple[PolicyNetwork, torch.device, int, bool, np.ndarray, dict[str, np.ndarray]]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     state_dict = ckpt["model_state_dict"]
@@ -199,21 +248,25 @@ def _load_model(checkpoint_path: Path) -> tuple[PolicyNetwork, torch.device, int
     )
     if delta_transition_counts.shape != (NUM_TACTICAL_OPTIONS, NUM_TACTICAL_OPTIONS):
         delta_transition_counts = np.zeros((NUM_TACTICAL_OPTIONS, NUM_TACTICAL_OPTIONS), dtype=np.float32)
+    harm_aware = _harm_aware_from_checkpoint(ckpt)
+    attempted_total = int(harm_aware["attempted_transition_counts"].sum())
     print(
         f"AE tactical policy loaded from {checkpoint_path} "
         f"(n_frames={n_frames}, use_belief={use_belief}, "
         f"epoch={ckpt.get('epoch')}, val_loss={ckpt.get('val_loss')}, "
-        f"weighted_delta={ckpt.get('weighted_delta_mean')}, device={device})",
+        f"weighted_delta={ckpt.get('weighted_delta_mean')}, "
+        f"harm_aware_attempted_total={attempted_total}, device={device})",
         flush=True,
     )
-    return model, device, n_frames, use_belief, delta_transition_counts
+    return model, device, n_frames, use_belief, delta_transition_counts, harm_aware
 
 
 class TacticalPolicyAEManager:
     """Inference wrapper for a 12-way tactical option checkpoint."""
 
     def __init__(self):
-        global _MODEL_CACHE, _DEVICE_CACHE, _N_FRAMES_CACHE, _USE_BELIEF_CACHE, _DELTA_TRANSITION_COUNTS_CACHE
+        global _MODEL_CACHE, _DEVICE_CACHE, _N_FRAMES_CACHE, _USE_BELIEF_CACHE
+        global _DELTA_TRANSITION_COUNTS_CACHE, _HARM_AWARE_CACHE
         if _MODEL_CACHE is None:
             ckpt_path = _resolve_checkpoint_path()
             if not ckpt_path.exists():
@@ -228,12 +281,14 @@ class TacticalPolicyAEManager:
                 _N_FRAMES_CACHE,
                 _USE_BELIEF_CACHE,
                 _DELTA_TRANSITION_COUNTS_CACHE,
+                _HARM_AWARE_CACHE,
             ) = _load_model(ckpt_path)
         self.model = _MODEL_CACHE
         self.device = _DEVICE_CACHE
         self.n_frames = _N_FRAMES_CACHE or 4
         self.use_belief = _USE_BELIEF_CACHE
         self.delta_transition_counts = _DELTA_TRANSITION_COUNTS_CACHE
+        self.harm_aware = _HARM_AWARE_CACHE or {}
         self.stacker = FrameStacker(self.n_frames)
         self.belief_manager = AEManager()
         self._last_step: int | None = None
@@ -546,13 +601,80 @@ class TacticalHybridAEManager:
         self.delta_conf_threshold = _env_float("AE_TACTICAL_DELTA_CONF", 0.60 if bracket_profile else 0.80)
         self.allow_mapped_deltas = _env_bool("AE_TACTICAL_ALLOW_MAPPED_DELTAS", False)
         self.require_delta_support = _env_bool("AE_TACTICAL_REQUIRE_DELTA_SUPPORT", True)
+        # Legacy: min count of positive (delta>0, option!=prior) samples for
+        # this transition. Default preserves bracket-profile behaviour from
+        # the 26 May 400-game checkpoint deploy.
         self.min_delta_support = int(_env_float("AE_TACTICAL_MIN_DELTA_SUPPORT", 3.0 if bracket_profile else 999999.0))
+        # W1.1 harm-aware gates. Defaults are permissive (== "off") so that
+        # an unset env yields exactly the pre-W1.1 behaviour. Enable per
+        # deployment with explicit env overrides — see ae/NOTES.md for the
+        # recommended starting point (e.g. positive_rate>=0.55, mean_delta>=0).
+        self.min_positive_rate = _env_float("AE_TACTICAL_MIN_POSITIVE_RATE", 0.0)
+        self.min_net_delta = _env_float("AE_TACTICAL_MIN_NET_DELTA", float("-inf"))
+        self.min_attempted = int(_env_float("AE_TACTICAL_MIN_ATTEMPTED", 0.0))
+        # When 1, additionally check bucket_attempted / bucket_positive for
+        # the current distance bucket (near/mid/far). When 0 (default) only
+        # the global per-transition matrices are consulted.
+        self.use_distance_bucket_gate = _env_bool("AE_TACTICAL_USE_DISTANCE_BUCKET_GATE", False)
         self.allowed_delta_options = _env_option_set("AE_TACTICAL_ALLOWED_DELTA_OPTIONS")
         self.allowed_delta_transitions = _env_transition_set("AE_TACTICAL_ALLOWED_DELTA_TRANSITIONS")
         self.allowed_delta_distance_buckets = _env_string_set(
             "AE_TACTICAL_ALLOWED_DELTA_DISTANCE_BUCKETS",
             {"near", "mid", "far"},
         )
+
+    _BUCKET_INDEX = {"near": 0, "mid": 1, "far": 2}
+
+    def _delta_is_supported(
+        self,
+        prior_option: int,
+        option: int,
+        bucket: str | None,
+    ) -> tuple[bool, str]:
+        """Return (ok, reason) for the harm-aware support check.
+
+        Defaults make this function pass-through (always ok) when the env
+        thresholds are at their defaults. With harm-aware npz metadata
+        present in the checkpoint, it requires:
+          attempted >= min_attempted
+          positive / attempted >= min_positive_rate
+          mean_net_delta >= min_net_delta
+        per (prior_option, option), and optionally per distance bucket.
+        """
+        harm = self.policy.harm_aware or {}
+        attempted_mat = harm.get("attempted_transition_counts")
+        if attempted_mat is None:
+            return True, "no_harm_aware_data"
+        attempted = int(attempted_mat[prior_option, option])
+        if attempted < self.min_attempted:
+            return False, "insufficient_attempted"
+        if attempted > 0:
+            positive_mat = harm.get("positive_transition_counts_full")
+            net_delta_mat = harm.get("transition_net_delta_sum")
+            positive = int(positive_mat[prior_option, option]) if positive_mat is not None else 0
+            mean_delta = (float(net_delta_mat[prior_option, option]) / attempted) if net_delta_mat is not None else 0.0
+            pos_rate = positive / attempted
+            if pos_rate < self.min_positive_rate:
+                return False, "low_positive_rate"
+            if mean_delta < self.min_net_delta:
+                return False, "low_mean_net_delta"
+        if self.use_distance_bucket_gate and bucket is not None:
+            bucket_idx = self._BUCKET_INDEX.get(bucket)
+            if bucket_idx is not None:
+                bucket_attempted_mat = harm.get("bucket_attempted")
+                bucket_positive_mat = harm.get("bucket_positive")
+                bucket_net_delta_mat = harm.get("bucket_net_delta_sum")
+                b_att = int(bucket_attempted_mat[prior_option, option, bucket_idx]) if bucket_attempted_mat is not None else 0
+                if b_att < self.min_attempted:
+                    return False, "bucket_insufficient_attempted"
+                if b_att > 0:
+                    b_pos = int(bucket_positive_mat[prior_option, option, bucket_idx]) if bucket_positive_mat is not None else 0
+                    b_mean = (float(bucket_net_delta_mat[prior_option, option, bucket_idx]) / b_att) if bucket_net_delta_mat is not None else 0.0
+                    if (b_pos / b_att) < self.min_positive_rate:
+                        return False, "bucket_low_positive_rate"
+                    if b_mean < self.min_net_delta:
+                        return False, "bucket_low_mean_net_delta"
+        return True, "ok"
 
     def _distance_bucket(self, observation: dict) -> str | None:
         location = self.heuristic._location(observation.get("location"))
@@ -615,6 +737,18 @@ class TacticalHybridAEManager:
                     f"unsupported_delta_{tactical_option_name(prior_option)}_to_{tactical_option_name(int(option))}"
                 ] += 1
                 return heuristic_action
+
+        # W1.1 harm-aware gate. Returns ok=True when env thresholds are at
+        # defaults (no opinion) or when the checkpoint has no harm-aware
+        # metadata. With explicit thresholds + W1.1 npz data, this is what
+        # blocks transitions that worked positively often in absolute counts
+        # but had a low success rate or negative mean net delta in context.
+        ok, reason = self._delta_is_supported(prior_option, int(option), bucket)
+        if not ok:
+            self.decision_counts[
+                f"harm_aware_{reason}_{tactical_option_name(prior_option)}_to_{tactical_option_name(int(option))}"
+            ] += 1
+            return heuristic_action
 
         if self.delta_conf_threshold > 0.0:
             if probs is None:

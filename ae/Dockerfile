@@ -9,6 +9,12 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
+# Pin PYTHONHASHSEED so AEManager's hash-order-dependent code paths (set/dict
+# iteration in candidate scoring) produce deterministic decisions across cloud
+# invocations. Without this, two byte-identical submissions of the same image
+# can differ by ~0.10 in cloudsuite-equivalent score because hash order shifts
+# which equal-cost candidate wins ties.
+ENV PYTHONHASHSEED=0
 WORKDIR /workspace
 
 # Runtime manager selection (hybrid | policy | heuristic). Bake it into
@@ -70,6 +76,30 @@ ENV AE_USE_OPPONENT_MODEL=0
 #     reconstruction toward enemy territory. Optimal distances unchanged.
 ENV AE_DIJKSTRA_BOMB_COST=5.0
 ENV AE_ASTAR_TIEBREAK=0
+
+# W2.1a — M5 spawn-aware first-target table. When AE_FIRST_TARGET_TABLE=1,
+# enemy_base candidate values get an additive boost based on M5's
+# FIRST_TARGET_BY_OWN_BASE priority (3 of 6 Novice spawns; others unchanged).
+# Default OFF; set to 1 only after multi_seed_eval shows positive lift over
+# the protected heuristic-A configuration.
+ENV AE_FIRST_TARGET_TABLE=0
+ENV AE_FIRST_TARGET_BOOST=60.0
+ENV AE_FIRST_TARGET_DECAY=0.55
+
+# W2.1b — M5 enemy-bomb-only escape override. When set, if a visible enemy
+# bomb (own==False) with timer <= 2 has us in its blast, force an escape
+# action chosen by M5 scoring (leave danger first, max distance from bomb,
+# more open neighbors, fewer turns). Default OFF.
+ENV AE_ENEMY_BOMB_OVERRIDE=0
+ENV AE_ENEMY_BOMB_ESCAPE_TURN_PENALTY=0.2
+ENV AE_ENEMY_BOMB_ESCAPE_VISIT_PENALTY=0.3
+
+# W2.1c — orientation-aware A*. When set, _choose_target uses Dijkstra over
+# (x, y, facing) states with real turn cost instead of grid-only Dijkstra
+# that treats turns as free. Default OFF (grid Dijkstra). On the fixed
+# Novice map only; general-map BFS path is untouched.
+ENV AE_ORIENTATION_AWARE_PATH=0
+ENV AE_ORIENTATION_AWARE_TURN_COST=1.0
 
 # Installs your dependencies.
 RUN pip install -U pip

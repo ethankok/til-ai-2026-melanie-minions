@@ -23,8 +23,16 @@ independent of which PPO weights it wraps.
 
 from __future__ import annotations
 
-import argparse
+# Pin PYTHONHASHSEED=0 before any other import so checkpoint comparisons are
+# reproducible across runs. See sweep_heuristic_knobs.py for full rationale.
+import os
 import sys
+
+if os.environ.get("PYTHONHASHSEED") is None:
+    os.environ["PYTHONHASHSEED"] = "0"
+    os.execvp(sys.executable, [sys.executable, *sys.argv])
+
+import argparse
 from pathlib import Path
 from types import SimpleNamespace
 

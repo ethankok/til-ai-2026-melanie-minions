@@ -16,14 +16,21 @@ deltas plus rejection reasons.
 
 from __future__ import annotations
 
+# Pin PYTHONHASHSEED=0 before any other import. See sweep_heuristic_knobs.py
+# for the full rationale.
+import os
+import sys
+
+if os.environ.get("PYTHONHASHSEED") is None:
+    os.environ["PYTHONHASHSEED"] = "0"
+    os.execvp(sys.executable, [sys.executable, *sys.argv])
+
 import argparse
 import contextlib
 import io
 import json
-import os
 import random
 import statistics
-import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
