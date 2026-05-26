@@ -116,7 +116,7 @@
 <p class="meta">Team <code>melanie-minions</code> · last update 26 May 2026 (late session) · author: project transcript</p>
 
 <blockquote>
-This document is a self-contained walkthrough of <strong>everything we have done on the AE (Autonomous Escape) task</strong> for TIL-AI 2026 — what AE is, how our agent works, the strategic decisions that landed today's standings, the infrastructure we built this session, and the final operational recommendation. It's written so a teammate (or next year's team) can read it cold and pick up where we left off.
+This document is a self-contained walkthrough of <strong>everything we have done on the AE (Autonomous Exploration) task</strong> for TIL-AI 2026 — what AE is, how our agent works, the strategic decisions that landed today's standings, the infrastructure we built this session, and the final operational recommendation. It's written so a teammate (or next year's team) can read it cold and pick up where we left off.
 </blockquote>
 
 <nav class="toc">
@@ -140,7 +140,7 @@ This document is a self-contained walkthrough of <strong>everything we have done
 
 <h2 id="what-is-ae">1. What is AE?</h2>
 
-<p><strong>AE</strong> (Autonomous Escape) is one of the five competition tasks in TIL-AI 2026. It is a 6-team Bomberman-style grid environment where each team controls one agent on a 16×16 map, places bombs, collects items, and tries to maximize total reward over a fixed number of game steps. The Docker image we ship hosts an HTTP server; the official evaluator sends one observation per game tick (a JSON dict containing the agent's view, base view, scalars like <code>health</code> and <code>step</code>, plus an <code>action_mask</code>) and expects a single integer action back.</p>
+<p><strong>AE</strong> (Autonomous Exploration) is one of the five competition tasks in TIL-AI 2026. It is a 6-team Bomberman-style grid environment where each team controls one agent on a 16×16 map, places bombs, collects items, and tries to maximize total reward over a fixed number of game steps. The Docker image we ship hosts an HTTP server; the official evaluator sends one observation per game tick (a JSON dict containing the agent's view, base view, scalars like <code>health</code> and <code>step</code>, plus an <code>action_mask</code>) and expects a single integer action back.</p>
 
 <h3>Scoring</h3>
 
