@@ -272,10 +272,12 @@ the current heuristic baseline by a visible margin and does not trade away
 
 ### Semifinals tactical outcome path
 
-This is the preferred next RL route after the 8-way option PPO failed to beat
-the furnished heuristic baseline. It uses terminal score delta as the main
+This is the preferred current AE route after the 8-way option PPO failed to
+beat the furnished heuristic baseline. It uses terminal score delta as the main
 learning signal, but keeps the executor tactical enough that a learned policy
-can express anti-rush behavior.
+can express anti-rush behavior. BC here means behavior cloning: the network is
+still a supervised selector trained on outcome-weighted labels, not an online
+RL loop that directly maximizes the furnished eval.
 
 Collect full-game outcome-weighted tactical data:
 
@@ -299,13 +301,23 @@ Train the tactical selector:
 
 The runtime is conservative by default. `AE_MODE=tactical_hybrid` loads the
 policy, but learned deviations only execute when the support/confidence gates
-allow them. Set `AE_TACTICAL_PROFILE=bracket` to enable the current
-bracket-focused residual defaults (`min_delta_support=3`,
-`delta_conf=0.60`). Leave the profile unset for a safe heuristic-equivalent
-shadow run, or set explicit gates for controlled probes:
+allow them. Leave the profile unset for a safe heuristic-equivalent shadow run.
+For the current 400-game checkpoint, the best local gate found so far is
+explicitly stricter than the `bracket` profile defaults:
+
+```bash
+AE_TACTICAL_PROFILE=bracket
+AE_TACTICAL_DELTA_CONF=0.85
+AE_TACTICAL_MIN_DELTA_SUPPORT=50
+AE_TACTICAL_POLICY_CHECKPOINT=training/ae/checkpoints/tactical_policy.pt
+```
+
+Quick bracket-only probe:
 
 ```bash
 AE_TACTICAL_PROFILE=bracket \
+AE_TACTICAL_DELTA_CONF=0.85 \
+AE_TACTICAL_MIN_DELTA_SUPPORT=50 \
 AE_TACTICAL_POLICY_CHECKPOINT=training/ae/checkpoints/tactical_policy.pt \
 PYTHONHASHSEED=0 .venv/bin/python training/ae/validate_cloud_suite.py \
   --suites bracket_proxy --rounds 12 --seeds 42 137 --our tactical_hybrid
@@ -315,24 +327,62 @@ Gate it before touching deploy artifacts:
 
 ```bash
 AE_TACTICAL_PROFILE=bracket \
+AE_TACTICAL_DELTA_CONF=0.85 \
+AE_TACTICAL_MIN_DELTA_SUPPORT=50 \
 AE_TACTICAL_POLICY_CHECKPOINT=training/ae/checkpoints/tactical_policy.pt \
 PYTHONHASHSEED=0 .venv/bin/python training/ae/validate_cloud_suite.py \
   --preset furnished --rounds 12 --seeds 42 137 --our tactical_hybrid \
-  --summary-out training/ae/data/tactical_hybrid_furnished_eval.json
+  --summary-out training/ae/data/gate_sweep_c085_s050_12r_2seed.json
 ```
 
 Promotion rule for global deployment is still strict: weighted furnished mean
 must clear the heuristic baseline by a visible margin, with no
-`base_rush_exploit`/`top_seed_proxy` regression. The 25 May 120-game pilot
-proved that the model can learn a real bracket residual, but not that it is a
-global replacement:
+`base_rush_exploit`/`top_seed_proxy` regression. Current evidence:
 
-- `tactical_policy_elite120_supported.pt`, `AE_TACTICAL_PROFILE=bracket`:
-  `bracket_proxy` 4-round seed-42 mean `0.3080` versus heuristic `0.2470`.
-- Same checkpoint on furnished 4-round seed-42: weighted `0.2723` versus
-  heuristic `0.2812`, mainly because `strong_realistic` regressed.
-- Conclusion: bracket profile is an experimental semifinals lever; do not bake
-  it as the furnished/global default without a stronger multi-seed gate.
+- Heuristic baseline, furnished 12-round x seeds 42/137:
+  `training/ae/data/heuristic_furnished_12r_2seed.json`, weighted `0.2825`,
+  worst-suite mean `0.1633`.
+- 400-game checkpoint, broad `AE_TACTICAL_PROFILE=bracket` on furnished
+  4-round seed-42: weighted `0.2339`; rejected.
+- 400-game checkpoint with the explicit `0.85/50` gate above:
+  `training/ae/data/gate_sweep_c085_s050_12r_2seed.json`, weighted `0.2932`,
+  mean-of-means `0.3139`, median-of-medians `0.2880`, worst-suite mean
+  `0.2305`. Suite means: `cloudsuite=0.4233`, `pressure2=0.2305`,
+  `strong_realistic=0.2613`, `base_rush_exploit=0.2362`,
+  `bracket_proxy=0.2664`, `top_seed_proxy=0.2850`,
+  `defense_trap=0.5080`, `mixed=0.3009`.
+- Stricter `0.95/50` and hand-filtered transition/distance gates
+  (`bombonly`, `cr_bomb_guard`, `far_only`) were rejected because they either
+  lost the bracket/cloud lift or dropped below heuristic.
+
+The 800-game follow-up is useful analysis data, not the current candidate:
+
+```bash
+PYTHONHASHSEED=0 .venv/bin/python training/ae/collect_tactical_outcome.py \
+  --games 800 \
+  --suite-cycle base_rush_exploit top_seed_proxy bracket_proxy base_rush_exploit top_seed_proxy defense_trap bracket_proxy strong_realistic cloudsuite pressure2 mixed \
+  --out training/ae/data/tactical_outcome_800_more.npz \
+  2>&1 | tee training/ae/logs/tactical_outcome_collect_800_more.log
+
+.venv/bin/python training/ae/train_tactical_bc.py \
+  --data training/ae/data/tactical_outcome_800_more.npz \
+  --out training/ae/checkpoints/tactical_policy_800_more.pt \
+  --epochs 30 --num-workers 0 \
+  2>&1 | tee training/ae/logs/tactical_bc_800_more_train.log
+```
+
+The 800-game run collected `172,000` samples and saved best checkpoint around
+epoch 5. Under the old `0.85/50` gate it scored furnished 12-round x 2-seed
+weighted `0.2593`, with `base_rush_exploit=0.1246`,
+`bracket_proxy=0.1887`, and `top_seed_proxy=0.1180`. Raising support to `100`
+on a 4-round x 2-seed screen restored the catastrophic suites
+(`pressure2=0.2305`, `top_seed_proxy=0.2850`) and reached weighted `0.2798`,
+but still did not beat the 400-game candidate. Diagnosis: current
+`AE_TACTICAL_MIN_DELTA_SUPPORT` is a raw positive-support count, so doubling
+data changes the meaning of the gate. The next implementation should record
+attempted transition counts and gate on positive rate/net delta/harm rate,
+possibly bucketed by distance or suite-like pressure features, before training
+more BC.
 
 ### 19 May immediate handoff: speedcheck before more AE code
 

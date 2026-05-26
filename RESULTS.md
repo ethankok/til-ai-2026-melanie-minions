@@ -1,7 +1,23 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 25 May 2026 (semifinals local AE update; qualifier final status preserved) — **Qualifier closed. AE final: protected leaderboard max stays `ppo-full-rl-v1-hybrid 0.638 / 0.847` (heuristic via silent fallback). Last-session hail-mary restored `ae_manager.py` + `Dockerfile` to commit `747b1e1` (byte-identical to the 0.638 build on the served path) and burned 6 cloud submits: 5 vanilla farming + 1 A* tiebreak experiment (`AE_ASTAR_TIEBREAK=1`, plumbed in commit `afd03fd` alongside `AE_DIJKSTRA_BOMB_COST`). Scores 0.553 / 0.608 / 0.591 / 0.521 / **0.612** (`A-star-base`) / 0.573 (`a-star-v2`, A* tiebreak on). No new high. Combined 14-submit farming of byte-equivalent vanilla code over the past 36h confirms 0.638 is right-tail variance: mean ≈ 0.572, max 0.612. A* tiebreak (n=1) inside baseline σ — null result, can't reject either direction. Best intentional heuristic tag remains `heuristic-A-vf1` at `0.613 / 0.845`. ASR final: `nemo-ft-v1` is the new high score at `0.969 / 0.946` (blended `0.96325`). NLP `v28-optimized-bm25` is the new overall blended & accuracy high at `0.98425` (Score: `0.984`, Speed: `0.985`). CV `yolo11l-1280-alldata-final-v2` at imgsz=1280 reached local validation mAP 0.988. Noise `level10-detector-stress` is the current Semifinals/Finals disruption tag at `1.000 / 0.947`.**
+Last updated: 26 May 2026 (semifinals AE local training update; qualifier final
+status preserved) — **Qualifier closed. AE official max remains
+`ppo-full-rl-v1-hybrid 0.638 / 0.847` via heuristic fallback, and best
+intentional heuristic remains `heuristic-A-vf1 0.613 / 0.845`. For semifinals
+work, the current local tactical candidate is the 400-game checkpoint
+`training/ae/checkpoints/tactical_policy.pt` with explicit conservative gates
+`AE_TACTICAL_PROFILE=bracket`, `AE_TACTICAL_DELTA_CONF=0.85`, and
+`AE_TACTICAL_MIN_DELTA_SUPPORT=50`: furnished 12-round x seeds 42/137 weighted
+mean `0.2932` versus heuristic `0.2825`, with worst-suite mean `0.2305` versus
+heuristic `0.1633`. The larger 800-game checkpoint is not promotable yet:
+`tactical_policy_800_more.pt` at the same gate scored only `0.2593` weighted
+because `base_rush_exploit`, `bracket_proxy`, and `top_seed_proxy` collapsed;
+raising raw support to 100 rescued the worst failures but only reached `0.2798`.
+Next AE work should be harm-aware tactical gating, not blind larger BC. ASR
+final: `nemo-ft-v1` at `0.969 / 0.946`; NLP: `v28-optimized-bm25` blended
+`0.98425`; CV: `yolo11l-1280-alldata-final-v2` local mAP `0.988`; Noise:
+`level10-detector-stress` at `1.000 / 0.947`.**
 
 ## Final Qualifier Status
 
@@ -17,14 +33,38 @@ history stays in this file.
 | CV | `yolo11l-1280-alldata-final-v2` | pending | pending | All-data 1280px YOLO11l candidate. Fine-tuned on all data for 36 epochs; local validation mAP is 0.988, but official score was still pending in the deadline notes. | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `level10-detector-stress` | 1.000 | 0.947 | Shipped for Semifinals/Finals CV disruption. No direct Qualifier reward, but passed fairness locally and scored 1.000 cloud. | [noise/NOTES.md](noise/NOTES.md) |
 
-AE 25 May semifinals local update: added the opt-in `tactical_hybrid` path for
-outcome-weighted 12-way tactical option learning. The 120-game pilot
-(`tactical_policy_elite120_supported.pt`, `AE_TACTICAL_PROFILE=bracket`) showed
-real bracket-proxy learning: 4-round seed-42 `bracket_proxy` rose to `0.3080`
-versus heuristic `0.2470`. It is **not** a global replacement: the same
-checkpoint scored furnished weighted `0.2723` versus heuristic `0.2812`, mostly
-from a `strong_realistic` regression. Runtime default is safe shadow mode unless
-`AE_TACTICAL_PROFILE=bracket` or explicit tactical gates are set. See
+AE 26 May semifinals local update: after landing 15th on the Novice path
+leaderboard, expected semifinals Match 1 is seeds 3/8/9/14/15/20, so AE is the
+main remaining lever to win the match outright. `tactical_hybrid` is the serious
+AE semifinals path, but only behind explicit gates. Broad bracket profile was a
+trap: the 400-game checkpoint with plain `AE_TACTICAL_PROFILE=bracket` scored
+only `0.2339` weighted on furnished 4-round seed-42. Gate sweeping found one
+local candidate worth preserving:
+
+```bash
+AE_TACTICAL_PROFILE=bracket
+AE_TACTICAL_DELTA_CONF=0.85
+AE_TACTICAL_MIN_DELTA_SUPPORT=50
+AE_TACTICAL_POLICY_CHECKPOINT=training/ae/checkpoints/tactical_policy.pt
+```
+
+That setup scored furnished 12-round x seeds 42/137 weighted `0.2932`, beating
+the heuristic baseline `0.2825` and lifting the worst suite from `0.1633` to
+`0.2305`. The lift is concentrated in `base_rush_exploit` (`0.2362` versus
+`0.1633`), `bracket_proxy` (`0.2664` versus `0.2480`), and `cloudsuite`
+(`0.4233` versus `0.4140`), while `strong_realistic` and `mixed` regress.
+Stricter confidence/support and hand-filtered transition gates were rejected.
+
+The later 800-game tactical dataset did not produce a better checkpoint.
+`tactical_policy_800_more.pt` fits more labels, but under the same `0.85/50`
+gate it scored furnished weighted `0.2593` and collapsed the match-critical
+base/top/bracket suites. Raising raw support to `100` restored pressure/top
+sanity on a quick 4-round x 2-seed screen (`0.2798` weighted), but still did
+not beat the old 400-game checkpoint. Diagnosis: BC here means behavior
+cloning, so it imitates outcome-weighted labels; it does not directly optimize
+eval score. The gate currently counts positive support but not harm rate, so
+more data can make bad transitions look "supported." Next step is a harm-aware
+gate using attempted transition counts, positive rate, and net delta. See
 [ae/NOTES.md](ae/NOTES.md) and [training/ae/RUNBOOK.md](training/ae/RUNBOOK.md).
 
 AE 24 May session — full submission log (17 new submits, best intentional heuristic tag found):

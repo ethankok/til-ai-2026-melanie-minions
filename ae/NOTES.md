@@ -1,6 +1,29 @@
 # AE — notes & history
 
-Last updated: 25 May 2026 (deadline) — **AE FINAL. Qualifier deadline reached. Protected leaderboard max stays `ppo-full-rl-v1-hybrid 0.638/0.847` (forensic: heuristic via silent fallback). Final session burned 6 more cloud submits across (a) restoring `ae_manager.py` + `Dockerfile` to commit `747b1e1` (the fixed-map-v3 source state that produced the original 0.638 draw — byte-for-byte equivalent on the served path, verified via `git diff 747b1e1 c66a4b7 -- ae/src/`: only `hybrid_manager.py` differs and it's not in the served call path because the policy-load exception catches before HybridAEManager instantiates); (b) farming the restored build for 5 submits (`fixed-map-v5-restored-vf1, vf2, vf5, vf6`: 0.553, 0.608, 0.591, 0.521; plus `A-star-base`: **0.612**); (c) shipping a hail-mary A* tiebreak (`AE_ASTAR_TIEBREAK=1` adds Manhattan-to-enemy-base-centroid as secondary heap key in `_dijkstra_distance_map`) + a plumbed `AE_DIJKSTRA_BOMB_COST` env var — `a-star-v2` (Config A: tiebreak on, bomb cost 5.0) scored 0.573, indistinguishable from baseline distribution. The 6-submit batch confirms the prior conclusion: vanilla heuristic on the 0.638-equivalent build has mean ~0.577 (n=6 in this batch: 0.553, 0.608, 0.591, 0.521, 0.612, 0.573) and the 0.638 / 0.612 highs are right-tail draws, not reproducible expectation. A* tiebreak had no measurable effect on cloud score (n=1, point-estimate inside baseline σ). New scaffolding in tree (default OFF): `AE_DIJKSTRA_BOMB_COST` (commit `afd03fd`), `AE_ASTAR_TIEBREAK` (commit `afd03fd`). AE direction is closed for Qualifiers; the protected 0.638 stands on the leaderboard.**
+Last updated: 26 May 2026 (semifinals local tactical learning) — **Qualifier
+AE remains closed with protected max `ppo-full-rl-v1-hybrid 0.638/0.847`
+(heuristic fallback) and best intentional heuristic `heuristic-A-vf1
+0.613/0.845`. Semifinals work moved to the opt-in `tactical_hybrid` path. The
+current local candidate is the 400-game outcome-weighted BC checkpoint
+`training/ae/checkpoints/tactical_policy.pt` gated by
+`AE_TACTICAL_PROFILE=bracket`, `AE_TACTICAL_DELTA_CONF=0.85`, and
+`AE_TACTICAL_MIN_DELTA_SUPPORT=50`: furnished 12-round x seeds 42/137 weighted
+mean `0.2932` versus heuristic `0.2825`, and worst suite `0.2305` versus
+heuristic `0.1633`. The larger 800-game checkpoint
+`tactical_policy_800_more.pt` is not promotable: same gate scored `0.2593`
+weighted after collapsing base/top/bracket suites; support `100` rescued the
+collapse on a quick screen but only reached `0.2798`. Next AE implementation
+should add harm-aware tactical gates based on attempted transitions,
+positive-rate, and net delta before collecting more BC.**
+
+Prior update: 25 May 2026 (deadline) — **AE FINAL. Qualifier deadline reached.
+Protected leaderboard max stays `ppo-full-rl-v1-hybrid 0.638/0.847`
+(forensic: heuristic via silent fallback). The final session restored
+`ae_manager.py` + `Dockerfile` to commit `747b1e1`, farmed byte-equivalent
+vanilla behavior, shipped a hail-mary `AE_ASTAR_TIEBREAK=1` test, and found no
+new high. The 0.638 / 0.612 highs remain right-tail draws. A* tiebreak had no
+measurable effect on cloud score. Default-off scaffolding retained in tree:
+`AE_DIJKSTRA_BOMB_COST` and `AE_ASTAR_TIEBREAK` (commit `afd03fd`).**
 
 Prior update: 24 May 2026 (late evening) — **Spent the rest of the evening burning ~15 more AE cloud submissions on a hybrid-PPO retry inspired by a teammate's friend reporting ~0.7 cloud with "hybrid PPO", followed by variance-farming the protected heuristic configs. Nothing beat the existing leaderboard. Final state: protected max stays `ppo-full-rl-v1-hybrid 0.638/0.847` (heuristic fallback) and best intentional heuristic stays `heuristic-A-vf1 0.613/0.845`. Three concrete additions this session beyond the morning's calibration finding: (a) trained `hybrid-friend-v1` PPO from BC warm-start with `PYTHONHASHSEED=0` pinned; local update-60 weighted eval 0.4502 beat the `ppo-full-rl-v1.pt` reference (0.4403), notably +0.075 on cloudsuite — but cloud was 3-submit mean `0.433` (max 0.471), matching every prior PPO ceiling. (b) Added `AE_TACTICAL_CLUSTER_BOMB` flag (opt-in, default OFF) lifted from M5 docs — local never fires, cloud 3-submit mean `0.566` is statistically indistinguishable from baseline heuristic-A. (c) Discovered via M5 docs that the friend's "hybrid PPO 0.7" is actually a scripted-first cascade (`ScriptedBaseAttackPolicy` → BC fallback → heuristic), NOT PPO-as-primary; not portable to our codebase in the time remaining. Variance-farming heuristic-A (n=5, mean 0.575, σ 0.024, max 0.610) and vanilla-baseline-equivalent `fixed-map-v3-farm` (n=3 partial: 0.549, 0.560, 0.598) confirmed cloud variance is real but tighter than the across-config pooled σ suggests — single-config farming has <10% chance of drawing 0.638+ per realistic sample budget. See "24 May 2026 (late evening) — hybrid PPO retry + cluster bomb + variance farming" below for the per-submit log and analysis.**
 
@@ -9,6 +32,113 @@ Prior update: 24 May 2026 (evening) — **Local→cloud calibration attempt foun
 Prior update: 24 May 2026 (afternoon) — **AE remains parked. Today's `AE_USE_MEMORIZED_ROUTE` cheese (precomputed greedy item+base route per fixed-Novice spawn) returned 4 cloud samples vs 5 fresh baseline samples and lost by ~0.022 on mean (cheese mean `0.535`, baseline mean `0.557`). Two updates from this round of data: (1) the cheese hypothesis is falsified — commitment to a static route loses to per-tick re-evaluation in the cloud opponent distribution, same shape failure as opening-book / rusher / ally-bomb-safe; (2) the `heuristic-A-vf1` `0.613` was upper-tail variance, not a stable ceiling — five fresh baseline samples max at `0.592` with mean `0.557` and σ ≈ `0.022`. The `0.638` protected leaderboard tag is still on the board but neither it nor the `0.613` is reproducible in expectation. Do not iterate further cheese variants; keep heuristic defaults protected.**
 
 Prior update: 24 May 2026 — AE is parked after the late local sweeps. The protected leaderboard max remains `ppo-full-rl-v1-hybrid` at `0.638 / 0.847`, but that tag was serving pure heuristic through silent fallback. The best intentional heuristic cloud tag is `heuristic-A-vf1` at `0.613 / 0.845` (originally claimed mean `0.599` over 3 submits — see afternoon revision above). Five structural experiments, broad/focused/bridge heuristic knob sweeps, and the controlled option-v2 planner sweep all failed to produce a candidate worth baking. Keep the legacy heuristic path protected; future AE work should be a narrow legacy-manager patch with a paired cloudsuite/pressure2 gate, not another broad sweep.
+
+## 26 May 2026 — semifinals tactical BC and gate sweep
+
+Context: we landed 15th on the Novice path leaderboard, so the expected
+semifinals Match 1 bracket is seeds 3/8/9/14/15/20. AE is the likeliest place
+to gain enough separation to win the match outright. PPO still has the same
+transfer problem: local reward can improve while hidden eval does not, because
+the learned policy optimizes the local opponent/shape distribution. We switched
+to a higher-level 12-way `tactical_hybrid` selector that leaves movement and
+bomb safety to the existing planner while learning when to choose macros like
+`counter_rush`, `guard_base_lane`, `intercept_base_threat`,
+`bomb_base_threat`, and `stall_when_winning`.
+
+Terminology: BC means behavior cloning. The tactical trainer is supervised,
+not online PPO; it fits outcome-weighted labels from
+`collect_tactical_outcome.py`. Higher validation accuracy/lower validation
+loss means better label fit, not guaranteed furnished-eval improvement.
+
+### 400-game checkpoint and current gate
+
+Initial 400-game collection:
+
+```bash
+PYTHONHASHSEED=0 .venv/bin/python training/ae/collect_tactical_outcome.py \
+  --games 400 \
+  --suite-cycle base_rush_exploit top_seed_proxy defense_trap bracket_proxy base_rush_exploit top_seed_proxy strong_realistic cloudsuite pressure2 \
+  --out training/ae/data/tactical_outcome_400.npz
+
+.venv/bin/python training/ae/train_tactical_bc.py \
+  --data training/ae/data/tactical_outcome_400.npz \
+  --out training/ae/checkpoints/tactical_policy.pt \
+  --epochs 20 --num-workers 0
+```
+
+The broad `AE_TACTICAL_PROFILE=bracket` setting learned real aggressive
+patterns but was not safe globally: furnished 4-round seed-42 weighted was
+`0.2339`, dragged down by `pressure2`/`strong_realistic`/`base_rush_exploit`.
+Gate sweep then found the current local candidate:
+
+```bash
+AE_TACTICAL_PROFILE=bracket
+AE_TACTICAL_DELTA_CONF=0.85
+AE_TACTICAL_MIN_DELTA_SUPPORT=50
+AE_TACTICAL_POLICY_CHECKPOINT=training/ae/checkpoints/tactical_policy.pt
+```
+
+Furnished 12-round x seeds 42/137 result:
+
+| Setup | Weighted | Mean of means | Median of medians | Worst suite |
+|---|---:|---:|---:|---:|
+| Heuristic baseline | 0.2825 | 0.3209 | 0.2890 | 0.1633 |
+| `tactical_policy.pt`, `0.85/50` gate | **0.2932** | 0.3139 | 0.2880 | **0.2305** |
+
+Suite deltas versus heuristic:
+
+| Suite | Heuristic | Tactical gated | Read |
+|---|---:|---:|---|
+| `cloudsuite` | 0.4140 | **0.4233** | small lift |
+| `pressure2` | 0.2305 | 0.2305 | neutral |
+| `strong_realistic` | **0.2861** | 0.2613 | regression |
+| `base_rush_exploit` | 0.1633 | **0.2362** | major bracket lift |
+| `bracket_proxy` | 0.2480 | **0.2664** | useful lift |
+| `top_seed_proxy` | 0.2850 | 0.2850 | neutral |
+| `defense_trap` | 0.5080 | 0.5080 | neutral |
+| `mixed` | **0.3326** | 0.3009 | regression |
+
+Rejected gates:
+- `0.95/50` kept safety but lost too much of the bracket/cloud lift.
+- Hand-filtered transition/distance gates (`bombonly`, `cr_bomb_guard`,
+  `far_only`) fell below the candidate and/or below heuristic.
+
+### 800-game follow-up and failure mode
+
+We collected a larger 800-game tactical dataset with heavier
+`base_rush_exploit`, `top_seed_proxy`, and `bracket_proxy` representation:
+
+```bash
+PYTHONHASHSEED=0 .venv/bin/python training/ae/collect_tactical_outcome.py \
+  --games 800 \
+  --suite-cycle base_rush_exploit top_seed_proxy bracket_proxy base_rush_exploit top_seed_proxy defense_trap bracket_proxy strong_realistic cloudsuite pressure2 mixed \
+  --out training/ae/data/tactical_outcome_800_more.npz
+```
+
+This produced `172,000` tactical samples. Training
+`tactical_policy_800_more.pt` for 30 epochs selected an early checkpoint around
+epoch 5, while later epochs overfit labels (`val_loss` climbed sharply even as
+train weighted accuracy rose).
+
+The bigger checkpoint is **not promotable**:
+
+| Checkpoint / gate | Eval | Weighted | Worst suite | Failure |
+|---|---|---:|---:|---|
+| `tactical_policy_800_more.pt`, `0.85/50` | 12-round x seeds 42/137 | 0.2593 | 0.1180 | `base_rush_exploit=0.1246`, `bracket_proxy=0.1887`, `top_seed_proxy=0.1180` |
+| `tactical_policy_800_more.pt`, `0.85/100` | 4-round x seeds 42/137 screen | 0.2798 | 0.1665 | pressure/top restored, still below old 400-game candidate |
+
+Diagnosis: the current gate checks positive support count, not harm rate. When
+the dataset doubled, raw `min_delta_support=50` became looser. More BC data
+therefore made some harmful transitions easier to admit. The model did learn
+something real (`cloudsuite=0.4323`, `strong_realistic=0.3263` under `0.85/50`),
+but it traded away the match-critical base/top/bracket suites.
+
+Next AE implementation should add harm-aware gate metadata: attempted
+transition counts, positive transition counts, positive rate, weighted net
+delta, and perhaps distance/suite-like pressure buckets. Do that before
+collecting more data or training another checkpoint. Current best local
+semifinals candidate remains `tactical_policy.pt` with the explicit `0.85/50`
+gate.
 
 ## 25 May 2026 (deadline-eve hail-mary) — restored 747b1e1 + A* tiebreak + bomb-cost env var (no new high)
 
@@ -1320,7 +1450,7 @@ Speed is within striking distance with uvicorn/Docker tuning. **Score is the har
 
 **Tier 3 hierarchical goal selector** is now implemented as the opt-in `option_hybrid` path (25 May 2026). It operates on coarser strategy labels (`escape`, `rush_base`, `base_bomb`, `defend_base`, `collect_mission`, `collect_resource`, `hunt_enemy`, `explore`) and leaves movement/bomb safety to planner variants. The training path is `collect_option_bc.py` -> `train_option_bc.py` -> `train_option_ppo.py`; only consider it for submission if it clears the furnished/bracket eval gate in `training/ae/RUNBOOK.md`. The 25 May PPO revision gives `escape` and `defend_base` dedicated executor behavior, adds base-health shaping plus exploration temperature/epsilon, and gates saves on the furnished proxy instead of a narrow local mean.
 
-**Tier 4 tactical outcome selector** is now available as the opt-in `tactical_hybrid` path (25 May 2026). It replaces the broad 8-way option labels with 12 tactical macros (`intercept_base_threat`, `guard_base_lane`, `bomb_base_threat`, `counter_rush`, etc.) and trains from full-game score delta versus a same-seed heuristic baseline via `collect_tactical_outcome.py` -> `train_tactical_bc.py`. The runtime now supports support/confidence/transition/distance gates and defaults to safe shadow mode unless `AE_TACTICAL_PROFILE=bracket` or explicit gates are set. The 120-game tactical-outcome pilot showed real bracket learning (`bracket_proxy` 4-round seed-42 `0.3080` vs heuristic `0.2470`) but did not clear the furnished/global gate (`0.2723` vs heuristic `0.2812`, with `strong_realistic` regression). Treat bracket profile as an experimental semifinals lever, not a global deployment replacement yet.
+**Tier 4 tactical outcome selector** is now available as the opt-in `tactical_hybrid` path (25 May 2026; updated 26 May). It replaces the broad 8-way option labels with 12 tactical macros (`intercept_base_threat`, `guard_base_lane`, `bomb_base_threat`, `counter_rush`, etc.) and trains from full-game score delta versus a same-seed heuristic baseline via `collect_tactical_outcome.py` -> `train_tactical_bc.py`. The runtime supports support/confidence/transition/distance gates and defaults to safe shadow mode unless `AE_TACTICAL_PROFILE=bracket` or explicit gates are set. Current best local candidate is the 400-game `tactical_policy.pt` with `AE_TACTICAL_DELTA_CONF=0.85` and `AE_TACTICAL_MIN_DELTA_SUPPORT=50`: furnished 12-round x seeds 42/137 weighted `0.2932` versus heuristic `0.2825`, worst suite `0.2305` versus heuristic `0.1633`. The 800-game checkpoint overfit/over-admitted harmful transitions under the same raw-support gate (`0.2593` weighted; base/top/bracket collapse), and support `100` only recovered to `0.2798` on a short screen. Next work should be harm-aware gating, not more blind BC.
 
 What to avoid (lessons learned):
 - Bigger BC networks with rich state inputs against random opponents (overfits transfer).
