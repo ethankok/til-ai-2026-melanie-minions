@@ -1,8 +1,11 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 26 May 2026 (methodology + calibration session; semifinals AE
-candidate revised to combo `C + bomb=7.0`) — **Qualifier closed.
+Last updated: 27 May 2026 (CV final scores in: blended high is
+`yolo11l-1024-alldata-final-v1-img1280` = `0.671 / 0.950` blended `0.7410`;
+v3 took the raw-acc high `0.672 / 0.940` but blended `0.7390` — TTA on
+YOLO11l cost more speed than it bought accuracy. Semifinals prep window
+runs through 2026-06-10) — **Qualifier closed.
 AE official max remains
 `ppo-full-rl-v1-hybrid 0.638 / 0.847` via heuristic fallback, and best
 intentional heuristic remains `heuristic-A-vf1 0.613 / 0.845`. For semifinals
@@ -20,8 +23,11 @@ reviewed: they describe generic CNN+MLP PPO, but the actionable clue is a
 BFS/rule-based fallback. Next AE work should be harm-aware tactical gating and
 planner-first arbitration, not blind larger BC or generic PPO. ASR final:
 `nemo-ft-v1` at `0.969 / 0.946`; NLP: `v28-optimized-bm25` blended `0.98425`;
-CV: `yolo11l-1280-alldata-final-v2` local mAP `0.988`; Noise:
-`level10-detector-stress` at `1.000 / 0.947`.**
+CV: `yolo11l-1024-alldata-final-v1-img1280` at `0.671 / 0.950` (final
+Qualifier CV high, +0.031 over plusval-v1 — v1 weights served at
+`CV_IMGSZ=1280`, the upscale-at-inference lever); Noise:
+`level10-detector-stress` at `1.000 / 0.947`. **Semifinals prep window:
+through 2026-06-10.**
 
 ## Final Qualifier Status
 
@@ -34,7 +40,7 @@ history stays in this file.
 | ASR | `nemo-ft-v1` | 0.969 | 0.946 | Final high score. Fine-tuned Parakeet-TDT-0.6B-v2 model (step 713, val WER 0.0856) built as `nemo-ft-v1`. Submitted 24 May 23:49 SGT with 0/400 errors. Blended score `0.96325`. | [asr/NOTES.md](asr/NOTES.md) |
 | AE | `ppo-full-rl-v1-hybrid` / `heuristic-A-vf1` | 0.638 max; 0.613 explicit heuristic | 0.847 max; 0.845 explicit heuristic | Parked. Protected leaderboard max remains `ppo-full-rl-v1-hybrid`, but forensics showed it served heuristic fallback rather than PPO. Best intentional heuristic tag is `heuristic-A-vf1`; final farming did not reproduce the 0.638 right-tail draw. | [ae/NOTES.md](ae/NOTES.md) |
 | NLP | `v28-optimized-bm25` | 0.984 | 0.985 | Final blended and accuracy high. Tuned document-level plus passage-level BM25 bypasses neural models for high speed and reached blended `0.98425`. | [nlp/NOTES.md](nlp/NOTES.md) |
-| CV | `yolo11l-1280-alldata-final-v2` | pending | pending | All-data 1280px YOLO11l candidate. Fine-tuned on all data for 36 epochs; local validation mAP is 0.988, but official score was still pending in the deadline notes. | [cv/NOTES.md](cv/NOTES.md) |
+| CV | `yolo11l-1024-alldata-final-v1-img1280` | 0.671 | 0.950 | Final Qualifier CV high. v1 weights (full-dataset YOLO11l trained at 1024px) served at `CV_IMGSZ=1280`. +0.031 over `plusval-v1` (0.640). Confirmed 27 May; v2-weights and TTA-stacked follow-ups did not beat it. | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `level10-detector-stress` | 1.000 | 0.947 | Shipped for Semifinals/Finals CV disruption. No direct Qualifier reward, but passed fairness locally and scored 1.000 cloud. | [noise/NOTES.md](noise/NOTES.md) |
 
 AE 26 May late-session (methodology + calibration update): nine independent
@@ -460,8 +466,10 @@ ASR (faster blended-tie fallback) melanie-minions-asr nemo-zs-v6 24/05/2026 17:3
 ASR (prior blended & acc high) melanie-minions-asr nemo-zs-v5 23/05/2026 03:38:55 0 / 400 0.966 0.944  ← Prior blended & accuracy high (0.9605); Parakeet-TDT-v2 + slang prompter fallback wordlist extraction fix + space-eating bugfix + Zonnon/Caulfield rules, refined v5 proper nouns (Canian, Hegemony, Sharpsea, Nyari, Dreamer, Fullwalker, Edgedancer, Floodwall, TEC, CYPHER, Bloc), and context-specific Phi currency rules.
 ASR (prior blended & acc high) melanie-minions-asr nemo-zs-v4 23/05/2026 02:37:18 0 / 400 0.962 0.942  ← Prior blended & acc high (0.957); Parakeet-TDT-v2 + slang prompter fallback wordlist extraction fix + space-eating bugfix + Zonnon/Caulfield rules.
 ASR (prior)              melanie-minions-asr nemo-zs-v3 (22/05) 22/05/2026 21:46:36 0 / 400 0.960 0.945  ← Prior blended high (0.95625); Parakeet-TDT-v2 + initial phonetic post-corrections.
-CV (all-data 1280px) melanie-minions-cv yolo11l-1280-alldata-final-v2 23/05/2026 20:55:00 0 / 500 [pending] [pending]  ← Fine-tuned YOLO11l on all data natively at imgsz=1280, 36 epochs. Served at imgsz=1280. Local validation mAP: 0.988 (small AP: 0.793, medium: 0.974, large: 0.997).
-CV (current high) melanie-minions-cv yolo11l-896-plusval-v1 22/05/2026 0 / 500 0.640 0.954  ← NEW CV HIGH. YOLO11l trained with the plusval recipe (folds old val split back into training, keeps hard test split for sanity; corrects ship-class imbalance in old train). Served at imgsz=896. Backbone family change off the at-ceiling v8s/v11m lineage was the lever. Next staged build: `yolo11l-1024-alldata-final-v1` (all-data fine-tune at 1024px, 70 epochs, local val mAP50-95 ~0.985); `cv/Dockerfile` already at `CV_IMGSZ=1024` for it.
+CV (FINAL BLENDED HIGH) melanie-minions-cv yolo11l-1024-alldata-final-v1-img1280 22/05/2026 22:36:21 0 / 500 0.671 0.950  ← FINAL QUALIFIER CV HIGH BY BLENDED SCORE (0.7410). v1 weights (YOLO11l trained on the all-data fine-tune at imgsz=1024, 70 epochs, local val mAP50-95 ~0.985) served at `CV_IMGSZ=1280`. Upscale-at-inference on YOLO11l was the lever (mirrors the v8s tier1 train-768/serve-896 trick). +0.031 raw acc over plusval-v1 at essentially flat speed. `v3` later took the raw-acc high by +0.001 but lost blended by -0.002.
+CV (raw-acc high but blended LOSS) melanie-minions-cv yolo11-optimized-v3 24/05/2026 20:43:30 0 / 500 0.672 0.940  ← Rebuild of v2 weights at native imgsz=1280 + `CV_AUGMENT=1` (TTA) + `CV_CONF=0.20`. Raw acc `0.672` (+0.001 vs v1-img1280) but speed dropped to `0.940` (-0.010); blended `0.7390` < v1-img1280's `0.7410`. **TTA on YOLO11l cloud distribution is dead** — confirmed third negative TTA-on-bigger-model result (matches v11m@1280+TTA, augc1 augmentation training).
+CV (v2 weights, regressed) melanie-minions-cv yolo11l-1280-alldata-final-v2 23/05/2026 20:56:08 0 / 500 0.654 0.950  ← Fine-tuned YOLO11l on all data natively at imgsz=1280, 36 epochs (local val mAP 0.988, small AP 0.793 / medium 0.974 / large 0.997). Accidentally served at `CV_IMGSZ=1024` (Dockerfile bumped after this submit). Raw acc `0.654` regressed -0.017 vs v1-img1280 — bigger-trained model + matched-imgsz lost to smaller-trained + upscale-at-inference, same pattern v8s tier1 / v11m@1024 showed in mid-May.
+CV (prior high) melanie-minions-cv yolo11l-896-plusval-v1 22/05/2026 0 / 500 0.640 0.954  ← Prior CV high (since superseded by v1-img1280). YOLO11l trained with the plusval recipe (folds old val split back into training, keeps hard test split for sanity; corrects ship-class imbalance in old train). Served at imgsz=896. Backbone family change off the at-ceiling v8s/v11m lineage was the lever.
 CV (prior high) melanie-minions-cv       ry-v2 19/05/2026 18:37:07 0 / 500 0.608 0.961  ← Prior CV high. Same weights as `ruiyang-v1`; serving row `conf=0.15 iou=0.55 imgsz=896 aug=0 cross_nms=0.97`. Local hard held-out 0.9234; til test 0.9076.
 CV (prior) melanie-minions-cv ruiyang-v1 19/05/2026 13:15:19 0 / 500 0.588 0.955  ← First 19 May unpark; local hard held-out 0.9125 with real-score HTTP eval.
 CV (regressed) melanie-minions-cv ry_v3_adaptive 19/05/2026 22:08:35 0 / 500 0.571 0.958  <- Low-conf + adaptive TTA rescue overfit saved JSON; til test fell to 0.8513. Do not ship.

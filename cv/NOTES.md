@@ -1,5 +1,79 @@
 # CV — notes & history
 
+## 27 May 2026 — Semifinals CV plan: noise-robustness against opponent perturbations
+
+**Working horizon: 2026-06-10.** In Semis/Finals an opponent may apply their
+own noise model to our CV input image before our CV model sees it, constrained
+by the same fairness gate as our `level10-detector-stress` (SSIM floor + RMSE
+L2 ≤ 50). Our `v1-img1280` was trained and scored on clean images only;
+its 0.671 raw acc is an upper bound and the under-attack number is unknown.
+
+**Verify first:** read the Wiki spec at
+<https://github.com/til-ai/til-26/wiki/Challenge-specifications> for the
+exact Finals/Semis mechanic before starting work. Below plan assumes the
+symmetric "opponents noise our CV input within the fairness gate" mechanic
+described in [../noise/README.md](../noise/README.md).
+
+**Plan (cheapest → strongest):**
+
+1. **Input purification stack in [src/cv_manager.py](src/cv_manager.py)
+   behind `CV_PURIFY=1`** — JPEG re-encode at q=75 (Dziugaite/Das), random
+   resize-and-pad in `[1200, 1280]` (Xie 2018), light Gaussian blur σ≈0.5.
+   Adversarial patterns are high-frequency; quantization + smoothing wipe
+   most of them. Compute cost is negligible vs YOLO11l inference.
+2. **Adversarial fine-tune of v1 weights.** Generate ~5k images noised via
+   our own `level10-detector-stress` (or PGD against a YOLO surrogate),
+   fine-tune v1 for 5-10 epochs on a 50/50 clean+noised mix. ~3-4h T4.
+   Highest-EV single experiment; doesn't change inference cost. Must
+   protect clean accuracy — gate against a clean held-out before promotion.
+3. **WBF ensemble v1-img1280 + plusval-v1.** Different training
+   distributions → different adversarial failure modes. Cost ~2× latency
+   (speed drops ~0.85). Need ≥+0.025 cloud acc to break even on blended.
+4. **Re-test TTA under noise.** Qualifier-era finding (TTA dead on YOLO11l)
+   may not hold against pixel-perfect attacks since TTA averages over
+   transforms. Cheap local re-check before dismissing.
+
+**Skip** (cited often, poor cost/benefit at our scale): TV minimization,
+denoising autoencoders, feature squeezing (dominated by JPEG re-encode),
+randomized smoothing (latency-prohibitive).
+
+**Speed math reminder:** v1-img1280 currently 0.950 speed → blended 0.7410.
+Spending speed → break-even rule is `Δacc ≥ Δspeed / 3` (since 0.75·acc /
+0.25·speed). Don't stack defenses blindly; gate each on cloud blended.
+
+**Important caveats:**
+- Our `level10` is *our* attack. Opponents will have different ones; gains
+  against `level10` may not fully transfer.
+- AE has more leaderboard headroom (~0.15 vs CV's ~0.05). If Semis time is
+  scarce, AE wins the marginal-hour ROI calculation.
+
+## 27 May 2026 — Qualifiers closed; final CV high `yolo11l-1024-alldata-final-v1-img1280` 0.671 / 0.950 (blended 0.7410)
+
+Qualifier submission window closed 24 May 2026 23:59:59 SGT. Team now in
+**Semifinals prep through 2026-06-10**.
+
+**Final Qualifier CV high (by blended score): `yolo11l-1024-alldata-final-v1-img1280`
+= 0.671 / 0.950, 0/500 errors, blended 0.7410.** Submitted 22 May 2026
+22:36:21 SGT. v1 weights (trained at `imgsz=1024`) served at `CV_IMGSZ=1280`
+— "train smaller, serve bigger" upscale-at-inference, same trick that worked
+for v8s tier1 (train 768 / serve 896). +0.031 raw acc over plusval-v1 (0.640)
+at essentially flat speed.
+
+Full set of 22-24 May submissions, all now scored:
+
+| Tag | Submit | Acc | Speed | Blended | Note |
+|---|---|---:|---:|---:|---|
+| `yolo11l-896-plusval-v1` | 22/05 23:45 | 0.640 | 0.954 | 0.7185 | Prior high. |
+| **`yolo11l-1024-alldata-final-v1-img1280`** | **22/05 22:36** | **0.671** | **0.950** | **0.7410** | **Final blended high.** v1 weights served at 1280. |
+| `yolo11l-1280-alldata-final-v2` | 23/05 20:56 | 0.654 | 0.950 | 0.7280 | v2 weights served at 1024 (Dockerfile lag). Regressed -0.017 acc vs v1-img1280. |
+| `yolo11-optimized-v3` | 24/05 20:43 | 0.672 | 0.940 | 0.7390 | v2 weights @ 1280 + TTA + CONF=0.20. **Raw-acc high +0.001 but blended -0.002** vs v1-img1280: TTA bought ~nothing in acc, cost a full point of speed. |
+
+Take-aways for Semis CV work:
+
+1. **Upscale-at-inference is the only confirmed lever** on the YOLO11l backbone. Training at higher resolution (v2 @ 1280) did *worse* than v1 @ 1024 served at 1280. Counter-intuitive but reproducible — same pattern v8s showed back in May 14.
+2. **TTA is dead on this distribution.** v3 vs the v2-at-1024 baseline lifted raw acc +0.018 but blended only +0.011, and against v1-img1280 it's a net regression. Don't ship TTA on YOLO11l.
+3. **Speed has slack to spend on Semis.** v1-img1280 at 0.950 means we can afford a heavier inference path (bigger imgsz, ensembling) if it actually lifts cloud acc. Budget: dropping speed to 0.85 costs 0.025 blended; need to gain >+0.034 cloud acc to break even.
+
 ## 24 May 2026 — Dockerfile bumped to CV_IMGSZ=1280
 
 Commit `543516e` flipped `cv/Dockerfile` from `CV_IMGSZ=1024` to
@@ -58,17 +132,15 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`yolo11-optimized-v3` — high-precision + TTA at 1280 (SHIPPED, pending score)**
-**Submitted: 24/05 (By [Your Name])**
-- Rebuilt from the `yolo11l-1280-alldata-final-v2` checkpoint.
-- **Fixed:** The v2 submission accidentally served at 1024px. The Dockerfile was already bumped to 1280px, so this build finally serves at native resolution.
-- **Precision Tweak:** Bumped `CV_CONF` from 0.15 to 0.20 to prune false positives.
-- **Recall Tweak:** Flipped `CV_AUGMENT` from 0 to 1 to enable Test-Time Augmentation (TTA). Expecting a speed hit but a significant mAP lift on hidden/small objects.
+**`yolo11l-1024-alldata-final-v1-img1280` — final Qualifier CV high by blended score, 0.671 / 0.950 (blended 0.7410, 22/05 22:36 SGT, 0/500 errors).**
+- YOLO11l v1 weights (trained on full dataset at `imgsz=1024`, 70 epochs, local val mAP50-95 ~0.985) served at `CV_IMGSZ=1280`.
+- Beat plusval-v1 (0.640 / 0.954, blended 0.7185) by +0.031 raw acc.
+- Win came from upscale-at-inference on YOLO11l, not further training.
 
-**`yolo11l-1280-alldata-final-v2` — submitted 23/05 20:55, score pending.**
-Last scored high: **`yolo11l-896-plusval-v1` — official 0.640 / 0.954.**
-**`yolo11l-1280-alldata-final-v2` — submitted 23/05 20:55, score pending.**
-Last scored high: **`yolo11l-896-plusval-v1` — official 0.640 / 0.954.**
+`yolo11-optimized-v3` (0.672 / 0.940, blended 0.7390) has the raw-acc high
+by +0.001 but loses on blended by -0.002 — see comparison table above.
+
+Prior high: **`yolo11l-896-plusval-v1` — official 0.640 / 0.954.**
 
 Dockerfile now serves at `CV_IMGSZ=1280` (bumped 24 May in `543516e` —
 matches the v2 checkpoint's training resolution). The already-shipped v2
@@ -462,8 +534,10 @@ cv-yolo11m-v3-pre      15/05 11:34     0.376   0.955   0 / 500   YOLOv11m@1024 f
 v11m-1280-noaug-v1     16/05 04:04     0.474   0.949   0 / 500   Same v11m weights, imgsz=1280 aug=0. Hard 0.9088. REGRESSED -0.082; v11m gap structurally wider.
 cv-augc1-v4            16/05 15:28     0.553   0.962   0 / 500   Phase C.1, mismatched Dockerfile config. Tied tier1 by luck.
 cv-augc1-v4-1280       16/05 18:28     0.553   0.959   0 / 500   Phase C.1, matched config. Hard 0.948. Tier1 stays.
-yolo11l-896-plusval-v1 22/05 23:45     0.640   0.954   0 / 500   YOLO11l on plusval data. Served at imgsz=896. Accuracy high.
-yolo11l-1280-alldata-final-v2 23/05 20:55 [pending] [pending] 0 / 500 Fine-tuned YOLO11l on all data natively at 1280px. Local mAP: 0.988.
+yolo11l-896-plusval-v1 22/05 23:45     0.640   0.954   0 / 500   YOLO11l on plusval data. Served at imgsz=896. Prior high.
+yolo11l-1024-alldata-final-v1-img1280 22/05 22:36 0.671 0.950 0 / 500 FINAL BLENDED HIGH (0.7410). v1 weights (all-data 1024px training) served at imgsz=1280. +0.031 over plusval-v1.
+yolo11l-1280-alldata-final-v2 23/05 20:56 0.654 0.950 0 / 500 v2 weights served at imgsz=1024 (Dockerfile lag). Regressed -0.017 acc vs v1-img1280 — bigger-trained model + matched-imgsz lost to smaller-trained + upscale, same v8s/v11m pattern.
+yolo11-optimized-v3 24/05 20:43 0.672 0.940 0 / 500 v2 weights @ 1280 + TTA + CONF=0.20. Raw-acc +0.001 vs v1-img1280 but blended -0.002 (0.7390 vs 0.7410). TTA dead.
 ```
 
 ## Detailed timeline (early submissions)
