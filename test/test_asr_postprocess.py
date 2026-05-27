@@ -258,6 +258,32 @@ def test_digits_to_words():
     assert digits_to_words("heading one hundred eighty degrees") == "heading one eight zero degrees"
     assert digits_to_words("bearing two hundred seventy degrees") == "bearing two seven zero degrees"
 
+    # 36. New spelling/phonetic variants of proper nouns & phrases
+    assert digits_to_words("Takeshi Oelaren") == "Takeshi Oyelaran"
+    assert digits_to_words("Takeshi Olaran") == "Takeshi Oyelaran"
+    assert digits_to_words("Devika Runyan") == "Devika Oranyan"
+    assert digits_to_words("Was it Tevika or Anyan's people") == "Was it Devika or Oranyan's people"
+    assert digits_to_words("Sim Jiang hasn't been seen") == "Sim Jiahong hasn't been seen"
+    assert digits_to_words("Parks and Hyun has already") == "Park Soo-Hyun has already"
+    assert digits_to_words("Cyrento North Pit") == "Sarento North Pit"
+    assert digits_to_words("Sarenite Patrol spotted") == "Sarento Patrol spotted"
+    assert digits_to_words("Cape Bidak waterfront") == "Cape Tidak waterfront"
+    assert digits_to_words("This is Vayanoa sector") == "This is Veyanova sector"
+    assert digits_to_words("Madame Bayanova") == "Madame Veyanova"
+    assert digits_to_words("Phinexis shell account") == "Phyrexis shell account"
+    assert digits_to_words("A Nayari cryptography") == "A Nyari cryptography"
+    assert digits_to_words("Cavenport Station") == "Tavenport Station"
+    assert digits_to_words("northeast of Blackthorne Point") == "northeast of Blackshore Point"
+    assert digits_to_words("before the cyanate patrol") == "before the cyanite patrol"
+    assert digits_to_words("from the Cyanian territories") == "from the Cyanite territories"
+    assert digits_to_words("Clayro's standard") == "Clairos' standard"
+    assert digits_to_words("latest Claro's Governance Council") == "latest Clairos' Governance Council"
+    assert digits_to_words("wrong with Tim") == "wrong with Sim"
+    assert digits_to_words("at the CUBE. Tim") == "at the CUBE. Sim"
+    assert digits_to_words("labor conditions and sadentu") == "labor conditions in sarento"
+    assert digits_to_words("labor conditions and Sadentu") == "labor conditions in Sarento"
+    assert digits_to_words("Chikario Nidak shows miserable receptivity") == "Kashikari node shows measurable receptivity"
+
     print("All unit tests passed successfully!")
 
 if __name__ == "__main__":
