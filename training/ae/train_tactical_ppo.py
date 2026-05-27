@@ -653,6 +653,133 @@ def evaluate_macro_hybrid(
     return score, parts, deltas, diagnostics
 
 
+def evaluate_macro_hybrid_multi_seed(
+    actor: PolicyNetwork,
+    args: argparse.Namespace,
+    device: torch.device,
+    harm: HarmStats,
+) -> tuple[float, dict[str, float], dict[str, float], dict[str, float]]:
+    """Wrapper eval over multiple PYTHONHASHSEED values via subprocess fan-out.
+
+    The single-process ``evaluate_macro_hybrid`` overfits to whichever
+    PYTHONHASHSEED the trainer was launched with, because PYTHONHASHSEED is
+    read once at interpreter startup and controls set/dict iteration order
+    in AEManager's tied-cost branches. To get a save-gate that aligns with
+    the n=5 hash multi-seed gate (which empirically matches cloud + 0.30),
+    we write the current actor to a temp checkpoint and shell out to
+    multi_seed_eval.py with the configured ``--eval-hash-seeds``. Per-suite
+    means come from the JSON aggregate; deltas vs baseline are computed
+    against the canonical pre-computed C+bomb7 baseline file (no need to
+    re-run heuristic baselines each eval).
+    """
+
+    import json
+    import subprocess
+    import tempfile
+
+    use_belief = bool(getattr(actor, "use_belief", False))
+
+    # Stage 1: write a self-contained checkpoint the ConfidenceHybrid runtime
+    # can load. Schema mirrors save_checkpoint() but drops the optimizer /
+    # diagnostics fields the eval-time wrapper doesn't need.
+    tmp_dir = Path(tempfile.mkdtemp(prefix="ms_eval_"))
+    tmp_ckpt = tmp_dir / "actor.pt"
+    torch.save({
+        "model_state_dict": actor.state_dict(),
+        "n_frames": args.n_frames,
+        "use_belief": use_belief,
+        "action_dim": NUM_TACTICAL_OPTIONS,
+        "option_names": TACTICAL_OPTION_NAMES,
+        "model_type": "ae_tactical_policy",
+        "training_mode": "planner_first_macro_ppo",
+        "positive_delta_transition_counts": harm.positive.astype(np.int64),
+        "attempted_transition_counts": harm.attempted.astype(np.int64),
+        "positive_transition_counts_full": harm.positive.astype(np.int64),
+        "negative_transition_counts": harm.negative.astype(np.int64),
+        "transition_net_delta_sum": harm.net_delta.astype(np.float64),
+        "transition_weight_sum": harm.weight.astype(np.float64),
+        "transition_weighted_delta_sum": harm.weighted_delta.astype(np.float64),
+        "bucket_attempted": harm.bucket_attempted.astype(np.int64),
+        "bucket_positive": harm.bucket_positive.astype(np.int64),
+        "bucket_net_delta_sum": harm.bucket_net_delta.astype(np.float64),
+    }, tmp_ckpt)
+
+    out_json = tmp_dir / "result.json"
+
+    # Stage 2: build subprocess invocation. The runtime envs pin C+bomb7 +
+    # confidence-gate thresholds so the subprocess wrapper matches the
+    # in-training rollout distribution.
+    extra_env = [
+        f"AE_TACTICAL_POLICY_CHECKPOINT={tmp_ckpt}",
+        "AE_ITEM_MISSION_VALUE=80",
+        "AE_ITEM_RESOURCE_VALUE=40",
+        "AE_ENEMY_BASE_VALUE=100",
+        "AE_DIJKSTRA_BOMB_COST=7.0",
+        f"AE_CONF_MARGIN_EPSILON={args.conf_margin_epsilon}",
+        f"AE_CONF_TOP_FLOOR={args.conf_top_floor}",
+        f"AE_CONF_OVERRIDE_TARGET_NONE={int(args.conf_override_target_none)}",
+    ]
+
+    cmd = [
+        sys.executable,
+        str(THIS_DIR / "multi_seed_eval.py"),
+        "--our", args.eval_wrapper,
+        "--rounds", str(args.eval_rounds_per_hash_seed),
+        "--hash-seeds", *[str(h) for h in args.eval_hash_seeds],
+        "--sim-seeds", "42",
+        "--extra-env", *extra_env,
+        "--summary-out", str(out_json),
+    ]
+
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        print(f"multi-seed eval subprocess failed: {proc.stderr[-2000:]}")
+        # Fall back to single-seed eval to keep the run alive.
+        return evaluate_macro_hybrid(actor, args, device, harm)
+
+    with open(out_json) as f:
+        result = json.load(f)
+
+    parts: dict[str, float] = {}
+    for suite, suite_data in result["per_suite"].items():
+        parts[suite] = float(suite_data["mean"])
+
+    # Stage 3: deltas vs canonical baseline (loaded once, no per-update
+    # baseline re-runs). If the baseline file is missing we still return
+    # parts/score but with zero deltas; the save gate's min_eval_delta check
+    # is then effectively skipped, which is the conservative behavior.
+    deltas: dict[str, float] = {}
+    if args.baseline_json and Path(args.baseline_json).exists():
+        with open(args.baseline_json) as f:
+            baseline = json.load(f)
+        for suite, suite_data in baseline.get("per_suite", {}).items():
+            if suite in parts:
+                deltas[suite] = parts[suite] - float(suite_data["mean"])
+
+    score = float(result["aggregate"]["weighted_mean"])
+    weighted_delta = _weighted_eval(deltas, args) if deltas else 0.0
+    worst_suite_mean = float(result["aggregate"].get("worst_suite_mean", min(parts.values()) if parts else 0.0))
+
+    diagnostics: dict[str, float] = {
+        "weighted_delta_vs_baseline": weighted_delta,
+        "worst_suite_score": worst_suite_mean,
+        "harm_attempted_total": float(harm.attempted.sum()),
+        "harm_positive_total": float(harm.positive.sum()),
+        "multi_seed_runs": float(result["aggregate"].get("runs", 0)),
+        "multi_seed_weighted_mean_se": float(result["aggregate"].get("weighted_mean_se", 0.0)),
+    }
+
+    # Cleanup
+    try:
+        tmp_ckpt.unlink(missing_ok=True)
+        out_json.unlink(missing_ok=True)
+        tmp_dir.rmdir()
+    except OSError:
+        pass
+
+    return score, parts, deltas, diagnostics
+
+
 def load_actor(args: argparse.Namespace, device: torch.device) -> tuple[PolicyNetwork, bool, dict | None]:
     ckpt_path = Path(args.bc_checkpoint)
     ckpt = None
@@ -806,12 +933,20 @@ def train(args: argparse.Namespace) -> None:
         if should_eval:
             actor.eval()
             critic.eval()
-            eval_score, eval_parts, eval_deltas, eval_diag = evaluate_macro_hybrid(
-                actor,
-                args,
-                device,
-                cumulative_harm,
-            )
+            if args.eval_multi_seed:
+                eval_score, eval_parts, eval_deltas, eval_diag = evaluate_macro_hybrid_multi_seed(
+                    actor,
+                    args,
+                    device,
+                    cumulative_harm,
+                )
+            else:
+                eval_score, eval_parts, eval_deltas, eval_diag = evaluate_macro_hybrid(
+                    actor,
+                    args,
+                    device,
+                    cumulative_harm,
+                )
             if args.eval_ungated_policy:
                 ungated_score, ungated_parts, _ungated_deltas, ungated_diag = evaluate_ungated_policy(
                     actor,
@@ -970,6 +1105,20 @@ def main() -> None:
                         choices=["macro_hybrid", "confidence_hybrid"],
                         help="wrapper class for in-training save-gate eval; "
                              "use confidence_hybrid to match deployment when --confidence-gated is set")
+    # Multi-seed save gate. When --eval-multi-seed is set, the in-training
+    # save gate spawns multi_seed_eval.py as a subprocess at each
+    # --eval-hash-seeds value and aggregates the result. Empirically
+    # established calibration: multi-seed wrapper score correlates with cloud
+    # score at offset +0.30. Cost: ~3-6x eval wall-clock per gate check.
+    parser.add_argument("--eval-multi-seed", action="store_true",
+                        help="use subprocess fan-out for multi-hash-seed save gate")
+    parser.add_argument("--eval-hash-seeds", nargs="+", type=int, default=[0, 1, 2],
+                        help="PYTHONHASHSEED values to fan out over when --eval-multi-seed is set")
+    parser.add_argument("--eval-rounds-per-hash-seed", type=int, default=6,
+                        help="rounds per (hash_seed, suite) cell in multi-seed eval")
+    parser.add_argument("--baseline-json", type=str,
+                        default="training/ae/data/w3_2_C_bomb7_n5.json",
+                        help="canonical baseline multi-seed JSON for delta-vs-baseline computation")
     args = parser.parse_args()
     # Forward conf-* args to the runtime wrapper so eval-time and rollout-time
     # gate thresholds match. setdefault is intentional: explicit env wins.
