@@ -282,6 +282,17 @@ class AEManager:
         """Choose the next action for the controlled agent."""
 
         self.turn_counter += 1
+        # Default sentinel: any early-return path (frozen, playbook, dominant,
+        # tactical_lookahead, escape, etc.) is treated as high-confidence by
+        # confidence-gated wrappers (margin=+inf). Only the main target-scoring
+        # path overwrites this in _choose_target() with real top/runner-up.
+        self.last_decision_confidence = {
+            "top_score": float("inf"),
+            "runner_up_score": float("-inf"),
+            "margin": float("inf"),
+            "n_candidates": 0,
+            "decision_path": "early_return",
+        }
         step = self._as_int(observation.get("step"), default=self.turn_counter)
         if self.last_step is None or step == 0 or step < self.last_step:
             self._reset_memory()
@@ -512,6 +523,17 @@ class AEManager:
         self.last_bomb_reason = "unknown"
         self.last_dominant_reason = "unknown"
         self.last_decision = "reset"
+        # Read by confidence-gated wrappers (e.g. ConfidenceHybridAEManager).
+        # Default sentinel = high-confidence so wrappers don't override before
+        # ae() has been called. Updated each tick at the top of ae() and again
+        # inside _choose_target() with real top/runner-up scores.
+        self.last_decision_confidence: dict = {
+            "top_score": float("inf"),
+            "runner_up_score": float("-inf"),
+            "margin": float("inf"),
+            "n_candidates": 0,
+            "decision_path": "init",
+        }
         self.decision_counts: Counter[str] = Counter()
         self.dijkstra_bomb_cost = _env_float("AE_DIJKSTRA_BOMB_COST", 5.0)
         # Hail-mary A* tie-breaker: when enabled, equal-cost paths in
@@ -763,6 +785,11 @@ class AEManager:
         best_target = None
         best_kind = "none"
         best_score = -inf
+        # Track the second-best score so wrappers can read the heuristic's
+        # decision confidence (margin = top - runner_up). Pure observation;
+        # no effect on best_target / best_kind / returned path.
+        runner_up_score = -inf
+        n_scored = 0
         for base_value, pos, kind in candidates:
             if pos == start or pos not in distance:
                 continue
@@ -781,15 +808,42 @@ class AEManager:
                         path_threat += 1
                     cursor = parent.get(cursor)
                 score -= self.PATH_THREAT_PENALTY * path_threat
+            n_scored += 1
             if score > best_score:
+                runner_up_score = best_score  # demote old best
                 best_score = score
                 best_target = pos
                 best_kind = kind
+            elif score > runner_up_score:
+                runner_up_score = score
 
         if best_target is None:
             self.current_path = None
             self.last_target_kind = "none"
+            self.last_decision_confidence = {
+                "top_score": float("-inf"),
+                "runner_up_score": float("-inf"),
+                "margin": 0.0,
+                "n_candidates": n_scored,
+                "decision_path": "target_none",
+            }
             return None, None
+        # Margin is +inf when only one candidate scored (no runner-up exists).
+        # That signals to the wrapper "heuristic has only one option" and counts
+        # as high-confidence (no tie to break).
+        if runner_up_score == -inf:
+            margin = float("inf")
+            runner_up_out = float(best_score)
+        else:
+            margin = float(best_score - runner_up_score)
+            runner_up_out = float(runner_up_score)
+        self.last_decision_confidence = {
+            "top_score": float(best_score),
+            "runner_up_score": runner_up_out,
+            "margin": margin,
+            "n_candidates": n_scored,
+            "decision_path": "target",
+        }
         path = self._reconstruct_path(parent, start, best_target)
         self.current_path = path
         self.last_target_kind = best_kind

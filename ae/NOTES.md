@@ -1,6 +1,71 @@
 # AE — notes & history
 
-Last updated: 27 May 2026 (C+bomb7 cloud check) —
+Last updated: 27 May 2026 (confidence-gated PPO backup — Stage 3 negative) —
+**Implemented `AE_MODE=confidence_hybrid`
+([ae/src/confidence_hybrid_manager.py](src/confidence_hybrid_manager.py))
+that consults the tactical PPO macro selector *only* when the heuristic
+itself reports low confidence (top score - runner_up < epsilon OR top score
+< floor). Stage 1 added `last_decision_confidence` write-through in
+[ae_manager.py](src/ae_manager.py)'s `_choose_target()` with sentinel
+margin=+inf on early-return paths (no behavior change). Stage 2 wired the
+wrapper into [ae_server.py](src/ae_server.py),
+[simulate.py](../training/ae/simulate.py),
+and [validate_cloud_suite.py](../training/ae/validate_cloud_suite.py).
+At defaults (eps=5.0, floor=10.0) over 6 cloudsuite rounds the wrapper
+consulted PPO on 29% of ticks (14.7% low_margin + 13.5% target_none +
+0.8% low_top_score), passed through on 70.6%, and accepted 251 PPO macro
+deviations (top: rush_enemy_base 110, collect_mission_safe 88). Multi-
+seed gate at n=5 hash × 1 sim × 6 rounds against the canonical
+`w3_2_C_bomb7_n5.json` baseline failed decisively: `weighted_mean=0.2556
+± 0.0051` vs baseline `0.2842 ± 0.0074` (Δ -0.0285). Suite shape:
+`pressure2 +0.069`, `cloudsuite +0.013`, `bracket_proxy/mixed` flat;
+`top_seed_proxy -0.138`, `base_rush_exploit -0.127`, `defense_trap
+-0.107` collapsed. Diagnostic with `AE_CONF_OVERRIDE_TARGET_NONE=0`
+recovered `base_rush_exploit` fully (+0.001) and `top_seed_proxy`
+partially (-0.060), confirming target_none ticks are where the
+heuristic's fallback is correct and PPO should not substitute. But the
+underlying low_margin/low_top_score collapse on `defense_trap` and
+`strong_realistic` remained: the PPO checkpoint (trained as
+unconditional deviator under macro_hybrid) substitutes aggressive macros
+in defensive situations. Architecture is sound (the gate's
+target_none-skip behaved as predicted), but this PPO checkpoint is the
+wrong tool. Plan strict-stop triggered: no cloud submit, no retrain
+without explicit user override. The infrastructure (`AE_MODE=confidence_hybrid`,
+env knobs `AE_CONF_MARGIN_EPSILON`, `AE_CONF_TOP_FLOOR`,
+`AE_CONF_OVERRIDE_TARGET_NONE`) is in tree and ready for a future
+attempt with a PPO checkpoint specifically trained to know when to
+defer.**
+
+Prior update: 27 May 2026 (macro-PPO v1 — selective BC warm-start) —
+**Trained `tactical_policy_macro_ppo_v1.pt` from a positive-delta-only BC
+warm-start ([training/ae/checkpoints/tactical_policy_pos_only.pt](training/ae/checkpoints/tactical_policy_pos_only.pt),
+12k samples filtered from the 800-game harm-aware dataset to non-baseline
+rows with `advantage > 0`). 40-update CPU PPO with the calibrated C+bomb7
+fallback profile saved a checkpoint at update 35:
+`wrapper_eval=0.3184, wrapper_delta=+0.0256, accept_rate=0.403` on the
+in-training single-seed eval (eval_seed=137). This is the first macro-PPO
+checkpoint to clear the save gate after the 27 May repair. However, n=5
+hash × 1 sim × 6 rounds multi-seed eval against the C+bomb7 baseline
+failed the promotion gate: `weighted_mean=0.2464 ± 0.0167` vs baseline
+`0.2842 ± 0.0074` (Δ -0.0378), and 4 of 8 suites regressed by more than
+-0.030 (`base_rush_exploit -0.077`, `defense_trap -0.077`,
+`top_seed_proxy -0.066`, `bracket_proxy -0.052`). This confirms the
+26 May methodology finding that single-seed in-training eval is hash-noise
+overfit relative to n=5 multi-seed. One targeted narrowing was attempted
+(`AE_TACTICAL_ALLOWED_DELTA_OPTIONS=rush_enemy_base,collect_mission_safe,collect_resource_safe`,
+dropping `bomb_enemy_base` and `counter_rush`) and produced essentially a
+tie: `weighted_mean=0.2883 ± 0.0157` (Δ +0.0041, below the +0.005
+promotion threshold). The narrowed config wins on `pressure2 +0.054`,
+`top_seed_proxy +0.020`, and `base_rush_exploit +0.008`, but still
+regresses on `defense_trap -0.062`. Not promoted. Decision: macro-PPO
+v1 is a local tie with C+bomb7, no cloud submit warranted. New BC flag
+`--positive-only` is kept in [train_tactical_bc.py](training/ae/train_tactical_bc.py)
+for future runs. The transfer gap between single-seed and multi-seed eval
+(~0.08 weighted) is the actionable bottleneck: future macro-PPO runs
+should switch the in-training save gate to n>=3 hash-seed eval so the
+policy doesn't optimize against eval_seed=137 noise.**
+
+Prior update: 27 May 2026 (C+bomb7 cloud check) —
 **Submitted `heuristic-c-bomb7-v1` after baking the calibrated
 `heuristic-C + bomb_cost=7.0` profile into the AE Docker image
 (`AE_MODE=heuristic`, `AE_ITEM_MISSION_VALUE=80`,

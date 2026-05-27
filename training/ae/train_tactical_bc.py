@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
+
+if os.environ.get("PYTHONHASHSEED") is None:
+    os.environ["PYTHONHASHSEED"] = "0"
 
 import numpy as np
 import torch
@@ -24,12 +28,29 @@ from tactical_policy import NUM_TACTICAL_OPTIONS, TACTICAL_OPTION_NAMES  # noqa:
 
 
 class TacticalDataset(Dataset):
-    def __init__(self, npz_path: Path, min_weight: float = 0.0):
+    def __init__(
+        self,
+        npz_path: Path,
+        min_weight: float = 0.0,
+        positive_only: bool = False,
+        positive_delta_floor: float = 0.0,
+    ):
         data = np.load(npz_path)
         weights = data["weights"].astype(np.float32)
         keep = weights >= float(min_weight)
+        if positive_only:
+            advantages = data["advantages"].astype(np.float32)
+            is_baseline = (
+                data["is_baseline"].astype(bool)
+                if "is_baseline" in data.files
+                else np.zeros_like(advantages, dtype=bool)
+            )
+            keep = keep & (advantages > float(positive_delta_floor)) & (~is_baseline)
         if not np.any(keep):
-            raise SystemExit(f"No samples remain after min_weight={min_weight}")
+            raise SystemExit(
+                f"No samples remain after min_weight={min_weight} positive_only={positive_only} "
+                f"positive_delta_floor={positive_delta_floor}"
+            )
         self.agent_views = torch.from_numpy(data["agent_views"][keep]).float()
         self.base_views = torch.from_numpy(data["base_views"][keep]).float()
         self.scalars = torch.from_numpy(data["scalars"][keep]).float()
@@ -211,7 +232,12 @@ def train(args: argparse.Namespace) -> None:
     data_path = Path(args.data)
     if not data_path.exists():
         raise SystemExit(f"Dataset not found at {data_path}. Run collect_tactical_outcome.py first.")
-    dataset = TacticalDataset(data_path, min_weight=args.min_sample_weight)
+    dataset = TacticalDataset(
+        data_path,
+        min_weight=args.min_sample_weight,
+        positive_only=args.positive_only,
+        positive_delta_floor=args.positive_delta_floor,
+    )
     use_belief = dataset.has_belief and not args.no_belief
     print(
         f"samples: {len(dataset):,}; n_frames={dataset.n_frames}; use_belief={use_belief}; "
@@ -386,6 +412,11 @@ def main() -> None:
     parser.add_argument("--loss-penalty", type=float, default=0.25,
                         help="checkpoint score is val_wacc - loss_penalty * val_loss")
     parser.add_argument("--min-sample-weight", type=float, default=0.05)
+    parser.add_argument("--positive-only", action="store_true",
+                        help="filter dataset to non-baseline rows with advantages > positive-delta-floor "
+                             "(warm-start macro-PPO at a 'where the heuristic is suboptimal' prior)")
+    parser.add_argument("--positive-delta-floor", type=float, default=0.0,
+                        help="threshold for --positive-only (kept if advantage > floor)")
     parser.add_argument("--no-belief", action="store_true")
     train(parser.parse_args())
 

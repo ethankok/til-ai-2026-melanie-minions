@@ -230,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rounds", type=int, default=12)
     parser.add_argument("--our", default="heuristic",
-                        help="agent to score: heuristic, option_v2, hybrid, option_hybrid, tactical_hybrid, macro_hybrid, or opponent:<name>")
+                        help="agent to score: heuristic, option_v2, hybrid, option_hybrid, tactical_hybrid, macro_hybrid, confidence_hybrid, or opponent:<name>")
     parser.add_argument("--preset", choices=sorted(SUITE_PRESETS), default="furnished",
                         help="suite preset used when --suites is omitted")
     parser.add_argument("--suites", nargs="+", default=None)

@@ -10,13 +10,27 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`nemo-ft-v1` — official 0.969 / 0.946 (24 May 23:49 SGT, 0/400 errors).**
-Blended score `0.75*0.969 + 0.25*0.946 = 0.96325`.
-This model fine-tuned Parakeet-TDT-0.6B-v2 (step 713, val WER 0.0856) on the novice ASR data and successfully improved the blended score.
+**`nemo-ft-v2` — official 0.970 / 0.943 (27 May 12:42 SGT, 0/400 errors).**
+Blended score `0.75*0.970 + 0.25*0.943 = 0.96325`.
+This model integrates spelling and regex group post-processing fixes on top of the fine-tuned Parakeet-TDT-0.6B-v2 model and reached a new accuracy high.
 
 Decision: **closed.**
 
-## nemo-ft-v1 (24/05) — fine-tuned model (new high score)
+## nemo-ft-v2 (27/05) — proper-noun post-processing fixes (new accuracy high)
+
+Status: current accuracy high score.
+
+Why this candidate:
+- Integrated spelling and regex group post-processing fixes to `asr/src/asr_postprocess.py` based on error analysis of `asr_results.json`.
+- Corrected regex capture groups for Sim Jiahong, Blackshore, and Clairos (e.g. `Clayro's` -> `Clairos'`).
+- Added corrections for `Takeshi Oelaren` -> `Takeshi Oyelaran`, `Devika Runyan` -> `Devika Oranyan`, `Parks and Hyun` -> `Park Soo-Hyun`, `sadentu` -> `in Sarento`, `SEC37`/`CEC87` -> `TEC`, etc.
+- Passed local unit tests and Workbench `til test` with English WER `0.0210` and `1 - MER` `0.9947535430276239`.
+
+Submit gate:
+- Cloud result: 0/400 errors, Score `0.970` (Accuracy high!), Speed `0.943`.
+- Blended result: `0.96325` (tied overall blended high score!).
+
+## nemo-ft-v1 (24/05) — fine-tuned model (prior high score)
 
 Status: final submission.
 

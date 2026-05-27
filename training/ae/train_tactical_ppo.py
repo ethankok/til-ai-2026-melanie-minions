@@ -39,6 +39,7 @@ for path in (THIS_DIR, AE_SRC, TIL_AE):
         sys.path.insert(0, str(path))
 
 from ae_manager import AEManager  # noqa: E402
+from confidence_hybrid_manager import ConfidenceHybridAEManager  # noqa: E402
 from encoder import FrameStacker  # noqa: E402
 from macro_hybrid_manager import MacroHybridAEManager, _apply_baseline_profile  # noqa: E402
 from model import PolicyNetwork, num_parameters  # noqa: E402
@@ -394,40 +395,69 @@ def collect_rollouts(
                     belief_manager = AEManager()
                     executor = TacticalExecutor()
                 heuristic_action = int(executor.heuristic.ae(obs_py))
-                prior = int(tactical_from_manager(executor.heuristic, action=heuristic_action))
-                option, logprob, value, stacked, belief = select_tactical(
-                    actor,
-                    critic,
-                    stacker,
-                    belief_manager,
-                    obs_py,
-                    device,
-                    use_belief,
-                    greedy=False,
-                    temperature=args.option_temperature,
-                    epsilon=args.option_epsilon,
-                )
-                action, _info = executor.act_with_info(
-                    option,
-                    obs_py,
-                    heuristic_action=heuristic_action,
-                    heuristic_already_run=True,
-                )
-                transitions.append(TacticalTransition(
-                    agent_view=stacked["agent_view"],
-                    base_view=stacked["base_view"],
-                    scalars=stacked["scalars"],
-                    belief=belief,
-                    option=option,
-                    logprob=logprob,
-                    value=value,
-                    prior_option=prior,
-                    distance_bucket=_distance_bucket(executor, obs_py),
-                    health=_safe_float(obs_py.get("health")),
-                    base_health=_safe_float(obs_py.get("base_health")),
-                ))
-                pending_idx = len(transitions) - 1
-                episode_indices.append(pending_idx)
+
+                # Confidence gate. When --confidence-gated is on, only query
+                # the PPO actor on low-confidence ticks; on high-confidence
+                # ticks just play the heuristic action and don't log a
+                # transition. This matches the deployment-time distribution
+                # of ConfidenceHybridAEManager so the trained policy sees only
+                # the states it will be asked to act on.
+                if args.confidence_gated:
+                    conf = getattr(executor.heuristic, "last_decision_confidence", None) or {}
+                    path = conf.get("decision_path", "unknown")
+                    if path == "target_none":
+                        low_conf = bool(args.conf_override_target_none)
+                    elif path == "target":
+                        low_conf = (
+                            float(conf.get("margin", float("inf"))) < float(args.conf_margin_epsilon)
+                            or float(conf.get("top_score", float("inf"))) < float(args.conf_top_floor)
+                        )
+                    else:
+                        low_conf = False
+                else:
+                    low_conf = True
+
+                if not low_conf:
+                    # Passthrough: use heuristic, don't log a transition. The
+                    # reward from this step accrues to pending_idx (the
+                    # most-recent logged transition), same as the standard
+                    # one-step-credit pattern.
+                    action = heuristic_action
+                else:
+                    prior = int(tactical_from_manager(executor.heuristic, action=heuristic_action))
+                    option, logprob, value, stacked, belief = select_tactical(
+                        actor,
+                        critic,
+                        stacker,
+                        belief_manager,
+                        obs_py,
+                        device,
+                        use_belief,
+                        greedy=False,
+                        temperature=args.option_temperature,
+                        epsilon=args.option_epsilon,
+                    )
+                    action, _info = executor.act_with_info(
+                        option,
+                        obs_py,
+                        heuristic_action=heuristic_action,
+                        heuristic_already_run=True,
+                    )
+                    transitions.append(TacticalTransition(
+                        agent_view=stacked["agent_view"],
+                        base_view=stacked["base_view"],
+                        scalars=stacked["scalars"],
+                        belief=belief,
+                        option=option,
+                        logprob=logprob,
+                        value=value,
+                        prior_option=prior,
+                        distance_bucket=_distance_bucket(executor, obs_py),
+                        health=_safe_float(obs_py.get("health")),
+                        base_health=_safe_float(obs_py.get("base_health")),
+                    ))
+                    pending_idx = len(transitions) - 1
+                    episode_indices.append(pending_idx)
             else:
                 slot = other_ids.index(agent)
                 action = int(opponents[slot](obs_py))
@@ -564,7 +594,10 @@ def evaluate_macro_hybrid(
                 op._reset_memory()
 
         policy = InMemoryTacticalPolicy(actor, device, args.n_frames, use_belief, harm)
-        manager = MacroHybridAEManager(policy=policy)
+        if args.eval_wrapper == "confidence_hybrid":
+            manager = ConfidenceHybridAEManager(policy=policy)
+        else:
+            manager = MacroHybridAEManager(policy=policy)
         total = 0.0
         for agent in env.agent_iter():
             obs, reward, termination, truncation, _info = env.last()
@@ -584,13 +617,17 @@ def evaluate_macro_hybrid(
 
         for key, count in manager.decision_counts.items():
             decision_counts[key] = decision_counts.get(key, 0.0) + float(count)
-            if key.startswith("macro_accept_") and not key.startswith("macro_accept_dist_"):
+            if (key.startswith("macro_accept_") and not key.startswith("macro_accept_dist_")) \
+               or (key.startswith("conf_accept_") and not key.startswith("conf_accept_dist_")):
                 accept_total += float(count)
             elif (
                 key.startswith("macro_exact_heuristic_")
                 or key.startswith("macro_no_accepted_delta_")
                 or "fallback" in key
                 or key.startswith("macro_reject_")
+                or key.startswith("conf_no_accepted_delta_")
+                or key.startswith("conf_reject_")
+                or key.startswith("conf_passthrough_")
             ):
                 fallback_total += float(count)
         score = total / 1000.0
@@ -917,7 +954,30 @@ def main() -> None:
     parser.add_argument("--min-required-suite-score", type=float, default=0.16)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
-    train(parser.parse_args())
+    # Confidence-gated rollout + eval. When --confidence-gated is set, the
+    # rollout loop only queries the PPO actor on low-confidence heuristic
+    # ticks (matching ConfidenceHybridAEManager deployment); high-confidence
+    # ticks play the heuristic action with no transition logged. Combine
+    # with --eval-wrapper=confidence_hybrid so save-gating measures the same
+    # deployment shape.
+    parser.add_argument("--confidence-gated", action="store_true",
+                        help="rollouts query PPO only on low-confidence heuristic ticks")
+    parser.add_argument("--conf-margin-epsilon", type=float, default=5.0)
+    parser.add_argument("--conf-top-floor", type=float, default=10.0)
+    parser.add_argument("--conf-override-target-none", type=int, default=1,
+                        help="1 = consult PPO when heuristic returned no scorable target")
+    parser.add_argument("--eval-wrapper", default="macro_hybrid",
+                        choices=["macro_hybrid", "confidence_hybrid"],
+                        help="wrapper class for in-training save-gate eval; "
+                             "use confidence_hybrid to match deployment when --confidence-gated is set")
+    args = parser.parse_args()
+    # Forward conf-* args to the runtime wrapper so eval-time and rollout-time
+    # gate thresholds match. setdefault is intentional: explicit env wins.
+    if args.eval_wrapper == "confidence_hybrid" or args.confidence_gated:
+        os.environ.setdefault("AE_CONF_MARGIN_EPSILON", str(args.conf_margin_epsilon))
+        os.environ.setdefault("AE_CONF_TOP_FLOOR", str(args.conf_top_floor))
+        os.environ.setdefault("AE_CONF_OVERRIDE_TARGET_NONE", str(int(args.conf_override_target_none)))
+    train(args)
 
 
 if __name__ == "__main__":
