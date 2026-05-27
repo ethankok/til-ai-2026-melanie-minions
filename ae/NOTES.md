@@ -1,6 +1,69 @@
 # AE — notes & history
 
-Last updated: 27 May 2026 (confidence-gated PPO backup — Stage 3 negative) —
+Last updated: 27 May 2026 (confidence-gated PPO retrain — first save, multi-seed fails) —
+**Stage 4 of the confidence-gated plan: retrained tactical PPO under matched
+deployment distribution (rollouts query PPO only on low-confidence ticks;
+in-training save gate uses `ConfidenceHybridAEManager` for evaluation). New
+trainer flags in [train_tactical_ppo.py](../training/ae/train_tactical_ppo.py):
+`--confidence-gated`, `--conf-margin-epsilon`, `--conf-top-floor`,
+`--conf-override-target-none`, `--eval-wrapper`. 150-update run from
+`tactical_policy_pos_only.pt` warm-start saved a gated checkpoint at update
+80: `tactical_policy_conf_ppo_v2.pt` with in-training
+`wrapper_eval=0.3663, wrapper_delta=+0.0783` (eval_seed=137,
+24 eval games). This is the first PPO checkpoint in this project to clear
+the `+0.005` min_eval_delta gate, and the first to not collapse defense
+suites in-training. Three gated saves total across the run (updates 35, 40,
+80); after update 80 the policy drifted; the final-state
+`tactical_policy_conf_ppo_v2_latest.pt` (update 150) is worse on every
+metric. Multi-seed gate at n=5 hash × 1 sim × 6 rounds against the
+canonical `w3_2_C_bomb7_n5.json` baseline FAILS for both checkpoints:
+  - u80 gated save: `weighted_mean=0.2711 ± 0.0090` vs baseline
+    `0.2842 ± 0.0074` (Δ -0.013, -1.12σ). Per-suite at multi-seed:
+    `pressure2 +0.105` (held), `mixed +0.007`; collapses on `top_seed_proxy
+    -0.115`, `defense_trap -0.057`, `base_rush_exploit -0.042`,
+    `cloudsuite -0.038`, `strong_realistic -0.022`. Single-seed→multi-seed
+    transfer gap **0.091** (in-training +0.078 → multi-seed -0.013).
+  - u150 latest: `weighted_mean=0.2546 ± 0.0095` (Δ -0.030 vs baseline).
+    Per-suite all worse than u80 except cloudsuite (+0.016) and mixed
+    (+0.013). u150 is NOT a less-overfit recovery; it's a different drift.
+Net: the architectural fix in Stage 4 was real — `pressure2` lifts by
++0.10 stably across both eval distributions, and `defense_trap` no longer
+collapses by >0.10 like every prior PPO checkpoint did. But the
+single-seed in-training eval still overfits to seed=137 by 0.09 weighted,
+which is more than the gain. To break past this, the trainer's save-gate
+needs n>=3 hash-seed eval (the optional item in the plan that was
+deferred). Pending 27 May cloud-submission calibration with both
+checkpoints to establish whether cloud distribution is closer to seed=137
+or to seeds 0-4. Repo state: Dockerfile defaults to
+`AE_MODE=confidence_hybrid` + C+bomb7 envs + AE_CONF_* defaults +
+`AE_TACTICAL_POLICY_CHECKPOINT=/workspace/models/tactical_policy.pt`.
+Both .pt files staged under `ae/models/` (gitignored); copy the desired
+one to `ae/models/tactical_policy.pt` before `til build`.**
+
+### Calibration log (27 May upcoming cloud submissions)
+
+| Tag | Checkpoint | Local in-training | Local multi-seed | Cloud | Cloud − in-training | Cloud − multi-seed |
+|---|---|---:|---:|---:|---:|---:|
+| `conf-hybrid-v2-best` | `tactical_policy_conf_ppo_v2.pt` (u80) | +0.078 (0.366) | -0.013 (0.271) | TBD | | |
+| `conf-hybrid-v2-latest` | `tactical_policy_conf_ppo_v2_latest.pt` (u150) | -0.003 (0.281) | -0.030 (0.255) | TBD | | |
+| `heuristic-c-bomb7-v1` (prior) | n/a (heuristic) | n/a | +0.000 (0.284) | +0.590/0.845 | | +0.306 |
+| `heuristic-A-vf1` (current cloud max, intentional) | n/a (heuristic-A) | n/a | -0.0064 (0.258) | +0.613/0.845 | | +0.355 |
+
+Reading the calibration once submitted:
+- If `cloud(u80) > cloud(u150)`: cloud is closer to seed=137 than to seeds
+  0-4, the trainer's single-seed gate IS predictive for cloud (and
+  multi-seed is overly pessimistic). Action: keep single-seed save gate
+  but pick eval_seed deliberately to match cloud.
+- If `cloud(u80) ≈ cloud(u150) ≈ multi-seed numbers` (~0.50): multi-seed
+  is the right local predictor, the policy itself is just slightly
+  net-negative, and the architectural ceiling is the heuristic. Action:
+  implement multi-seed save gate (Stage 4 deferred item) and accept the
+  ceiling for this PPO line.
+- If `cloud(u80)` and `cloud(u150)` both > 0.60: neither local eval
+  matches cloud; cloud distribution is its own animal. Action: stop local
+  PPO iteration, invest in cloud opponent reverse-engineering instead.
+
+Prior update: 27 May 2026 (confidence-gated PPO backup — Stage 3 negative) —
 **Implemented `AE_MODE=confidence_hybrid`
 ([ae/src/confidence_hybrid_manager.py](src/confidence_hybrid_manager.py))
 that consults the tactical PPO macro selector *only* when the heuristic

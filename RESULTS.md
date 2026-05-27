@@ -1,7 +1,13 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 27 May 2026 (CV final scores in: blended high is
+Last updated: 27 May 2026 (Stage 4 confidence-gated PPO retrain complete —
+local multi-seed gate fails on both saved and final checkpoints, pending
+cloud-submission calibration on `conf-hybrid-v2-best` and
+`conf-hybrid-v2-latest` to align local vs cloud distributions. See
+[ae/NOTES.md](ae/NOTES.md) calibration log.
+
+CV final scores in: blended high is
 `yolo11l-1024-alldata-final-v1-img1280` = `0.671 / 0.950` blended `0.7410`;
 v3 took the raw-acc high `0.672 / 0.940` but blended `0.7390` — TTA on
 YOLO11l cost more speed than it bought accuracy. Semifinals prep window
@@ -38,7 +44,7 @@ history stays in this file.
 | Task | Latest shipped tag | Acc/reward | Speed | Status | Working log |
 |---|---|---:|---:|---|---|
 | ASR | `nemo-ft-v3` | 0.970 | 0.947 | New accuracy and speed high score. Fine-tuned Parakeet-TDT-0.6B-v2 model (step 713, val WER 0.0856) built as `nemo-ft-v3` with spelling, regex group post-processing fixes, and additional spelling variant corrections (zonen/sono, mewn, pullwalker). Submitted 27 May 13:26 SGT with 0/400 errors. Blended score `0.96425`. | [asr/NOTES.md](asr/NOTES.md) |
-| AE | `ppo-full-rl-v1-hybrid` / `heuristic-A-vf1` | 0.638 max; 0.613 explicit heuristic | 0.847 max; 0.845 explicit heuristic | Parked. Protected leaderboard max remains `ppo-full-rl-v1-hybrid`, but forensics showed it served heuristic fallback rather than PPO. Best intentional heuristic tag is `heuristic-A-vf1`; final farming did not reproduce the 0.638 right-tail draw. | [ae/NOTES.md](ae/NOTES.md) |
+| AE | `ppo-full-rl-v1-hybrid` / `heuristic-A-vf1` | 0.638 max; 0.613 explicit heuristic | 0.847 max; 0.845 explicit heuristic | Semifinals: confidence-gated PPO retrain landed first real save (`tactical_policy_conf_ppo_v2.pt`, update 80, in-training wrapper_delta +0.078) but failed multi-seed gate at -0.013. Pending 2-submission cloud calibration on `conf-hybrid-v2-best` and `conf-hybrid-v2-latest` to align local vs cloud. | [ae/NOTES.md](ae/NOTES.md) |
 | NLP | `v28-optimized-bm25` | 0.984 | 0.985 | Final blended and accuracy high. Tuned document-level plus passage-level BM25 bypasses neural models for high speed and reached blended `0.98425`. | [nlp/NOTES.md](nlp/NOTES.md) |
 | CV | `yolo11l-1024-alldata-final-v1-img1280` | 0.671 | 0.950 | Final Qualifier CV high. v1 weights (full-dataset YOLO11l trained at 1024px) served at `CV_IMGSZ=1280`. +0.031 over `plusval-v1` (0.640). Confirmed 27 May; v2-weights and TTA-stacked follow-ups did not beat it. | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `level10-detector-stress` | 1.000 | 0.947 | Shipped for Semifinals/Finals CV disruption. No direct Qualifier reward, but passed fairness locally and scored 1.000 cloud. | [noise/NOTES.md](noise/NOTES.md) |

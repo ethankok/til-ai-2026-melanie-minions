@@ -17,12 +17,45 @@ ENV PIP_ROOT_USER_ACTION=ignore
 ENV PYTHONHASHSEED=0
 WORKDIR /workspace
 
-# Runtime manager selection (hybrid | policy | heuristic). Bake it into
-# the image so the cloud evaluator (which doesn't inherit our shell env)
-# uses the right mode. Edit this line before each `til build` to switch
-# modes, OR write the mode into `ae/src/.ae_mode` (the server reads that
-# file at startup if AE_MODE is unset in the container env).
-ENV AE_MODE=hybrid
+# Runtime manager selection (hybrid | policy | heuristic | macro_hybrid |
+# confidence_hybrid). Bake it into the image so the cloud evaluator (which
+# doesn't inherit our shell env) uses the right mode. Edit this line before
+# each `til build` to switch modes, OR write the mode into `ae/src/.ae_mode`
+# (the server reads that file at startup if AE_MODE is unset in the
+# container env).
+#
+# confidence_hybrid: heuristic-C+bomb7 plays on every tick; the PPO tactical
+# macro selector is consulted only when the heuristic itself reports low
+# confidence in its top action (top-vs-runner-up margin below
+# AE_CONF_MARGIN_EPSILON OR top absolute score below AE_CONF_TOP_FLOOR, or
+# the heuristic returned no scorable target). On the 27 May n=5 hash
+# multi-seed gate this is the only setup that didn't catastrophically
+# collapse defense_trap; pressure2 lifts by +0.10 and the worst single-suite
+# regression is top_seed_proxy at -0.115 (smaller than every prior PPO
+# attempt). See ae/NOTES.md for the diagnostic.
+ENV AE_MODE=confidence_hybrid
+# C+bomb7 baseline profile (also auto-applied by ConfidenceHybridAEManager
+# via _apply_baseline_profile, but explicit here so the image's behavior
+# is obvious from the Dockerfile alone).
+ENV AE_ITEM_MISSION_VALUE=80
+ENV AE_ITEM_RESOURCE_VALUE=40
+ENV AE_ENEMY_BASE_VALUE=100
+# Confidence-gate thresholds. Defaults validated in the 27 May confidence
+# distribution probe: at eps=5.0 / floor=10.0 the wrapper consults PPO on
+# ~29% of total ticks (14.7% low_margin + 13.5% target_none + 0.8%
+# low_top_score) and passes through on 70.6%.
+ENV AE_CONF_MARGIN_EPSILON=5.0
+ENV AE_CONF_TOP_FLOOR=10.0
+ENV AE_CONF_OVERRIDE_TARGET_NONE=1
+# Tactical PPO checkpoint. Copy the desired .pt to ae/models/tactical_policy.pt
+# before `til build`. Files in tree right now:
+#   tactical_policy_conf_ppo_v2.pt        — update-80 gated save, in-training
+#                                            wrapper_delta=+0.078,
+#                                            multi-seed n=5 wrapper_delta=-0.013
+#   tactical_policy_conf_ppo_v2_latest.pt — update-150 final state,
+#                                            multi-seed n=5 wrapper_delta=-0.030
+# Either can be staged as `tactical_policy.pt` for submission.
+ENV AE_TACTICAL_POLICY_CHECKPOINT=/workspace/models/tactical_policy.pt
 # MCTS-light is a known-regressed experiment, so keep it opt-in. See
 # ae/NOTES.md for the speed budget math and the v1/v2 cloud failures.
 # v1 used DEPTH=5 WIDTH=96 with no gate / no latency cap; cloud killed it after
@@ -74,7 +107,7 @@ ENV AE_USE_OPPONENT_MODEL=0
 #   AE_ASTAR_TIEBREAK — when =1, secondary heap key in _dijkstra_distance_map
 #     is Manhattan distance to enemy-base centroid, biasing equal-cost path
 #     reconstruction toward enemy territory. Optimal distances unchanged.
-ENV AE_DIJKSTRA_BOMB_COST=5.0
+ENV AE_DIJKSTRA_BOMB_COST=7.0
 ENV AE_ASTAR_TIEBREAK=0
 
 # W2.1a — M5 spawn-aware first-target table. When AE_FIRST_TARGET_TABLE=1,
