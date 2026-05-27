@@ -349,6 +349,28 @@ Only consider cloud if `macro_hybrid` beats the direct
 `heuristic-C + bomb_cost=7.0` gate. If it only beats the old baseline, it is
 not enough.
 
+Confidence-gated continuation:
+
+```bash
+PYTHONHASHSEED=0 .venv/bin/python training/ae/train_tactical_ppo.py \
+  --bc-checkpoint training/ae/checkpoints/tactical_policy_pos_only.pt \
+  --out training/ae/checkpoints/tactical_policy_conf_ppo_v3.pt \
+  --latest-out training/ae/checkpoints/tactical_policy_conf_ppo_v3_latest.pt \
+  --baseline-profile combo_c_bomb7 \
+  --confidence-gated --eval-wrapper confidence_hybrid \
+  --eval-multi-seed --eval-hash-seeds 0 1 2 \
+  --eval-rounds-per-hash-seed 6 \
+  --baseline-json training/ae/data/w3_2_C_bomb7_n5.json \
+  --updates 80 --games-per-update 16 --eval-every 5 \
+  --save-floor 0.260 --min-eval-delta 0.005
+```
+
+This path is for PPO runs that should only act on low-confidence heuristic
+ticks, then save only when the candidate clears a multi-`PYTHONHASHSEED`
+gate against the calibrated `C + bomb=7.0` baseline. If the multi-seed
+subprocess fails, the trainer may still print a single-seed diagnostic, but
+it must not save a checkpoint from that fallback path.
+
 Collect supervised option labels against the furnished semifinal proxy suites:
 
 ```bash

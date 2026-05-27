@@ -1,6 +1,30 @@
 # AE — notes & history
 
-Last updated: 27 May 2026 (confidence-gated PPO retrain — first save, multi-seed fails) —
+Last updated: 28 May 2026 (parallel codex confirmation + supplementary ablations) —
+**Codex agent on a separate worktree (`codex/ae-score-improve`) independently
+implemented the same confidence-gated PPO pipeline (same CLI args, same
+multi-seed gate via subprocess, same positive-only BC filter) backed by the
+papers PPO (Schulman 2017), SPIBB (Laroche 2019), AWR (Peng 2019), DAgger
+(Ross 2011), and domain randomization (Tobin 2017). Same headline result:
+no promotable AE candidate. Net-new ablations beyond what the main branch
+ran:
+- Post-hoc `AE_CONF_OVERRIDE_TARGET_NONE=0` on the update-40 v3 latest
+  checkpoint: `weighted_mean=0.2555 ± 0.0229`, worst suite `pressure2=0.2057`.
+- Distribution-matched `target_none=0` retrain stopped after update 15:
+  gate trajectory u5 `0.2569`, u10 `0.2611`, u15 `0.2590`, all below
+  baseline `0.2842`. Reduced some top-seed collapses on isolated hash seeds
+  but pressure/strong stayed below baseline.
+- Workbench gated side probe with stricter tactical harm gates
+  (`positive_rate=0.55`, `min_net_delta=0.0`, `attempted=5`):
+  `weighted_mean=0.2775 ± 0.0112`, worst suite `pressure2=0.1972`.
+Codex restored its worktree Dockerfile to defaults; our main `ethanAE`
+Dockerfile keeps `AE_MODE=confidence_hybrid` because we have cloud
+calibration data (0.570/0.582 on `conf-hybrid-v2-best`/`-latest`) that
+they don't, and the wrapper is roughly heuristic-equivalent on cloud. The
+[../training/ae/RUNBOOK.md](../training/ae/RUNBOOK.md) now documents the
+confidence-gated training recipe.**
+
+Prior update: 27 May 2026 (confidence-gated PPO retrain — first save, multi-seed fails) —
 **Stage 4 of the confidence-gated plan: retrained tactical PPO under matched
 deployment distribution (rollouts query PPO only on low-confidence ticks;
 in-training save gate uses `ConfidenceHybridAEManager` for evaluation). New
