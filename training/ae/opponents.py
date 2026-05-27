@@ -741,6 +741,21 @@ OPPONENT_SUITES = {
         "defender",
         "safe_base_bomber",
     ],
+    # 28 May 2026: compound stress mix specifically for data collection that
+    # exposes heuristic mistakes against the strongest opponents. Mixes
+    # base-siege/base-bomb/scripted-M5/counter-defender/cluster-hunt — these
+    # are the opponent archetypes the heuristic struggles against the most
+    # (see ae/NOTES.md "harm-aware analysis: 800-game harm-aware data shows
+    # ZERO positive-EV transitions in random exploration"). Used by
+    # collect_tactical_outcome.py to grow the positive-advantage BC pool
+    # against tougher distributions than the default cloudsuite mix.
+    "strong_compound": [
+        "our_base_sieger",
+        "safe_base_bomber",
+        "scripted_base_attack",
+        "counter_defender",
+        "cluster_hunter",
+    ],
 }
 
 
