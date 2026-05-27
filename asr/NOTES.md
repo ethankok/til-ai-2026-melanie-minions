@@ -10,15 +10,29 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 ## Current shipped tag
 
-**`nemo-ft-v2` — official 0.970 / 0.943 (27 May 12:42 SGT, 0/400 errors).**
-Blended score `0.75*0.970 + 0.25*0.943 = 0.96325`.
-This model integrates spelling and regex group post-processing fixes on top of the fine-tuned Parakeet-TDT-0.6B-v2 model and reached a new accuracy high.
+**`nemo-ft-v3` — official 0.970 / 0.947 (27 May 13:26 SGT, 0/400 errors).**
+Blended score `0.75*0.970 + 0.25*0.947 = 0.96425`.
+This model builds on `nemo-ft-v2` by adding post-processing rules for additional spelling and phonetic variants (e.g. zonen/sono -> Zonnon, mewn -> Mewan, pullwalker -> Fullwalker).
 
 Decision: **closed.**
 
-## nemo-ft-v2 (27/05) — proper-noun post-processing fixes (new accuracy high)
+## nemo-ft-v3 (27/05) — additional spelling post-processing fixes (new blended high)
 
-Status: current accuracy high score.
+Status: current shipped tag and blended high score.
+
+Why this candidate:
+- Identified residual spelling and phonetic errors in predictions via the `scan_errors.py` script.
+- Added corrections for `zonen`/`sono` -> `Zonnon`, `mewn` -> `Mewan`, and space-less `pullwalker(s)` -> `Fullwalker(s)`.
+- Corrected unit test assertions for casing behavior of `copy is sil`.
+- Passed local unit tests and Workbench `til test` with English WER `0.0209` (improved from `0.0210`) and `1 - MER` `0.994785` (improved from `0.994753`).
+
+Submit gate:
+- Cloud result: 0/400 errors, Score `0.970`, Speed `0.947` (improved from `0.943`).
+- Blended result: `0.96425` (new overall blended high score!).
+
+## nemo-ft-v2 (27/05) — proper-noun post-processing fixes (prior accuracy high)
+
+Status: prior accuracy high score.
 
 Why this candidate:
 - Integrated spelling and regex group post-processing fixes to `asr/src/asr_postprocess.py` based on error analysis of `asr_results.json`.
@@ -27,8 +41,8 @@ Why this candidate:
 - Passed local unit tests and Workbench `til test` with English WER `0.0210` and `1 - MER` `0.9947535430276239`.
 
 Submit gate:
-- Cloud result: 0/400 errors, Score `0.970` (Accuracy high!), Speed `0.943`.
-- Blended result: `0.96325` (tied overall blended high score!).
+- Cloud result: 0/400 errors, Score `0.970`, Speed `0.943`.
+- Blended result: `0.96325`.
 
 ## nemo-ft-v1 (24/05) — fine-tuned model (prior high score)
 
