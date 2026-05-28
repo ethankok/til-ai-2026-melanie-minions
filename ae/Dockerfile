@@ -56,6 +56,9 @@ ENV AE_CONF_OVERRIDE_TARGET_NONE=1
 #                                            multi-seed n=5 wrapper_delta=-0.030
 # Either can be staged as `tactical_policy.pt` for submission.
 ENV AE_TACTICAL_POLICY_CHECKPOINT=/workspace/models/tactical_policy.pt
+# Surgical positive-rate gate variables to block defensive regressions.
+ENV AE_TACTICAL_MIN_POSITIVE_RATE=0.25
+ENV AE_TACTICAL_MIN_ATTEMPTED=5
 # MCTS-light is a known-regressed experiment, so keep it opt-in. See
 # ae/NOTES.md for the speed budget math and the v1/v2 cloud failures.
 # v1 used DEPTH=5 WIDTH=96 with no gate / no latency cap; cloud killed it after
