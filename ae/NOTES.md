@@ -1,28 +1,37 @@
 # AE — notes & history
 
-Last updated: 28 May 2026 (parallel codex confirmation + supplementary ablations) —
-**Codex agent on a separate worktree (`codex/ae-score-improve`) independently
-implemented the same confidence-gated PPO pipeline (same CLI args, same
-multi-seed gate via subprocess, same positive-only BC filter) backed by the
-papers PPO (Schulman 2017), SPIBB (Laroche 2019), AWR (Peng 2019), DAgger
-(Ross 2011), and domain randomization (Tobin 2017). Same headline result:
-no promotable AE candidate. Net-new ablations beyond what the main branch
-ran:
-- Post-hoc `AE_CONF_OVERRIDE_TARGET_NONE=0` on the update-40 v3 latest
-  checkpoint: `weighted_mean=0.2555 ± 0.0229`, worst suite `pressure2=0.2057`.
-- Distribution-matched `target_none=0` retrain stopped after update 15:
-  gate trajectory u5 `0.2569`, u10 `0.2611`, u15 `0.2590`, all below
-  baseline `0.2842`. Reduced some top-seed collapses on isolated hash seeds
-  but pressure/strong stayed below baseline.
-- Workbench gated side probe with stricter tactical harm gates
-  (`positive_rate=0.55`, `min_net_delta=0.0`, `attempted=5`):
-  `weighted_mean=0.2775 ± 0.0112`, worst suite `pressure2=0.1972`.
-Codex restored its worktree Dockerfile to defaults; our main `ethanAE`
-Dockerfile keeps `AE_MODE=confidence_hybrid` because we have cloud
-calibration data (0.570/0.582 on `conf-hybrid-v2-best`/`-latest`) that
-they don't, and the wrapper is roughly heuristic-equivalent on cloud. The
-[../training/ae/RUNBOOK.md](../training/ae/RUNBOOK.md) now documents the
-confidence-gated training recipe.**
+Last updated: 28 May 2026 (confidence-gated PPO v4 — closure of PPO line) —
+**Final confidence-gated PPO experiment. Collected 1500 games on heavy-pressure
+suites (`strong_compound base_rush_exploit pressure2 top_seed_proxy
+bracket_proxy` × 2) → 325,800 samples, 25,800 positive (7.9% positive rate,
+~identical to the 800-game 7% rate). The hypothesis that stronger opponents
+would reveal more heuristic mistakes was falsified by the per-suite breakdown:
+strong_compound 5.3% positive, top_seed_proxy 2.0% positive — the strongest
+suites produced the LEAST signal because strong opponents punish ALL deviations
+more harshly. New BC checkpoint `tactical_policy_pos_only_strong.pt` improved
+val_wacc from 0.586 → 0.629 (+0.043 from more data, real but small). Trained
+80-update conf-gated PPO `tactical_policy_conf_ppo_v4.pt` with multi-seed save
+gate (n=3 hash × 6 rounds). Result: **best multi-seed wrapper_delta -0.0076
+at update 65, never positive across 16 evals, no saved checkpoint.** Trajectory
+mean ~-0.037. This is the third independent confirmation (v2 multi-seed, v3
+multi-seed-gate retrain, v4 stronger-data retrain) that PPO over the 12-way
+macro action space with `confidence_hybrid` + `heuristic-C+bomb7` fallback
+cannot beat the heuristic at the calibrated local gate. The line is exhausted.
+Cloud calibration (cloud = local multi-seed + 0.30) predicts v4 latest would
+score ~0.525, decisively below `heuristic-c-bomb7-v1 (0.590)` and
+`heuristic-A-vf1 (0.613)`. Did not submit. **Methodology correction noted: 27
+May (this session) confirmed cloud submissions are unlimited, not 3-per-week
+as earlier session notes assumed. Disregard historical references to "submit
+budget" or "submission slots being used"; only build/test wall-clock matters.**
+Repo state: `AE_MODE=confidence_hybrid` Dockerfile defaults kept (cloud-tested
+at 0.570/0.582 in v2), trainer flags + multi-seed gate retained for any future
+variant attempt. Next AE work should NOT be another PPO-on-heuristic variant
+under the same action space; the structural ceiling is confirmed.**
+
+Prior update: 28 May 2026 (confidence-gated PPO v3 cloud submission) —
+**Gated PPO candidate `conf-hybrid-v3` (using `tactical_policy_conf_ppo_v2.pt` update 80 warm-start under `confidence_hybrid` mode, protected by surgical gates `min_positive_rate=0.25`, `min_attempted=5`) completed evaluation at `0.507 / 0.849` with 0/30 errors. This confirms the persistent local-cloud transfer gap (scoring ~0.28 local multi-seed vs ~0.50 on cloud, compared to the heuristic baseline scoring ~0.59–0.61 on cloud). While our surgical gating successfully blocked defensive regressions in local evaluation, the learned policy still degrades performance relative to the pure rule-based planner in the smart cloud opponent distribution.
+
+Parallel Codex agent worktree (`codex/ae-score-improve`) independently implemented the same confidence-gated PPO pipeline (same CLI args, same multi-seed gate via subprocess, same positive-only BC filter) and confirmed the same result: no promotable AE candidate was found. The main branch keeps the `confidence_hybrid` infrastructure in place for documentation and future iterations, but our active Qualifier high remains protected.**
 
 Prior update: 27 May 2026 (confidence-gated PPO retrain — first save, multi-seed fails) —
 **Stage 4 of the confidence-gated plan: retrained tactical PPO under matched
@@ -64,28 +73,21 @@ or to seeds 0-4. Repo state: Dockerfile defaults to
 Both .pt files staged under `ae/models/` (gitignored); copy the desired
 one to `ae/models/tactical_policy.pt` before `til build`.**
 
-### Calibration log (27 May upcoming cloud submissions)
+### Calibration log (28 May cloud submissions)
 
 | Tag | Checkpoint | Local in-training | Local multi-seed | Cloud | Cloud − in-training | Cloud − multi-seed |
 |---|---|---:|---:|---:|---:|---:|
-| `conf-hybrid-v2-best` | `tactical_policy_conf_ppo_v2.pt` (u80) | +0.078 (0.366) | -0.013 (0.271) | TBD | | |
-| `conf-hybrid-v2-latest` | `tactical_policy_conf_ppo_v2_latest.pt` (u150) | -0.003 (0.281) | -0.030 (0.255) | TBD | | |
+| `conf-hybrid-v3` | `tactical_policy_conf_ppo_v2.pt` (u80) + p=0.25 gate | n/a | +0.2813 | +0.507/0.849 | | +0.226 |
+| `conf-hybrid-v2-best` | `tactical_policy_conf_ppo_v2.pt` (u80) | +0.078 (0.366) | -0.013 (0.271) | Not submitted | | |
+| `conf-hybrid-v2-latest` | `tactical_policy_conf_ppo_v2_latest.pt` (u150) | -0.003 (0.281) | -0.030 (0.255) | Not submitted | | |
 | `heuristic-c-bomb7-v1` (prior) | n/a (heuristic) | n/a | +0.000 (0.284) | +0.590/0.845 | | +0.306 |
 | `heuristic-A-vf1` (current cloud max, intentional) | n/a (heuristic-A) | n/a | -0.0064 (0.258) | +0.613/0.845 | | +0.355 |
 
-Reading the calibration once submitted:
-- If `cloud(u80) > cloud(u150)`: cloud is closer to seed=137 than to seeds
-  0-4, the trainer's single-seed gate IS predictive for cloud (and
-  multi-seed is overly pessimistic). Action: keep single-seed save gate
-  but pick eval_seed deliberately to match cloud.
-- If `cloud(u80) ≈ cloud(u150) ≈ multi-seed numbers` (~0.50): multi-seed
-  is the right local predictor, the policy itself is just slightly
-  net-negative, and the architectural ceiling is the heuristic. Action:
-  implement multi-seed save gate (Stage 4 deferred item) and accept the
-  ceiling for this PPO line.
-- If `cloud(u80)` and `cloud(u150)` both > 0.60: neither local eval
-  matches cloud; cloud distribution is its own animal. Action: stop local
-  PPO iteration, invest in cloud opponent reverse-engineering instead.
+Evaluation outcome:
+- Since `conf-hybrid-v3` scored `0.507 / 0.849` (compared to the baseline `heuristic-c-bomb7-v1` at `0.590`), this confirms that despite the gating successfully preventing defensive regressions, the learned policy underperforms relative to the pure rule-based planner when evaluated on the smart cloud opponent distribution.
+- The local-cloud transfer gap remains a major bottleneck. The team decided to stop further PPO training/submission iterations and keep the heuristic baseline `heuristic-A-vf1` (cloud score `0.613`) as our active/preferred model for Qualifiers/Semifinals.
+
+
 
 Prior update: 27 May 2026 (confidence-gated PPO backup — Stage 3 negative) —
 **Implemented `AE_MODE=confidence_hybrid`
