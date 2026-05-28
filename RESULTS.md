@@ -1,11 +1,11 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 27 May 2026 (Stage 4 confidence-gated PPO retrain complete —
-local multi-seed gate fails on both saved and final checkpoints, pending
-cloud-submission calibration on `conf-hybrid-v2-best` and
-`conf-hybrid-v2-latest` to align local vs cloud distributions. See
-[ae/NOTES.md](ae/NOTES.md) calibration log.
+Last updated: 28 May 2026 (confidence-gated PPO v3 cloud submission evaluated —
+gated PPO candidate `conf-hybrid-v3` scored `0.507 / 0.849` with 0/30 errors,
+confirming the persistent local-cloud transfer gap. While surgical gates
+prevented defensive collapse, the learned policy still degrades performance
+relative to pure heuristic on cloud. See [ae/NOTES.md](ae/NOTES.md) calibration log.
 
 CV final scores in: blended high is
 `yolo11l-1024-alldata-final-v1-img1280` = `0.671 / 0.950` blended `0.7410`;
@@ -44,7 +44,7 @@ history stays in this file.
 | Task | Latest shipped tag | Acc/reward | Speed | Status | Working log |
 |---|---|---:|---:|---|---|
 | ASR | `nemo-ft-v3` | 0.970 | 0.947 | New accuracy and speed high score. Fine-tuned Parakeet-TDT-0.6B-v2 model (step 713, val WER 0.0856) built as `nemo-ft-v3` with spelling, regex group post-processing fixes, and additional spelling variant corrections (zonen/sono, mewn, pullwalker). Submitted 27 May 13:26 SGT with 0/400 errors. Blended score `0.96425`. | [asr/NOTES.md](asr/NOTES.md) |
-| AE | `ppo-full-rl-v1-hybrid` / `heuristic-A-vf1` | 0.638 max; 0.613 explicit heuristic | 0.847 max; 0.845 explicit heuristic | Semifinals: confidence-gated PPO retrain landed first real save (`tactical_policy_conf_ppo_v2.pt`, update 80, in-training wrapper_delta +0.078) but failed multi-seed gate at -0.013. Pending 2-submission cloud calibration on `conf-hybrid-v2-best` and `conf-hybrid-v2-latest` to align local vs cloud. | [ae/NOTES.md](ae/NOTES.md) |
+| AE | `ppo-full-rl-v1-hybrid` / `heuristic-A-vf1` | 0.638 max; 0.613 explicit heuristic | 0.847 max; 0.845 explicit heuristic | Semifinals: confidence-gated PPO retrain landed save (`tactical_policy_conf_ppo_v2.pt` update 80). Gated PPO candidate `conf-hybrid-v3` evaluated at `0.507 / 0.849`, confirming the persistent local-cloud transfer gap for learned policy. Baseline heuristic remains active. | [ae/NOTES.md](ae/NOTES.md) |
 | NLP | `v28-optimized-bm25` | 0.984 | 0.985 | Final blended and accuracy high. Tuned document-level plus passage-level BM25 bypasses neural models for high speed and reached blended `0.98425`. | [nlp/NOTES.md](nlp/NOTES.md) |
 | CV | `yolo11l-1024-alldata-final-v1-img1280` | 0.671 | 0.950 | Final Qualifier CV high. v1 weights (full-dataset YOLO11l trained at 1024px) served at `CV_IMGSZ=1280`. +0.031 over `plusval-v1` (0.640). Confirmed 27 May; v2-weights and TTA-stacked follow-ups did not beat it. | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `level10-detector-stress` | 1.000 | 0.947 | Shipped for Semifinals/Finals CV disruption. No direct Qualifier reward, but passed fairness locally and scored 1.000 cloud. | [noise/NOTES.md](noise/NOTES.md) |
@@ -499,6 +499,7 @@ Noise (current high) melanie-minions-noise level10-detector-stress 24/05/2026 16
 Noise (prior high) melanie-minions-noise level9 24/05/2026 06:18:59 0 / 500 1.000 0.934  ← Level 9 AdvGAN single-forward-pass generator (ε=32/255, bilinear upsample, JPEG q=95). Validator: SSIM inside mean `0.9839` (min `0.9414`), L2 inside mean `6.6800`, 500/500 images pass fairness gate. Replaced the JPEG re-encode baseline; superseded by `level10-detector-stress`.
 Noise (prior baseline)  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970  ← Plain JPEG re-encode baseline; superseded by `level9` and then `level10-detector-stress`.
 AE (current high by max score) melanie-minions-ae ppo-full-rl-v1-hybrid 22/05/2026 23:40:11 0 / 30 0.638 0.847 ← PROTECTED LEADERBOARD MAX, but 24 May forensic review showed this tag served pure heuristic through silent policy-load fallback; not PPO evidence. Duplicate submits were 0.564/0.843, 0.599/0.848, and 0.552/0.841, so the mean is only ~0.588.
+AE (confidence-gated PPO v3) melanie-minions-ae conf-hybrid-v3 28/05/2026 13:10:18 0 / 30 0.507 0.849  ← `AE_MODE=confidence_hybrid` with v2 (update 80) checkpoint + surgical gates (`positive_rate=0.25`, `attempted=5`). Local multi-seed evaluation was `0.281` (close to baseline `0.284`), but cloud score dropped to `0.507`. Confirms the local-cloud transfer gap remains a major bottleneck for the learned policy on cloud.
 AE (best intentional heuristic) melanie-minions-ae heuristic-A-vf1 24/05/2026 0 / 30 0.613 0.845 ← `AE_MODE=heuristic`, `AE_ENEMY_BASE_VALUE=160`, `AE_DIST_PENALTY=0.9`. Duplicate submits were 0.579/~0.849 and 0.606/~0.852, mean 0.599. Best explicit heuristic cloud tag, but still below protected max.
 AE (neutral C+bomb7 cloud check) melanie-minions-ae heuristic-c-bomb7-v1 27/05/2026 03:59:13 0 / 30 0.590 0.845 ← `AE_MODE=heuristic`, `AE_ITEM_MISSION_VALUE=80`, `AE_ITEM_RESOURCE_VALUE=40`, `AE_ENEMY_BASE_VALUE=100`, `AE_DIJKSTRA_BOMB_COST=7.0`. Workbench `til test` was 0.8031666666666666; cloud landed in expected 0.59-0.60 band, so not promoted.
 AE (heuristic defense-first) melanie-minions-ae heuristic-B-vf1..vf4 24/05/2026 0 / 30 0.581 best ~0.85 ← `AE_TIER1_DEFENSE=1`, `AE_BASE_DEFENSE_HEALTH=80`, `AE_BASE_DEFENSE_RADIUS=6`; mean 0.563. Rejected.
