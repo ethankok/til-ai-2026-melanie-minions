@@ -1,7 +1,22 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
-Last updated: 28 May 2026 (confidence-gated PPO v3 cloud submission evaluated —
+Last updated: 28 May 2026 late-night (AE PPO line empirically closed via
+cloud variance-farm). `conf-hybrid-v4` first-shot scored `0.615 / 0.847` —
+looked like a new AE high. Variance-farmed 5x with identical image bytes
+(`conf-hybrid-v4-vf1..vf5`): `0.511, 0.566, 0.605, 0.491, 0.508`. 6-sample
+mean **0.549, σ 0.053**. The 0.615 was a high-tail draw; true v4 cloud
+mean is decisively below `heuristic-A-vf1 (0.613)`. **Methodology
+bombshell: cloud-eval σ ≈ 0.053 on a deterministic image — every
+single-shot historical cloud score in this repo carries ±0.10 measurement
+noise (95% CI on n=1). Speed σ ≈ 0.004 (stable); all variance is in the
+accuracy term.** Future promotion claims require n≥5 variance-farm.
+Also submitted: `heuristic-a-bomb7-v1` (`0.529`, untested combo regressed
+— drop) and `conf-hybrid-ppo-disabled-v1` (`0.591`, confirms
+`confidence_hybrid` wrapper is a no-op when PPO is gated off). AE active
+high unchanged: `heuristic-A-vf1 0.613 / 0.845`.
+
+Prior update: 28 May 2026 (confidence-gated PPO v3 cloud submission evaluated —
 gated PPO candidate `conf-hybrid-v3` scored `0.507 / 0.849` with 0/30 errors,
 confirming the persistent local-cloud transfer gap. While surgical gates
 prevented defensive collapse, the learned policy still degrades performance
@@ -44,7 +59,7 @@ history stays in this file.
 | Task | Latest shipped tag | Acc/reward | Speed | Status | Working log |
 |---|---|---:|---:|---|---|
 | ASR | `nemo-ft-v3` | 0.970 | 0.947 | New accuracy and speed high score. Fine-tuned Parakeet-TDT-0.6B-v2 model (step 713, val WER 0.0856) built as `nemo-ft-v3` with spelling, regex group post-processing fixes, and additional spelling variant corrections (zonen/sono, mewn, pullwalker). Submitted 27 May 13:26 SGT with 0/400 errors. Blended score `0.96425`. | [asr/NOTES.md](asr/NOTES.md) |
-| AE | `ppo-full-rl-v1-hybrid` / `heuristic-A-vf1` | 0.638 max; 0.613 explicit heuristic | 0.847 max; 0.845 explicit heuristic | Semifinals: confidence-gated PPO retrain landed save (`tactical_policy_conf_ppo_v2.pt` update 80). Gated PPO candidate `conf-hybrid-v3` evaluated at `0.507 / 0.849`, confirming the persistent local-cloud transfer gap for learned policy. Baseline heuristic remains active. | [ae/NOTES.md](ae/NOTES.md) |
+| AE | `ppo-full-rl-v1-hybrid` / `heuristic-A-vf1` | 0.638 max; 0.613 explicit heuristic | 0.847 max; 0.845 explicit heuristic | Semifinals: PPO line empirically closed. v4 cloud variance-farm (n=6, identical image): mean 0.549, σ 0.053 — original 0.615 was a high-tail draw. Cloud-eval σ ≈ 0.053 invalidates all single-shot historical comparisons inside ±0.10. Active high stays heuristic. | [ae/NOTES.md](ae/NOTES.md) |
 | NLP | `v28-optimized-bm25` | 0.984 | 0.985 | Final blended and accuracy high. Tuned document-level plus passage-level BM25 bypasses neural models for high speed and reached blended `0.98425`. | [nlp/NOTES.md](nlp/NOTES.md) |
 | CV | `yolo11l-1024-alldata-final-v1-img1280` | 0.671 | 0.950 | Final Qualifier CV high. v1 weights (full-dataset YOLO11l trained at 1024px) served at `CV_IMGSZ=1280`. +0.031 over `plusval-v1` (0.640). Confirmed 27 May; v2-weights and TTA-stacked follow-ups did not beat it. | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `level10-detector-stress` | 1.000 | 0.947 | Shipped for Semifinals/Finals CV disruption. No direct Qualifier reward, but passed fairness locally and scored 1.000 cloud. | [noise/NOTES.md](noise/NOTES.md) |
@@ -75,6 +90,28 @@ corrections: `heuristic-A` (`0.613/0.845` leaderboard tag) ranks 7th here at
 and #1 in combo. This made `C + bomb=7.0` the only reasonable cloud
 variance-farm candidate; see [ae/NOTES.md](ae/NOTES.md) "26 May 2026 (late)"
 for full breakdown.
+
+AE 28 May late-night cloud batch (8 submissions, all 0/30 errors):
+
+| Tag | Mode | Score | Speed | Note |
+|---|---|---:|---:|---|
+| `conf-hybrid-v4` | confidence_hybrid + v4 ckpt | 0.615 | 0.847 | First-shot — looked like new high, then variance-farm refuted |
+| `conf-hybrid-v4-vf1` | (same image) | 0.511 | 0.840 | Variance farm 1/5 |
+| `conf-hybrid-v4-vf2` | (same image) | 0.566 | 0.837 | Variance farm 2/5 |
+| `conf-hybrid-v4-vf3` | (same image) | 0.605 | 0.841 | Variance farm 3/5 |
+| `conf-hybrid-v4-vf4` | (same image) | 0.491 | 0.841 | Variance farm 4/5 |
+| `conf-hybrid-v4-vf5` | (same image) | 0.508 | 0.847 | Variance farm 5/5 |
+| `heuristic-a-bomb7-v1` | heuristic + A-aggression + bomb7 | 0.529 | 0.842 | Untested combo regressed; drop |
+| `conf-hybrid-ppo-disabled-v1` | confidence_hybrid w/ PPO gated off | 0.591 | 0.846 | Confirms wrapper is no-op when PPO disabled |
+
+6-sample v4 stats: **mean 0.549, σ 0.053, range 0.491–0.615 (124 pts)**,
+speed σ ≈ 0.004. 95% CI on the mean: `0.549 ± 0.043`. **Cloud σ ≈ 0.053
+applies to ALL prior single-shot cloud scores in this repo** — historical
+comparisons with ±0.02 deltas (most of them) were inside noise. Not
+promoting v4. Active AE high remains `heuristic-A-vf1 0.613 / 0.845`. Per
+PR-friendly numbers, set the bar for any future "real" promotion claim at
+**Δ_mean ≥ 0.05 with n≥5 each side** (i.e. don't bother resubmitting unless
+you expect a half-σ-or-better effect, and always farm both sides).
 
 AE 27 May cloud check: `heuristic-c-bomb7-v1` baked the C+bomb7 profile
 (`AE_MODE=heuristic`, `AE_ITEM_MISSION_VALUE=80`, `AE_ITEM_RESOURCE_VALUE=40`,

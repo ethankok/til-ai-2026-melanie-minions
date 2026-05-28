@@ -8,6 +8,36 @@ cloning then PPO-fine-tunes against mixed opponents.
 
 Official AE spec: <https://github.com/til-ai/til-26/wiki/Challenge-specifications#ae>
 
+> ### ⚠️ Cloud-eval variance (measured 28 May 2026)
+>
+> Cloud-eval is NOT deterministic on identical image bytes. Variance-farming
+> `conf-hybrid-v4` (n=6, same image) yielded **σ ≈ 0.053** on the accuracy
+> term (`0.491, 0.508, 0.511, 0.566, 0.605, 0.615` → mean 0.549). Speed
+> term σ ≈ 0.004 (stable). 95% CI on a single sample is **±0.10**.
+>
+> **Implications for any cloud-based decision:**
+> - A single submission's score has ±0.10 error bars. Don't promote on n=1
+>   unless Δ > 0.10 over the active baseline.
+> - For any "is candidate X better than baseline Y?" question on cloud,
+>   variance-farm both sides with n≥5 and compare means. Set the
+>   promotion bar at **Δ_mean ≥ 0.05 with overlapping CIs disjoint**.
+> - All prior single-shot calibration comparisons (local vs cloud, ±0.02
+>   "lifts" in the leaderboard log) are inside noise. Treat them as
+>   directional, not authoritative.
+>
+> Variance-farm recipe (same image, fresh tags so the eval queue treats
+> each as a new run; build is cache-hit-instant after the first):
+>
+> ```bash
+> BASE=<your-base-tag>
+> for i in $(seq 1 5); do
+>   TAG="${BASE}-vf${i}"
+>   til build  ae "${TAG}"   # cache-hit; near-instant
+>   til submit ae "${TAG}"
+>   [ "$i" -lt 5 ] && sleep 210   # space out the eval queue
+> done
+> ```
+
 Quick reference of artifacts produced at each step:
 
 ```

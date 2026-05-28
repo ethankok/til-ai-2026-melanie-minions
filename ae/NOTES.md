@@ -1,6 +1,54 @@
 # AE — notes & history
 
-Last updated: 28 May 2026 (confidence-gated PPO v4 — closure of PPO line) —
+Last updated: 28 May 2026 late-night (v4 cloud submission + variance-farm
+— PPO line empirically closed) —
+**Cloud submission resolved the question the local multi-seed gate could not.
+v4 (`tactical_policy_conf_ppo_v4_latest.pt` under `AE_MODE=confidence_hybrid`)
+was submitted as `conf-hybrid-v4` and scored `0.615 / 0.847`, briefly looking
+like a new AE high above `heuristic-A-vf1 (0.613)`. Variance-farmed across
+5 resubmissions of the identical image (`conf-hybrid-v4-vf1..vf5`):
+`0.511, 0.566, 0.605, 0.491, 0.508`. Combined 6-sample stats: **mean 0.549,
+sample σ 0.053, range 0.491–0.615 (124-point spread), speed σ ≈ 0.004**.
+95% CI on the mean: `0.549 ± 0.043`. The original 0.615 was a high-tail
+draw. True v4 cloud mean ≈ 0.549, decisively below the heuristic baselines
+(`heuristic-A-vf1 0.613`, `heuristic-c-bomb7-v1 0.590`,
+`conf-hybrid-ppo-disabled-v1 0.591`). PPO line is now empirically
+closed — not just by calibration prediction but by direct cloud measurement.
+Active AE high remains **`heuristic-A-vf1 (0.613)`**. Do NOT promote v4.**
+
+**Methodology bombshell — cloud σ ≈ 0.053 on a deterministic image.** Every
+single-shot cloud score in this project's history carries ~±0.10 measurement
+noise (95% CI on a single sample = ±2σ). A lot of prior calibration
+comparisons (local vs cloud, candidate vs baseline, ±0.02 promotion gates)
+were inside noise. Future "real" promotion claims require **n≥5 variance-farm
+of the identical image** before drawing conclusions. Speed score is stable
+(σ ≈ 0.004) — only the accuracy term varies. Likely sources: opponent-seed
+sampling at the official evaluator (30 games drawn from a larger distribution
+each run), non-deterministic NPC behavior, or stochastic match assignment.
+
+Other 28 May late-night results:
+- `heuristic-a-bomb7-v1` (`AE_MODE=heuristic` + item_mission=160, enemy_base=160,
+  dist_penalty=0.9 — untested combo of heuristic-A aggression + bomb7 envs):
+  **0.529 / 0.842**. Regressed vs both `heuristic-A-vf1 (0.613)` and
+  `heuristic-c-bomb7-v1 (0.590)`. Untested heuristic-parameter combos are
+  not free lunches; drop this line.
+- `conf-hybrid-ppo-disabled-v1` (`AE_CONF_MARGIN_EPSILON=999999`,
+  `AE_CONF_TOP_FLOOR=-999999`, `AE_CONF_OVERRIDE_TARGET_NONE=0` — PPO
+  effectively never consulted): **0.591 / 0.846**. Within 0.001 of
+  `heuristic-c-bomb7-v1 (0.590)`. Confirms the `confidence_hybrid` wrapper
+  adds no inference overhead and is safe to keep in the Dockerfile as a
+  no-op when PPO is gated off. **But** this is a single sample inside the
+  σ ≈ 0.053 noise band — could just as easily be 0.54 or 0.64 on another run.
+
+Repo state unchanged: `AE_MODE=confidence_hybrid` Dockerfile defaults kept,
+trainer flags + multi-seed gate retained. Submitted tags remain in
+artifact registry; no rollback needed. Next AE work should target
+**heuristic-internal tweaks measured with n≥5 variance-farm**, not another
+PPO-on-heuristic variant under the same 12-way macro action space.
+
+---
+
+Prior update: 28 May 2026 (confidence-gated PPO v4 — closure of PPO line) —
 **Final confidence-gated PPO experiment. Collected 1500 games on heavy-pressure
 suites (`strong_compound base_rush_exploit pressure2 top_seed_proxy
 bracket_proxy` × 2) → 325,800 samples, 25,800 positive (7.9% positive rate,
