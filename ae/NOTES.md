@@ -1,6 +1,6 @@
 # AE — notes & history
 
-Last updated: 29 May 2026 (LLM rationale-mining leads — all 3 fail the gate) —
+Last updated: 29 May 2026 (LLM rationale-mining + base-tether cloud A/B 0.612) —
 **Ran an LLM-as-player + heuristic-annotation experiment to mine heuristic
 improvements. New infra: `ae/src/llm_manager.py` (LLM-as-player, backends
 sdk/pioneer/agy/cli, with belief-map memory), `training/ae/collect_annotated_heuristic.py`
@@ -33,8 +33,21 @@ C+bomb7 baseline 0.2842 ± 0.0074):
   higher-n (more sim-seeds) confirmation is the disciplined next step if
   revisited.**
 
+Cloud A/B update (29 May 2026): despite the local result being within noise,
+lead ① (base-tether) was submitted to cloud to test the *direction* on the real
+opponent distribution. Image `tether-v1` = `AE_MODE=heuristic` + C+bomb7 +
+`AE_LEAD_BASE_TETHER=1` (health<60, weight 0.5) scored **0.612 / 0.850 with
+0/30 errors** — +0.022 over the prior `heuristic-c-bomb7-v1` (0.590, identical
+config without the tether) and effectively tied with the active high
+`heuristic-A-vf1 (0.613)`. This is a single sample; cloud σ≈0.053 means ±0.10
+noise on n=1, so it does NOT establish a promotion. A variance-farm (n≥5,
+identical image bytes) is in progress to estimate the true mean. If the farm
+mean clears `heuristic-A-vf1 (0.613)`, the tether becomes the first
+rationale-mined lead worth promoting. The Dockerfile currently ships this
+heuristic+C+bomb7+tether config for the A/B; revert `AE_MODE` to
+`confidence_hybrid` to restore the prior shipped image.
 
-Last updated: 28 May 2026 late-night (v4 cloud submission + variance-farm
+Prior update: 28 May 2026 late-night (v4 cloud submission + variance-farm
 — PPO line empirically closed) —
 **Cloud submission resolved the question the local multi-seed gate could not.
 v4 (`tactical_policy_conf_ppo_v4_latest.pt` under `AE_MODE=confidence_hybrid`)
