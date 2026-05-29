@@ -177,6 +177,9 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
     if name == "scripted_hybrid":
         from scripted_hybrid_manager import ScriptedHybridAEManager
         return ScriptedHybridAEManager(**kwargs)
+    if name == "llm":
+        from llm_manager import LLMAEManager
+        return LLMAEManager(**kwargs)
     if name.startswith("opponent:"):
         opponent_name = name.split(":", 1)[1].strip()
         if opponent_name not in OPPONENT_NAMES:
@@ -542,6 +545,13 @@ def run_simulation(
 
     env.close()
 
+    agent_diagnostics: dict = {}
+    if hasattr(our_agent, "diagnostics") and callable(our_agent.diagnostics):
+        try:
+            agent_diagnostics = dict(our_agent.diagnostics())
+        except Exception:
+            agent_diagnostics = {}
+
     component_sum: Counter[str] = Counter()
     base_failure_sum: Counter[str] = Counter()
     action_sum: Counter[str] = Counter()
@@ -583,6 +593,7 @@ def run_simulation(
             "base_failure_classes": dict(base_failure_sum),
             "action_counts": dict(action_sum),
             "decision_counts": dict(decision_sum),
+            "agent": agent_diagnostics,
         },
     }
 
@@ -642,6 +653,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  std           : {s['std_score']:.4f}")
     print(f"  p25 / p50 / p75: {s['p25']:.4f} / {s['p50']:.4f} / {s['p75']:.4f}")
     print(f"  min / max     : {s['min_score']:.4f} / {s['max_score']:.4f}")
+    agent_diag = s.get("diagnostics", {}).get("agent") or {}
+    if agent_diag:
+        print("-" * 64)
+        for k, v in agent_diag.items():
+            print(f"  {k:<28}: {v}")
     print("=" * 64)
 
     if args.summary_out is not None:
