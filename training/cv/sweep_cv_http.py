@@ -86,6 +86,7 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "model_family",
         "rtdetr_eval_idx",
         "rtdetr_num_queries",
+        "rfdetr_resolution",
         "map",
         "map50",
         "map75",
@@ -126,9 +127,16 @@ def main() -> None:
     )
     parser.add_argument(
         "--model-family",
-        choices=["auto", "yolo", "rtdetr"],
+        choices=["auto", "yolo", "rtdetr", "rfdetr"],
         default="auto",
-        help="Set CV_MODEL_FAMILY for the container. Use rtdetr for RT-DETR best.pt files.",
+        help="Set CV_MODEL_FAMILY for the container. Use rtdetr for RT-DETR best.pt "
+        "files, rfdetr for RF-DETR .pth checkpoints.",
+    )
+    parser.add_argument(
+        "--rfdetr-resolution",
+        default="",
+        help="Comma-separated RF-DETR resolutions to sweep (divisible by 56); "
+        "empty uses the container default.",
     )
     parser.add_argument(
         "--rtdetr-eval-idx",
@@ -181,6 +189,18 @@ def main() -> None:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
     container_name = f"til-cv-sweep-{os.getpid()}"
+
+    # RF-DETR is NMS-free and resolution-fixed-at-load: iou/imgsz/augment/RT-DETR
+    # knobs are no-ops, so collapse them to a single placeholder to avoid
+    # multiplying out useless combos. The real knobs are conf (threshold) and
+    # the RF-DETR resolution.
+    if args.model_family == "rfdetr":
+        args.iou = "0"
+        args.imgsz = "0"
+        args.augment = "0"
+        args.rtdetr_eval_idx = ""
+        args.rtdetr_num_queries = ""
+
     combos = list(
         itertools.product(
             _parse_floats(args.conf),
@@ -191,6 +211,7 @@ def main() -> None:
             _parse_floats(args.cross_class_nms_iou),
             _parse_optional_ints(args.rtdetr_eval_idx),
             _parse_optional_ints(args.rtdetr_num_queries),
+            _parse_optional_ints(args.rfdetr_resolution),
         )
     )
 
@@ -203,12 +224,13 @@ def main() -> None:
         cross_class_nms_iou,
         rtdetr_eval_idx,
         rtdetr_num_queries,
+        rfdetr_resolution,
     ) in enumerate(combos, start=1):
         print(
             f"\n[{idx}/{len(combos)}] conf={conf} iou={iou} imgsz={imgsz} "
             f"max_det={max_det} augment={augment} family={args.model_family} "
             f"cross_nms={cross_class_nms_iou} eval_idx={rtdetr_eval_idx} "
-            f"queries={rtdetr_num_queries}"
+            f"queries={rtdetr_num_queries} rfdetr_res={rfdetr_resolution}"
         )
         env = {
             "CV_MODEL_FAMILY": args.model_family,
@@ -224,6 +246,8 @@ def main() -> None:
             env["CV_RTDETR_EVAL_IDX"] = str(rtdetr_eval_idx)
         if rtdetr_num_queries is not None:
             env["CV_RTDETR_NUM_QUERIES"] = str(rtdetr_num_queries)
+        if rfdetr_resolution is not None:
+            env["CV_RFDETR_RESOLUTION"] = str(rfdetr_resolution)
         host_port = _find_free_port() if args.port == 0 else args.port
         try:
             _start_container(args.image, container_name, host_port, env, use_gpus=not args.cpu)
@@ -256,6 +280,7 @@ def main() -> None:
             "model_family": args.model_family,
             "rtdetr_eval_idx": rtdetr_eval_idx,
             "rtdetr_num_queries": rtdetr_num_queries,
+            "rfdetr_resolution": rfdetr_resolution,
             "map": summary["map"],
             "map50": summary["map50"],
             "map75": summary["map75"],
@@ -277,6 +302,8 @@ def main() -> None:
             run_name += f"_eval{rtdetr_eval_idx}"
         if rtdetr_num_queries is not None:
             run_name += f"_q{rtdetr_num_queries}"
+        if rfdetr_resolution is not None:
+            run_name += f"_res{rfdetr_resolution}"
         run_name = run_name.replace(".", "p")
         (args.out_dir / f"{run_name}.json").write_text(json.dumps(row, indent=2), encoding="utf-8")
         best = max(rows, key=lambda item: item["map"])

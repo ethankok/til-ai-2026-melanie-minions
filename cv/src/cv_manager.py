@@ -39,6 +39,12 @@ except Exception:  # pragma: no cover - older ultralytics / optional deps
     RTDETR = None
 
 try:
+    from rfdetr import RFDETRBase, RFDETRLarge
+except Exception:  # pragma: no cover - rfdetr is an optional, container-only dep
+    RFDETRBase = None
+    RFDETRLarge = None
+
+try:
     import torch
 except Exception:  # pragma: no cover - optional for non-OWLv2 paths
     torch = None
@@ -167,7 +173,7 @@ class CVManager:
     def __init__(self):
         self.model_path = os.environ.get("CV_MODEL_PATH", "yolov8n.pt")
         self.model_family = os.environ.get("CV_MODEL_FAMILY", "auto").strip().lower()
-        if self.model_family not in ("auto", "yolo", "rtdetr", "owlv2"):
+        if self.model_family not in ("auto", "yolo", "rtdetr", "owlv2", "rfdetr"):
             print(
                 f"[CVManager] unknown CV_MODEL_FAMILY={self.model_family!r}; using auto",
                 flush=True,
@@ -183,6 +189,27 @@ class CVManager:
         self.device = os.environ.get("CV_DEVICE")
         self.rtdetr_eval_idx = _env_optional_int("CV_RTDETR_EVAL_IDX")
         self.rtdetr_num_queries = _env_optional_int("CV_RTDETR_NUM_QUERIES")
+
+        # RF-DETR settings. CV_CONF is reused as the predict threshold; CV_IOU is
+        # ignored because RF-DETR is NMS-free (DETR set prediction). Resolution
+        # must be divisible by 56 and is snapped to the nearest valid multiple.
+        rfdetr_variant = os.environ.get("CV_RFDETR_VARIANT", "base").strip().lower()
+        if rfdetr_variant not in ("base", "large"):
+            print(
+                f"[CVManager] unknown CV_RFDETR_VARIANT={rfdetr_variant!r}; using base",
+                flush=True,
+            )
+            rfdetr_variant = "base"
+        self.rfdetr_variant = rfdetr_variant
+        rfdetr_res = _env_int("CV_RFDETR_RESOLUTION", 728)
+        snapped = max(56, int(round(rfdetr_res / 56)) * 56)
+        if snapped != rfdetr_res:
+            print(
+                f"[CVManager] snapping CV_RFDETR_RESOLUTION {rfdetr_res} -> {snapped} "
+                "(must be divisible by 56)",
+                flush=True,
+            )
+        self.rfdetr_resolution = snapped
         self.cross_class_nms_iou = float(os.environ.get("CV_CROSS_CLASS_NMS_IOU", "0"))
         if self.cross_class_nms_iou < 0.0:
             self.cross_class_nms_iou = 0.0
@@ -255,11 +282,20 @@ class CVManager:
         self._last_second_pass_used = False
 
         if (
-            self.resolved_model_family != "owlv2"
+            self.resolved_model_family not in ("owlv2", "rfdetr")
             and YOLO is None
             and RTDETR is None
         ):
             print("[CVManager] ultralytics unavailable; returning empty detections", flush=True)
+            return
+        if self.resolved_model_family == "rfdetr" and (
+            RFDETRBase is None or RFDETRLarge is None
+        ):
+            print(
+                "[CVManager] RF-DETR requested but the rfdetr package is unavailable; "
+                "returning empty detections",
+                flush=True,
+            )
             return
         if self.resolved_model_family == "owlv2" and (
             torch is None or Owlv2ForObjectDetection is None or Owlv2Processor is None
@@ -306,6 +342,8 @@ class CVManager:
         lower_path = model_path.lower()
         if "owlv2" in lower_path or "owl-v2" in lower_path:
             return "owlv2"
+        if "rfdetr" in name or "rf-detr" in name:
+            return "rfdetr"
         if "rtdetr" in name or "rt-detr" in name:
             return "rtdetr"
         return "yolo"
@@ -315,6 +353,8 @@ class CVManager:
         family = self.resolved_model_family
         if family == "owlv2":
             return self._load_owlv2_model()
+        if family == "rfdetr":
+            return self._load_rfdetr_model(model_path)
         if family == "rtdetr":
             if RTDETR is None:
                 raise RuntimeError("RT-DETR requested but ultralytics.RTDETR is unavailable")
@@ -382,6 +422,23 @@ class CVManager:
             model.half()
         model.eval()
         self.loaded_model_family = "owlv2"
+        return model
+
+    def _load_rfdetr_model(self, model_path: str):
+        """Load a Roboflow RF-DETR detector (separate ``rfdetr`` package).
+
+        Unlike the Ultralytics families, RF-DETR has its own model classes and a
+        ``.pth`` checkpoint. Resolution is fixed at load time (positional
+        embeddings depend on it), so it must match the training resolution.
+        """
+        cls = RFDETRLarge if self.rfdetr_variant == "large" else RFDETRBase
+        if cls is None:
+            raise RuntimeError("RF-DETR requested but the rfdetr package is unavailable")
+        kwargs: dict[str, Any] = {"resolution": self.rfdetr_resolution}
+        if model_path and Path(model_path).exists():
+            kwargs["pretrain_weights"] = model_path
+        model = cls(**kwargs)
+        self.loaded_model_family = "rfdetr"
         return model
 
     def _apply_rtdetr_inference_knobs(self, model) -> None:
@@ -638,6 +695,36 @@ class CVManager:
         valid = cls >= 0
         return xyxy[valid], cls[valid], conf[valid]
 
+    def _rfdetr_predict(
+        self,
+        img: Image.Image,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Run RF-DETR and return (xyxy, class_id, conf).
+
+        RF-DETR returns a supervision ``Detections`` object with ``xyxy``,
+        ``class_id`` and ``confidence`` arrays. CV_CONF is the predict threshold.
+        Class ids are mapped to TIL category ids downstream via ``category_map``.
+        """
+        empty = (
+            np.zeros((0, 4), dtype=np.float32),
+            np.zeros((0,), dtype=np.int64),
+            np.zeros((0,), dtype=np.float32),
+        )
+        if self.model is None:
+            return empty
+
+        detections = self.model.predict(img, threshold=self.conf)
+        xyxy = getattr(detections, "xyxy", None)
+        class_id = getattr(detections, "class_id", None)
+        conf = getattr(detections, "confidence", None)
+        if xyxy is None or class_id is None or conf is None or len(xyxy) == 0:
+            return empty
+
+        xyxy = np.asarray(xyxy, dtype=np.float32)
+        cls = np.asarray(class_id, dtype=np.int64)
+        conf = np.asarray(conf, dtype=np.float32)
+        return xyxy, cls, conf
+
     def _tile_offsets(self, width: int, height: int) -> list[tuple[int, int, int, int]]:
         """Compute (x1, y1, x2, y2) tile rectangles in image pixel coords."""
         if self.tile_grid is None:
@@ -686,6 +773,9 @@ class CVManager:
         self._last_second_pass_used = False
         if self.loaded_model_family == "owlv2":
             xyxy, cls, conf = self._owlv2_predict(img)
+            return xyxy.tolist(), cls.tolist(), conf.tolist()
+        if self.loaded_model_family == "rfdetr":
+            xyxy, cls, conf = self._rfdetr_predict(img)
             return xyxy.tolist(), cls.tolist(), conf.tolist()
 
         width, height = img.size

@@ -1,5 +1,72 @@
 # CV — notes & history
 
+## 29 May 2026 — RF-DETR exploration scaffold (code landed, NOT yet trained)
+
+Architecture-family bet against the distribution-shift ceiling. The whole CV
+ceiling story below is that gap is *content shift* (~80%), not backbone capacity.
+RF-DETR (Roboflow, DINOv2 ViT backbone, DETR set-prediction / NMS-free) is the
+strongest member of the "different family, unknown gap, info-positive" bucket
+this file already flagged — its headline benchmark is *domain transfer*, which is
+exactly our failure mode. **Decisions (confirmed):** RFDETRBase @ resolution 728,
+all-data recipe (train on train+val, validate on hard test, like
+`build_final_yolo_dataset.py`). Champion `yolo11l-...-v1-img1280` (0.7410) stays
+shipped; this runs in parallel on uncapped slots. **Promote only if cloud blended
+≥ 0.7410.**
+
+Key difference from the RT-DETR path: RT-DETR rides Ultralytics; RF-DETR is the
+separate `rfdetr` pip package with its own train API, `.pth` checkpoints, and a
+supervision `Detections` return — so it gets its own inference branch (not the
+`_yolo_predict` adapter) and its own Python trainer (not a `yolo`-CLI shell).
+
+What landed (Mac-verified: import guard + remap logic; train/build/submit are
+Workbench-only):
+
+- **`cv/src/cv_manager.py`** — `CV_MODEL_FAMILY=rfdetr` fifth family. New knobs
+  `CV_RFDETR_RESOLUTION` (snaps to nearest ×56, default 728), `CV_RFDETR_VARIANT`
+  (base/large). `CV_CONF` = predict threshold; `CV_IOU` ignored (NMS-free). Reuses
+  the family-agnostic LTWH + `category_map` output path; rfdetr falls through the
+  no-NMS branch like single-pass YOLO. Guarded `from rfdetr import ...` keeps the
+  manager importable (and the YOLO path intact) when rfdetr is absent.
+- **`cv/requirements.txt`** — `rfdetr>=1.1.0`, `supervision>=0.25.0`.
+- **`training/cv/build_rfdetr_dataset.py`** — emits RF-DETR COCO layout
+  (`train/ valid/ test/`, each with images + `_annotations.coco.json`). Reuses the
+  split helpers. `train/`=train+val, `valid/`=`test/`=hard test.
+- **`training/cv/train_rfdetr.py`** — env-overridable Python trainer; prints the
+  exact build/sweep follow-ups. Emits `checkpoint_best_total.pth`.
+- **`training/cv/sweep_cv_http.py`** — `--model-family rfdetr` + `--rfdetr-resolution`
+  sweep dim; collapses the no-op iou/imgsz/augment dims for rfdetr.
+
+**Two gotchas to settle on the Workbench before the long run:**
+
+1. **Dependency conflict (highest risk).** `rfdetr` may pin torch/transformers that
+   fight the base image's CUDA torch or the existing `transformers<5` /
+   `ultralytics` pins. After `pip install`, confirm `torch.__version__` + CUDA are
+   intact (didn't get swapped for a CPU/older wheel). If it conflicts, isolate the
+   rfdetr image deps rather than degrade the YOLO image.
+2. **Class indexing.** `build_rfdetr_dataset.py` defaults to `--category-offset 1`
+   (Roboflow convention: reserve class 0, categories 1..18 + dummy id-0). The
+   script prints the matching `CV_CATEGORY_MAP` (`{"1":0,...,"18":17}`). A 3-epoch
+   smoke + one served image confirms whether RF-DETR is 1- or 0-indexed; rebuild
+   with `--category-offset 0` + identity map if 0-indexed.
+
+**Resolution coupling:** RF-DETR ties resolution to positional embeddings — train
+and serve at the *same* 728. The YOLO "train-small/serve-big upscale" lever does
+NOT transfer to DETR; don't sweep serve-res far from train-res.
+
+Workbench run order:
+
+```bash
+python training/cv/build_rfdetr_dataset.py            # writes /home/jupyter/cv_rfdetr_dataset
+EPOCHS=3 NAME=rfdetr-base-728-smoke python training/cv/train_rfdetr.py   # smoke: data + class idx
+python training/cv/train_rfdetr.py                    # full ~60ep run (T4 batch=4 grad_accum=4)
+cp /home/jupyter/cv_runs/rfdetr-base-728-v1/checkpoint_best_total.pth cv/models/best.pth
+# til build cv rfdetr-base-728-v1   (override CV_MODEL_FAMILY=rfdetr, CV_MODEL_PATH=.../best.pth,
+#                                    CV_RFDETR_RESOLUTION=728, CV_CONF=0.30, CV_CATEGORY_MAP=...)
+# sweep conf via training/cv/sweep_cv_http.py --model-family rfdetr (see train_rfdetr.py footer)
+# eval_cv_http.py hard held-out -> compare gap vs YOLO11l lineage (the go/no-go signal)
+# til test cv -> 0/500 errors; til submit cv -> compare cloud blended vs 0.7410
+```
+
 ## 27 May 2026 — Semifinals CV plan: noise-robustness against opponent perturbations
 
 **Working horizon: 2026-06-10.** In Semis/Finals an opponent may apply their

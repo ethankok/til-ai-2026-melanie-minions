@@ -5,3 +5,10 @@ uvicorn[standard]==0.34.2
 pillow>=10.0.0
 ultralytics>=8.3.40
 transformers>=4.48.0,<5.0.0
+# RF-DETR (Roboflow) detector path, gated behind CV_MODEL_FAMILY=rfdetr.
+# Optional/container-only: cv_manager.py guards the import so the YOLO path and
+# the local import sanity-check keep working when rfdetr is absent. Pulls in
+# `supervision` (its Detections return type). VERIFY at build that installing
+# rfdetr does not downgrade the base image's CUDA torch wheel (see cv/NOTES.md).
+rfdetr>=1.1.0
+supervision>=0.25.0
