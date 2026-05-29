@@ -4,16 +4,13 @@ fastapi==0.115.12
 uvicorn[standard]==0.34.2
 pillow>=10.0.0
 ultralytics>=8.3.40
-# transformers is bumped to 5.x because rfdetr 1.7.x requires transformers>=5.1.0.
-# Only the opt-in (never-shipped) OWLv2 path imports transformers; YOLO and
-# RF-DETR inference do not, so the bump is safe for the champion image too.
-transformers>=5.1.0,<6.0.0
-# RF-DETR (Roboflow) detector path, gated behind CV_MODEL_FAMILY=rfdetr.
-# Optional/container-only: cv_manager.py guards the import so the YOLO path and
-# the local import sanity-check keep working when rfdetr is absent. Pulls in
-# `supervision` (its Detections return type). Pinned <2.0.0: RFDETRBase is
-# removed in rfdetr v2.0.0, which would break the import at startup. Verified
-# at build that rfdetr does NOT downgrade the base image's CUDA torch wheel
-# (torch stayed 2.10.0+cu128 on the Workbench).
-rfdetr>=1.7.0,<2.0.0
-supervision>=0.25.0
+transformers>=4.48.0,<5.0.0
+
+# NOTE: RF-DETR (rfdetr + supervision, transformers>=5.1.0) is intentionally NOT
+# in the shipped container — the RF-DETR experiment lost to the YOLO11l champion
+# (30 May, cloud 0.666/0.921 < 0.7410; see cv/NOTES.md). The rfdetr serving path
+# in cv_manager.py is guarded and harmless without the package. To rebuild the
+# RF-DETR image, re-add `rfdetr>=1.7.0,<2.0.0` + `supervision>=0.25.0`, bump
+# transformers to `>=5.1.0,<6.0.0`, and restore the rfdetr Dockerfile block
+# (preserved in git history at the RF-DETR commits). Training deps live in
+# requirements-dev.txt.

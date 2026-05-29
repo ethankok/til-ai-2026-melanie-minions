@@ -33,11 +33,14 @@
   - `CV_IMGSZ=1280`, `CV_CONF=0.20`, `CV_IOU=0.55`, `CV_AUGMENT=1`, `CV_HALF=1`,
     `CV_CROSS_CLASS_NMS_IOU=0.97`, `CV_SECOND_PASS=0`.
 - **Headroom is small (~0.05).** AE has far more (~0.15). **If Semis time is
-  scarce, AE wins the marginal-hour ROI** — spend CV time only on the
-  architecture-family bet (RF-DETR) or noise-robustness, not more YOLO sweeps.
-- **Active experiment:** RF-DETR exploration scaffold has landed (code only, not
-  yet trained) — the one architecture-family bet against the ceiling. See
-  *Active line* below.
+  scarce, AE wins the marginal-hour ROI** — the architecture-family lever is now
+  spent (see below), so remaining CV time goes to noise-robustness only.
+- **Architecture-family question CLOSED (30 May):** RF-DETR (DINOv2 DETR) trained
+  and submitted — cloud **0.666/0.921, blended 0.7298, lost to champion 0.7410**.
+  It *ties* champion acc with a narrower train→cloud gap than old YOLO, but a
+  strong YOLO already hits the same ~0.67 cloud ceiling, so no win. **Confirms the
+  ceiling is content shift, not backbone.** Champion stays shipped. See the
+  resolved RF-DETR section below. **Next CV lever: noise-robustness only.**
 
 ### The one problem that dominates CV: the local→cloud distribution shift
 
@@ -50,16 +53,19 @@ scenes than our train distribution). The gap is a function of
 **architecture-generalization to the hidden distribution, not resolution**:
 
 ```
-Backbone   local→cloud gap on hard held-out
-v8s        ~0.35   (tier1: 0.9049 → 0.556)
-v11m       ~0.44   (0.8673 → 0.376 ; 0.9088 → 0.474)
+Backbone     local→cloud gap on hard held-out
+v8s          ~0.35   (tier1: 0.9049 → 0.556)
+v11m         ~0.44   (0.8673 → 0.376 ; 0.9088 → 0.474)
+RF-DETR-B    ~0.26   (0.921 → 0.666)   ← narrower gap, but same ~0.67 cloud ceiling
 ```
 
 Implication: to beat the old tier1 cloud (0.556) with a **v11m**-class model you
-would need hard-held-out ≥ 0.99 (out of reach); v8s-class needs ≥ 0.91. **A
-different backbone family has an unknown gap — the only credible path to a step
-change, which is why RF-DETR is the active bet.** More YOLO sweeping cannot
-break this ceiling.
+would need hard-held-out ≥ 0.99 (out of reach); v8s-class needs ≥ 0.91. **The
+backbone-family lever has now been tested to exhaustion: RF-DETR's DINOv2 ViT
+backbone generalizes better (gap 0.26 vs YOLO's 0.35–0.44) yet still tops out at
+the same ~0.67 cloud accuracy as YOLO11l — so the ceiling is the task's content
+distribution, not any architecture.** Neither more YOLO sweeping nor a different
+detector family breaks it.
 
 ### Calibration / measurement facts (trust these)
 
@@ -107,37 +113,55 @@ break this ceiling.
 | **Augmented training** (Phase C.1: JPEG + native tile crops) | Train on shifted data to close the gap | Lifted hard held-out +0.04 but **WIDENED the cloud gap** 0.349 → 0.395 — it *specialized* to small-object-dense scenes; cloud is closer to easy/sparse. Cloud flat (−0.003). |
 | **Adaptive 2nd-pass rescue** (`ry_v3_adaptive`, `CV_SECOND_PASS`) | Low-conf base + down-weighted TTA on dense images | **Overfit the held-out JSON**: 0.927 offline ensemble-lab → 0.571 cloud. Kept opt-in only, Dockerfile reverted. |
 | **OWLv2 zero-shot** (`CV_MODEL_FAMILY=owlv2`) | Open-vocab detector | Path exists, never beat YOLO; not proven. Default stays YOLO. |
+| **RF-DETR-B** (`CV_MODEL_FAMILY=rfdetr`, DINOv2 DETR) | Different backbone family vs the content-shift ceiling | Cloud **0.666/0.921, blended 0.7298 < champion 0.7410**. Ties champion acc with a *narrower* gap (0.26 vs YOLO 0.35–0.44) but hits the same ~0.67 cloud ceiling and loses on speed. **Closed the architecture-family question: ceiling is content, not backbone.** Scaffold kept for a possible RFDETRLarge revisit (low EV). |
 
 **General lesson:** offline/held-out gains that don't survive the *full-set*
 proxy or a clean held-out gate are usually overfit to our hard distribution and
 evaporate (or invert) on cloud. Gate on cloud blended before believing any lift.
 
-### Active line: RF-DETR (trained 30 May — awaiting cloud verdict)
+### RESOLVED 30 May — RF-DETR did NOT beat the champion (architecture-family question closed)
 
 The architecture-family bet against the content-shift ceiling. RF-DETR (Roboflow,
-DINOv2 ViT backbone, DETR set-prediction / NMS-free) is the strongest "different
-family, unknown gap, info-positive" candidate — its headline benchmark is
-*domain transfer*, exactly our failure mode.
+DINOv2 ViT backbone, DETR set-prediction / NMS-free) was the strongest "different
+family, unknown gap, info-positive" candidate — headline benchmark *domain
+transfer*, exactly our failure mode. Trained RFDETRBase @ 728, all-data recipe.
 
-- **Recipe (confirmed):** RFDETRBase @ resolution **728**, all-data recipe (train
-  on train+val, validate on hard test). Runs in parallel on uncapped slots.
-  **Promote only if cloud blended ≥ 0.7410.** Champion stays shipped meanwhile.
-- **It gets its own branch, not the YOLO adapter:** separate `rfdetr` pip
-  package, own train API, `.pth` checkpoints, supervision `Detections` return.
-  `CV_MODEL_FAMILY=rfdetr` is the fifth family in `cv_manager.py`; new knobs
-  `CV_RFDETR_RESOLUTION` (snaps to ×56, default 728), `CV_RFDETR_VARIANT`.
-  `CV_IOU` is ignored (NMS-free); `CV_CONF` = predict threshold.
-- **First full run (30 May, `rfdetr-base-728-v1`):** converged cleanly, no
-  overfit. Hard-held-out (torchmetrics COCO) **mAP50-95 peaked 0.912 @ epoch 16,
-  EMA 0.928**; plateaued by ~epoch 12, so the 30-epoch cap is never reached
-  (early-stopping on). batch=4 → ~3h run. Small/hard classes learned well
-  (cargo_aircraft 0.34→0.86, light_aircraft 0.29→0.87, drone→0.87) — encouraging
-  since small objects are the cloud weakness. **Caveat: this 0.91 is BELOW
-  YOLO11l's ~0.98 on the same split, but (a) torchmetrics≠Ultralytics mAP so it's
-  partly measurement, and (b) the bet rides on the cloud GAP, not local — if the
-  gap matches YOLO's ~0.31, cloud ≈ 0.60–0.62 and the bet FAILS. Decided only on
-  submit.** Serve **`checkpoint_best_ema.pth`** (rfdetr 1.7.x writes
-  `_ema` + `_regular`, NOT `_total`; EMA generalizes best — 0.928 vs 0.912).
+**Cloud result (`rfdetr-base-728-v1`, 30 May): 0.666 acc / 0.921 speed, 0/500
+errors → blended 0.7298. LOST to champion's 0.7410.** Acc *ties* the champion
+(0.666 vs 0.671, within cloud σ≈0.053); blended is lower purely on **speed**
+(0.921 vs 0.950 — RF-DETR-B is heavier per image). Do **not** promote.
+
+**The decisive finding — the ~0.67 cloud ceiling is architecture-independent:**
+
+```
+Model         local-hard (HTTP-pycoco)   cloud acc   gap
+v8s tier1            0.905                  0.556     0.349
+v11m                 0.909                  0.474     0.435
+RF-DETR-B            0.921                  0.666     0.255   ← narrower gap, same cloud ceiling
+YOLO11l champ        ~0.92                  0.671     ~0.25
+```
+
+- **The DINOv2 thesis was partially right:** RF-DETR's local→cloud gap (0.255) is
+  genuinely *narrower* than the old v8s/v11m backbones (0.35–0.44) — it does
+  generalize to the hidden distribution better than they did.
+- **But it doesn't win:** a strong YOLO (11l) already reaches the same ~0.67 cloud
+  ceiling, so RF-DETR only *ties* on acc and loses on blended via speed. **A
+  fundamentally different, foundation-model-backbone detector hits the same wall
+  → the ceiling is content/distribution shift, not backbone. Architecture-family
+  swapping is now a closed question for CV.**
+- **Training (for the record):** converged cleanly, no overfit; hard-held-out
+  torchmetrics mAP50-95 peaked 0.912 @ ep16 / EMA 0.928, plateaued ~ep12.
+  Served `checkpoint_best_ema.pth` (rfdetr 1.7.x writes `_ema`+`_regular`, not
+  `_total`; EMA 0.928 > regular 0.912). HTTP-pycoco hard = 0.921 @ conf 0.20.
+- **Optional, LOW priority:** RFDETRLarge *might* squeak past the champion if its
+  cloud-acc gain outpaces its (certain) speed cost — but the blended math is a
+  coin-flip and **AE (~0.15 headroom) + noise-robustness are far higher EV.** Not
+  recommended under the 2026-06-10 window. The scaffold (`train_rfdetr.py`
+  `VARIANT=large`, `CV_RFDETR_VARIANT=large`) is ready if revisited.
+- **Champion Dockerfile must be restored** before any champion rebuild: the
+  committed `cv/Dockerfile` on `ethanAE` is currently the RF-DETR config (champion
+  ENV preserved inline, commented). Use `git checkout main -- cv/Dockerfile` or
+  uncomment the champion block.
 - **Settled gotchas (from the 29 May smoke / 30 May run):**
   1. **Class indexing — confirmed:** `--category-offset 1` (Roboflow reserves
      class 0; categories 1..18 + dummy id-0; rf-detr read "19 classes"; per-class
