@@ -1,293 +1,216 @@
 # CV — notes & history
 
-## 29 May 2026 — RF-DETR exploration scaffold (code landed, NOT yet trained)
+> **How to read this file.** This is the CV working memory: what we've tried,
+> what worked, what failed, and *why*, so we don't re-run dead ends. **Read the
+> `## Read this first` digest below before doing any CV work** — it is the
+> current, distilled state. Everything under the `## Detailed history (archive)`
+> divider further down is the original per-session log, kept for raw numbers,
+> sweep tables, and reproduction commands. The archive is intentionally
+> redundant with the digest; consult it only for the specifics behind a claim.
+> Authoritative spec: [README.md](README.md) +
+> [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv).
+> Cross-task scores: [../RESULTS.md](../RESULTS.md).
+>
+> _Digest last refreshed: 30 May 2026._
 
-Architecture-family bet against the distribution-shift ceiling. The whole CV
-ceiling story below is that gap is *content shift* (~80%), not backbone capacity.
-RF-DETR (Roboflow, DINOv2 ViT backbone, DETR set-prediction / NMS-free) is the
-strongest member of the "different family, unknown gap, info-positive" bucket
-this file already flagged — its headline benchmark is *domain transfer*, which is
-exactly our failure mode. **Decisions (confirmed):** RFDETRBase @ resolution 728,
-all-data recipe (train on train+val, validate on hard test, like
-`build_final_yolo_dataset.py`). Champion `yolo11l-...-v1-img1280` (0.7410) stays
-shipped; this runs in parallel on uncapped slots. **Promote only if cloud blended
-≥ 0.7410.**
+---
 
-Key difference from the RT-DETR path: RT-DETR rides Ultralytics; RF-DETR is the
-separate `rfdetr` pip package with its own train API, `.pth` checkpoints, and a
-supervision `Detections` return — so it gets its own inference branch (not the
-`_yolo_predict` adapter) and its own Python trainer (not a `yolo`-CLI shell).
+## Read this first
 
-What landed (Mac-verified: import guard + remap logic; train/build/submit are
-Workbench-only):
+### Current state (30 May 2026)
 
-- **`cv/src/cv_manager.py`** — `CV_MODEL_FAMILY=rfdetr` fifth family. New knobs
-  `CV_RFDETR_RESOLUTION` (snaps to nearest ×56, default 728), `CV_RFDETR_VARIANT`
-  (base/large). `CV_CONF` = predict threshold; `CV_IOU` ignored (NMS-free). Reuses
-  the family-agnostic LTWH + `category_map` output path; rfdetr falls through the
-  no-NMS branch like single-pass YOLO. Guarded `from rfdetr import ...` keeps the
-  manager importable (and the YOLO path intact) when rfdetr is absent.
-- **`cv/requirements.txt`** — `rfdetr>=1.1.0`, `supervision>=0.25.0`.
-- **`training/cv/build_rfdetr_dataset.py`** — emits RF-DETR COCO layout
-  (`train/ valid/ test/`, each with images + `_annotations.coco.json`). Reuses the
-  split helpers. `train/`=train+val, `valid/`=`test/`=hard test.
-- **`training/cv/train_rfdetr.py`** — env-overridable Python trainer; prints the
-  exact build/sweep follow-ups. Emits `checkpoint_best_total.pth`.
-- **`training/cv/sweep_cv_http.py`** — `--model-family rfdetr` + `--rfdetr-resolution`
-  sweep dim; collapses the no-op iou/imgsz/augment dims for rfdetr.
+- **Phase:** Qualifiers closed (window ended 24 May 23:59:59 SGT). Semifinals
+  prep runs through **2026-06-10**. CV is 20% of the score.
+- **Champion (final Qualifier high by blended score):**
+  **`yolo11l-1024-alldata-final-v1-img1280` — 0.671 acc / 0.950 speed, blended
+  0.7410**, 0/500 errors. YOLO11l v1 weights (all-data, trained at `imgsz=1024`)
+  served at **`CV_IMGSZ=1280`** — the win came from *upscale-at-inference*, not
+  more training.
+- **Shipped Docker serving config** ([Dockerfile](Dockerfile)) — what goes to
+  cloud now:
+  - `CV_MODEL_FAMILY=auto`, weights at `/workspace/models/cv/best.pt`,
+    `CV_CATEGORY_MAP` = identity `0..17`.
+  - `CV_IMGSZ=1280`, `CV_CONF=0.20`, `CV_IOU=0.55`, `CV_AUGMENT=1`, `CV_HALF=1`,
+    `CV_CROSS_CLASS_NMS_IOU=0.97`, `CV_SECOND_PASS=0`.
+- **Headroom is small (~0.05).** AE has far more (~0.15). **If Semis time is
+  scarce, AE wins the marginal-hour ROI** — spend CV time only on the
+  architecture-family bet (RF-DETR) or noise-robustness, not more YOLO sweeps.
+- **Active experiment:** RF-DETR exploration scaffold has landed (code only, not
+  yet trained) — the one architecture-family bet against the ceiling. See
+  *Active line* below.
 
-**Two gotchas to settle on the Workbench before the long run:**
+### The one problem that dominates CV: the local→cloud distribution shift
 
-1. **Dependency conflict (highest risk).** `rfdetr` may pin torch/transformers that
-   fight the base image's CUDA torch or the existing `transformers<5` /
-   `ultralytics` pins. After `pip install`, confirm `torch.__version__` + CUDA are
-   intact (didn't get swapped for a CPU/older wheel). If it conflicts, isolate the
-   rfdetr image deps rather than degrade the YOLO image.
-2. **Class indexing.** `build_rfdetr_dataset.py` defaults to `--category-offset 1`
-   (Roboflow convention: reserve class 0, categories 1..18 + dummy id-0). The
-   script prints the matching `CV_CATEGORY_MAP` (`{"1":0,...,"18":17}`). A 3-epoch
-   smoke + one served image confirms whether RF-DETR is 1- or 0-indexed; rebuild
-   with `--category-offset 0` + identity map if 0-indexed.
+Every YOLO submission shows a large, stable gap between local hard-held-out mAP
+and cloud accuracy. The gap is **content shift (~80%), not backbone capacity and
+not a fixable inference knob.** Diagnostics (Phase C.0): JPEG-quality and
+resolution shifts together explain **≤20%** of the gap; the remaining ~80% is
+*different scene content* (cloud is heavier on small-object / photo-composited
+scenes than our train distribution). The gap is a function of
+**architecture-generalization to the hidden distribution, not resolution**:
 
-**Resolution coupling:** RF-DETR ties resolution to positional embeddings — train
-and serve at the *same* 728. The YOLO "train-small/serve-big upscale" lever does
-NOT transfer to DETR; don't sweep serve-res far from train-res.
-
-Workbench run order:
-
-```bash
-python training/cv/build_rfdetr_dataset.py            # writes /home/jupyter/cv_rfdetr_dataset
-EPOCHS=3 NAME=rfdetr-base-728-smoke python training/cv/train_rfdetr.py   # smoke: data + class idx
-python training/cv/train_rfdetr.py                    # full ~60ep run (T4 batch=4 grad_accum=4)
-cp /home/jupyter/cv_runs/rfdetr-base-728-v1/checkpoint_best_total.pth cv/models/best.pth
-# til build cv rfdetr-base-728-v1   (override CV_MODEL_FAMILY=rfdetr, CV_MODEL_PATH=.../best.pth,
-#                                    CV_RFDETR_RESOLUTION=728, CV_CONF=0.30, CV_CATEGORY_MAP=...)
-# sweep conf via training/cv/sweep_cv_http.py --model-family rfdetr (see train_rfdetr.py footer)
-# eval_cv_http.py hard held-out -> compare gap vs YOLO11l lineage (the go/no-go signal)
-# til test cv -> 0/500 errors; til submit cv -> compare cloud blended vs 0.7410
+```
+Backbone   local→cloud gap on hard held-out
+v8s        ~0.35   (tier1: 0.9049 → 0.556)
+v11m       ~0.44   (0.8673 → 0.376 ; 0.9088 → 0.474)
 ```
 
-**29 May smoke findings (first Workbench run):**
+Implication: to beat the old tier1 cloud (0.556) with a **v11m**-class model you
+would need hard-held-out ≥ 0.99 (out of reach); v8s-class needs ≥ 0.91. **A
+different backbone family has an unknown gap — the only credible path to a step
+change, which is why RF-DETR is the active bet.** More YOLO sweeping cannot
+break this ceiling.
 
-- **Class setup confirmed correct.** rf-detr logged "Checkpoint has 90 classes
-  but model is configured for **19** classes" — i.e. it read our 18 TIL classes +
-  dummy background (offset=1). So `--category-offset 1` + the printed
-  `CV_CATEGORY_MAP` is the right path (pending the served-image confirmation).
-- **OOM on a 15GB T4**, in Lightning's pre-train validation sanity check. Cause:
-  upstream defaults `batch_size=4` + multi-scale upsample to ~1008px → an 11.25GB
-  single DINOv2 full-attention allocation. **Fix baked into `train_rfdetr.py`
-  defaults:** `BATCH=1`, `GRAD_ACCUM=16` (effective 16), `GRAD_CHECKPOINT=1`,
-  `MULTI_SCALE=0`. The memory knobs are passed only if the installed `train()`
-  signature accepts them (version drift — installed rfdetr is ≥1.7.0, so
-  `RFDETRBase` is deprecated-but-present). batch=1 alone is the primary fix
-  (~4× less attention memory); the rest is margin.
-- **Albumentations incompatibility (quality bug, not a crash):** rf-detr logged
-  "Built 0 Albumentations transforms" / "Unknown Albumentations transform:
-  'Resize'/'HorizontalFlip'" → **no augmentation is being applied**. This is a
-  *training-env* mismatch (not the inference container — `predict()` doesn't use
-  the aug config). Pin `albumentations` in the Workbench env to the version
-  rf-detr declares before the full run; otherwise the model trains
-  augmentation-free and the local→cloud gap read is pessimistic. A 3-epoch smoke
-  doesn't need aug, so it's fine to smoke first and fix this before the full run.
+### Calibration / measurement facts (trust these)
 
-## 27 May 2026 — Semifinals CV plan: noise-robustness against opponent perturbations
+- **Speed is NOT a CV constraint.** Cloud GPU is much faster than the Workbench
+  T4: no-TTA inference at 1280 hits cloud speed **0.949** (we'd projected
+  0.85–0.92). Spend speed freely if it buys cloud accuracy.
+- **Blended break-even rule:** score is `0.75·acc + 0.25·speed`, so a heavier
+  inference path pays off only if **Δacc ≥ Δspeed / 3**. Gate every defense /
+  ensemble on cloud blended, not raw acc.
+- **Two proxies, two jobs:** the **hard held-out split** predicts cloud
+  *direction*; the **full local set** (`til test`) predicts cloud *absolute
+  level*. A model can win one and lose the other (v11m@1280 did).
+- **`test/test_cv.py` pins `score=1.0` on every box** before pycocotools (it's
+  competition scaffolding, can't change). This turns local mAP into a
+  precision-sensitive metric, so the optimal `CV_CONF` is **higher** than the
+  COCO default 0.001 — low conf floods score-1.0 FPs and tanks the local number.
+  Whether cloud consumes our real `score` field is unknown; we emit it anyway
+  (free upside, no-op otherwise).
 
-**Working horizon: 2026-06-10.** In Semis/Finals an opponent may apply their
-own noise model to our CV input image before our CV model sees it, constrained
-by the same fairness gate as our `level10-detector-stress` (SSIM floor + RMSE
-L2 ≤ 50). Our `v1-img1280` was trained and scored on clean images only;
-its 0.671 raw acc is an upper bound and the under-attack number is unknown.
+### What works / keep doing
 
-**Verify first:** read the Wiki spec at
-<https://github.com/til-ai/til-26/wiki/Challenge-specifications> for the
-exact Finals/Semis mechanic before starting work. Below plan assumes the
-symmetric "opponents noise our CV input within the fairness gate" mechanic
-described in [../noise/README.md](../noise/README.md).
+- **"Train small, serve big" — upscale-at-inference is the ONLY confirmed lever
+  on the YOLO backbone.** v8s: train 768 / serve 896. YOLO11l: train 1024 /
+  serve 1280 (+0.031 acc, the champion). Reproducible across v8s/v11m/v11l.
+- **Corollary (counter-intuitive, reproducible): bigger model + matched-imgsz
+  LOSES to smaller model + upscaled-imgsz** on this dataset. Native-1280
+  training (v2) scored *worse* than 1024-trained served at 1280 (v1). Do not
+  "fix" the upscale by training at the serve resolution.
+  - ⚠️ This lever does **NOT** transfer to DETR — RF-DETR ties resolution to
+    positional embeddings, so train and serve at the *same* res.
+- **plusval / all-data recipe** (`build_final_yolo_dataset.py`,
+  `train_v5_plusval.sh`): fold the old val split back into training, keep the
+  hard test split for sanity. Addresses ship-class imbalance (old train had only
+  34 cruise ships / 52 warships / 56 yachts). This produced the champion weights.
 
-**Plan (cheapest → strongest):**
+### Dead ends — DO NOT REDO (each confirmed negative)
 
-1. **Input purification stack in [src/cv_manager.py](src/cv_manager.py)
-   behind `CV_PURIFY=1`** — JPEG re-encode at q=75 (Dziugaite/Das), random
-   resize-and-pad in `[1200, 1280]` (Xie 2018), light Gaussian blur σ≈0.5.
-   Adversarial patterns are high-frequency; quantization + smoothing wipe
-   most of them. Compute cost is negligible vs YOLO11l inference.
-2. **Adversarial fine-tune of v1 weights.** Generate ~5k images noised via
-   our own `level10-detector-stress` (or PGD against a YOLO surrogate),
-   fine-tune v1 for 5-10 epochs on a 50/50 clean+noised mix. ~3-4h T4.
-   Highest-EV single experiment; doesn't change inference cost. Must
-   protect clean accuracy — gate against a clean held-out before promotion.
-3. **WBF ensemble v1-img1280 + plusval-v1.** Different training
-   distributions → different adversarial failure modes. Cost ~2× latency
-   (speed drops ~0.85). Need ≥+0.025 cloud acc to break even on blended.
-4. **Re-test TTA under noise.** Qualifier-era finding (TTA dead on YOLO11l)
-   may not hold against pixel-perfect attacks since TTA averages over
-   transforms. Cheap local re-check before dismissing.
+| Lever | What was tried | Result / why it failed |
+|---|---|---|
+| **TTA on YOLO11l** (`CV_AUGMENT=1`/optimized-v3) | Test-time augment for acc | Raw acc +0.018 but **blended flat-to-negative**; costs a full point of speed. Dead on this distribution. |
+| **Raise `CV_CONF` to clean FPs** | Cut low-conf detections | mAP drops **monotonically** (0.8947 → 0.8854 as conf 0.20→0.80). Integrated PR curve needs the high-recall tail; even 2.8%-precision boxes help via recall. |
+| **Tiled inference** (`CV_TILE_MODE` 2x2/2x1/3x2) | Crop into tiles to rescue small objects | **Small AP regressed in every mode**; only a small *medium*-object lift. Net flat/negative on blended. Patch stays default-off. |
+| **v8s-1024 retrain, `copy_paste=0.40`** | Higher-res retrain | **Toxic.** Small AP crashed −0.11 to −0.14 (dataset is already composed copy-paste; 0.40 shifts distribution away from eval). Safe range is 0.0–0.10. |
+| **v11m@1024 and @1280** | Bigger backbone | Regressed to cloud 0.376 / 0.474; gap structurally wider (~0.44). Bigger model didn't help; matched-imgsz hurt. |
+| **Augmented training** (Phase C.1: JPEG + native tile crops) | Train on shifted data to close the gap | Lifted hard held-out +0.04 but **WIDENED the cloud gap** 0.349 → 0.395 — it *specialized* to small-object-dense scenes; cloud is closer to easy/sparse. Cloud flat (−0.003). |
+| **Adaptive 2nd-pass rescue** (`ry_v3_adaptive`, `CV_SECOND_PASS`) | Low-conf base + down-weighted TTA on dense images | **Overfit the held-out JSON**: 0.927 offline ensemble-lab → 0.571 cloud. Kept opt-in only, Dockerfile reverted. |
+| **OWLv2 zero-shot** (`CV_MODEL_FAMILY=owlv2`) | Open-vocab detector | Path exists, never beat YOLO; not proven. Default stays YOLO. |
 
-**Skip** (cited often, poor cost/benefit at our scale): TV minimization,
-denoising autoencoders, feature squeezing (dominated by JPEG re-encode),
-randomized smoothing (latency-prohibitive).
+**General lesson:** offline/held-out gains that don't survive the *full-set*
+proxy or a clean held-out gate are usually overfit to our hard distribution and
+evaporate (or invert) on cloud. Gate on cloud blended before believing any lift.
 
-**Speed math reminder:** v1-img1280 currently 0.950 speed → blended 0.7410.
-Spending speed → break-even rule is `Δacc ≥ Δspeed / 3` (since 0.75·acc /
-0.25·speed). Don't stack defenses blindly; gate each on cloud blended.
+### Active line: RF-DETR (trained 30 May — awaiting cloud verdict)
 
-**Important caveats:**
-- Our `level10` is *our* attack. Opponents will have different ones; gains
-  against `level10` may not fully transfer.
-- AE has more leaderboard headroom (~0.15 vs CV's ~0.05). If Semis time is
-  scarce, AE wins the marginal-hour ROI calculation.
+The architecture-family bet against the content-shift ceiling. RF-DETR (Roboflow,
+DINOv2 ViT backbone, DETR set-prediction / NMS-free) is the strongest "different
+family, unknown gap, info-positive" candidate — its headline benchmark is
+*domain transfer*, exactly our failure mode.
 
-## 27 May 2026 — Qualifiers closed; final CV high `yolo11l-1024-alldata-final-v1-img1280` 0.671 / 0.950 (blended 0.7410)
+- **Recipe (confirmed):** RFDETRBase @ resolution **728**, all-data recipe (train
+  on train+val, validate on hard test). Runs in parallel on uncapped slots.
+  **Promote only if cloud blended ≥ 0.7410.** Champion stays shipped meanwhile.
+- **It gets its own branch, not the YOLO adapter:** separate `rfdetr` pip
+  package, own train API, `.pth` checkpoints, supervision `Detections` return.
+  `CV_MODEL_FAMILY=rfdetr` is the fifth family in `cv_manager.py`; new knobs
+  `CV_RFDETR_RESOLUTION` (snaps to ×56, default 728), `CV_RFDETR_VARIANT`.
+  `CV_IOU` is ignored (NMS-free); `CV_CONF` = predict threshold.
+- **First full run (30 May, `rfdetr-base-728-v1`):** converged cleanly, no
+  overfit. Hard-held-out (torchmetrics COCO) **mAP50-95 peaked 0.912 @ epoch 16,
+  EMA 0.928**; plateaued by ~epoch 12, so the 30-epoch cap is never reached
+  (early-stopping on). batch=4 → ~3h run. Small/hard classes learned well
+  (cargo_aircraft 0.34→0.86, light_aircraft 0.29→0.87, drone→0.87) — encouraging
+  since small objects are the cloud weakness. **Caveat: this 0.91 is BELOW
+  YOLO11l's ~0.98 on the same split, but (a) torchmetrics≠Ultralytics mAP so it's
+  partly measurement, and (b) the bet rides on the cloud GAP, not local — if the
+  gap matches YOLO's ~0.31, cloud ≈ 0.60–0.62 and the bet FAILS. Decided only on
+  submit.** Serve `checkpoint_best_total.pth`.
+- **Settled gotchas (from the 29 May smoke / 30 May run):**
+  1. **Class indexing — confirmed:** `--category-offset 1` (Roboflow reserves
+     class 0; categories 1..18 + dummy id-0; rf-detr read "19 classes"; per-class
+     val table showed correct label association). Use `CV_CATEGORY_MAP`
+     `{"1":0,...,"18":17}`. Re-confirm with one served image.
+  2. **T4 OOM — fixed:** the cause was the multi-scale ~1008px upsample, NOT batch
+     size. `train_rfdetr.py` defaults are now `BATCH=4`, `GRAD_ACCUM=4`,
+     `GRAD_CHECKPOINT=1`, `MULTI_SCALE=0` (batch=4 fits at 728, ~3-4× faster than
+     batch=1). Fall back to `BATCH=2 GRAD_ACCUM=8` on a tighter card.
+  3. **Albumentations + faster-coco-eval were missing** (rfdetr 1.7.x doesn't
+     auto-pull albumentations → "Built 0 transforms" / no aug; faster-coco-eval
+     is the torchmetrics MAP backend for the val callback). Both now pinned in
+     `requirements-dev.txt`; install with `pip install -r requirements-dev.txt`.
+  4. **Dependency conflict — clear:** rfdetr 1.7.1 installed without disturbing
+     torch (`2.10.0+cu128`, CUDA OK). No need to isolate the image.
+- **Resolution coupling:** train and serve at the *same* 728 — the YOLO
+  upscale-at-inference lever does NOT transfer to DETR.
+- **Workbench run order:**
+  ```bash
+  pip install -r requirements-dev.txt                   # rfdetr + albumentations + faster-coco-eval
+  python training/cv/build_rfdetr_dataset.py            # → /home/jupyter/cv_rfdetr_dataset (prints CV_CATEGORY_MAP)
+  EPOCHS=3 NAME=rfdetr-base-728-smoke python training/cv/train_rfdetr.py   # optional smoke
+  python training/cv/train_rfdetr.py                    # full run (BATCH=4 GRAD_ACCUM=4 EPOCHS=30, early-stops ~ep16)
+  cp /home/jupyter/cv_runs/rfdetr-base-728-v1/checkpoint_best_total.pth cv/models/best.pth
+  # til build/test/submit cv with CV_MODEL_FAMILY=rfdetr, CV_RFDETR_RESOLUTION=728,
+  #   CV_CONF=0.30, CV_CATEGORY_MAP=<printed map>; sweep conf via sweep_cv_http.py --model-family rfdetr
+  # eval_cv_http.py hard held-out → clean gap vs YOLO11l lineage (the go/no-go signal)
+  ```
 
-Qualifier submission window closed 24 May 2026 23:59:59 SGT. Team now in
-**Semifinals prep through 2026-06-10**.
+### Next direction (Semis): noise-robustness against opponent perturbations
 
-**Final Qualifier CV high (by blended score): `yolo11l-1024-alldata-final-v1-img1280`
-= 0.671 / 0.950, 0/500 errors, blended 0.7410.** Submitted 22 May 2026
-22:36:21 SGT. v1 weights (trained at `imgsz=1024`) served at `CV_IMGSZ=1280`
-— "train smaller, serve bigger" upscale-at-inference, same trick that worked
-for v8s tier1 (train 768 / serve 896). +0.031 raw acc over plusval-v1 (0.640)
-at essentially flat speed.
+In Semis/Finals an opponent may noise our CV input (bounded by the fairness gate:
+SSIM floor + RMSE L2 ≤ 50) before our model sees it. The champion was trained/
+scored on clean images only — its under-attack accuracy is unknown. **Verify the
+exact mechanic in the Wiki spec before starting.** Plan, cheapest→strongest:
 
-Full set of 22-24 May submissions, all now scored:
+1. **Input purification** behind `CV_PURIFY=1` (JPEG re-encode q=75, random
+   resize-and-pad in [1200,1280], light Gaussian blur σ≈0.5) — negligible cost.
+2. **Adversarial fine-tune** of champion weights on a 50/50 clean+noised mix
+   (~5k images via our `level10-detector-stress` or PGD surrogate, 5–10 ep,
+   ~3–4h T4). Highest-EV single experiment; gate against a clean held-out to
+   protect clean accuracy.
+3. **WBF ensemble** champion + plusval-v1 (~2× latency; need ≥+0.025 cloud acc).
+4. **Re-test TTA under noise** (the "TTA is dead" finding was on clean images;
+   cheap re-check).
 
-| Tag | Submit | Acc | Speed | Blended | Note |
-|---|---|---:|---:|---:|---|
-| `yolo11l-896-plusval-v1` | 22/05 23:45 | 0.640 | 0.954 | 0.7185 | Prior high. |
-| **`yolo11l-1024-alldata-final-v1-img1280`** | **22/05 22:36** | **0.671** | **0.950** | **0.7410** | **Final blended high.** v1 weights served at 1280. |
-| `yolo11l-1280-alldata-final-v2` | 23/05 20:56 | 0.654 | 0.950 | 0.7280 | v2 weights served at 1024 (Dockerfile lag). Regressed -0.017 acc vs v1-img1280. |
-| `yolo11-optimized-v3` | 24/05 20:43 | 0.672 | 0.940 | 0.7390 | v2 weights @ 1280 + TTA + CONF=0.20. **Raw-acc high +0.001 but blended -0.002** vs v1-img1280: TTA bought ~nothing in acc, cost a full point of speed. |
+Skip (poor cost/benefit at our scale): TV minimization, denoising autoencoders,
+feature squeezing, randomized smoothing. Caveat: `level10` is *our* attack;
+gains may not fully transfer to opponents' attacks.
 
-Take-aways for Semis CV work:
+### Key files
 
-1. **Upscale-at-inference is the only confirmed lever** on the YOLO11l backbone. Training at higher resolution (v2 @ 1280) did *worse* than v1 @ 1024 served at 1280. Counter-intuitive but reproducible — same pattern v8s showed back in May 14.
-2. **TTA is dead on this distribution.** v3 vs the v2-at-1024 baseline lifted raw acc +0.018 but blended only +0.011, and against v1-img1280 it's a net regression. Don't ship TTA on YOLO11l.
-3. **Speed has slack to spend on Semis.** v1-img1280 at 0.950 means we can afford a heavier inference path (bigger imgsz, ensembling) if it actually lifts cloud acc. Budget: dropping speed to 0.85 costs 0.025 blended; need to gain >+0.034 cloud acc to break even.
+- Manager (the thing we edit): [src/cv_manager.py](src/cv_manager.py) — robust
+  decode → YOLO/RF-DETR/OWLv2 → xyxy→**LTWH `[l,t,w,h]`** adapter (keep this
+  conversion; output must be pixel LTWH, never normalized center-XYWH).
+- Server (don't edit): [src/cv_server.py](src/cv_server.py)
+- Build: [Dockerfile](Dockerfile), [requirements.txt](requirements.txt) — weights
+  baked to `/workspace/models/cv/best.pt` from local `cv/models/best.pt`.
+- Training/eval: [../training/cv/](../training/cv/) — `build_final_yolo_dataset.py`,
+  `train_v5_plusval.sh`, `build_rfdetr_dataset.py`, `train_rfdetr.py`,
+  `eval_cv_http.py`, `sweep_cv_http.py` (`--model-family rfdetr`), `gap_diagnose.py`.
+- ⚠️ `test/test_cv.py` pins `score=1.0` (see calibration facts) — keep `CV_CONF`
+  higher than COCO default.
 
-## 24 May 2026 — Dockerfile bumped to CV_IMGSZ=1280
+---
 
-Commit `543516e` flipped `cv/Dockerfile` from `CV_IMGSZ=1024` to
-`CV_IMGSZ=1280` so the next submission of the yolo11l-1280-alldata-final-v2
-weights actually inferences at the resolution the model was trained at.
-The already-shipped v2 row below was submitted at `CV_IMGSZ=1024` and has
-not been re-submitted yet — when the next `til submit cv` goes out, it
-will be at native 1280.
+## Detailed history (archive — reverse chronological)
 
-## yolo11l-1280-alldata-final-v2 — all-data fine-tuned at imgsz=1280 (SHIPPED, pending score)
-
-**Cloud `[pending] / [pending]`, local test `0.988` mAP on novice validation set (small AP: 0.793, medium: 0.974, large: 0.997).**
-- Fine-tuned YOLO11l from the `yolo11l-1024-alldata-final-v1` checkpoint for 36 epochs natively at `imgsz=1280`.
-- Trained on the complete dataset (`cv_yolo_dataset_all`) to maximize representation.
-- Submitted at `CV_IMGSZ=1024` (Dockerfile was not bumped before this submission). Dockerfile is now at 1280 for the next submission — see top note.
-
-## yolo11l-896-plusval-v1 — official 0.640 / 0.954 (accuracy high)
-
-**Cloud `0.640 / 0.954` official (22 May).**
-- The plusval recipe folds the old val split back into training while keeping the hard test split for sanity (old train had only 34 cruise ships / 52 warships / 56 yachts vs ship-heavy val+test).
-- Served at `CV_IMGSZ=896`.
-
-20 May update: `cv/src/cv_manager.py` now has an opt-in Hugging Face OWLv2
-zero-shot detector path behind `CV_MODEL_FAMILY=owlv2`. It maps the 18 official
-TIL category prompts to LTWH output, supports custom `CV_OWLV2_PROMPTS`, and
-keeps the YOLO path as the Docker default until Workbench `til test` /
-submission numbers prove OWLv2 helps. For offline evaluator runs, prefetch/bake
-the model cache during Docker build or point `CV_OWLV2_MODEL_ID` at a copied
-local model directory, then keep `CV_OWLV2_LOCAL_FILES_ONLY=1`.
-
-Failed follow-up: `ry_v3_adaptive` tried low-conf base (`CV_CONF=0.05`,
-`CV_IOU=0.70`, `CV_CROSS_CLASS_NMS_IOU=0`) plus an adaptive down-weighted TTA
-rescue pass on dense images (`CV_SECOND_MIN_DETECTIONS=7`). It overfit the
-held-out JSON: offline ensemble-lab scoring was 0.9270 mAP, but `til test`
-fell to 0.8513 and official fell to 0.571 / 0.958 on 19 May 22:08 SGT.
-Keep the second-pass code opt-in only; `cv/Dockerfile` is restored to `ry-v2`.
-
-Next checkpoint path: `training/cv/build_final_yolo_dataset.py` plus
-`training/cv/train_v5_plusval.sh`. This folds the old val split into training
-while keeping the old hard test split for sanity. The reason is split imbalance:
-old train has only 34 cruise ships / 52 warships / 56 yachts, while val+test are
-much more ship-heavy and dense.
-
-Previous 16 May note: **CV RE-PARKED at `cv-yolo-v2-tier1-best`
-0.556/0.956 after Phase C.1 didn't transfer.** Augmented training (JPEG + native
-tile crops) lifted hard held-out +0.04 (0.948 vs tier1's 0.905) but the
-local→cloud gap WIDENED from 0.349 → 0.395 — augmentation overfit to the
-small-object-dense distribution, didn't generalize. v8s/v11m family is now
-confirmed at-ceiling around cloud 0.55-0.56. Hitting 0.7 would require either
-a different architecture family (RT-DETR / YOLOv9) or accepting CV at this
-number and reallocating to AE/NLP. Tier1 stays shipped.
-
-Per-task working log for CV (object detection). For the authoritative input/output/scoring spec see
-[README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#cv).
-For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
-
-## Current shipped tag
-
-**`yolo11l-1024-alldata-final-v1-img1280` — final Qualifier CV high by blended score, 0.671 / 0.950 (blended 0.7410, 22/05 22:36 SGT, 0/500 errors).**
-- YOLO11l v1 weights (trained on full dataset at `imgsz=1024`, 70 epochs, local val mAP50-95 ~0.985) served at `CV_IMGSZ=1280`.
-- Beat plusval-v1 (0.640 / 0.954, blended 0.7185) by +0.031 raw acc.
-- Win came from upscale-at-inference on YOLO11l, not further training.
-
-`yolo11-optimized-v3` (0.672 / 0.940, blended 0.7390) has the raw-acc high
-by +0.001 but loses on blended by -0.002 — see comparison table above.
-
-Prior high: **`yolo11l-896-plusval-v1` — official 0.640 / 0.954.**
-
-Dockerfile now serves at `CV_IMGSZ=1280` (bumped 24 May in `543516e` —
-matches the v2 checkpoint's training resolution). The already-shipped v2
-row above was submitted at 1024; the next submission will be at native
-1280. Other serving knobs stay at the ruiyang-sweep defaults:
-
-```text
-CV_CONF=0.15
-CV_IOU=0.55
-CV_IMGSZ=1280     # was 896 for plusval-v1, 1024 for the first v2 submit
-CV_AUGMENT=0
-CV_CROSS_CLASS_NMS_IOU=0.97
-CV_SECOND_PASS=0
-```
-
-Previous CV highs: `ry-v2` 0.608 / 0.961, `ruiyang-v1` 0.588 / 0.955, parked
-v8s `cv-yolo-v2-tier1-best` 0.556 / 0.956.
-
-Tier1 + Tier2 attempts (15-16 May) all regressed cloud or were blended-flat:
-
-| Tag | Cloud | Hard held-out | Notes |
-|---|---:|---:|---|
-| `ry-v2` (live) | 0.608 / 0.961 | 0.9234 | ruiyang-v1 weights, conf=0.15 iou=0.55 imgsz=896 aug=0 cross_nms=0.97 |
-| `ruiyang-v1` | 0.588 / 0.955 | 0.9125 | new high before core sweep, real-score HTTP eval |
-| `cv-yolo-v2-tier1-best` (live) | 0.556 / 0.956 | 0.9049 | tier1 |
-| `cv-yolo11m-v3-pre` (15/05) | 0.376 / 0.955 | 0.8673 | v11m@1024 matched-imgsz |
-| `v11m-1280-noaug-v1` (16/05) | 0.474 / 0.949 | 0.9088 | v11m at 1280 aug=0 |
-| `cv-augc1-v4` (16/05 15:28) | 0.553 / 0.962 | 0.948 | Phase C.1, mismatched Dockerfile config (imgsz=768) |
-| `cv-augc1-v4-1280` (16/05 18:28) | 0.553 / 0.959 | 0.948 | Phase C.1, matched config (imgsz=1280) |
-| v8s-1024 retrain (16/05) | NOT SUBMITTED | 0.8217-0.8370 | cp=0.40 toxic regression |
-
-**Current read**: `ry-v2` is worth keeping. Inference-only gains within this
-weight family may still exist, but the easy row has now been shipped. Material
-next gains likely require a different architecture family or a fundamentally
-different distribution recipe.
-
-## Calibration learned (for any future CV submission)
-
-```text
-Backbone     Local→cloud gap on hard held-out
-v8s          ~0.35  (tier1: 0.9049 → 0.556)
-v11m         ~0.44  (v3-pre: 0.8673 → 0.376; v11m@1280: 0.9088 → 0.474)
-```
-
-The two v11m data points agree on absolute cloud (`0.376` vs `0.474`) and on gap
-(`0.491` vs `0.435`). **The gap is a function of architecture generalization to
-the hidden distribution, not of resolution.**
-
-Implication: to beat tier1 cloud 0.556 with a v11m-class submission would need
-hard held-out ≥ 0.99 (out of reach). v8s-class needs hard ≥ 0.91 (current tier1
-is 0.9049). A different backbone family has an unknown gap; discovery requires
-submitting, and that exploratory budget is spent.
-
-**Speed projection was wrong on the cloud side**: cloud GPU is meaningfully faster
-than the workbench T4. No-TTA inference at 1280 hits cloud speed 0.949, not the
-0.85-0.92 we projected. Cloud speed is no longer a CV constraint for any
-reasonable inference resolution.
+> Everything below is the original per-session log: full sweep tables, per-tag
+> submission rows, the early-submission timeline, and the deployment/format
+> reference. It is redundant with the digest above; consult it for the exact
+> numbers behind a claim. (The most recent sessions — RF-DETR scaffold, Semis
+> noise plan, Qualifiers-closed final high, shipped-tag detail, and the
+> calibration tables — are summarized in the digest and not duplicated here.)
 
 ## Phase C.1 — augmented training didn't transfer (16 May 19:00 SGT)
 

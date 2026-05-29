@@ -86,11 +86,17 @@ def main() -> None:
     name = os.environ.get("NAME", f"rfdetr-{variant}-{resolution}-v1")
     dataset_dir = os.environ.get("RFDETR_DATASET", "/home/jupyter/cv_rfdetr_dataset")
     output_dir = os.environ.get("OUTPUT_DIR", f"/home/jupyter/cv_runs/{name}")
-    epochs = _env_int("EPOCHS", 60)
-    # T4-safe defaults: RF-DETR-B's DINOv2 backbone + multi-scale OOMs a 15GB T4
-    # at the upstream batch=4. batch=1 x grad_accum=16 keeps effective batch 16.
-    batch = _env_int("BATCH", 1)
-    grad_accum = _env_int("GRAD_ACCUM", 16)
+    # 30-epoch cap with early stopping: the first full run (29 May) converged by
+    # ~epoch 12 and peaked at epoch 16 (hard-held-out mAP50-95 0.912 / EMA 0.928),
+    # so 30 is a ceiling early-stopping never reaches.
+    epochs = _env_int("EPOCHS", 30)
+    # T4-safe defaults (15GB). The original OOM was the multi-scale ~1008px
+    # upsample, NOT batch size; with MULTI_SCALE off (below), batch=4 fits at 728
+    # and runs ~3-4x faster than batch=1 (~3h full run vs ~36h). batch=4 x
+    # grad_accum=4 keeps effective batch 16. Drop to BATCH=2 GRAD_ACCUM=8 if a
+    # tighter card OOMs.
+    batch = _env_int("BATCH", 4)
+    grad_accum = _env_int("GRAD_ACCUM", 4)
     lr = _env_float("LR", 1e-4)
     # Memory knobs (only passed if the installed train() accepts them):
     #   GRAD_CHECKPOINT (default on): trade compute for activation memory.
