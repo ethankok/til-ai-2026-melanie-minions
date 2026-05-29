@@ -67,6 +67,29 @@ cp /home/jupyter/cv_runs/rfdetr-base-728-v1/checkpoint_best_total.pth cv/models/
 # til test cv -> 0/500 errors; til submit cv -> compare cloud blended vs 0.7410
 ```
 
+**29 May smoke findings (first Workbench run):**
+
+- **Class setup confirmed correct.** rf-detr logged "Checkpoint has 90 classes
+  but model is configured for **19** classes" — i.e. it read our 18 TIL classes +
+  dummy background (offset=1). So `--category-offset 1` + the printed
+  `CV_CATEGORY_MAP` is the right path (pending the served-image confirmation).
+- **OOM on a 15GB T4**, in Lightning's pre-train validation sanity check. Cause:
+  upstream defaults `batch_size=4` + multi-scale upsample to ~1008px → an 11.25GB
+  single DINOv2 full-attention allocation. **Fix baked into `train_rfdetr.py`
+  defaults:** `BATCH=1`, `GRAD_ACCUM=16` (effective 16), `GRAD_CHECKPOINT=1`,
+  `MULTI_SCALE=0`. The memory knobs are passed only if the installed `train()`
+  signature accepts them (version drift — installed rfdetr is ≥1.7.0, so
+  `RFDETRBase` is deprecated-but-present). batch=1 alone is the primary fix
+  (~4× less attention memory); the rest is margin.
+- **Albumentations incompatibility (quality bug, not a crash):** rf-detr logged
+  "Built 0 Albumentations transforms" / "Unknown Albumentations transform:
+  'Resize'/'HorizontalFlip'" → **no augmentation is being applied**. This is a
+  *training-env* mismatch (not the inference container — `predict()` doesn't use
+  the aug config). Pin `albumentations` in the Workbench env to the version
+  rf-detr declares before the full run; otherwise the model trains
+  augmentation-free and the local→cloud gap read is pessimistic. A 3-epoch smoke
+  doesn't need aug, so it's fine to smoke first and fix this before the full run.
+
 ## 27 May 2026 — Semifinals CV plan: noise-robustness against opponent perturbations
 
 **Working horizon: 2026-06-10.** In Semis/Finals an opponent may apply their

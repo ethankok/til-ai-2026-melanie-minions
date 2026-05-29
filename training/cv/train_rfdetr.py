@@ -32,6 +32,7 @@ Knobs (env):
 
 from __future__ import annotations
 
+import inspect
 import os
 from pathlib import Path
 
@@ -46,6 +47,34 @@ def _env_float(name: str, default: float) -> float:
     return float(raw) if raw else default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
+
+
+def _filter_train_kwargs(train_fn, desired: dict) -> dict:
+    """Keep only kwargs the installed rfdetr's train() accepts.
+
+    RF-DETR's train() signature drifts across versions (the installed build is
+    >=1.7.0, newer than the documented 1.1.0). If train() takes **kwargs we pass
+    everything; otherwise we drop unsupported keys and say which, so a memory
+    knob renamed upstream degrades to a warning instead of a TypeError.
+    """
+    try:
+        params = inspect.signature(train_fn).parameters
+    except (TypeError, ValueError):
+        return desired
+    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return desired
+    supported = {k: v for k, v in desired.items() if k in params}
+    dropped = sorted(set(desired) - set(supported))
+    if dropped:
+        print(f"[train_rfdetr] train() does not accept {dropped}; skipping those", flush=True)
+    return supported
+
+
 def main() -> None:
     variant = os.environ.get("VARIANT", "base").strip().lower()
     resolution = _env_int("RESOLUTION", 728)
@@ -58,9 +87,18 @@ def main() -> None:
     dataset_dir = os.environ.get("RFDETR_DATASET", "/home/jupyter/cv_rfdetr_dataset")
     output_dir = os.environ.get("OUTPUT_DIR", f"/home/jupyter/cv_runs/{name}")
     epochs = _env_int("EPOCHS", 60)
-    batch = _env_int("BATCH", 4)
-    grad_accum = _env_int("GRAD_ACCUM", 4)
+    # T4-safe defaults: RF-DETR-B's DINOv2 backbone + multi-scale OOMs a 15GB T4
+    # at the upstream batch=4. batch=1 x grad_accum=16 keeps effective batch 16.
+    batch = _env_int("BATCH", 1)
+    grad_accum = _env_int("GRAD_ACCUM", 16)
     lr = _env_float("LR", 1e-4)
+    # Memory knobs (only passed if the installed train() accepts them):
+    #   GRAD_CHECKPOINT (default on): trade compute for activation memory.
+    #   MULTI_SCALE (default off): upstream default upsamples to ~1008px, which
+    #     is what produced the 11GB allocation; off keeps everything at resolution.
+    grad_checkpoint = _env_bool("GRAD_CHECKPOINT", True)
+    multi_scale = _env_bool("MULTI_SCALE", False)
+    num_workers = _env_int("NUM_WORKERS", 2)
 
     from rfdetr import RFDETRBase, RFDETRLarge
 
@@ -68,20 +106,28 @@ def main() -> None:
     print(
         f"[train_rfdetr] variant={variant} resolution={resolution} epochs={epochs} "
         f"batch={batch} grad_accum={grad_accum} lr={lr} "
+        f"grad_checkpoint={grad_checkpoint} multi_scale={multi_scale} "
         f"dataset={dataset_dir} output={output_dir}",
         flush=True,
     )
 
     model = model_cls(resolution=resolution)
-    model.train(
-        dataset_dir=dataset_dir,
-        epochs=epochs,
-        batch_size=batch,
-        grad_accum_steps=grad_accum,
-        lr=lr,
-        output_dir=output_dir,
-        early_stopping=True,
-    )
+    desired = {
+        "dataset_dir": dataset_dir,
+        "epochs": epochs,
+        "batch_size": batch,
+        "grad_accum_steps": grad_accum,
+        "lr": lr,
+        "output_dir": output_dir,
+        "early_stopping": True,
+        "num_workers": num_workers,
+        # candidate names for the same knobs across rfdetr versions:
+        "gradient_checkpointing": grad_checkpoint,
+        "grad_checkpoint": grad_checkpoint,
+        "multi_scale": multi_scale,
+        "expanded_scales": multi_scale,
+    }
+    model.train(**_filter_train_kwargs(model.train, desired))
 
     best = Path(output_dir) / "checkpoint_best_total.pth"
     print()
