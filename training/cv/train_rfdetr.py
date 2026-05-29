@@ -135,9 +135,18 @@ def main() -> None:
     }
     model.train(**_filter_train_kwargs(model.train, desired))
 
-    best = Path(output_dir) / "checkpoint_best_total.pth"
+    # rfdetr 1.7.x (Lightning) writes checkpoint_best_ema.pth (EMA weights, best
+    # generalization) and checkpoint_best_regular.pth — NOT checkpoint_best_total.pth.
+    # Prefer EMA; fall back to regular, then any legacy name.
+    out = Path(output_dir)
+    candidates = [
+        out / "checkpoint_best_ema.pth",
+        out / "checkpoint_best_regular.pth",
+        out / "checkpoint_best_total.pth",
+    ]
+    best = next((c for c in candidates if c.exists()), candidates[0])
     print()
-    print(f"Best checkpoint (for inference): {best}")
+    print(f"Best checkpoint (for inference, EMA preferred): {best}")
     print()
     print("Next steps:")
     print("  mkdir -p cv/models")

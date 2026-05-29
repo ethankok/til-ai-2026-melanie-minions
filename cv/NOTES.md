@@ -136,7 +136,8 @@ family, unknown gap, info-positive" candidate — its headline benchmark is
   YOLO11l's ~0.98 on the same split, but (a) torchmetrics≠Ultralytics mAP so it's
   partly measurement, and (b) the bet rides on the cloud GAP, not local — if the
   gap matches YOLO's ~0.31, cloud ≈ 0.60–0.62 and the bet FAILS. Decided only on
-  submit.** Serve `checkpoint_best_total.pth`.
+  submit.** Serve **`checkpoint_best_ema.pth`** (rfdetr 1.7.x writes
+  `_ema` + `_regular`, NOT `_total`; EMA generalizes best — 0.928 vs 0.912).
 - **Settled gotchas (from the 29 May smoke / 30 May run):**
   1. **Class indexing — confirmed:** `--category-offset 1` (Roboflow reserves
      class 0; categories 1..18 + dummy id-0; rf-detr read "19 classes"; per-class
@@ -160,7 +161,7 @@ family, unknown gap, info-positive" candidate — its headline benchmark is
   python training/cv/build_rfdetr_dataset.py            # → /home/jupyter/cv_rfdetr_dataset (prints CV_CATEGORY_MAP)
   EPOCHS=3 NAME=rfdetr-base-728-smoke python training/cv/train_rfdetr.py   # optional smoke
   python training/cv/train_rfdetr.py                    # full run (BATCH=4 GRAD_ACCUM=4 EPOCHS=30, early-stops ~ep16)
-  cp /home/jupyter/cv_runs/rfdetr-base-728-v1/checkpoint_best_total.pth cv/models/best.pth
+  cp /home/jupyter/cv_runs/rfdetr-base-728-v1/checkpoint_best_ema.pth cv/models/best.pth   # EMA; _total does not exist in 1.7.x
   # til build/test/submit cv with CV_MODEL_FAMILY=rfdetr, CV_RFDETR_RESOLUTION=728,
   #   CV_CONF=0.30, CV_CATEGORY_MAP=<printed map>; sweep conf via sweep_cv_http.py --model-family rfdetr
   # eval_cv_http.py hard held-out → clean gap vs YOLO11l lineage (the go/no-go signal)
