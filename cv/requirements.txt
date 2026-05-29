@@ -4,11 +4,16 @@ fastapi==0.115.12
 uvicorn[standard]==0.34.2
 pillow>=10.0.0
 ultralytics>=8.3.40
-transformers>=4.48.0,<5.0.0
+# transformers is bumped to 5.x because rfdetr 1.7.x requires transformers>=5.1.0.
+# Only the opt-in (never-shipped) OWLv2 path imports transformers; YOLO and
+# RF-DETR inference do not, so the bump is safe for the champion image too.
+transformers>=5.1.0,<6.0.0
 # RF-DETR (Roboflow) detector path, gated behind CV_MODEL_FAMILY=rfdetr.
 # Optional/container-only: cv_manager.py guards the import so the YOLO path and
 # the local import sanity-check keep working when rfdetr is absent. Pulls in
-# `supervision` (its Detections return type). VERIFY at build that installing
-# rfdetr does not downgrade the base image's CUDA torch wheel (see cv/NOTES.md).
-rfdetr>=1.1.0
+# `supervision` (its Detections return type). Pinned <2.0.0: RFDETRBase is
+# removed in rfdetr v2.0.0, which would break the import at startup. Verified
+# at build that rfdetr does NOT downgrade the base image's CUDA torch wheel
+# (torch stayed 2.10.0+cu128 on the Workbench).
+rfdetr>=1.7.0,<2.0.0
 supervision>=0.25.0

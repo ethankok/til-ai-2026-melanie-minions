@@ -43,7 +43,7 @@ trl>=0.12.0
 # by rf-detr's validation callback) are TRAINING-ONLY and not needed in the
 # container. rfdetr 1.7.x does not auto-pull albumentations, so it must be listed
 # explicitly or training runs augmentation-free.
-rfdetr>=1.7.0
+rfdetr>=1.7.0,<2.0.0
 supervision>=0.25.0
 albumentations>=1.4.24,<3.0.0
 faster-coco-eval
