@@ -1,5 +1,39 @@
 # AE — notes & history
 
+Last updated: 29 May 2026 (LLM rationale-mining leads — all 3 fail the gate) —
+**Ran an LLM-as-player + heuristic-annotation experiment to mine heuristic
+improvements. New infra: `ae/src/llm_manager.py` (LLM-as-player, backends
+sdk/pioneer/agy/cli, with belief-map memory), `training/ae/collect_annotated_heuristic.py`
+(heuristic plays, LLM writes per-tick rationale), `training/ae/mine_rationales.py`
+(buckets rationales into heuristic-weakness leads). Findings on LLM-as-player
+(3 rounds vs mixed, seed 42): conservative-prompt Sonnet -0.085, aggressive-prompt
+Sonnet +0.100, Gemini-3.5-Flash + belief-memory +0.251 round-1 (≈ heuristic 0.260)
+but agy quota throttled rounds 2-5. Memory/plan/belief context is the biggest
+lever for LLM play quality — but LLM-as-player still ≤ heuristic, so it's a
+worse teacher than the heuristic itself. Pivoted to mining rationales for
+heuristic tweaks. Three leads implemented, each behind a default-OFF env flag,
+all gated through multi_seed_eval (furnished preset, 5 hash × sim42 × 6 rounds,
+C+bomb7 baseline 0.2842 ± 0.0074):
+  - Lead ① base tether (`AE_LEAD_BASE_TETHER`): penalize targets by distance
+    from base when base_health < threshold. **0.2901 ± 0.0106, Δ +0.006
+    (+0.46σ)** — within noise, no suite collapses (wins cloudsuite +0.014,
+    pressure2 +0.017; worst mixed -0.023). NOT promoted (fails >1σ bar).
+  - Lead ② bomb-gate base (`AE_LEAD_BOMB_GATE_BASE`): skip enemy-base targets
+    when team_bombs==0. **0.2664 ± 0.0124, Δ -0.018 (FAIL)** — pressure2 +0.094
+    but defense_trap collapses -0.213, top_seed_proxy -0.098, cloudsuite -0.062.
+  - Lead ③ recon discount (`AE_LEAD_RECON_DISCOUNT`): extra distance penalty on
+    recon targets. **0.2842, Δ +0.000 (no-op)** — instrumentation shows recon
+    never wins as a target on the fixed-novice suites (only enemy_base/mission/
+    none), so the mixed-opponent corner-recon pattern doesn't manifest here.
+  All three flags kept default-OFF in tree. Active AE high unchanged:
+  `heuristic-A-vf1 (0.613)`. Durable lesson reaffirmed: leads mined from one
+  opponent distribution (mixed) must clear the furnished multi-seed gate before
+  they mean anything; rationale plausibility != eval lift. Lead ① is the only
+  directionally-positive, non-harmful candidate — a tether-weight sweep or
+  higher-n (more sim-seeds) confirmation is the disciplined next step if
+  revisited.**
+
+
 Last updated: 28 May 2026 late-night (v4 cloud submission + variance-farm
 — PPO line empirically closed) —
 **Cloud submission resolved the question the local multi-seed gate could not.

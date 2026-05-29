@@ -269,6 +269,26 @@ class AEManager:
         # ticks; lower values bias toward shorter cell paths even when turny).
         self.orientation_aware_path_enabled = _env_int("AE_ORIENTATION_AWARE_PATH", 0) > 0
         self.orientation_aware_turn_cost = _env_float("AE_ORIENTATION_AWARE_TURN_COST", 1.0)
+        # ── Rationale-mining leads (29 May 2026). Each default OFF; gated by an
+        # env flag and validated via multi_seed_eval before any promotion.
+        # Lead ②: don't target an enemy base we can't destroy (team_bombs==0).
+        # The LLM annotations flagged 8 cases where the planner walked onto/up
+        # to an enemy base with no bomb in hand and had to turn away.
+        self.lead_bomb_gate_base = _env_int("AE_LEAD_BOMB_GATE_BASE", 0) > 0
+        # Lead ①: base-health-conditioned distance tether. When our base is
+        # below AE_LEAD_TETHER_HEALTH, penalize candidate targets by their
+        # Manhattan distance *from our base*, pulling the agent home instead of
+        # ranging far while the base is destroyed (the #1 reward leak). Penalty
+        # scales with how damaged the base is.
+        self.lead_base_tether = _env_int("AE_LEAD_BASE_TETHER", 0) > 0
+        self.lead_tether_health = _env_float("AE_LEAD_TETHER_HEALTH", 60.0)
+        self.lead_tether_weight = _env_float("AE_LEAD_TETHER_WEIGHT", 0.5)
+        # Lead ③: recon-item distance discount. Recon is only +1; the planner
+        # chased scattered recon into far corners and got cut off. Apply an
+        # extra distance penalty to recon targets so they're only grabbed when
+        # close. 18 backtrack/dead-end rationales clustered on this pattern.
+        self.lead_recon_discount = _env_int("AE_LEAD_RECON_DISCOUNT", 0) > 0
+        self.lead_recon_dist_mult = _env_float("AE_LEAD_RECON_DIST_MULT", 1.0)
         self._reset_memory()
 
     # ------------------------------------------------------------------
@@ -731,8 +751,12 @@ class AEManager:
                         candidates.append((150.0, pos, "defense_emergency"))
 
         # When health is low, avoid aggressive targets and stick to items/exploration
+        # Lead ②: skip enemy-base targeting when we hold no bombs — we can't
+        # destroy a base without one, so routing to it wastes the trip. Scoped
+        # to the enemy_bases loop only; base_defense/enemy_chase still apply.
+        bomb_gate_skip_bases = self.lead_bomb_gate_base and int(getattr(self, "team_bombs", 0)) == 0
         if not low_health and not defense_emergency:
-            for pos in self.enemy_bases:
+            for pos in (() if bomb_gate_skip_bases else self.enemy_bases):
                 if getattr(self, "is_fixed_novice_map", False):
                     value = 130.0
                 else:
@@ -797,6 +821,23 @@ class AEManager:
             score = base_value - self.DIST_PENALTY * dist - 0.25 * self.visit_count.get(pos, 0)
             if pos in self.recent_locations[-4:]:
                 score -= 2.0
+            # Lead ①: base tether. When our base is hurt, penalize targets by
+            # their distance from base (scaled by base damage) so the agent
+            # stops ranging far while home is under attack. base_defense
+            # candidates (near base) are naturally favored by this term.
+            if (
+                self.lead_base_tether
+                and self.base_location is not None
+                and self.base_health < self.lead_tether_health
+            ):
+                damage_frac = 1.0 - (self.base_health / max(1.0, self.lead_tether_health))
+                damage_frac = max(0.0, min(1.0, damage_frac))
+                score -= self.lead_tether_weight * damage_frac * self._manhattan(pos, self.base_location)
+            # Lead ③: recon distance discount. Recon is only +1, so only worth
+            # grabbing when close; add an extra distance penalty to recon
+            # targets to stop far-corner recon chasing.
+            if self.lead_recon_discount and kind in ("item_recon", "respawn_recon"):
+                score -= self.lead_recon_dist_mult * self.DIST_PENALTY * dist
             # Threats: penalize paths that brush near recently-seen enemies,
             # but don't penalize when the *target itself* is the enemy (we want
             # to attack them) or an enemy base.
