@@ -5,10 +5,16 @@ Last updated: 29 May 2026 (LLM rationale-mining + base-tether cloud A/B).
 Ran an LLM-as-player experiment then pivoted to mining LLM rationales of
 heuristic actions for heuristic tweaks. Submitted the one surviving lead
 (base-tether) to cloud as `tether-v1` (`AE_MODE=heuristic` + C+bomb7 +
-`AE_LEAD_BASE_TETHER=1`): **0.612 / 0.850, 0/30 errors** — +0.022 over
-`heuristic-c-bomb7-v1` (0.590, same config sans tether) and effectively tied
-with the active high `heuristic-A-vf1 (0.613)`. n=1, so INCONCLUSIVE (cloud
-σ≈0.053); variance-farm in progress. LLM-as-player findings (3 rounds vs
+`AE_LEAD_BASE_TETHER=1`): first-shot **0.612 / 0.850, 0/30**. Variance-farmed
+n=5 (`tether-v1-vf1..vf5`, identical image): `0.612, 0.560, 0.568, 0.559,
+0.662` → **mean 0.592 ± 0.020, σ 0.045**. The 0.612/0.662 were high-tail
+draws. Verdict: farm mean 0.592 ≈ `heuristic-c-bomb7-v1` single 0.590 (Δ
++0.002) and only +0.017 (+0.76σ) over heuristic-A's *true* farmed mean 0.575
+— within noise. The tether adds nothing detectable on cloud (consistent with
+its +0.006 local), so it stays default-OFF; NOT promoted. Mild takeaway: the
+C+bomb7 family farms ~0.59, in the same band as heuristic-A — no AE config has
+a farmed mean meaningfully above ~0.59. Active high unchanged. LLM-as-player
+findings (3 rounds vs
 mixed, seed 42, local sim): conservative-prompt Sonnet 4.6 -0.085,
 aggressive-prompt +0.100, Gemini-3.5-Flash + belief-memory +0.251 on round 1
 (≈ heuristic 0.279) before the agy subscription quota throttled later rounds.
@@ -82,7 +88,7 @@ history stays in this file.
 | Task | Latest shipped tag | Acc/reward | Speed | Status | Working log |
 |---|---|---:|---:|---|---|
 | ASR | `nemo-ft-v3` | 0.970 | 0.947 | New accuracy and speed high score. Fine-tuned Parakeet-TDT-0.6B-v2 model (step 713, val WER 0.0856) built as `nemo-ft-v3` with spelling, regex group post-processing fixes, and additional spelling variant corrections (zonen/sono, mewn, pullwalker). Submitted 27 May 13:26 SGT with 0/400 errors. Blended score `0.96425`. | [asr/NOTES.md](asr/NOTES.md) |
-| AE | `ppo-full-rl-v1-hybrid` / `heuristic-A-vf1` | 0.638 max; 0.613 explicit heuristic | 0.847 max; 0.845 explicit heuristic | Semifinals: PPO line empirically closed. v4 cloud variance-farm (n=6, identical image): mean 0.549, σ 0.053 — original 0.615 was a high-tail draw. Cloud-eval σ ≈ 0.053 invalidates all single-shot historical comparisons inside ±0.10. Active high stays heuristic. 29 May: base-tether cloud A/B (tether-v1) 0.612/0.850 — +0.022 over C+bomb7, ≈ tied with 0.613 high, n=1 inconclusive (variance-farm running). | [ae/NOTES.md](ae/NOTES.md) |
+| AE | `ppo-full-rl-v1-hybrid` / `heuristic-A-vf1` | 0.638 max; 0.613 explicit heuristic | 0.847 max; 0.845 explicit heuristic | Semifinals: PPO line empirically closed. v4 cloud variance-farm (n=6, identical image): mean 0.549, σ 0.053 — original 0.615 was a high-tail draw. Cloud-eval σ ≈ 0.053 invalidates all single-shot historical comparisons inside ±0.10. Active high stays heuristic. 29 May: base-tether cloud A/B (tether-v1) variance-farmed n=5 → mean 0.592 ± 0.020 (σ 0.045); tether is neutral (≈ C+bomb7 0.590, +0.76σ over heuristic-A mean 0.575). Not promoted; stays default-OFF. | [ae/NOTES.md](ae/NOTES.md) |
 | NLP | `v28-optimized-bm25` | 0.984 | 0.985 | Final blended and accuracy high. Tuned document-level plus passage-level BM25 bypasses neural models for high speed and reached blended `0.98425`. | [nlp/NOTES.md](nlp/NOTES.md) |
 | CV | `yolo11l-1024-alldata-final-v1-img1280` | 0.671 | 0.950 | Final Qualifier CV high. v1 weights (full-dataset YOLO11l trained at 1024px) served at `CV_IMGSZ=1280`. +0.031 over `plusval-v1` (0.640). Confirmed 27 May; v2-weights and TTA-stacked follow-ups did not beat it. | [cv/NOTES.md](cv/NOTES.md) |
 | Noise | `level10-detector-stress` | 1.000 | 0.947 | Shipped for Semifinals/Finals CV disruption. No direct Qualifier reward, but passed fairness locally and scored 1.000 cloud. | [noise/NOTES.md](noise/NOTES.md) |
@@ -126,7 +132,11 @@ AE 28 May late-night cloud batch (8 submissions, all 0/30 errors):
 | `conf-hybrid-v4-vf5` | (same image) | 0.508 | 0.847 | Variance farm 5/5 |
 | `heuristic-a-bomb7-v1` | heuristic + A-aggression + bomb7 | 0.529 | 0.842 | Untested combo regressed; drop |
 | `conf-hybrid-ppo-disabled-v1` | confidence_hybrid w/ PPO gated off | 0.591 | 0.846 | Confirms wrapper is no-op when PPO disabled |
-| `tether-v1` | heuristic + C+bomb7 + base-tether (lead ①) | 0.612 | 0.850 | +0.022 vs heuristic-c-bomb7-v1 (0.590); ≈ tied w/ 0.613 high. n=1, variance-farm in progress |
+| `tether-v1` | heuristic + C+bomb7 + base-tether (lead ①) | 0.612 | 0.850 | First-shot. Variance-farm n=5 → mean 0.592 ± 0.020 (see below) |
+| `tether-v1-vf2` | (same image) | 0.560 | 0.843 | Variance farm 2/5 |
+| `tether-v1-vf3` | (same image) | 0.568 | 0.845 | Variance farm 3/5 |
+| `tether-v1-vf4` | (same image) | 0.559 | 0.850 | Variance farm 4/5 |
+| `tether-v1-vf5` | (same image) | 0.662 | 0.855 | Variance farm 5/5 — high-tail draw |
 
 6-sample v4 stats: **mean 0.549, σ 0.053, range 0.491–0.615 (124 pts)**,
 speed σ ≈ 0.004. 95% CI on the mean: `0.549 ± 0.043`. **Cloud σ ≈ 0.053

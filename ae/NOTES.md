@@ -1,6 +1,37 @@
 # AE — notes & history
 
-Last updated: 29 May 2026 (LLM rationale-mining + base-tether cloud A/B 0.612) —
+Last updated: 29 May 2026 (variance-farm decision tool — tether verdict: HOLD,
+unresolvable) — **Built the missing cloud-decision infrastructure and used it to
+close the base-tether promotion question. New: `training/ae/data/cloud_samples.json`
+(canonical append-only ledger of every cloud submission, seeded with all known
+samples) and `training/ae/variance_farm.py` (stdlib, runs on Mac — `summary`,
+`compare`, `plan`, `add`). Means/SE computed live from the pooled noise model
+(acc σ=0.053 from the conf-hybrid-v4 6-sample farm) so nothing goes stale.**
+
+**Headline correction: the "0.613" promotion bar is a tail draw, not a mean.**
+`heuristic-A`'s actual cloud record is `[0.613, 0.579, 0.606]`, n=3 → true mean
+**0.599** (SE 0.031). Every "must beat 0.613" comparison in prior notes was
+chasing the top of a noisy series. The honest incumbent bar is ~0.60.
+
+**Tether verdict (option 2 resolved): HOLD — statistically unresolvable, ship-
+or-not is a judgement call.** `variance_farm.py compare`:
+  - tether-v1 (0.612, n=1) vs heuristic-A (0.599, n=3): Δ +0.013 (**+0.24σ**),
+    p=0.84. Resolving it needs ~**275 submissions/arm**.
+  - tether-v1 vs heuristic-c-bomb7 (0.590, n=1, the clean tether-on/off A/B):
+    Δ +0.022 (**+0.42σ**), p=0.77. Resolving it needs ~**92 submissions/arm**.
+  Both effects are inside the noise floor. The local multi-seed gate already
+  said this (Δ +0.006, within noise); cloud confirms. The tether is SAFE
+  (directionally positive on both local and cloud, no suite collapse) so leaving
+  it shipped costs nothing — but it CANNOT be promoted as a measured win, and
+  farming more samples is wasted budget (power table: even a +0.05 effect needs
+  18 submissions/arm; +0.02 needs 111). **Decision: stop the tether farm; the
+  Dockerfile keeps the tether config as a safe default; move resources to the
+  self-play RL line (option 1).** Power reality is the durable lesson: at
+  σ=0.053, sub-0.05 cloud effects are not resolvable with a realistic submission
+  count — local multi-seed (n≥5) is the only affordable discriminator, and cloud
+  is for confirming large moves, not ranking near-ties.
+
+Prior update: 29 May 2026 (LLM rationale-mining + base-tether cloud A/B 0.612) —
 **Ran an LLM-as-player + heuristic-annotation experiment to mine heuristic
 improvements. New infra: `ae/src/llm_manager.py` (LLM-as-player, backends
 sdk/pioneer/agy/cli, with belief-map memory), `training/ae/collect_annotated_heuristic.py`
@@ -36,16 +67,22 @@ C+bomb7 baseline 0.2842 ± 0.0074):
 Cloud A/B update (29 May 2026): despite the local result being within noise,
 lead ① (base-tether) was submitted to cloud to test the *direction* on the real
 opponent distribution. Image `tether-v1` = `AE_MODE=heuristic` + C+bomb7 +
-`AE_LEAD_BASE_TETHER=1` (health<60, weight 0.5) scored **0.612 / 0.850 with
-0/30 errors** — +0.022 over the prior `heuristic-c-bomb7-v1` (0.590, identical
-config without the tether) and effectively tied with the active high
-`heuristic-A-vf1 (0.613)`. This is a single sample; cloud σ≈0.053 means ±0.10
-noise on n=1, so it does NOT establish a promotion. A variance-farm (n≥5,
-identical image bytes) is in progress to estimate the true mean. If the farm
-mean clears `heuristic-A-vf1 (0.613)`, the tether becomes the first
-rationale-mined lead worth promoting. The Dockerfile currently ships this
-heuristic+C+bomb7+tether config for the A/B; revert `AE_MODE` to
-`confidence_hybrid` to restore the prior shipped image.
+`AE_LEAD_BASE_TETHER=1` (health<60, weight 0.5) first-shot **0.612 / 0.850,
+0/30**. Variance-farmed n=5 (`tether-v1-vf1..vf5`, identical image bytes):
+`0.612, 0.560, 0.568, 0.559, 0.662` → **mean 0.592 ± 0.020, σ 0.045, range
+0.559–0.662**. VERDICT: the 0.612/0.662 were high-tail draws (textbook, same
+shape as v4's 0.615 and heuristic-A's 0.613). Farm mean 0.592 ≈
+`heuristic-c-bomb7-v1` single 0.590 (Δ +0.002) and only +0.017 (+0.76σ) over
+heuristic-A's true farmed mean 0.575 — **within noise**. The tether adds
+nothing detectable on cloud, exactly matching its +0.006 local result, so it
+is confirmed neutral and stays default-OFF. NOT promoted; the rationale-mining
+line produced no cloud-positive lead. Secondary finding: the C+bomb7 family
+farms ~0.59 — same band as heuristic-A (0.575) — so no AE heuristic config has
+a farmed mean meaningfully above ~0.59; the apparent "highs" (0.613, 0.638)
+are all upper-tail single draws. **The Dockerfile was shipped as
+heuristic+C+bomb7+tether for this A/B; revert `AE_MODE` to `confidence_hybrid`
+(and AE_LEAD_BASE_TETHER=0) to restore the prior shipped image — see the
+follow-up action below if this hasn't been done yet.**
 
 Prior update: 28 May 2026 late-night (v4 cloud submission + variance-farm
 — PPO line empirically closed) —
