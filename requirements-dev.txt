@@ -36,6 +36,18 @@ nltk
 bitsandbytes>=0.43.0
 trl>=0.12.0
 
+# CV RF-DETR training stack (Roboflow detector, separate from the Ultralytics
+# YOLO path). rfdetr + supervision also ship in cv/requirements.txt for the
+# inference container; albumentations (rf-detr's augmentation pipeline, pinned to
+# rf-detr's supported range) and faster-coco-eval (torchmetrics MAP backend used
+# by rf-detr's validation callback) are TRAINING-ONLY and not needed in the
+# container. rfdetr 1.7.x does not auto-pull albumentations, so it must be listed
+# explicitly or training runs augmentation-free.
+rfdetr>=1.7.0
+supervision>=0.25.0
+albumentations>=1.4.24,<3.0.0
+faster-coco-eval
+
 # This is the til_environment package. You'll need this to train and test your
 #AE model. You can import this package using `import til_environment`.
 -e ./til-26-ae
