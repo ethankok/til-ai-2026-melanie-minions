@@ -33,10 +33,14 @@ WORKDIR /workspace
 # collapse defense_trap; pressure2 lifts by +0.10 and the worst single-suite
 # regression is top_seed_proxy at -0.115 (smaller than every prior PPO
 # attempt). See ae/NOTES.md for the diagnostic.
-ENV AE_MODE=confidence_hybrid
-# C+bomb7 baseline profile (also auto-applied by ConfidenceHybridAEManager
-# via _apply_baseline_profile, but explicit here so the image's behavior
-# is obvious from the Dockerfile alone).
+# 29 May 2026: switched to pure `heuristic` mode for a clean cloud A/B of the
+# base-tether lead (AE_LEAD_BASE_TETHER below). This config = heuristic + C+bomb7
+# + tether, directly comparable to the prior `heuristic-c-bomb7-v1` cloud result
+# (0.590) which was heuristic + C+bomb7 with NO tether. Isolating the tether as
+# the single variable. Revert to AE_MODE=confidence_hybrid to restore the prior
+# shipped image.
+ENV AE_MODE=heuristic
+# C+bomb7 baseline profile.
 ENV AE_ITEM_MISSION_VALUE=80
 ENV AE_ITEM_RESOURCE_VALUE=40
 ENV AE_ENEMY_BASE_VALUE=100
@@ -136,6 +140,23 @@ ENV AE_ENEMY_BOMB_ESCAPE_VISIT_PENALTY=0.3
 # Novice map only; general-map BFS path is untouched.
 ENV AE_ORIENTATION_AWARE_PATH=0
 ENV AE_ORIENTATION_AWARE_TURN_COST=1.0
+
+# Lead ① (29 May 2026) — base-health-conditioned distance tether. When base
+# health drops below AE_LEAD_TETHER_HEALTH, candidate targets are penalized by
+# their Manhattan distance from our base, scaled by how damaged the base is,
+# pulling the agent home instead of ranging far while the base is destroyed.
+# Local n=5 furnished gate vs C+bomb7 baseline (0.2842 ± 0.0074): 0.2901 ±
+# 0.0106, Δ +0.006 (+0.46σ) — within local noise, no suite collapses. ENABLED
+# here only as a cloud A/B vs heuristic-c-bomb7-v1 (0.590). NOTE: one cloud
+# sample carries ~±0.10 noise (cloud σ≈0.053); a single result is NOT
+# conclusive — variance-farm n≥5 before drawing any conclusion. Set
+# AE_LEAD_BASE_TETHER=0 to disable.
+ENV AE_LEAD_BASE_TETHER=1
+ENV AE_LEAD_TETHER_HEALTH=60.0
+ENV AE_LEAD_TETHER_WEIGHT=0.5
+# Leads ② / ③ stayed below the gate; keep OFF.
+ENV AE_LEAD_BOMB_GATE_BASE=0
+ENV AE_LEAD_RECON_DISCOUNT=0
 
 # Installs your dependencies.
 RUN pip install -U pip
