@@ -1,415 +1,208 @@
 # AE — notes & history
 
-Last updated: 29 May 2026 (variance-farm decision tool — tether verdict: HOLD,
-unresolvable) — **Built the missing cloud-decision infrastructure and used it to
-close the base-tether promotion question. New: `training/ae/data/cloud_samples.json`
-(canonical append-only ledger of every cloud submission, seeded with all known
-samples) and `training/ae/variance_farm.py` (stdlib, runs on Mac — `summary`,
-`compare`, `plan`, `add`). Means/SE computed live from the pooled noise model
-(acc σ=0.053 from the conf-hybrid-v4 6-sample farm) so nothing goes stale.**
-
-**Headline correction: the "0.613" promotion bar is a tail draw, not a mean.**
-`heuristic-A`'s actual cloud record is `[0.613, 0.579, 0.606]`, n=3 → true mean
-**0.599** (SE 0.031). Every "must beat 0.613" comparison in prior notes was
-chasing the top of a noisy series. The honest incumbent bar is ~0.60.
-
-**Tether verdict (option 2 resolved): HOLD — statistically unresolvable, ship-
-or-not is a judgement call.** `variance_farm.py compare`:
-  - tether-v1 (0.612, n=1) vs heuristic-A (0.599, n=3): Δ +0.013 (**+0.24σ**),
-    p=0.84. Resolving it needs ~**275 submissions/arm**.
-  - tether-v1 vs heuristic-c-bomb7 (0.590, n=1, the clean tether-on/off A/B):
-    Δ +0.022 (**+0.42σ**), p=0.77. Resolving it needs ~**92 submissions/arm**.
-  Both effects are inside the noise floor. The local multi-seed gate already
-  said this (Δ +0.006, within noise); cloud confirms. The tether is SAFE
-  (directionally positive on both local and cloud, no suite collapse) so leaving
-  it shipped costs nothing — but it CANNOT be promoted as a measured win, and
-  farming more samples is wasted budget (power table: even a +0.05 effect needs
-  18 submissions/arm; +0.02 needs 111). **Decision: stop the tether farm; the
-  Dockerfile keeps the tether config as a safe default; move resources to the
-  self-play RL line (option 1).** Power reality is the durable lesson: at
-  σ=0.053, sub-0.05 cloud effects are not resolvable with a realistic submission
-  count — local multi-seed (n≥5) is the only affordable discriminator, and cloud
-  is for confirming large moves, not ranking near-ties.
-
-Prior update: 29 May 2026 (LLM rationale-mining + base-tether cloud A/B 0.612) —
-**Ran an LLM-as-player + heuristic-annotation experiment to mine heuristic
-improvements. New infra: `ae/src/llm_manager.py` (LLM-as-player, backends
-sdk/pioneer/agy/cli, with belief-map memory), `training/ae/collect_annotated_heuristic.py`
-(heuristic plays, LLM writes per-tick rationale), `training/ae/mine_rationales.py`
-(buckets rationales into heuristic-weakness leads). Findings on LLM-as-player
-(3 rounds vs mixed, seed 42): conservative-prompt Sonnet -0.085, aggressive-prompt
-Sonnet +0.100, Gemini-3.5-Flash + belief-memory +0.251 round-1 (≈ heuristic 0.260)
-but agy quota throttled rounds 2-5. Memory/plan/belief context is the biggest
-lever for LLM play quality — but LLM-as-player still ≤ heuristic, so it's a
-worse teacher than the heuristic itself. Pivoted to mining rationales for
-heuristic tweaks. Three leads implemented, each behind a default-OFF env flag,
-all gated through multi_seed_eval (furnished preset, 5 hash × sim42 × 6 rounds,
-C+bomb7 baseline 0.2842 ± 0.0074):
-  - Lead ① base tether (`AE_LEAD_BASE_TETHER`): penalize targets by distance
-    from base when base_health < threshold. **0.2901 ± 0.0106, Δ +0.006
-    (+0.46σ)** — within noise, no suite collapses (wins cloudsuite +0.014,
-    pressure2 +0.017; worst mixed -0.023). NOT promoted (fails >1σ bar).
-  - Lead ② bomb-gate base (`AE_LEAD_BOMB_GATE_BASE`): skip enemy-base targets
-    when team_bombs==0. **0.2664 ± 0.0124, Δ -0.018 (FAIL)** — pressure2 +0.094
-    but defense_trap collapses -0.213, top_seed_proxy -0.098, cloudsuite -0.062.
-  - Lead ③ recon discount (`AE_LEAD_RECON_DISCOUNT`): extra distance penalty on
-    recon targets. **0.2842, Δ +0.000 (no-op)** — instrumentation shows recon
-    never wins as a target on the fixed-novice suites (only enemy_base/mission/
-    none), so the mixed-opponent corner-recon pattern doesn't manifest here.
-  All three flags kept default-OFF in tree. Active AE high unchanged:
-  `heuristic-A-vf1 (0.613)`. Durable lesson reaffirmed: leads mined from one
-  opponent distribution (mixed) must clear the furnished multi-seed gate before
-  they mean anything; rationale plausibility != eval lift. Lead ① is the only
-  directionally-positive, non-harmful candidate — a tether-weight sweep or
-  higher-n (more sim-seeds) confirmation is the disciplined next step if
-  revisited.**
-
-Cloud A/B update (29 May 2026): despite the local result being within noise,
-lead ① (base-tether) was submitted to cloud to test the *direction* on the real
-opponent distribution. Image `tether-v1` = `AE_MODE=heuristic` + C+bomb7 +
-`AE_LEAD_BASE_TETHER=1` (health<60, weight 0.5) first-shot **0.612 / 0.850,
-0/30**. Variance-farmed n=5 (`tether-v1-vf1..vf5`, identical image bytes):
-`0.612, 0.560, 0.568, 0.559, 0.662` → **mean 0.592 ± 0.020, σ 0.045, range
-0.559–0.662**. VERDICT: the 0.612/0.662 were high-tail draws (textbook, same
-shape as v4's 0.615 and heuristic-A's 0.613). Farm mean 0.592 ≈
-`heuristic-c-bomb7-v1` single 0.590 (Δ +0.002) and only +0.017 (+0.76σ) over
-heuristic-A's true farmed mean 0.575 — **within noise**. The tether adds
-nothing detectable on cloud, exactly matching its +0.006 local result, so it
-is confirmed neutral and stays default-OFF. NOT promoted; the rationale-mining
-line produced no cloud-positive lead. Secondary finding: the C+bomb7 family
-farms ~0.59 — same band as heuristic-A (0.575) — so no AE heuristic config has
-a farmed mean meaningfully above ~0.59; the apparent "highs" (0.613, 0.638)
-are all upper-tail single draws. **The Dockerfile was shipped as
-heuristic+C+bomb7+tether for this A/B; revert `AE_MODE` to `confidence_hybrid`
-(and AE_LEAD_BASE_TETHER=0) to restore the prior shipped image — see the
-follow-up action below if this hasn't been done yet.**
-
-Prior update: 28 May 2026 late-night (v4 cloud submission + variance-farm
-— PPO line empirically closed) —
-**Cloud submission resolved the question the local multi-seed gate could not.
-v4 (`tactical_policy_conf_ppo_v4_latest.pt` under `AE_MODE=confidence_hybrid`)
-was submitted as `conf-hybrid-v4` and scored `0.615 / 0.847`, briefly looking
-like a new AE high above `heuristic-A-vf1 (0.613)`. Variance-farmed across
-5 resubmissions of the identical image (`conf-hybrid-v4-vf1..vf5`):
-`0.511, 0.566, 0.605, 0.491, 0.508`. Combined 6-sample stats: **mean 0.549,
-sample σ 0.053, range 0.491–0.615 (124-point spread), speed σ ≈ 0.004**.
-95% CI on the mean: `0.549 ± 0.043`. The original 0.615 was a high-tail
-draw. True v4 cloud mean ≈ 0.549, decisively below the heuristic baselines
-(`heuristic-A-vf1 0.613`, `heuristic-c-bomb7-v1 0.590`,
-`conf-hybrid-ppo-disabled-v1 0.591`). PPO line is now empirically
-closed — not just by calibration prediction but by direct cloud measurement.
-Active AE high remains **`heuristic-A-vf1 (0.613)`**. Do NOT promote v4.**
-
-**Methodology bombshell — cloud σ ≈ 0.053 on a deterministic image.** Every
-single-shot cloud score in this project's history carries ~±0.10 measurement
-noise (95% CI on a single sample = ±2σ). A lot of prior calibration
-comparisons (local vs cloud, candidate vs baseline, ±0.02 promotion gates)
-were inside noise. Future "real" promotion claims require **n≥5 variance-farm
-of the identical image** before drawing conclusions. Speed score is stable
-(σ ≈ 0.004) — only the accuracy term varies. Likely sources: opponent-seed
-sampling at the official evaluator (30 games drawn from a larger distribution
-each run), non-deterministic NPC behavior, or stochastic match assignment.
-
-Other 28 May late-night results:
-- `heuristic-a-bomb7-v1` (`AE_MODE=heuristic` + item_mission=160, enemy_base=160,
-  dist_penalty=0.9 — untested combo of heuristic-A aggression + bomb7 envs):
-  **0.529 / 0.842**. Regressed vs both `heuristic-A-vf1 (0.613)` and
-  `heuristic-c-bomb7-v1 (0.590)`. Untested heuristic-parameter combos are
-  not free lunches; drop this line.
-- `conf-hybrid-ppo-disabled-v1` (`AE_CONF_MARGIN_EPSILON=999999`,
-  `AE_CONF_TOP_FLOOR=-999999`, `AE_CONF_OVERRIDE_TARGET_NONE=0` — PPO
-  effectively never consulted): **0.591 / 0.846**. Within 0.001 of
-  `heuristic-c-bomb7-v1 (0.590)`. Confirms the `confidence_hybrid` wrapper
-  adds no inference overhead and is safe to keep in the Dockerfile as a
-  no-op when PPO is gated off. **But** this is a single sample inside the
-  σ ≈ 0.053 noise band — could just as easily be 0.54 or 0.64 on another run.
-
-Repo state unchanged: `AE_MODE=confidence_hybrid` Dockerfile defaults kept,
-trainer flags + multi-seed gate retained. Submitted tags remain in
-artifact registry; no rollback needed. Next AE work should target
-**heuristic-internal tweaks measured with n≥5 variance-farm**, not another
-PPO-on-heuristic variant under the same 12-way macro action space.
+> **How to read this file.** This is the AE working memory: what we've tried,
+> what worked, what failed, and *why*, so we don't burn time re-running dead
+> ends. **Read the `## Read this first` digest below before doing any AE work** —
+> it is the current, distilled state. Everything under the
+> `## Detailed history (archive)` divider further down is a reverse-chronological
+> log of individual sessions, kept for the raw numbers and reproduction
+> commands. The archive is intentionally redundant with the digest; you only
+> need it when you want the exact per-submission detail behind a claim here.
+>
+> _Digest last refreshed: 30 May 2026._
 
 ---
 
-Prior update: 28 May 2026 (confidence-gated PPO v4 — closure of PPO line) —
-**Final confidence-gated PPO experiment. Collected 1500 games on heavy-pressure
-suites (`strong_compound base_rush_exploit pressure2 top_seed_proxy
-bracket_proxy` × 2) → 325,800 samples, 25,800 positive (7.9% positive rate,
-~identical to the 800-game 7% rate). The hypothesis that stronger opponents
-would reveal more heuristic mistakes was falsified by the per-suite breakdown:
-strong_compound 5.3% positive, top_seed_proxy 2.0% positive — the strongest
-suites produced the LEAST signal because strong opponents punish ALL deviations
-more harshly. New BC checkpoint `tactical_policy_pos_only_strong.pt` improved
-val_wacc from 0.586 → 0.629 (+0.043 from more data, real but small). Trained
-80-update conf-gated PPO `tactical_policy_conf_ppo_v4.pt` with multi-seed save
-gate (n=3 hash × 6 rounds). Result: **best multi-seed wrapper_delta -0.0076
-at update 65, never positive across 16 evals, no saved checkpoint.** Trajectory
-mean ~-0.037. This is the third independent confirmation (v2 multi-seed, v3
-multi-seed-gate retrain, v4 stronger-data retrain) that PPO over the 12-way
-macro action space with `confidence_hybrid` + `heuristic-C+bomb7` fallback
-cannot beat the heuristic at the calibrated local gate. The line is exhausted.
-Cloud calibration (cloud = local multi-seed + 0.30) predicts v4 latest would
-score ~0.525, decisively below `heuristic-c-bomb7-v1 (0.590)` and
-`heuristic-A-vf1 (0.613)`. Did not submit. **Methodology correction noted: 27
-May (this session) confirmed cloud submissions are unlimited, not 3-per-week
-as earlier session notes assumed. Disregard historical references to "submit
-budget" or "submission slots being used"; only build/test wall-clock matters.**
-Repo state: `AE_MODE=confidence_hybrid` Dockerfile defaults kept (cloud-tested
-at 0.570/0.582 in v2), trainer flags + multi-seed gate retained for any future
-variant attempt. Next AE work should NOT be another PPO-on-heuristic variant
-under the same action space; the structural ceiling is confirmed.**
+## Read this first
 
-Prior update: 28 May 2026 (confidence-gated PPO v3 cloud submission) —
-**Gated PPO candidate `conf-hybrid-v3` (using `tactical_policy_conf_ppo_v2.pt` update 80 warm-start under `confidence_hybrid` mode, protected by surgical gates `min_positive_rate=0.25`, `min_attempted=5`) completed evaluation at `0.507 / 0.849` with 0/30 errors. This confirms the persistent local-cloud transfer gap (scoring ~0.28 local multi-seed vs ~0.50 on cloud, compared to the heuristic baseline scoring ~0.59–0.61 on cloud). While our surgical gating successfully blocked defensive regressions in local evaluation, the learned policy still degrades performance relative to the pure rule-based planner in the smart cloud opponent distribution.
+### Current state (30 May 2026)
 
-Parallel Codex agent worktree (`codex/ae-score-improve`) independently implemented the same confidence-gated PPO pipeline (same CLI args, same multi-seed gate via subprocess, same positive-only BC filter) and confirmed the same result: no promotable AE candidate was found. The main branch keeps the `confidence_hybrid` infrastructure in place for documentation and future iterations, but our active Qualifier high remains protected.**
+- **Phase:** Qualifiers closed. Semifinals prep runs through **2026-06-10**. We
+  placed 15th on the Novice path, so the expected Semifinals Match-1 bracket is
+  seeds ≈ 3/8/9/14/15/20. AE is 40% of the score and our single biggest lever —
+  this is where a match is won or lost.
+- **Shipped Docker default** ([Dockerfile](Dockerfile)) — this is what currently
+  goes to cloud:
+  - `AE_MODE=heuristic` (pure rule-based planner; no NN in the loop)
+  - **"C+bomb7" item-farm profile:** `AE_ITEM_MISSION_VALUE=80`,
+    `AE_ITEM_RESOURCE_VALUE=40`, `AE_ENEMY_BASE_VALUE=100`,
+    `AE_DIJKSTRA_BOMB_COST=7.0`
+  - **base-tether ON:** `AE_LEAD_BASE_TETHER=1`, `AE_LEAD_TETHER_HEALTH=60`,
+    `AE_LEAD_TETHER_WEIGHT=0.5` (when base health < 60, penalize targets by
+    distance from base). Confirmed **neutral** on cloud — kept as a *safe
+    default*, NOT a measured win.
+  - `PYTHONHASHSEED=0` baked in. The `confidence_hybrid` wrapper code is present
+    but is a verified no-op at these settings (PPO never consulted).
+- **Honest cloud performance: no AE config has a variance-farmed mean
+  meaningfully above ~0.59.** The famous "highs" are all upper-tail single
+  draws, not means:
+  - `heuristic-A-vf1` **0.613** — true farmed mean ≈ 0.575–0.599.
+  - `ppo-full-rl-v1-hybrid` **0.638** (protected leaderboard max) — forensically
+    this was the **heuristic via silent fallback**, not real PPO.
+  - Treat ~0.59–0.60 as the real incumbent bar. Do not chase 0.613/0.638 as if
+    they were stable means.
+- **Active experiment:** Pandemonium-v1 from-scratch CNN-PPO is the one untried
+  recipe currently in flight (see *Active line* below).
 
-Prior update: 27 May 2026 (confidence-gated PPO retrain — first save, multi-seed fails) —
-**Stage 4 of the confidence-gated plan: retrained tactical PPO under matched
-deployment distribution (rollouts query PPO only on low-confidence ticks;
-in-training save gate uses `ConfidenceHybridAEManager` for evaluation). New
-trainer flags in [train_tactical_ppo.py](../training/ae/train_tactical_ppo.py):
-`--confidence-gated`, `--conf-margin-epsilon`, `--conf-top-floor`,
-`--conf-override-target-none`, `--eval-wrapper`. 150-update run from
-`tactical_policy_pos_only.pt` warm-start saved a gated checkpoint at update
-80: `tactical_policy_conf_ppo_v2.pt` with in-training
-`wrapper_eval=0.3663, wrapper_delta=+0.0783` (eval_seed=137,
-24 eval games). This is the first PPO checkpoint in this project to clear
-the `+0.005` min_eval_delta gate, and the first to not collapse defense
-suites in-training. Three gated saves total across the run (updates 35, 40,
-80); after update 80 the policy drifted; the final-state
-`tactical_policy_conf_ppo_v2_latest.pt` (update 150) is worse on every
-metric. Multi-seed gate at n=5 hash × 1 sim × 6 rounds against the
-canonical `w3_2_C_bomb7_n5.json` baseline FAILS for both checkpoints:
-  - u80 gated save: `weighted_mean=0.2711 ± 0.0090` vs baseline
-    `0.2842 ± 0.0074` (Δ -0.013, -1.12σ). Per-suite at multi-seed:
-    `pressure2 +0.105` (held), `mixed +0.007`; collapses on `top_seed_proxy
-    -0.115`, `defense_trap -0.057`, `base_rush_exploit -0.042`,
-    `cloudsuite -0.038`, `strong_realistic -0.022`. Single-seed→multi-seed
-    transfer gap **0.091** (in-training +0.078 → multi-seed -0.013).
-  - u150 latest: `weighted_mean=0.2546 ± 0.0095` (Δ -0.030 vs baseline).
-    Per-suite all worse than u80 except cloudsuite (+0.016) and mixed
-    (+0.013). u150 is NOT a less-overfit recovery; it's a different drift.
-Net: the architectural fix in Stage 4 was real — `pressure2` lifts by
-+0.10 stably across both eval distributions, and `defense_trap` no longer
-collapses by >0.10 like every prior PPO checkpoint did. But the
-single-seed in-training eval still overfits to seed=137 by 0.09 weighted,
-which is more than the gain. To break past this, the trainer's save-gate
-needs n>=3 hash-seed eval (the optional item in the plan that was
-deferred). Pending 27 May cloud-submission calibration with both
-checkpoints to establish whether cloud distribution is closer to seed=137
-or to seeds 0-4. Repo state: Dockerfile defaults to
-`AE_MODE=confidence_hybrid` + C+bomb7 envs + AE_CONF_* defaults +
-`AE_TACTICAL_POLICY_CHECKPOINT=/workspace/models/tactical_policy.pt`.
-Both .pt files staged under `ae/models/` (gitignored); copy the desired
-one to `ae/models/tactical_policy.pt` before `til build`.**
+### The one problem that dominates AE: the local→cloud transfer gap
 
-### Calibration log (28 May cloud submissions)
+Every learned-policy line (BC, PPO, self-play, belief-map, MCTS, macro/tactical
+hybrid) has died the **same death**: local reward improves while hidden cloud
+eval does not. The gap between optimistic local scores and cloud is a stable
+**~0.19–0.30**, and it does not close with more training, bigger nets, frame
+stacking, or richer state. Root cause: our local opponents ≠ the cloud NPC
+distribution, so the policy overfits local opponent behavior. **The rule-based
+heuristic transfers best precisely because it does not learn local-opponent
+quirks.** Any new learning attempt must have a credible answer to "why won't
+this overfit the local opponents like the last ten attempts did?"
 
-| Tag | Checkpoint | Local in-training | Local multi-seed | Cloud | Cloud − in-training | Cloud − multi-seed |
-|---|---|---:|---:|---:|---:|---:|
-| `conf-hybrid-v3` | `tactical_policy_conf_ppo_v2.pt` (u80) + p=0.25 gate | n/a | +0.2813 | +0.507/0.849 | | +0.226 |
-| `conf-hybrid-v2-best` | `tactical_policy_conf_ppo_v2.pt` (u80) | +0.078 (0.366) | -0.013 (0.271) | Not submitted | | |
-| `conf-hybrid-v2-latest` | `tactical_policy_conf_ppo_v2_latest.pt` (u150) | -0.003 (0.281) | -0.030 (0.255) | Not submitted | | |
-| `heuristic-c-bomb7-v1` (prior) | n/a (heuristic) | n/a | +0.000 (0.284) | +0.590/0.845 | | +0.306 |
-| `heuristic-A-vf1` (current cloud max, intentional) | n/a (heuristic-A) | n/a | -0.0064 (0.258) | +0.613/0.845 | | +0.355 |
+### Measurement reality (read before trusting any cloud number)
 
-Evaluation outcome:
-- Since `conf-hybrid-v3` scored `0.507 / 0.849` (compared to the baseline `heuristic-c-bomb7-v1` at `0.590`), this confirms that despite the gating successfully preventing defensive regressions, the learned policy underperforms relative to the pure rule-based planner when evaluated on the smart cloud opponent distribution.
-- The local-cloud transfer gap remains a major bottleneck. The team decided to stop further PPO training/submission iterations and keep the heuristic baseline `heuristic-A-vf1` (cloud score `0.613`) as our active/preferred model for Qualifiers/Semifinals.
+- **Cloud σ ≈ 0.053 on a byte-identical image.** A single cloud submission
+  carries ~±0.10 (95% CI = ±2σ) of pure measurement noise from opponent-seed
+  sampling at the evaluator. Speed score is stable (σ ≈ 0.004); only accuracy
+  varies. **A single cloud score proves almost nothing.**
+- **Power reality:** at σ=0.053, a +0.05 effect needs ~18 submissions/arm to
+  resolve; +0.02 needs ~111/arm. Sub-0.05 cloud effects are **not resolvable**
+  with any realistic submission budget. Cloud is for confirming *large* moves,
+  not ranking near-ties.
+- Cloud submissions are **unlimited** (the old "3/week budget" assumption was
+  wrong). Only build/test wall-clock costs anything.
 
+### How to evaluate properly (the gate)
 
+1. **Local gate = `training/ae/multi_seed_eval.py`**, n≥5 hash seeds × sim seeds
+   × 6 rounds, against the canonical `heuristic-C+bomb7` baseline
+   (`w3_2_C_bomb7_n5.json`, weighted_mean 0.2842 ± 0.0074). Promotion bar:
+   beat baseline by **>1σ**, with no semifinals-relevant suite collapsing.
+   Single-seed in-training eval is hash-noise overfit (~0.08–0.09 weighted gap
+   to multi-seed) — **never gate on it.**
+   - `PYTHONHASHSEED` is auto-pinned to 0 in all entry points; unpinned hashing
+     was silently adding 0.10+ drift to every pre-24-May sweep.
+2. **Cloud decision tool = `training/ae/variance_farm.py`** (`summary`,
+   `compare`, `plan`, `add`) reading the append-only ledger
+   `training/ae/data/cloud_samples.json`. Use it to (a) variance-farm n≥5
+   resubmissions of an identical image before claiming a cloud result, and
+   (b) check whether two configs are even statistically distinguishable before
+   spending submissions.
 
-Prior update: 27 May 2026 (confidence-gated PPO backup — Stage 3 negative) —
-**Implemented `AE_MODE=confidence_hybrid`
-([ae/src/confidence_hybrid_manager.py](src/confidence_hybrid_manager.py))
-that consults the tactical PPO macro selector *only* when the heuristic
-itself reports low confidence (top score - runner_up < epsilon OR top score
-< floor). Stage 1 added `last_decision_confidence` write-through in
-[ae_manager.py](src/ae_manager.py)'s `_choose_target()` with sentinel
-margin=+inf on early-return paths (no behavior change). Stage 2 wired the
-wrapper into [ae_server.py](src/ae_server.py),
-[simulate.py](../training/ae/simulate.py),
-and [validate_cloud_suite.py](../training/ae/validate_cloud_suite.py).
-At defaults (eps=5.0, floor=10.0) over 6 cloudsuite rounds the wrapper
-consulted PPO on 29% of ticks (14.7% low_margin + 13.5% target_none +
-0.8% low_top_score), passed through on 70.6%, and accepted 251 PPO macro
-deviations (top: rush_enemy_base 110, collect_mission_safe 88). Multi-
-seed gate at n=5 hash × 1 sim × 6 rounds against the canonical
-`w3_2_C_bomb7_n5.json` baseline failed decisively: `weighted_mean=0.2556
-± 0.0051` vs baseline `0.2842 ± 0.0074` (Δ -0.0285). Suite shape:
-`pressure2 +0.069`, `cloudsuite +0.013`, `bracket_proxy/mixed` flat;
-`top_seed_proxy -0.138`, `base_rush_exploit -0.127`, `defense_trap
--0.107` collapsed. Diagnostic with `AE_CONF_OVERRIDE_TARGET_NONE=0`
-recovered `base_rush_exploit` fully (+0.001) and `top_seed_proxy`
-partially (-0.060), confirming target_none ticks are where the
-heuristic's fallback is correct and PPO should not substitute. But the
-underlying low_margin/low_top_score collapse on `defense_trap` and
-`strong_realistic` remained: the PPO checkpoint (trained as
-unconditional deviator under macro_hybrid) substitutes aggressive macros
-in defensive situations. Architecture is sound (the gate's
-target_none-skip behaved as predicted), but this PPO checkpoint is the
-wrong tool. Plan strict-stop triggered: no cloud submit, no retrain
-without explicit user override. The infrastructure (`AE_MODE=confidence_hybrid`,
-env knobs `AE_CONF_MARGIN_EPSILON`, `AE_CONF_TOP_FLOOR`,
-`AE_CONF_OVERRIDE_TARGET_NONE`) is in tree and ready for a future
-attempt with a PPO checkpoint specifically trained to know when to
-defer.**
+### What works / keep doing
 
-Prior update: 27 May 2026 (macro-PPO v1 — selective BC warm-start) —
-**Trained `tactical_policy_macro_ppo_v1.pt` from a positive-delta-only BC
-warm-start ([training/ae/checkpoints/tactical_policy_pos_only.pt](training/ae/checkpoints/tactical_policy_pos_only.pt),
-12k samples filtered from the 800-game harm-aware dataset to non-baseline
-rows with `advantage > 0`). 40-update CPU PPO with the calibrated C+bomb7
-fallback profile saved a checkpoint at update 35:
-`wrapper_eval=0.3184, wrapper_delta=+0.0256, accept_rate=0.403` on the
-in-training single-seed eval (eval_seed=137). This is the first macro-PPO
-checkpoint to clear the save gate after the 27 May repair. However, n=5
-hash × 1 sim × 6 rounds multi-seed eval against the C+bomb7 baseline
-failed the promotion gate: `weighted_mean=0.2464 ± 0.0167` vs baseline
-`0.2842 ± 0.0074` (Δ -0.0378), and 4 of 8 suites regressed by more than
--0.030 (`base_rush_exploit -0.077`, `defense_trap -0.077`,
-`top_seed_proxy -0.066`, `bracket_proxy -0.052`). This confirms the
-26 May methodology finding that single-seed in-training eval is hash-noise
-overfit relative to n=5 multi-seed. One targeted narrowing was attempted
-(`AE_TACTICAL_ALLOWED_DELTA_OPTIONS=rush_enemy_base,collect_mission_safe,collect_resource_safe`,
-dropping `bomb_enemy_base` and `counter_rush`) and produced essentially a
-tie: `weighted_mean=0.2883 ± 0.0157` (Δ +0.0041, below the +0.005
-promotion threshold). The narrowed config wins on `pressure2 +0.054`,
-`top_seed_proxy +0.020`, and `base_rush_exploit +0.008`, but still
-regresses on `defense_trap -0.062`. Not promoted. Decision: macro-PPO
-v1 is a local tie with C+bomb7, no cloud submit warranted. New BC flag
-`--positive-only` is kept in [train_tactical_bc.py](training/ae/train_tactical_bc.py)
-for future runs. The transfer gap between single-seed and multi-seed eval
-(~0.08 weighted) is the actionable bottleneck: future macro-PPO runs
-should switch the in-training save gate to n>=3 hash-seed eval so the
-policy doesn't optimize against eval_seed=137 noise.**
+- **The rule-based heuristic is the strongest deployable agent we have.** Ship
+  it. The `confidence_hybrid` wrapper safely falls back to it and adds no
+  inference cost.
+- The **C+bomb7** profile is the best-ranked heuristic config at the calibrated
+  local gate (+1.13σ over baseline; wins defense_trap/top_seed_proxy/
+  bracket_proxy — every semifinals-relevant suite; only loses pressure2). Use it
+  for any cloud variance-farming.
+- Multi-seed local eval + variance-farm cloud confirmation is the only honest
+  measurement loop. Use it.
 
-Prior update: 27 May 2026 (C+bomb7 cloud check) —
-**Submitted `heuristic-c-bomb7-v1` after baking the calibrated
-`heuristic-C + bomb_cost=7.0` profile into the AE Docker image
-(`AE_MODE=heuristic`, `AE_ITEM_MISSION_VALUE=80`,
-`AE_ITEM_RESOURCE_VALUE=40`, `AE_ENEMY_BASE_VALUE=100`,
-`AE_DIJKSTRA_BOMB_COST=7.0`). Workbench packaging passed
-`til test ae heuristic-c-bomb7-v1` at `0.8031666666666666`; the cloud result
-was `0.590 / 0.845` with 0/30 errors. Interpretation: neutral draw, not a
-promotion. It lands in the expected variance band for the local mean estimate
-and is not meaningfully worse than explicit heuristic runs, but it does not
-beat `heuristic-A-vf1` (`0.613 / 0.845`) or the protected max-score artifact
-`ppo-full-rl-v1-hybrid` (`0.638 / 0.847`, later shown to be heuristic-fallback
-provenance rather than PPO evidence). Do not promote C+bomb7 as the repo
-default based on this single cloud draw. After logging the result, the
-Dockerfile was restored off the non-promoted C+bomb7 build config.**
+### Dead ends — DO NOT REDO (each cost a session; all confirmed negative)
 
-Prior update: 27 May 2026 (macro-hybrid PPO trainer repair) —
-**The tactical PPO trainer now gates and saves on the deployed
-`macro_hybrid` wrapper score, not the old standalone policy/executor score.
-`training/ae/train_tactical_ppo.py` evaluates the current in-memory actor
-through `MacroHybridAEManager`, compares that wrapper score against the
-same-seed `heuristic-C + bomb_cost=7.0` baseline, and stores cumulative
-attempted/positive/negative/net-delta transition matrices in the checkpoint.
-The old ungated policy score is available only as `--eval-ungated-policy`
-diagnostics. This fixes the 27 May failure mode where an 80-update run looked
-bad because `eval=` was measuring the policy by itself, while the real runtime
-is supposed to use heuristic-first fallback gates. Smoke test passed:
-one-update CPU PPO saved `/tmp/tactical_macro_ppo_fix_smoke.pt` with
-`wrapper_eval=0.3870`, `wrapper_delta=+0.0000`, `accept_rate=0.000`, and
-`ungated=0.1090`; the zero accept rate is expected for a one-game smoke and
-confirms the wrapper safely fell back instead of deploying harmful deltas.
-Follow-up diagnosis from the first full repaired run: the original strict
-macro gate (`support=8`, `attempted=20`, `positive_rate=0.50`,
-`mean_delta>=0`, `margin=0.02`) deadlocked at `accept_rate=0.000` and constant
-fallback `wrapper_eval=0.2928`. A second bug made top-k ineffective: when the
-BC-warm-start policy ranked the heuristic macro first, the wrapper returned
-immediately instead of trying runner-up deviations. Defaults are now
-`top_k=4`, `margin=-0.01`, and at least one positive same-seed episode sample
-for the prior->option transition before executor safety can admit it. The
-default allowed-delta set is now limited to scoring/collection/counter-rush
-macros (`rush_enemy_base`, `bomb_enemy_base`, `collect_mission_safe`,
-`collect_resource_safe`, `counter_rush`); executor-only admission and broad
-guard/intercept/hunt deltas were tested and were too destructive. The outer
-save gate remains strict
-(`wrapper_delta>=0.005` plus required-suite floors), so bad deltas can move eval
-but still cannot save as a candidate. MPS probes after the fix: broad
-executor-only admission hit `accept_rate~0.80-0.89` and collapsed wrapper eval
-near zero; adding guard/intercept/hunt restrictions but allowing guard still
-collapsed (`accept_rate~0.31`, negative wrapper eval); the scoring-only
-candidate set was bounded (`accept_rate~0.18-0.20`) but still below fallback
-(`wrapper_delta` roughly `-0.07` to `-0.08`). A CPU 5-update end-to-end screen
-completed cleanly but found no positive support and fell back to heuristic
-(`wrapper_eval=0.2990`, `wrapper_delta=0`, `accept_rate=0`). Net: mechanics are
-fixed, but this warm-started tactical PPO line is not promotable yet.**
+| Line | What was tried | Result / why it failed |
+|---|---|---|
+| **Plain PPO over raw actions** (`ppo-v1/v2`, selfplay, full-RL) | BC warm-start + PPO, frame-stacking, self-play snapshot league | Cloud ceiling ~0.43–0.51; transfer gap never closed. `ppo-full-rl-v1` farmed mean ~0.577. |
+| **Confidence-gated PPO** (`confidence_hybrid`, v2/v3/v4) | PPO consulted only on low-confidence heuristic ticks; multi-seed save gate | 3 independent retrains all fail local multi-seed (best Δ -0.008, never positive). v4 cloud-farmed **0.549** mean — below heuristic. **PPO-on-heuristic line is empirically closed.** |
+| **Macro/tactical-hybrid PPO** (12-way macro selector) | Learn *when* to pick macros, planner owns movement | Harm-aware data on 800 games: **zero positive-EV transitions across all 90 prior/option pairs.** Heuristic beats random macro exploration everywhere. |
+| **Tactical BC** (400/800-game outcome-weighted) | Behavior-clone good macros | 400-game "win" was legacy-gate variance; 800-game overfit and collapsed base/top/bracket suites. |
+| **Belief-map / memory BC** (`bc-belief-hybrid`) | 704k-param CNN belief input | Fit local *better* (val_acc 0.897) but **widened** cloud gap by +0.044. Rich state against random opponents = more ways to overfit. |
+| **MCTS as primary planner** (`mcts-light`) | Depth/width search per tick | Either times out (no latency cap) or, when capped, regresses accuracy −0.068 and speed −0.254. Workshop teaches no MCTS; top teams aren't doing it. |
+| **Scripted M5 port** (`scripted_hybrid`, full ScriptedBaseAttackPolicy) | Port the 0.731 team's full decision tree | **−3.35σ LOSS** at the local gate. M5's 0.731 is codebase-specific, not primitive-additive. |
+| **Three M5 primitives** (spawn-first-target table, enemy-bomb-only escape, orientation-aware A*) | Bolt-on env flags | All noise-to-catastrophic (orientation-aware A* −0.142; our DIST_PENALTY is tuned for grid, not orientation distance). All default-OFF. |
+| **Memorized-route / opening-book / rusher / camping cheese** | Precompute greedy route per fixed-Novice spawn | All lose to per-tick re-evaluation in the cloud opponent distribution. |
+| **LLM-as-player** (`llm_manager.py`) | Sonnet/Gemini play the game; mine rationales | LLM play ≤ heuristic even with belief-memory; a *worse* teacher than the heuristic itself. |
+| **Rationale-mined heuristic leads** (bomb-gate-base, recon-discount) | Tweaks suggested by LLM rationale mining | bomb-gate-base collapses defense_trap −0.213; recon-discount is a no-op. Only base-tether survived (and it's neutral, see above). |
+| **Heuristic-A (160/0.9) aggression**, `heuristic-a-bomb7` combos | Untested heuristic-parameter combos | heuristic-A ranks 7th (−0.28σ) at the calibrated gate; its 0.613 cloud was tail variance. Untested combos regress. |
 
-Prior update: 26 May 2026 (proper hybrid implementation) —
-**Implemented the next serious AE direction as a real planner-first hybrid
-instead of raw-action RL. New runtime mode: `AE_MODE=macro_hybrid`
-([src/macro_hybrid_manager.py](src/macro_hybrid_manager.py)), wired through
-[src/ae_server.py](src/ae_server.py), `simulate.py`, and
-`validate_cloud_suite.py`. It defaults the fallback planner to the calibrated
-`heuristic-C + bomb_cost=7.0` profile, loads a 12-way tactical checkpoint, tries
-top-k learned tactical macros, and only accepts deviations that pass
-confidence/support/harm-aware gates; otherwise it returns the heuristic action.
-New trainer: [../training/ae/train_tactical_ppo.py](../training/ae/train_tactical_ppo.py).
-It trains PPO over the 12 tactical macros, not raw actions; `TacticalExecutor`
-still owns movement, action-mask legality, bomb safety, own-base blast checks,
-and escape. Each rollout is paired with a same-seed heuristic baseline and the
-checkpoint stores attempted/positive/negative/net-delta transition matrices for
-the runtime gate. Smoke tests passed: `py_compile`, trainer CLI in `.venv`, a
-one-update/one-game PPO smoke saved `/tmp/tactical_macro_ppo_smoke.pt`, the
-macro runtime loaded that checkpoint with `harm_aware_attempted_total=200`, and
-`simulate.py --our macro_hybrid --rounds 1 --opponents cloudsuite` completed.
-No promotable checkpoint has been trained yet; next real gate is n=5
-`multi_seed_eval.py` against `macro_hybrid` versus direct `heuristic-C +
-bomb_cost=7.0`.**
+**General anti-patterns (from the table above):** bigger BC nets with rich
+state, larger same-distribution BC datasets, frame stacking, frontier/
+exploration tuning for its own sake, six-game local means as a selection metric,
+and committing large checkpoints to git. All burned.
 
-Prior update: 26 May 2026 (methodology + calibration session) —
-**Infrastructure-heavy session. Built reproducible AE evaluation
-(`PYTHONHASHSEED=0` auto-pin in 6 entry points + Dockerfile;
-`training/ae/multi_seed_eval.py` for n×hash×sim aggregation with proper SE);
-falsified the tactical-hybrid line (harm-aware data on 800 fresh games shows
-ZERO positive-EV transitions across 90 distinct prior/option pairs); shipped a
-full M5-style `ScriptedBaseAttackPolicy` port behind `AE_MODE=scripted_hybrid`
-which lost at -3.35σ on the furnished gate, decisively answering that M5's
-0.731 is codebase-specific not primitive-additive; then ranked 11 AE configs
-at n=5 hash × 6 rounds to find the actual best mean. WINNER (new):
-`heuristic-C + bomb_cost=7.0` (`AE_ITEM_MISSION_VALUE=80`,
-`AE_ITEM_RESOURCE_VALUE=40`, `AE_ENEMY_BASE_VALUE=100`,
-`AE_DIJKSTRA_BOMB_COST=7.0`) at weighted_mean 0.2842 ± 0.0074, Δ +0.020 vs
-baseline (+1.13σ). Composed 82% additively from heuristic-C (+0.016 alone)
-and bomb=7.0 (+0.009 alone). Wins on every semifinals-relevant suite:
-bracket_proxy +0.075, top_seed_proxy +0.088, defense_trap +0.070; only loser
-pressure2 -0.062. Major historical correction: `heuristic-A` (the
-0.613/0.845 leaderboard tag) actually ranks 7th at -0.28σ on calibrated
-local eval — its cloud lift was upper-tail variance, not a stable mean. The
-similarly-claimed `heuristic-C` was dismissed last week as 3rd-of-3 on 3
-cloud submissions, but within-config σ≈0.024 means 3 samples is barely n=1
-for ranking; at n=5 it's #2 alone and #1 in combo. For cloud variance-farming
-this is now the recommended config. Same 26 May tactical_hybrid candidate
-preserved at #10 (skeleton) / #11 (full stack) but both rank below
-baseline.**
+### Active line: Pandemonium-v1 (from-scratch CNN-PPO)
 
-Prior update: 26 May 2026 (semifinals tactical learning + Pandemonium plan
-review) — **Qualifier
-AE remains closed with protected max `ppo-full-rl-v1-hybrid 0.638/0.847`
-(heuristic fallback) and best intentional heuristic `heuristic-A-vf1
-0.613/0.845`. Semifinals work moved to the opt-in `tactical_hybrid` path. The
-current local candidate is the 400-game outcome-weighted BC checkpoint
-`training/ae/checkpoints/tactical_policy.pt` gated by
-`AE_TACTICAL_PROFILE=bracket`, `AE_TACTICAL_DELTA_CONF=0.85`, and
-`AE_TACTICAL_MIN_DELTA_SUPPORT=50`: furnished 12-round x seeds 42/137 weighted
-mean `0.2932` versus heuristic `0.2825`, and worst suite `0.2305` versus
-heuristic `0.1633`. The larger 800-game checkpoint
-`tactical_policy_800_more.pt` is not promotable: same gate scored `0.2593`
-weighted after collapsing base/top/bracket suites; support `100` rescued the
-collapse on a quick screen but only reached `0.2798`. Next AE implementation
-should add harm-aware tactical gates based on attempted transitions,
-positive-rate, and net delta before collecting more BC. External Pandemonium
-plan docs/screenshots (`til26_model_plan (1).md`, `pandemonium1.png`,
-`pandemonium2.png`, `pandemonium3.png`; user-reported AE score `0.731`) point
-to PPO+CNN/MLP plus a BFS/rule fallback, but the durable takeaway is
-scripted/planner-first arbitration with learned high-level choices, not another
-generic Stable-Baselines PPO run.**
+The **one untried recipe**: the 0.731 team's CNN-over-viewcone + MLP PPO trained
+**from scratch at ~15M steps** (~10M Novice mix + ~5M self-play). Note this is
+NOT a new architecture — `PolicyNetwork` (model.py) already matches the spec and
+`train_ppo.py` has the loop. The only new variables are **scale** (~15M vs our
+historical ~1M steps), from-scratch init, and their hyperparams.
+
+- Launcher: [../training/ae/run_pandemonium_v1.py](../training/ae/run_pandemonium_v1.py)
+  (two-phase: full-rl mix from scratch → self-play fine-tune; γ0.99/λ0.95/
+  ent0.01→0.001/lr-decay; orthogonal init; saves `-latest` every update).
+- **CPU-bound, ~3.5–4 days wall-clock** (cost is 3 opponent-AEManager Dijkstra
+  plans per tick; the NN is trivial, MPS barely helps). Phase1 ~60h, phase2 ~30h.
+- Launch (run manually so it owns the machine):
+  ```bash
+  cd /Users/ethankok/projects/TIL
+  PYTHONHASHSEED=0 PYTORCH_ENABLE_MPS_FALLBACK=1 \
+    nohup caffeinate -is .venv/bin/python -u training/ae/run_pandemonium_v1.py \
+    --tag pandemonium-v1 --games-per-update 12 --eval-every 20 \
+    > training/ae/checkpoints/pandemonium-v1.run.log 2>&1 &
+  tail -f training/ae/checkpoints/pandemonium-v1.log   # watch training
+  # resume after phase 1 crash:  add --skip-phase1
+  # kill:  pkill -f run_pandemonium_v1.py
+  ```
+  Gotchas: orthogonal-init's `linalg_qr` needs `PYTORCH_ENABLE_MPS_FALLBACK=1`;
+  from-scratch via a non-existent `--bc-checkpoint`; `caffeinate -is` keeps the
+  Mac awake but a **closed lid still clamshell-sleeps**.
+- **Early-abort signal:** eval prints every 20 updates (~45 min). From scratch
+  starts at eval ≈ −0.35. If it isn't trending up by **update ~100–200**, it's
+  the same transfer-gap failure — kill it.
+- **Promotion gate (critical):** do NOT trust the single-seed in-training gate
+  (that's what burned the elo line: predicted +0.028 → cloud −0.21). Real gate =
+  n≥3 `multi_seed_eval.py` under the hybrid wrapper vs C+bomb7, **then** cloud
+  variance-farm via `variance_farm.py`. Deployment fallback stays the existing
+  heuristic-veto (already stronger than Pandemonium's BFS), so no separate BFS
+  manager was built.
+- **Concurrent early-read submissions (30 May, u860 snapshot).** While training
+  runs, the current-best checkpoint (`pandemonium-v1-best-u860.pt`, local
+  ppo_eval 0.7415; in bucket `handoff/`) is submitted in three deploy modes to
+  get an early transfer read (mid-training, no self-play yet — read the *sign*,
+  not the exact value; cloud n=1 = ±0.10):
+  - `AE_MODE=policy` — pure PPO in full control.
+  - `AE_MODE=hybrid` — policy-first, heuristic safety veto.
+  - `AE_MODE=confidence_policy_hybrid` — **new wrapper**
+    ([src/confidence_policy_hybrid_manager.py](src/confidence_policy_hybrid_manager.py)):
+    heuristic-first, raw 6-action policy consulted only on low-confidence ticks.
+    Built because the existing `confidence_hybrid` is **macro-only** and would
+    silently fall back to heuristic on a raw-action checkpoint (the 0.638 bug).
+  All three verified to load the real policy via `_make_manager()` (no silent
+  fallback). Workbench: `git pull` → copy the ckpt to `ae/models/bc.pt` → set
+  `ENV AE_MODE` per build → `til build/test/submit`. **Canary:** the `til test`
+  log must say `AE policy loaded … epoch=860`, NOT "falling back to heuristic".
+  Log results with `variance_farm.py add --config pandemonium-{policy,hybrid,confpol}`.
+
+### Key files
+
+- Manager (the thing we edit): [src/ae_manager.py](src/ae_manager.py)
+- Server (reset-robustness patch applied): [src/ae_server.py](src/ae_server.py)
+- Wrappers: [src/confidence_policy_hybrid_manager.py](src/confidence_policy_hybrid_manager.py)
+  (raw-policy confidence gate, active Pandemonium deploy),
+  [src/confidence_hybrid_manager.py](src/confidence_hybrid_manager.py) (macro-only),
+  [src/macro_hybrid_manager.py](src/macro_hybrid_manager.py),
+  [src/scripted_hybrid_manager.py](src/scripted_hybrid_manager.py) (last two are
+  closed lines; kept for reference)
+- Local gate: [../training/ae/multi_seed_eval.py](../training/ae/multi_seed_eval.py)
+- Cloud decision tool: [../training/ae/variance_farm.py](../training/ae/variance_farm.py)
+  + ledger `training/ae/data/cloud_samples.json`
+- Active experiment launcher:
+  [../training/ae/run_pandemonium_v1.py](../training/ae/run_pandemonium_v1.py)
+- Training runbook: [../training/ae/RUNBOOK.md](../training/ae/RUNBOOK.md)
+- Deployment contract & full submission ledger: see the archive below
+  (*Full AE submission ledger*, *What our agent runs on*).
+
+---
+
+## Detailed history (archive — reverse chronological)
+
+> Everything below is the original per-session log, kept for raw numbers and
+> reproduction detail. It is redundant with the digest above; consult it only
+> for the specifics behind a claim. The most recent sessions (Pandemonium
+> launch, tether verdict, variance-farm build, rationale-mining, v4 cloud
+> closure) are summarized in the digest — their full prose write-ups have been
+> folded in rather than duplicated here.
 
 ## 26 May 2026 (late) — methodology + calibration session
 
