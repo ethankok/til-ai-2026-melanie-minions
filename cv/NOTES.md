@@ -90,7 +90,13 @@ detector family breaks it.
 
 - **"Train small, serve big" — upscale-at-inference is the ONLY confirmed lever
   on the YOLO backbone.** v8s: train 768 / serve 896. YOLO11l: train 1024 /
-  serve 1280 (+0.031 acc, the champion). Reproducible across v8s/v11m/v11l.
+  serve **1408** (the current champion). Reproducible across v8s/v11m/v11l.
+  - **Peaks ~1.375× train res, then turns over (30 May sweep).** YOLO11l (train
+    1024) cloud acc by serve res: 1280 → 0.671, **1408 → 0.684 (peak, blended
+    0.7473)**, 1536 → 0.650 (regressed on cloud *and* local — full-set mAP
+    0.986→0.977, small AP 0.860→0.829; too far above training scale). The lever
+    had real headroom past 1280 (correction to the earlier "exhausted" read) but
+    is now mapped — **1408 is the peak; finer steps are inside cloud σ≈0.053.**
 - **Corollary (counter-intuitive, reproducible): bigger model + matched-imgsz
   LOSES to smaller model + upscaled-imgsz** on this dataset. Native-1280
   training (v2) scored *worse* than 1024-trained served at 1280 (v1). Do not
