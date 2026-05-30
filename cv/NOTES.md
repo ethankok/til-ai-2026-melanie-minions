@@ -200,9 +200,9 @@ YOLO11l champ        ~0.92                  0.671     ~0.25
      size. `train_rfdetr.py` now sets a **resolution-aware batch default** (4 at
      res≤840, 2 above) with `GRAD_ACCUM` auto-scaled to hold effective batch 16,
      plus `GRAD_CHECKPOINT=1`, `MULTI_SCALE=0`. So 728→batch4, 952→batch2
-     automatically; override `BATCH`/`GRAD_ACCUM` if needed. **Note: at 952 the
-     batch=2 default did NOT hold on the 15GB T4 — the native-952 run is using
-     `BATCH=1 GRAD_ACCUM=16` (still effective 16).**
+     automatically; override `BATCH`/`GRAD_ACCUM` if needed. **Confirmed: the
+     `BATCH=2 GRAD_ACCUM=8` (effective 16) default held on the 15GB T4 at 952 —
+     the native-952 run is training at batch=2 with no OOM.**
   3. **Albumentations + faster-coco-eval were missing** (rfdetr 1.7.x doesn't
      auto-pull albumentations → "Built 0 transforms" / no aug; faster-coco-eval
      is the torchmetrics MAP backend for the val callback). Both now pinned in
