@@ -91,12 +91,13 @@ def main() -> None:
     # so 30 is a ceiling early-stopping never reaches.
     epochs = _env_int("EPOCHS", 30)
     # T4-safe defaults (15GB). The original OOM was the multi-scale ~1008px
-    # upsample, NOT batch size; with MULTI_SCALE off (below), batch=4 fits at 728
-    # and runs ~3-4x faster than batch=1 (~3h full run vs ~36h). batch=4 x
-    # grad_accum=4 keeps effective batch 16. Drop to BATCH=2 GRAD_ACCUM=8 if a
-    # tighter card OOMs.
-    batch = _env_int("BATCH", 4)
-    grad_accum = _env_int("GRAD_ACCUM", 4)
+    # upsample, NOT batch size; with MULTI_SCALE off (below) batch=4 fits at 728.
+    # Activation memory scales ~resolution^2, so above ~840px drop to batch=2 to
+    # avoid OOM; grad_accum auto-scales to hold the effective batch at 16. Both
+    # overridable via BATCH / GRAD_ACCUM.
+    default_batch = 4 if resolution <= 840 else 2
+    batch = _env_int("BATCH", default_batch)
+    grad_accum = _env_int("GRAD_ACCUM", max(1, 16 // batch))
     lr = _env_float("LR", 1e-4)
     # Memory knobs (only passed if the installed train() accepts them):
     #   GRAD_CHECKPOINT (default on): trade compute for activation memory.

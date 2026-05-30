@@ -160,24 +160,47 @@ YOLO11l champ        ~0.92                  0.671     ~0.25
   torchmetrics mAP50-95 peaked 0.912 @ ep16 / EMA 0.928, plateaued ~ep12.
   Served `checkpoint_best_ema.pth` (rfdetr 1.7.x writes `_ema`+`_regular`, not
   `_total`; EMA 0.928 > regular 0.912). HTTP-pycoco hard = 0.921 @ conf 0.20.
+- **Serve-res sweep on the 728-trained weights (30 May, local hard).** Tested the
+  YOLO "serve big" trick on RF-DETR — it does NOT transfer cleanly (ViT pos-embeds
+  are tied to the train grid; YOLO is fully-conv). Total mAP drops monotonically
+  (728 → 0.917, 840 → 0.907, 952 → 0.866, 1008 → 0.841) **but small AP peaks at
+  952 (0.723 → 0.795, +0.072)** before collapsing at 1008. Upscaling helps small
+  objects (more pixels) while blowing medium/large out of the learned scale +
+  degrading interpolated pos-embeds → net loss. A 952 *serve-time* submission
+  would regress (predicted ~0.61 cloud); not worth submitting.
+- **IN FLIGHT (30 May): native 952 retrain (`rfdetr-base-952-v1`).** The serve-res
+  sweep's +0.072 small-AP signal motivates training *natively* at 952, where the
+  model learns medium/large at that scale too instead of having them blown OOD —
+  testing whether the small gain survives without the med/large collapse. Same
+  offset-1 dataset (resolution-independent). T4: `BATCH=2 GRAD_ACCUM=8` (auto-set
+  by `train_rfdetr.py` for res>840). Still a long shot vs the champion (RF-DETR is
+  behind on cloud and slower at 952 → harder blended math), but it's the one
+  remaining *real-mechanism* RF-DETR experiment. Run concurrently with AE work.
 - **Optional, LOW priority:** RFDETRLarge *might* squeak past the champion if its
   cloud-acc gain outpaces its (certain) speed cost — but the blended math is a
   coin-flip and **AE (~0.15 headroom) + noise-robustness are far higher EV.** Not
   recommended under the 2026-06-10 window. The scaffold (`train_rfdetr.py`
   `VARIANT=large`, `CV_RFDETR_VARIANT=large`) is ready if revisited.
-- **Champion Dockerfile must be restored** before any champion rebuild: the
-  committed `cv/Dockerfile` on `ethanAE` is currently the RF-DETR config (champion
-  ENV preserved inline, commented). Use `git checkout main -- cv/Dockerfile` or
-  uncomment the champion block.
+- **Serving an RF-DETR model requires restoring the rfdetr Dockerfile + deps.**
+  The committed `cv/Dockerfile` + `cv/requirements.txt` on `ethanAE` are the
+  **YOLO11l champion** (reverted after the 728 submission). The full rfdetr serving
+  config (ENV block, offline prefetch, rfdetr/supervision/transformers-5.x deps)
+  is preserved in git history at commit `eb87b61`. To build a 952 RF-DETR image:
+  `git show eb87b61:cv/Dockerfile > cv/Dockerfile`,
+  `git show eb87b61:cv/requirements.txt > cv/requirements.txt`, then bump the
+  `CV_RFDETR_RESOLUTION` (and prefetch `RFDETRBase(resolution=...)`) to 952. Build,
+  test, submit, then `git checkout cv/Dockerfile cv/requirements.txt` to restore
+  the champion.
 - **Settled gotchas (from the 29 May smoke / 30 May run):**
   1. **Class indexing — confirmed:** `--category-offset 1` (Roboflow reserves
      class 0; categories 1..18 + dummy id-0; rf-detr read "19 classes"; per-class
      val table showed correct label association). Use `CV_CATEGORY_MAP`
      `{"1":0,...,"18":17}`. Re-confirm with one served image.
   2. **T4 OOM — fixed:** the cause was the multi-scale ~1008px upsample, NOT batch
-     size. `train_rfdetr.py` defaults are now `BATCH=4`, `GRAD_ACCUM=4`,
-     `GRAD_CHECKPOINT=1`, `MULTI_SCALE=0` (batch=4 fits at 728, ~3-4× faster than
-     batch=1). Fall back to `BATCH=2 GRAD_ACCUM=8` on a tighter card.
+     size. `train_rfdetr.py` now sets a **resolution-aware batch default** (4 at
+     res≤840, 2 above) with `GRAD_ACCUM` auto-scaled to hold effective batch 16,
+     plus `GRAD_CHECKPOINT=1`, `MULTI_SCALE=0`. So 728→batch4, 952→batch2
+     automatically; override `BATCH`/`GRAD_ACCUM` if needed.
   3. **Albumentations + faster-coco-eval were missing** (rfdetr 1.7.x doesn't
      auto-pull albumentations → "Built 0 transforms" / no aug; faster-coco-eval
      is the torchmetrics MAP backend for the val callback). Both now pinned in
