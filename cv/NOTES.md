@@ -21,16 +21,17 @@
 
 - **Phase:** Qualifiers closed (window ended 24 May 23:59:59 SGT). Semifinals
   prep runs through **2026-06-10**. CV is 20% of the score.
-- **Champion (final Qualifier high by blended score):**
-  **`yolo11l-1024-alldata-final-v1-img1280` — 0.671 acc / 0.950 speed, blended
-  0.7410**, 0/500 errors. YOLO11l v1 weights (all-data, trained at `imgsz=1024`)
-  served at **`CV_IMGSZ=1280`** — the win came from *upscale-at-inference*, not
-  more training.
+- **Champion (current high by blended score):**
+  **`yolo11l-1408` — 0.684 acc / 0.937 speed, blended 0.7473**, 0/500 errors
+  (30 May). Same YOLO11l v1 weights (all-data, trained at `imgsz=1024`) served at
+  **`CV_IMGSZ=1408`** — the upscale-at-inference lever had headroom past 1280;
+  1408 is the peak (see *What works*). Prior champion was `...-v1-img1280` at
+  0.671 / 0.950 (blended 0.7410).
 - **Shipped Docker serving config** ([Dockerfile](Dockerfile)) — what goes to
   cloud now:
   - `CV_MODEL_FAMILY=auto`, weights at `/workspace/models/cv/best.pt`,
     `CV_CATEGORY_MAP` = identity `0..17`.
-  - `CV_IMGSZ=1280`, `CV_CONF=0.20`, `CV_IOU=0.55`, `CV_AUGMENT=1`, `CV_HALF=1`,
+  - `CV_IMGSZ=1408`, `CV_CONF=0.20`, `CV_IOU=0.55`, `CV_AUGMENT=1`, `CV_HALF=1`,
     `CV_CROSS_CLASS_NMS_IOU=0.97`, `CV_SECOND_PASS=0`.
 - **Headroom is small (~0.05).** AE has far more (~0.15). **If Semis time is
   scarce, AE wins the marginal-hour ROI** — the architecture-family lever is now
