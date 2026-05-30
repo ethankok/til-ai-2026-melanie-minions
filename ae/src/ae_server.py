@@ -123,6 +123,17 @@ def _make_manager():
             print(f"AE: mode=confidence_hybrid init failed — using heuristic ({exc!r})")
         return AEManager()
 
+    if mode == "confidence_policy_hybrid":
+        try:
+            from confidence_policy_hybrid_manager import ConfidencePolicyHybridAEManager  # noqa: WPS433
+            print("AE: mode=confidence_policy_hybrid — raw PPO policy consulted only on low-confidence heuristic ticks")
+            return ConfidencePolicyHybridAEManager()
+        except FileNotFoundError as exc:
+            print(f"AE: mode=confidence_policy_hybrid but no policy checkpoint — using heuristic ({exc})")
+        except Exception as exc:  # noqa: BLE001
+            print(f"AE: mode=confidence_policy_hybrid init failed — using heuristic ({exc!r})")
+        return AEManager()
+
     if mode == "scripted_hybrid":
         try:
             from scripted_hybrid_manager import ScriptedHybridAEManager  # noqa: WPS433
