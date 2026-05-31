@@ -41,8 +41,20 @@
     this was the **heuristic via silent fallback**, not real PPO.
   - Treat ~0.59–0.60 as the real incumbent bar. Do not chase 0.613/0.638 as if
     they were stable means.
-- **Active experiment:** Pandemonium-v1 from-scratch CNN-PPO is the one untried
-  recipe currently in flight (see *Active line* below).
+  - **NEW (31 May): `pandemonium-confpol`@u860 farmed mean 0.634 (n=13, 95%CI
+    [0.609,0.659]) — the best AE artifact, and the one to deploy.** Pandemonium
+    policy as a low-confidence *consultant* on the heuristic. **First AE config
+    with a FARMED mean above the bar** (every prior 0.613/0.638 "high" was a
+    single tail draw that regressed). +0.04 over ~0.59 at z≈2.7–3.4 (one-sample).
+    **Use the u860 checkpoint, NOT the final one:** the same wrapper with the
+    phase-1-final u1400 checkpoint (higher local eval 0.79) farmed only 0.600
+    (n=10) ≈ heuristic — more training OVERFIT and lost the edge (see *Active
+    line*). **To promote: re-farm the shipped heuristic to n≥5** for an
+    apples-to-apples call vs the 0.634.
+- **Active experiment:** Pandemonium-v1 from-scratch CNN-PPO. The raw policy
+  itself transfer-gaps (pure/hybrid cloud 0.51 < heuristic 0.59), but the
+  **`confidence_policy_hybrid` consultant pattern is the promising direction**
+  (see *Active line* below).
 
 ### The one problem that dominates AE: the local→cloud transfer gap
 
@@ -172,7 +184,94 @@ historical ~1M steps), from-scratch init, and their hyperparams.
   fallback). Workbench: `git pull` → copy the ckpt to `ae/models/bc.pt` → set
   `ENV AE_MODE` per build → `til build/test/submit`. **Canary:** the `til test`
   log must say `AE policy loaded … epoch=860`, NOT "falling back to heuristic".
-  Log results with `variance_farm.py add --config pandemonium-{policy,hybrid,confpol}`.
+
+  **RESULTS (30–31 May, 0/30 errors). policy/hybrid n=1; confpol VARIANCE-FARMED n=13:**
+  | mode | cloud acc | speed | read |
+  |---|---:|---:|---|
+  | `policy` (pure PPO) | **0.507** (n=1) | 0.848 | transfer gap holds (local 0.74 → cloud 0.51) |
+  | `hybrid` (policy-first + veto) | **0.508** (n=1) | 0.852 | ≈ policy; the safety veto rarely changes the outcome |
+  | `confpol` (heuristic-first) | **mean 0.634** (n=13, σ0.046, 95%CI [0.609,0.659]) | 0.84 | **first farmed AE config above the incumbent bar** |
+
+  **Read:** the raw policy is a *worse global controller* than the heuristic
+  (0.51 < 0.59 — Pandemonium scale did NOT close the transfer gap) but a *useful
+  local specialist*. `confpol` gates it to only the ~20% of ticks where the
+  heuristic is unsure, so two ≤0.59 components combine because their errors are
+  uncorrelated and the confidence router sends each tick to the stronger one.
+  This validates the long-standing "planner-first arbitration, learned policy as
+  consultant — NOT policy-as-primary" thesis with a policy finally good enough to pay.
+
+  **The farm (n=13): the 0.667 first draw was the 73rd percentile; true mean is
+  0.634.** Range 0.563–0.710, sample σ 0.046 (consistent with the 0.053 noise
+  model). This is the **first AE config in project history with a *farmed* mean
+  above the ~0.59–0.60 incumbent bar** — every prior "high" (0.613, 0.638) was a
+  single tail draw that regressed on re-sampling; this one holds at n=13.
+  - vs the established ~0.59–0.60 bar (one-sample): **+0.04, z≈2.7–3.4 — clears it.**
+  - vs `heuristic-A` (n=3, 0.599) two-sample: Δ+0.035, p=0.30 **NOT yet significant
+    — only because the incumbent is under-sampled (n=3)**, not because confpol is weak.
+  **Next steps (in order):**
+  1. **Pin the incumbent: re-farm the shipped heuristic (tether/C+bomb7) to n≥5**
+     so the comparison is apples-to-apples (n=13 vs n=13), not vs n=3. This is the
+     one clean experiment that converts "+0.035, p=0.30" into a real promotion call.
+  2. **Re-farm `confpol` with the FINAL post-self-play checkpoint** — the farm used
+     the *u860* snapshot; training is now at u1140 with eval 0.772 / cloudsuite 0.702
+     (vs 0.74/0.65 at u860), so the final policy likely lifts confpol further.
+  3. Sweep the gate (`AE_CONFPOL_MARGIN_EPSILON`/`_TOP_FLOOR`) — how often the policy
+     is consulted is the contribution lever.
+  - Drop `policy`/`hybrid` as deploy candidates (transfer-gapped at 0.51).
+
+  **It's WHICH ticks, not HOW MANY (measured 31 May, local 12-game tally).**
+  `confpol` consults the policy ~46% of ticks / changes the action ~25.5%;
+  `hybrid` (fixed-map shortcut off) lets the policy serve ~39.5% / changes ~23.7%
+  — **nearly the same policy-influence rate, yet confpol=0.634 vs hybrid=0.508.**
+  The difference is routing: `confpol` gives the policy only the heuristic's
+  *low-confidence* ticks (its competent ticks → helpful); `hybrid` lets it
+  override even confident-and-correct heuristic ticks (→ harmful, since the
+  policy is a bad global controller). Same policy, +0.13 from routing alone.
+  Note: local `hybrid` heuristic fast-paths fire heavily (fixed-map 42% + escape
+  60%), but on cloud hybrid scored 0.508 ≈ pure-policy 0.507 — so those fast-paths
+  (esp. the fixed-Novice map detector) **don't fire on the cloud eval**; another
+  face of the local→cloud distribution gap.
+
+  **⚠ CRITICAL (31 May): more local training made the policy a WORSE cloud
+  consultant — the cloud-best checkpoint is EARLIER than the local-best.**
+  Phase 1 finished at u1563 (best-local checkpoint = u1400, eval 0.790). Farmed
+  `confpol` with it (n=10): **mean 0.600** — vs the u860 checkpoint's **0.634**
+  (n=13). The u1400 policy was better on EVERY local metric (eval 0.742→0.790,
+  cloudsuite 0.647→0.747) and far more deterministic (entropy 0.064→0.025), yet
+  its cloud-consultant value DROPPED and its edge over the heuristic vanished
+  (0.600 ≈ heuristic 0.599; Δ vs u860 = −0.034, p=0.12 — not conclusive but
+  zero gain from +0.05 local eval). **Mechanism = overfitting / inverted-U
+  generalization:** the local eval suites are the same opponents the policy
+  trains on, so past ~u860 rising local eval = memorizing those opponents +
+  entropy-collapsing into over-confident locally-optimal moves that give worse
+  advice on the cloud's unseen hard ticks. **local eval and cloud transfer
+  decoupled, then went anti-correlated.** Consequences:
+  - **Deploy/promote `confpol`-u860 (0.634)** — the EARLIER checkpoint, not the
+    final one. Frozen at `pandemonium-v1-best-u860.pt` / bucket `handoff/`.
+  - **Never select an AE checkpoint by local eval** — it picks the overfit one.
+    Save periodic checkpoints next run; the cloud-optimum is likely even earlier
+    than u860 (we didn't keep intermediates to test).
+  - **Phase 2 (self-play) auto-ran** from the most-overfit u1400 checkpoint;
+    at u116/782 eval-vs-self 0.33, entropy recovered 0.025→0.34 (re-exploring).
+    Low prior it beats 0.634 (only prior self-play run cloud'd 0.41); side-quest.
+
+  **NEXT BIG BET — "confpol-native" gated PPO (train/deploy match).** Smoking-gun
+  evidence (31 May): the SAME extra training (u860→u1400) moved PURE policy UP
+  (0.507→0.550, n=4) but CONFPOL DOWN (0.634→0.600). Opposite responses ⇒ the
+  policy is trained as a global *controller* but deployed as a *consultant* on
+  the heuristic's hard ticks — a train/deploy mismatch. Fix = train the raw CNN
+  policy ON the deployed distribution: during rollouts the confidence wrapper
+  acts (heuristic on confident ticks; PPO acts AND collects transitions ONLY on
+  low-confidence ticks), and the save-gate scores the wrapped `confpol` policy.
+  Caveats: (a) the *macro* version of this was tried 27–28 May (confidence-gated
+  PPO → conf-hybrid-v3/v4, cloud 0.507–0.549, below heuristic) — but our RAW CNN
+  policy already beats that as a consultant (0.634), so gated-specializing it
+  should help; (b) still trains on local opponents → MUST save periodic
+  checkpoints + early-stop + select by the wrapped score, never raw local eval
+  (that's what overfit u1400). Infra: `confidence_policy_hybrid_manager.py`
+  exists; port the gated-rollout loop from `train_tactical_ppo.py --confidence-gated`
+  to the raw-action `train_ppo.py`. **Meanwhile SHIP confpol-u860 (0.634) as the
+  floor — independent of this bet.**
 
 ### Key files
 
