@@ -295,6 +295,7 @@ def run_one_round(
     opponents: list[OpponentFn],
     log_traj: bool,
     seed: int | None = None,
+    us_slot: int = 0,
 ) -> dict:
     """Run one full round (200 steps × 6 agents). Returns per-round stats."""
 
@@ -303,8 +304,8 @@ def run_one_round(
     else:
         env.reset()
 
-    agent_id_us = env.possible_agents[0]
-    other_ids = list(env.possible_agents[1:])
+    agent_id_us = env.possible_agents[us_slot]
+    other_ids = [a for i, a in enumerate(env.possible_agents) if i != us_slot]
 
     # Reset our agent's belief if it's an AEManager. The env already has a
     # fresh seed, so just zero its memory.

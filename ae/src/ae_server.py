@@ -134,6 +134,31 @@ def _make_manager():
             print(f"AE: mode=confidence_policy_hybrid init failed — using heuristic ({exc!r})")
         return AEManager()
 
+    if mode == "opening_hybrid":
+        # Divergence-gated Novice opening prefix in front of a planner. The inner
+        # planner is selected by AE_OPENING_PLANNER (default confidence_policy_hybrid
+        # so the combined opening+confpol build ships; degrades to the heuristic if
+        # the policy checkpoint is absent). The opening only fires on the spawns
+        # locked in openings_gate.json; all other spawns run the planner from tick 0.
+        try:
+            from opening_hybrid_manager import OpeningHybridManager  # noqa: WPS433
+            inner_name = os.environ.get("AE_OPENING_PLANNER", "confidence_policy_hybrid").strip().lower()
+            planner = None
+            if inner_name == "confidence_policy_hybrid":
+                try:
+                    from confidence_policy_hybrid_manager import ConfidencePolicyHybridAEManager  # noqa: WPS433
+                    planner = ConfidencePolicyHybridAEManager()
+                    print("AE: opening_hybrid inner planner = confidence_policy_hybrid")
+                except Exception as exc:  # noqa: BLE001
+                    print(f"AE: opening_hybrid confpol planner failed — using heuristic planner ({exc!r})")
+            if planner is None:
+                planner = AEManager()
+                print("AE: opening_hybrid inner planner = heuristic")
+            return OpeningHybridManager(planner=planner)
+        except Exception as exc:  # noqa: BLE001
+            print(f"AE: opening_hybrid init failed — using heuristic ({exc!r})")
+        return AEManager()
+
     if mode == "scripted_hybrid":
         try:
             from scripted_hybrid_manager import ScriptedHybridAEManager  # noqa: WPS433

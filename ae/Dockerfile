@@ -39,7 +39,20 @@ WORKDIR /workspace
 # (0.590) which was heuristic + C+bomb7 with NO tether. Isolating the tether as
 # the single variable. Revert to AE_MODE=confidence_hybrid to restore the prior
 # shipped image.
-ENV AE_MODE=heuristic
+# 1 Jun 2026: opening_hybrid — divergence-gated Novice opening prefix (locked in
+# ae/src/openings_gate.json: spawns 13,9 / 9,13 / 3,12 / 12,3 ON; 2,6 / 6,2 run
+# the planner from tick 0) in front of the confpol planner. AE_OPENING_PLANNER
+# selects the inner planner; confidence_policy_hybrid = the u860 confpol agent
+# (heuristic-first + PPO consultant). Stage the checkpoint as ae/models/bc.pt
+# before `til build` (NOT committed). If bc.pt is absent the inner planner
+# degrades to the C+bomb7 heuristic and the opening still fires.
+# Canary in the `til test` log: "AE policy loaded … epoch=860" AND
+# "opening_hybrid ready … opening-enabled spawns=['13,9','9,13','3,12','12,3']".
+# Local validation (cloudsuite, paired): +0.067 expected aggregate lift over the
+# bare planner; cloud variance-farm before trusting it. Revert to
+# AE_MODE=confidence_policy_hybrid (or =heuristic) to drop the opening prefix.
+ENV AE_MODE=opening_hybrid
+ENV AE_OPENING_PLANNER=confidence_policy_hybrid
 # C+bomb7 baseline profile.
 ENV AE_ITEM_MISSION_VALUE=80
 ENV AE_ITEM_RESOURCE_VALUE=40

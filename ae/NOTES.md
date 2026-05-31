@@ -9,58 +9,162 @@
 > commands. The archive is intentionally redundant with the digest; you only
 > need it when you want the exact per-submission detail behind a claim here.
 >
-> _Digest last refreshed: 30 May 2026._
+> _Digest last refreshed: 1 June 2026 (competitor teardown + novice-determinism
+> correction + reward-calibration ruling)._
 
 ---
 
 ## Read this first
 
-### Current state (30 May 2026)
+### Current state (1 June 2026)
 
 - **Phase:** Qualifiers closed. Semifinals prep runs through **2026-06-10**. We
   placed 15th on the Novice path, so the expected Semifinals Match-1 bracket is
   seeds ≈ 3/8/9/14/15/20. AE is 40% of the score and our single biggest lever —
-  this is where a match is won or lost.
-- **Shipped Docker default** ([Dockerfile](Dockerfile)) — this is what currently
-  goes to cloud:
-  - `AE_MODE=heuristic` (pure rule-based planner; no NN in the loop)
-  - **"C+bomb7" item-farm profile:** `AE_ITEM_MISSION_VALUE=80`,
-    `AE_ITEM_RESOURCE_VALUE=40`, `AE_ENEMY_BASE_VALUE=100`,
-    `AE_DIJKSTRA_BOMB_COST=7.0`
-  - **base-tether ON:** `AE_LEAD_BASE_TETHER=1`, `AE_LEAD_TETHER_HEALTH=60`,
-    `AE_LEAD_TETHER_WEIGHT=0.5` (when base health < 60, penalize targets by
-    distance from base). Confirmed **neutral** on cloud — kept as a *safe
-    default*, NOT a measured win.
-  - `PYTHONHASHSEED=0` baked in. The `confidence_hybrid` wrapper code is present
-    but is a verified no-op at these settings (PPO never consulted).
+  this is where a match is won or lost. **Semis = Novice path = the fixed
+  seed-42 map** (see the determinism section below — this is now the top lever).
+- **Shipped Docker default** ([Dockerfile](Dockerfile)) — as of 1 Jun this is
+  **`AE_MODE=opening_hybrid` + `AE_OPENING_PLANNER=confidence_policy_hybrid`**:
+  divergence-gated Novice opening prefix in front of the confpol planner.
+  - **Opening gate** ([ae/src/openings_gate.json](src/openings_gate.json)):
+    per-spawn locked openings — ON for spawns `13,9 / 9,13 / 3,12 / 12,3`, the
+    planner runs from tick 0 on `2,6 / 6,2`. `max(planner, opening)` per spawn by
+    construction (never worse). Built + validated this session (see archive 1 Jun).
+  - **Inner planner = confpol-u860** (heuristic-first C+bomb7 + PPO consultant).
+    **Still requires staging `pandemonium-v1-best-u860.pt` → `ae/models/bc.pt` on
+    the Workbench** (gitignored, not committed). If bc.pt is absent the inner
+    planner degrades to the bare C+bomb7 heuristic and the opening still fires.
+  - C+bomb7 profile + base-tether + `PYTHONHASHSEED=0` unchanged (all baked in).
+  - **Canary (`til test`):** `AE policy loaded … epoch=860` AND `opening_hybrid
+    ready … opening-enabled spawns=['13,9','9,13','3,12','12,3']`.
+  - To drop the opening prefix: `AE_MODE=confidence_policy_hybrid`. To drop the
+    NN too: `AE_MODE=heuristic`.
+- **⚠ Not yet cloud-confirmed.** Both layers need variance-farming: confpol-u860
+  is farmed (0.634), but the opening gate's +0.067 is a *local* (cloudsuite)
+  signal, and opening+confpol as a *combo* is unfarmed. Variance-farm the shipped
+  build vs confpol-u860 before trusting the lift.
 - **Honest cloud performance: no AE config has a variance-farmed mean
-  meaningfully above ~0.59.** The famous "highs" are all upper-tail single
-  draws, not means:
+  meaningfully above ~0.59**, except confpol-u860. The famous heuristic "highs"
+  are all upper-tail single draws, not means:
   - `heuristic-A-vf1` **0.613** — true farmed mean ≈ 0.575–0.599.
   - `ppo-full-rl-v1-hybrid` **0.638** (protected leaderboard max) — forensically
-    this was the **heuristic via silent fallback**, not real PPO.
-  - Treat ~0.59–0.60 as the real incumbent bar. Do not chase 0.613/0.638 as if
-    they were stable means.
-  - **NEW (31 May): `pandemonium-confpol`@u860 farmed mean 0.634 (n=13, 95%CI
-    [0.609,0.659]) — the best AE artifact, and the one to deploy.** Pandemonium
-    policy as a low-confidence *consultant* on the heuristic. **First AE config
-    with a FARMED mean above the bar** (every prior 0.613/0.638 "high" was a
-    single tail draw that regressed). +0.04 over ~0.59 at z≈2.7–3.4 (one-sample).
-    **Use the u860 checkpoint, NOT the final one:** the same wrapper with the
-    phase-1-final u1400 checkpoint (higher local eval 0.79) farmed only 0.600
-    (n=10) ≈ heuristic — more training OVERFIT and lost the edge (see *Active
-    line*). **To promote: re-farm the shipped heuristic to n≥5** for an
-    apples-to-apples call vs the 0.634.
-- **Latest line — confpol-native (gated PPO, train==deploy): tried, MATCHED u860,
-  no lift (1 Jun).** Built + ran a confidence-gated raw-policy PPO that trains the
-  policy only on the heuristic's low-conf ticks (the deploy distribution),
-  warm-started from u860. Early n=1 cloud reads: u100 0.551 / u200 0.621 / u360
-  0.624 — same ~0.60–0.63 band as the farmed u860 (0.634), no checkpoint clears
-  the floor. The train/deploy-match hypothesis did not beat u860. **Deploy stays
-  `pandemonium-confpol`@u860 (0.634).** Infra kept (`--confidence-gated` in
-  train_ppo.py, `run_confpol_native.py`, ladder `confpol-native-u*.pt`) if a
-  deeper n≥5 farm of one rung is ever wanted; prior says it ties/loses. Full
-  detail in the *Active line* archive below.
+    the **heuristic via silent fallback**, not real PPO.
+  - Treat ~0.59–0.60 as the real incumbent bar. Do not chase 0.613/0.638 as
+    stable means.
+  - **`pandemonium-confpol`@u860 farmed mean 0.634 (n=13, 95%CI [0.609,0.659])
+    — the best AE artifact.** Pandemonium policy as a low-confidence *consultant*
+    on the heuristic. First AE config with a FARMED mean above the bar.
+    **Use the u860 checkpoint, NOT the final one:** the phase-1-final u1400
+    checkpoint (local eval 0.79) farmed only 0.600 — more training OVERFIT the
+    local opponents and lost the cloud edge. Never select an AE checkpoint by
+    local eval.
+- **confpol-native (gated PPO, train==deploy): MATCHED u860, no lift (1 Jun).**
+  A confidence-gated raw-policy PPO trained only on the heuristic's low-conf
+  ticks, warm-started from u860. n=1 cloud: u100 0.551 / u200 0.621 / u360 0.624
+  — same ~0.60–0.63 band, no rung clears the floor. **Deploy stays confpol-u860
+  (0.634).** Run was still training at u507/2976 when shelved — **fine to
+  `pkill -f run_confpol_native.py`** (verdict in; eval flat ~0.56, entropy
+  collapsed). Ladder `confpol-native-u*.pt` on disk if a deeper farm is wanted;
+  prior says it ties/loses.
+- **🔭 TOP LEVER — first exploitation BUILT + SHIPPED (1 Jun): divergence-gated
+  opening book.** Inspired by competitor `curryfarmer`/royal-recruits (0.715/0.807,
+  who exploits novice determinism deeply). Offline beam search generates per-spawn
+  item-farming openings ([../training/ae/opening_sim.py](../training/ae/opening_sim.py),
+  `gen_openings.py`); a divergence-gated wrapper replays them then hands to the
+  planner ([src/opening_hybrid_manager.py](src/opening_hybrid_manager.py)).
+  **Key finding: the opening is a regression-to-the-mean operator** — it lifts
+  spawns where the planner opens weakly and *hurts* spawns where it already opens
+  well, so it MUST be per-slot gated. Per-slot sweep (`sweep_openings.py` →
+  `lock_gate.py`) locked 4/6 spawns ON (+0.067 local). Now the shipped default.
+  **Still under-exploited vs the competitor** (no distance/opponent LUTs, no
+  forward-sim planner). See *"The novice-determinism lever"* / *"Competitor intel"*.
+
+### The novice-determinism lever (the fixed seed-42 map) — LIVE, under-exploited
+
+**The Semis Novice map is identical every game, every seed, and our detector
+fires on it.** Proven 1 Jun via [../training/ae/probe_fixed_map.py](../training/ae/probe_fixed_map.py)
+against the real `til_environment`: `is_fixed_novice_map=True` on all 6 agents
+across seeds 7/999/31337; `base_location` (`array([13,9])` → native `[13,9]` →
+`(13,9)`) matches our hardcoded [src/novice_map_data.py](src/novice_map_data.py)
+exactly. Our `BASE_LOCATIONS` / `STARTING_LOCATIONS` / item table are
+**byte-identical** to the competitor's `HUNTER_*` tables.
+
+- **DELETED stale claim:** earlier NOTES said "the fixed-Novice map detector
+  doesn't fire on the cloud eval." That was a **misdiagnosis** — it was inferred
+  from a hybrid-PPO experiment (where the policy was in control and heuristic
+  fast-paths were subordinate), never tested directly. The detector firing is a
+  pure function of the observation format, which is defined by the `til_environment`
+  package the cloud runs — so fires-locally ⇒ fires-on-cloud. Confirmed. (Cloud
+  `til submit` gives no logs; the local env probe is the decisive test. Optional
+  belt-and-suspenders: add a `[FIXEDMAP] fired` print and grep the `til test`
+  log on the Workbench — `til test` runs the official evaluator locally.)
+- **What we do with it today = SHALLOW:** preload walls/destructibles/bases/items
+  at step 0, switch BFS→Dijkstra for exact pathing, bump `ENEMY_BASE_VALUE` to
+  130. That's it. ([ae_manager.py:329](src/ae_manager.py))
+- **What the competitor does = DEEP** (and scores 0.715): exact pathing **+ a
+  divergence-gated opening book + an all-pairs distance LUT + an opponent-position
+  LUT + a "defense wins / immortality" strategy**. Same trigger, far more
+  leverage. This depth gap is the most plausible single explanation for 0.715 vs
+  our 0.634. See the improvement plan in **"Using curryfarmer's work"** below.
+
+### Competitor intel: curryfarmer / "royal-recruits" (public repo, 0.715/0.807)
+
+Public GitHub repo `curryfarmer/til-26-ae` (team royal-recruits), cloud
+**0.715 reward / 0.807 speed**. Cloned + fully reviewed 1 Jun. Key facts:
+
+- **Same meta-conclusion as us:** their RL failed local→cloud transfer at
+  qualifiers → they ship a hand-coded heuristic and plan to use it as a BC
+  teacher/opponent for fresh RL at semis. Convergent with our entire arc.
+- **Their heuristic is a different machine: portfolio-A* + forward-sim plan
+  scoring**, not greedy target-picking. Per tick: enumerate K=4–6 goals → A*
+  each over `(x,y,facing,t,bombs,placed)` (facing/time/bomb-inventory aware,
+  horizon 8–10) → **project the world forward and score each plan by estimated
+  raw game reward** (`eval.score_plan`) → pick best. Time-layered danger map
+  (`is_lethal(x,y,t)` per future tick). ~12 personas (aggro/greedy/fortress/…)
+  + a runtime persona-FSM. **Rust (PyO3) A* kernel** for speed; full IS-MCTS
+  built but shipped OFF (A* portfolio is the live path).
+- **Their hunter scores:** `greedy_hunter` local bench qual **0.929** / semis
+  **0.747** composite; they note til-server ≈ −0.20 reward vs til-test, landing
+  cloud at ~0.71–0.75. The 0.715 the user found is one of these hunters.
+- **Strategic insight we lack: "immortality → farming race → defense wins."**
+  They reverse-engineered that kills only freeze 3 turns then respawn full-HP,
+  so a match is a 200-tick points-farming race; they price stun downtime in
+  `score_plan` (`FREEZE_TURNS × W_STUN_PER_TURN`) and built a `fortress` persona
+  (tops their roster). Our scorer has no respawn/stun model.
+- **Where we already match or beat them:** same RL verdict; both built search and
+  ship it OFF; both maintain a belief/world model; both pin `PYTHONHASHSEED=0`
+  for the same tie-break-determinism reason. **We're slightly FASTER** (~0.84 vs
+  their 0.807) — speed is not our problem; accuracy is.
+
+### Reward calibration: why we DON'T use nominal game rewards as candidate values
+
+Recurring question — settled here so we don't re-litigate. Real game rewards:
+mission +5, resource +2, recon +1, destroy_base +50, kill +30/15, own_base −50,
+damage +1/HP. Our candidate values: mission 80, resource 40, base 100/130.
+
+- **Our scorer is a greedy *priority* function, not an EV estimate.** `score =
+  base_value − DIST_PENALTY·dist − …` ranks one target cell to walk toward; the
+  value lives in the same arbitrary units as `DIST_PENALTY=1.15` and the
+  visit/threat penalties. Only *ratios* matter; rescaling to "game units" changes
+  nothing unless you change ratios.
+- **Nominal reward ≠ realized EV.** Game values base:mission at **10:1**; we use
+  **~1.25:1** — i.e. we deliberately UNDER-weight bases ~8× vs nominal. That's
+  correct: a base is nominally +50 but hard/contested/slow (realized EV ≪ 50),
+  a mission is +5 but near-certain. In a 200-tick farming race, steady certain
+  mission income beats risky base attempts. Our C+bomb7 ratios (survivors of the
+  +1.13σ `multi_seed_eval` sweep) already encode this realized-EV correction.
+- **Real-reward calibration is correct-by-construction ONLY when paired with
+  forward-sim plan projection** (the competitor's `score_plan` discounts a base
+  to ~0 when the bomb won't land). Bolting nominal rewards onto our greedy
+  one-step scorer with no projection would over-chase bases it can't finish →
+  almost certainly regress (same failure mode as our dead aggressive/scripted
+  lines). Calibration is a *consequence* of adopting plan-projection scoring, not
+  a standalone win.
+- **The RL side is already real-reward-aligned** (PPO trains on the env's actual
+  reward + shaping). The abstract constants are a heuristic-only object.
+- Cheap to falsify: `AE_ITEM_MISSION_VALUE=5 AE_ITEM_RESOURCE_VALUE=2
+  AE_ENEMY_BASE_VALUE=50` + `multi_seed_eval.py`. Strong prior: regresses unless
+  `DIST_PENALTY` is also retuned.
 
 ### The one problem that dominates AE: the local→cloud transfer gap
 
@@ -128,7 +232,7 @@ this overfit the local opponents like the last ten attempts did?"
 | **MCTS as primary planner** (`mcts-light`) | Depth/width search per tick | Either times out (no latency cap) or, when capped, regresses accuracy −0.068 and speed −0.254. Workshop teaches no MCTS; top teams aren't doing it. |
 | **Scripted M5 port** (`scripted_hybrid`, full ScriptedBaseAttackPolicy) | Port the 0.731 team's full decision tree | **−3.35σ LOSS** at the local gate. M5's 0.731 is codebase-specific, not primitive-additive. |
 | **Three M5 primitives** (spawn-first-target table, enemy-bomb-only escape, orientation-aware A*) | Bolt-on env flags | All noise-to-catastrophic (orientation-aware A* −0.142; our DIST_PENALTY is tuned for grid, not orientation distance). All default-OFF. |
-| **Memorized-route / opening-book / rusher / camping cheese** | Precompute greedy route per fixed-Novice spawn | All lose to per-tick re-evaluation in the cloud opponent distribution. |
+| **Memorized-route / rusher / camping cheese** (RIGID) | Precompute a greedy route per fixed-Novice spawn, replay blindly | RIGID replay loses to per-tick re-evaluation. **⚠ But see below: a DIVERGENCE-GATED opening book is NOT this** — the competitor ships one and scores 0.715. Re-open with abort-on-divergence (the rigid version is what failed, not the concept). |
 | **LLM-as-player** (`llm_manager.py`) | Sonnet/Gemini play the game; mine rationales | LLM play ≤ heuristic even with belief-memory; a *worse* teacher than the heuristic itself. |
 | **Rationale-mined heuristic leads** (bomb-gate-base, recon-discount) | Tweaks suggested by LLM rationale mining | bomb-gate-base collapses defense_trap −0.213; recon-discount is a no-op. Only base-tether survived (and it's neutral, see above). |
 | **Heuristic-A (160/0.9) aggression**, `heuristic-a-bomb7` combos | Untested heuristic-parameter combos | heuristic-A ranks 7th (−0.28σ) at the calibrated gate; its 0.613 cloud was tail variance. Untested combos regress. |
@@ -234,9 +338,14 @@ historical ~1M steps), from-scratch init, and their hyperparams.
   override even confident-and-correct heuristic ticks (→ harmful, since the
   policy is a bad global controller). Same policy, +0.13 from routing alone.
   Note: local `hybrid` heuristic fast-paths fire heavily (fixed-map 42% + escape
-  60%), but on cloud hybrid scored 0.508 ≈ pure-policy 0.507 — so those fast-paths
-  (esp. the fixed-Novice map detector) **don't fire on the cloud eval**; another
-  face of the local→cloud distribution gap.
+  60%), but on cloud hybrid scored 0.508 ≈ pure-policy 0.507. This was originally
+  read as "those fast-paths (esp. the fixed-Novice map detector) don't fire on the
+  cloud eval." **⚠ CORRECTED 1 Jun: that inference was WRONG.** The fixed-map
+  detector provably DOES fire (see *The novice-determinism lever* above). What
+  actually happened in `hybrid` mode is that the *policy* was the controller and
+  the heuristic's fast-paths were subordinate/overridden — so their firing didn't
+  show up in the score. The detector itself is healthy; do not cite this line as
+  evidence the map exploit is dead.
 
   **⚠ CRITICAL (31 May): more local training made the policy a WORSE cloud
   consultant — the cloud-best checkpoint is EARLIER than the local-best.**
@@ -343,12 +452,23 @@ historical ~1M steps), from-scratch init, and their hyperparams.
   [src/macro_hybrid_manager.py](src/macro_hybrid_manager.py),
   [src/scripted_hybrid_manager.py](src/scripted_hybrid_manager.py) (last two are
   closed lines; kept for reference)
+- Fixed-map detector probe: [../training/ae/probe_fixed_map.py](../training/ae/probe_fixed_map.py)
+  (proves `is_fixed_novice_map` fires against the real env; runs Mac or Workbench)
+- Hardcoded novice map data: [src/novice_map_data.py](src/novice_map_data.py)
+  (walls/destructibles/bases/spawns/items — byte-identical to the competitor's)
 - Local gate: [../training/ae/multi_seed_eval.py](../training/ae/multi_seed_eval.py)
 - Cloud decision tool: [../training/ae/variance_farm.py](../training/ae/variance_farm.py)
   + ledger `training/ae/data/cloud_samples.json`
 - Active experiment launcher:
   [../training/ae/run_pandemonium_v1.py](../training/ae/run_pandemonium_v1.py)
 - Training runbook: [../training/ae/RUNBOOK.md](../training/ae/RUNBOOK.md)
+- **Competitor reference** (cloned for analysis, not vendored):
+  `github.com/curryfarmer/til-26-ae` (royal-recruits, 0.715/0.807). Key files to
+  port-study: `experimental_heuristic/agent.py` (`_try_opening_playbook` +
+  `act()` pipeline), `experimental_heuristic/novice_state.py`
+  (`HUNTER_OPENING_SEQUENCES`, dist/opponent LUTs), `experimental_heuristic/eval.py`
+  (`score_plan` forward-sim), `experimental_heuristic/search.py` (A* over
+  `(x,y,facing,t,bombs,placed)`).
 - Deployment contract & full submission ledger: see the archive below
   (*Full AE submission ledger*, *What our agent runs on*).
 
@@ -362,6 +482,96 @@ historical ~1M steps), from-scratch init, and their hyperparams.
 > launch, tether verdict, variance-farm build, rationale-mining, v4 cloud
 > closure) are summarized in the digest — their full prose write-ups have been
 > folded in rather than duplicated here.
+
+## 1 June 2026 — competitor teardown + novice-determinism correction
+
+Session triggered by finding a public competitor repo. Three durable outcomes;
+all are folded into the digest above (*The novice-determinism lever*,
+*Competitor intel*, *Reward calibration*). Raw detail kept here.
+
+### 1. Competitor: `curryfarmer/til-26-ae` (team royal-recruits), cloud 0.715/0.807
+
+Cloned + read in full. They are ~one engineering tier above us on the heuristic,
+but arrived at the **same strategic map** we did:
+
+- **Same RL verdict:** their qualifier RL failed transfer → shipped a hand-coded
+  heuristic; semis plan is heuristic-as-BC-teacher + opponents → fresh RL. Identical
+  to our arc. This is strong external corroboration that the transfer gap is real
+  and not a skill issue on our side.
+- **Architecture (the real difference):** `ExperimentalHeuristicAgent` runs a
+  **goal-portfolio → A* → forward-sim plan-scoring** loop, NOT our greedy
+  single-target scorer. A* state is `(x,y,facing,t,bombs,placed)`; `eval.score_plan`
+  projects the world along each plan trajectory and sums **estimated raw game
+  reward** (bomb damage realized on bases/enemies, collectibles passed over, HP
+  lost to future blast layers, trap penalty, stun-on-death, distance tax). ~12
+  personas + a runtime persona-FSM. Rust PyO3 A* kernel + numba + precomputed
+  blast/legal tables for speed. Full IS-MCTS built but `USE_ISMCTS=0` (A* ships).
+- **Novice-determinism exploit (depth):** `novice_state.py` hardcodes the entire
+  seed-42 world — walls, destructibles, all 6 bases + spawns, 218 items, an
+  **all-pairs distance LUT**, an **opponent-position LUT**, and **multi-round
+  opening move sequences** (`HUNTER_OPENING_SEQUENCES`). The opening playbook
+  (`_try_opening_playbook`) is **divergence-gated**: replays the script only while
+  observed state matches the prediction, aborts to live planning the instant it
+  diverges — free upside, no downside. `greedy_hunter` local bench qual 0.929 /
+  semis 0.747; cloud ≈ 0.715 (they note til-server ≈ −0.20 vs til-test).
+- **Strategic insight we lacked:** "immortality → 200-tick farming race → defense
+  wins." Kills only freeze 3 turns then respawn full-HP; they price stun downtime
+  in `score_plan` and ship a `fortress` persona (tops their roster).
+- **Where we already win:** we're FASTER (~0.84 vs 0.807). Speed is not the gap.
+
+### 2. Our fixed-Novice-map detector PROVABLY fires (kills a stale misdiagnosis)
+
+Built [../training/ae/probe_fixed_map.py](../training/ae/probe_fixed_map.py): drives
+the real `til_environment` novice env, pulls genuine step-0 observations, feeds each
+through a fresh `AEManager`, checks `is_fixed_novice_map`. Result: **True on all 6
+agents, seeds 7/999/31337.** `base_location` format (`array([13,9])` → native
+`[13,9]` → `(13,9)`) matches our hardcoded `novice_map_data.py` exactly, which is
+itself byte-identical to the competitor's `HUNTER_*` tables. Since the detector
+firing is a pure function of the obs format (defined by the `til_environment`
+package the cloud also runs) and novice is seed-invariant, fires-locally ⇒
+fires-on-cloud. **The earlier "doesn't fire on cloud" claim was a misdiagnosis from
+a hybrid-PPO experiment and is now deleted/annotated wherever it appeared.** The
+exploit is LIVE; our use of it is just shallow (exact pathing + base-value bump).
+
+### 3. Reward calibration settled
+
+Why we don't set candidate values to nominal game rewards: our scorer is a greedy
+priority function, not a plan-EV estimate; nominal ≠ realized EV (we under-weight
+bases ~8× vs nominal on purpose, encoding that bases are hard/contested/slow). Real
+rewards are correct only when paired with forward-sim projection (the competitor's
+`score_plan`), which we don't have. Full reasoning in the digest. RL side already
+trains on real env reward.
+
+### 4. Opening book — built, validated, shipped (the first determinism exploit)
+
+Full pipeline, all TDD (parity against the real env is the spine):
+- **`opening_sim.py`** — minimal forkable forward model of the Novice map
+  (movement-only); env-parity tested (pos/dir/reward match the real env over
+  random + dense sequences). `beam_search` finds per-spawn item-farming openings.
+- **`gen_openings.py`** — generates ranked openings per spawn (each best opening
+  farms ~15 items / ~45 reward in 25 ticks; runs in ~9 s — search, not LLM).
+- **`opening_eval_manager.py`** (eval) / **`src/opening_hybrid_manager.py`**
+  (deploy, self-contained, baked-traj gate, generic planner) — replay opening with
+  a **divergence gate** (obs pos/dir must match the baked trajectory; else abort
+  to the planner permanently), planner kept warm every tick.
+- **`validate_openings.py`** — paired full-game validation vs the planner, per
+  spawn, reusing `simulate.run_one_round` (+ a new `us_slot` arg for spawn
+  rotation). **Headline finding: the opening regresses to the mean** — n=10
+  cloudsuite deltas by spawn: 13,9 **+0.069**; 9,13 **+0.185**; 3,12 +0.003;
+  2,6 **−0.075**; 6,2 **−0.128**; 12,3 −0.012. Big lift on weak-opening spawns,
+  big *loss* on strong ones (it forecloses the planner's better play). Aggregate
+  washes to ~0 — **per-slot gating is mandatory.** Root cause: opening maximizes a
+  proxy (25-tick item reward) misaligned with full-game score.
+- **`sweep_openings.py` + `lock_gate.py`** — per-(spawn × horizon) sweep, robust
+  selection (reliably completes AND Δ≥0.02 AND z>2; the completion guard rejects
+  high-variance non-completing "butterfly" wins — e.g. slot-2 H20 +0.286 @ compl
+  0%). **Locked gate** ([src/openings_gate.json](src/openings_gate.json)):
+  13,9 H16 +0.072 z5.2 · 9,13 H8 +0.196 z3.2 · 3,12 H8 +0.050 z4.5 · 12,3 H16
+  +0.087 z2.2 ON; 2,6 / 6,2 → planner. **+0.067 expected aggregate (local).**
+- Shipped as `AE_MODE=opening_hybrid` over confpol-u860 (graceful fallback to
+  heuristic if no bc.pt). `lock_gate.py` re-derives the gate from the sweep log
+  without re-running games (measurement ⊥ selection). **Pending: cloud
+  variance-farm the combined build vs confpol-u860 (0.634).**
 
 ## 26 May 2026 (late) — methodology + calibration session
 
