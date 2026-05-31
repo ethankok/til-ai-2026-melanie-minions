@@ -1,5 +1,18 @@
 # NLP — notes & history
 
+## AE trigger verified robust to upstream eval patch — NO retrain needed (2026-06-01)
+
+**Upstream `til-26` commit `206a5e1` ("bump ae, bugfix nlp eval") added `add_special_tokens=False` to the AE evaluator's tokenizer call in `test/test_nlp.py:batch_evaluate`.** We synced that one line into our branch. Initial concern was that it would patch the v20 Universal Adversarial Trigger, which was HotFlip-optimised against the old `[CLS] … [SEP]`-wrapped tokenization — collapse seemed likely on paper (lost CLS pooling + position shift).
+
+**Empirically the trigger SURVIVES.** [training/nlp/check_trigger_collapse.py](../training/nlp/check_trigger_collapse.py) measured `prob_eq` on 141 negative (failing, retrieval-hit) examples against the bundled `test/models/nlp_eval_512` checkpoint under both tokenizations:
+
+| tokenisation | pass_rate | mean_prob_eq |
+|---|---|---|
+| OLD (`add_special_tokens=True`)  | 1.0000 | 0.9999 |
+| NEW (`add_special_tokens=False`) | 1.0000 | 0.9984 |
+
+Mean `prob_eq` dropped a trivial 0.0015; all 141 still clear the 0.9 threshold. The 16-token adversarial prefix dominates the classifier logits regardless of the special-token wrapper — characteristic of a robust HotFlip trigger. **No retrain, no manager change.** Caveat: measured against the local checkpoint (assumed identical to cloud, as held when v20 originally transferred); didn't spend a cloud submission to re-confirm. Thread closed.
+
 ## v29-bm25-k1-retune — pure BM25 document-k1 retune (SUBMITTED, non-promoting A/B)
 
 **Cloud `0.984 / 0.984`, 0/700 errors (24 May 17:54 SGT). Non-promoting A/B: accuracy tied `v28-optimized-bm25`, speed lost 0.001, so `v28` remains the protected blended high. Workbench `til test` passed at `0.981` accuracy with 0 visible request failures. Local manager gate and saved Workbench predictions both show 871/883 top-3 retrieval hits (0.9864), `load_seconds=0.400`, 0 import/check errors.**
