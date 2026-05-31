@@ -372,6 +372,35 @@ def _select_action(
     return action, float(logprob.item()), float(value.item()), stacked, belief
 
 
+def _confpol_low_confidence(planner: AEManager, args: argparse.Namespace) -> tuple[bool, str]:
+    """Replicate ConfidencePolicyHybridAEManager's gate on the heuristic's
+    last decision.
+
+    Returns (low_confidence, reason). When ``low_confidence`` is True the
+    deployed wrapper hands the tick to the raw policy; otherwise the heuristic
+    action stands. Training only logs/learns on low-confidence ticks so the
+    policy sees exactly the deploy-time distribution. Mirrors
+    ``ae/src/confidence_policy_hybrid_manager.py`` (eps/floor/override) so
+    train and deploy gate identically.
+    """
+    conf = getattr(planner, "last_decision_confidence", None)
+    if not isinstance(conf, dict):
+        return False, "no_signal"
+    path = conf.get("decision_path", "unknown")
+    if path == "target_none":
+        return bool(args.conf_override_target_none), "target_none"
+    if path != "target":
+        # deliberate overrides (playbook/dominant/escape/frozen/init) — heuristic owns these
+        return False, f"path_{path}"
+    margin = float(conf.get("margin", float("inf")))
+    top = float(conf.get("top_score", float("inf")))
+    if margin < float(args.conf_margin_epsilon):
+        return True, "low_margin"
+    if top < float(args.conf_top_floor):
+        return True, "low_top_score"
+    return False, "confident"
+
+
 def _random_opponent(env, agent: str, _obs_py: dict) -> int:
     return int(env.action_space(agent).sample())
 
@@ -920,6 +949,138 @@ def collect_rollouts(
     return transitions, total_reward / max(args.games_per_update, 1) / MAX_SCORE, mode_counts
 
 
+def collect_rollouts_gated(
+    actor: PolicyNetwork,
+    critic: ValueNetwork,
+    args: argparse.Namespace,
+    device: torch.device,
+    seed_offset: int,
+    snapshot_pool: SnapshotPool | None = None,
+    opponent_mode: str | None = None,
+) -> tuple[list[Transition], float, dict[str, int]]:
+    """Confidence-gated rollout: train the raw policy on its DEPLOY distribution.
+
+    The heuristic (``planner``) runs every tick — it owns movement, bomb safety,
+    escape, and writes ``last_decision_confidence``. On *confident* ticks we play
+    the heuristic action, do NOT advance the frame stacker, and do NOT log a
+    transition (its reward accrues to the most-recent logged low-conf transition,
+    semi-MDP style). On *low-confidence* ticks the policy acts and we log a
+    transition. This is exactly what ``confidence_policy_hybrid`` does at deploy,
+    so the policy only ever learns the ~20-46% of ticks it will actually be asked
+    to act on — closing the train/deploy mismatch that made the ungated u1400
+    policy a worse consultant than the earlier u860.
+    """
+    env = _make_env(args)
+    our_agent = env.possible_agents[0]
+
+    transitions: list[Transition] = []
+    total_reward = 0.0
+    reward_shaper = AdaptiveRewardShaper(args)
+    mode = opponent_mode or args.opponents
+    opponent_plan = _opponent_plan_for_update(args)
+    mode_counts: dict[str, int] = {}
+    consulted = 0
+    our_ticks = 0
+    use_belief = bool(getattr(actor, "use_belief", False))
+
+    for game in range(args.games_per_update):
+        game_mode = opponent_plan[game] if opponent_plan else mode
+        mode_counts[game_mode] = mode_counts.get(game_mode, 0) + 1
+        reward_shaper.start_game()
+        reset_seed = None
+        if args.vary_maps:
+            reset_seed = random.randint(0, 2**31 - 1)
+            env.reset(seed=reset_seed)
+        elif args.seed is not None:
+            reset_seed = args.seed + seed_offset + game
+            env.reset(seed=reset_seed)
+        else:
+            env.reset()
+        stacker = FrameStacker(args.n_frames)
+        # Heuristic planner runs EVERY tick (confidence + bomb-safety). Distinct
+        # from the stacker, which only advances on low-conf ticks (deploy match).
+        planner = AEManager()
+        opponents, _ = _make_opponents(
+            actor, device, game_mode,
+            [a for a in env.possible_agents if a != our_agent],
+            args.n_frames,
+            snapshot_pool=snapshot_pool,
+            seed_base=None if reset_seed is None else reset_seed + 100_000,
+        )
+        for op in opponents.values():
+            if hasattr(op, "reset"):
+                op.reset()
+        pending_idx: int | None = None
+
+        for agent in env.agent_iter():
+            obs, reward, termination, truncation, _info = env.last()
+            done = bool(termination or truncation)
+            if agent == our_agent:
+                # Every reward our agent sees counts toward the game score, even
+                # rewards earned on heuristic-owned (confident) ticks. Shaped
+                # reward accrues to the last LOGGED low-conf transition.
+                total_reward += float(reward)
+                if pending_idx is not None:
+                    try:
+                        current_obs_py = _obs_to_python(obs)
+                    except Exception:
+                        current_obs_py = None
+                    transitions[pending_idx].reward += reward_shaper.shape(
+                        float(reward),
+                        current_obs_py,
+                        transitions[pending_idx].action,
+                        done,
+                    )
+                    transitions[pending_idx].done = done
+                    if done:
+                        pending_idx = None
+
+            if done:
+                env.step(None)
+                continue
+
+            obs_py = _obs_to_python(obs)
+            if agent == our_agent:
+                our_ticks += 1
+                # Heuristic acts every tick → populates last_decision_confidence.
+                heuristic_action = int(planner.ae(obs_py))
+                low_conf, reason = _confpol_low_confidence(planner, args)
+                mode_counts[f"g:{reason}"] = mode_counts.get(f"g:{reason}", 0) + 1
+                if not low_conf:
+                    # Passthrough: heuristic owns this tick. Stacker NOT advanced,
+                    # no transition logged. Reward accrues to prior pending_idx.
+                    action = heuristic_action
+                else:
+                    consulted += 1
+                    action, logprob, value, stacked, belief = _select_action(
+                        actor, critic, stacker, planner, obs_py, device, use_belief, greedy=False,
+                    )
+                    transitions.append(Transition(
+                        agent_view=stacked["agent_view"],
+                        base_view=stacked["base_view"],
+                        scalars=stacked["scalars"],
+                        action_mask=stacked["action_mask"],
+                        action=action,
+                        logprob=logprob,
+                        value=value,
+                        belief_map=belief,
+                    ))
+                    pending_idx = len(transitions) - 1
+            else:
+                action = int(opponents.get(agent, _random_opponent)(env, agent, obs_py))
+                mask = np.asarray(obs_py.get("action_mask", [1, 1, 1, 1, 1, 1]), dtype=np.float32).reshape(-1)
+                if action < 0 or action >= ACTION_DIM or not bool(mask[action]):
+                    action = _random_legal_action(mask, env, agent)
+            env.step(action)
+
+        if pending_idx is not None:
+            transitions[pending_idx].done = True
+
+    env.close()
+    mode_counts["consult%"] = int(round(100.0 * consulted / max(our_ticks, 1)))
+    return transitions, total_reward / max(args.games_per_update, 1) / MAX_SCORE, mode_counts
+
+
 def _random_legal_action(mask: np.ndarray, env, agent: str) -> int:
     legal = np.flatnonzero(mask[:ACTION_DIM] > 0)
     if legal.size:
@@ -1048,6 +1209,10 @@ def evaluate(
     use_belief = bool(getattr(actor, "use_belief", False))
     mode = opponent_mode or args.eval_opponents
     use_hybrid = getattr(args, "selection_manager", "policy") == "hybrid"
+    # Confidence-gated eval: score the live actor through the SAME heuristic-first
+    # gate it deploys behind, so the save-gate reflects confpol behavior (not the
+    # pure-policy score, which is meaningless for a consultant-trained policy).
+    use_confpol = bool(getattr(args, "confidence_gated", False)) and not use_hybrid
 
     for game in range(games):
         reset_seed = None
@@ -1063,6 +1228,7 @@ def evaluate(
             env.reset()
         stacker = FrameStacker(args.n_frames)
         planner = AEManager()
+        confpol_adapter = LivePolicyAdapter(actor, device, args.n_frames) if use_confpol else None
         hybrid_manager = None
         if use_hybrid:
             from hybrid_manager import HybridAEManager  # noqa: WPS433
@@ -1098,7 +1264,17 @@ def evaluate(
                 continue
             obs_py = _obs_to_python(obs)
             if agent == our_agent:
-                if hybrid_manager is not None:
+                if use_confpol:
+                    # Heuristic every tick (writes confidence); policy only on
+                    # low-conf ticks via the adapter (its stacker advances only
+                    # when called → matches the deployed PolicyAEManager cadence).
+                    heuristic_action = int(planner.ae(obs_py))
+                    low_conf, _reason = _confpol_low_confidence(planner, args)
+                    if low_conf:
+                        action = int(confpol_adapter.ae_logits(obs_py)[0])
+                    else:
+                        action = heuristic_action
+                elif hybrid_manager is not None:
                     action = int(hybrid_manager.ae(obs_py))
                 else:
                     belief = _belief_for(planner, obs_py, use_belief)
@@ -1497,15 +1673,23 @@ def train(args: argparse.Namespace) -> None:
         )
         actor.train()
         critic.train()
-        transitions, rollout_score, mode_counts = collect_rollouts(
-            actor, critic, args, device,
-            seed_offset=update * args.games_per_update,
-            snapshot_pool=snapshot_pool,
-            opponent_mode=opponent_mode,
-            elo_pop=elo_pop,
-            live_rating=live_rating,
-            elo_baseline=args.elo_baseline,
-        )
+        if args.confidence_gated:
+            transitions, rollout_score, mode_counts = collect_rollouts_gated(
+                actor, critic, args, device,
+                seed_offset=update * args.games_per_update,
+                snapshot_pool=snapshot_pool,
+                opponent_mode=opponent_mode,
+            )
+        else:
+            transitions, rollout_score, mode_counts = collect_rollouts(
+                actor, critic, args, device,
+                seed_offset=update * args.games_per_update,
+                snapshot_pool=snapshot_pool,
+                opponent_mode=opponent_mode,
+                elo_pop=elo_pop,
+                live_rating=live_rating,
+                elo_baseline=args.elo_baseline,
+            )
         if not transitions:
             raise SystemExit("No PPO transitions collected; environment likely terminated before our agent acted.")
         stats = ppo_update(actor, critic, transitions, optimizer, args, device, clip_coef, entropy_coef)
@@ -1534,6 +1718,18 @@ def train(args: argparse.Namespace) -> None:
                     f"  candidate gate not met: eval {eval_score:.4f} "
                     f"< save_floor {save_floor:.4f}"
                 )
+
+        # Periodic snapshot — unconditional, keeps intermediates for cloud
+        # variance-farming. The previous run proved local eval is anti-correlated
+        # with cloud-consultant value past a point, so we must NOT trust the
+        # best-by-eval checkpoint; we farm several of these offline instead.
+        if args.checkpoint_every > 0 and update % args.checkpoint_every == 0:
+            ckpt_path = out_path.with_name(f"{out_path.stem}-u{update}{out_path.suffix}")
+            save_policy_checkpoint(
+                actor, critic, args, ckpt_path, update,
+                eval_score, eval_parts, rollout_score, gate_metadata,
+            )
+            print(f"  · periodic checkpoint → {ckpt_path.name}")
 
         # Self-play: snapshot the actor at the configured cadence so future
         # rollouts can face this state from the pool. Done AFTER the PPO
@@ -1623,6 +1819,19 @@ def main() -> None:
                         help="Train with novice=False and a random seed per game (diversify the training distribution).")
     parser.add_argument("--eval-every", type=int, default=5)
     parser.add_argument("--eval-games", type=int, default=12)
+    # --- confpol-native: confidence-gated raw-policy PPO (train == deploy) ---
+    parser.add_argument("--confidence-gated", action="store_true",
+                        help="Train/eval the raw policy through the deploy-time confidence gate: "
+                             "heuristic owns confident ticks; policy acts+learns only on low-conf ticks.")
+    parser.add_argument("--conf-margin-epsilon", type=float, default=5.0,
+                        help="Heuristic stays in control when (top - runner_up) >= this (deploy default 5.0).")
+    parser.add_argument("--conf-top-floor", type=float, default=10.0,
+                        help="Heuristic stays in control when top_score >= this (deploy default 10.0).")
+    parser.add_argument("--conf-override-target-none", type=int, default=1,
+                        help="Also consult the policy when the heuristic has no scorable target (deploy default 1).")
+    parser.add_argument("--checkpoint-every", type=int, default=0,
+                        help="If >0, save an unconditional -u<update> checkpoint every N updates "
+                             "(keeps intermediates for cloud variance-farming; 0=off).")
     parser.add_argument("--opponents", choices=OPPONENT_MODES, default="mixed")
     parser.add_argument("--eval-opponents", choices=OPPONENT_MODES, default="mixed")
     parser.add_argument("--curriculum", choices=["none", "pressure", "bomberman"], default="none",

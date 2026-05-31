@@ -51,10 +51,16 @@
     (n=10) ≈ heuristic — more training OVERFIT and lost the edge (see *Active
     line*). **To promote: re-farm the shipped heuristic to n≥5** for an
     apples-to-apples call vs the 0.634.
-- **Active experiment:** Pandemonium-v1 from-scratch CNN-PPO. The raw policy
-  itself transfer-gaps (pure/hybrid cloud 0.51 < heuristic 0.59), but the
-  **`confidence_policy_hybrid` consultant pattern is the promising direction**
-  (see *Active line* below).
+- **Latest line — confpol-native (gated PPO, train==deploy): tried, MATCHED u860,
+  no lift (1 Jun).** Built + ran a confidence-gated raw-policy PPO that trains the
+  policy only on the heuristic's low-conf ticks (the deploy distribution),
+  warm-started from u860. Early n=1 cloud reads: u100 0.551 / u200 0.621 / u360
+  0.624 — same ~0.60–0.63 band as the farmed u860 (0.634), no checkpoint clears
+  the floor. The train/deploy-match hypothesis did not beat u860. **Deploy stays
+  `pandemonium-confpol`@u860 (0.634).** Infra kept (`--confidence-gated` in
+  train_ppo.py, `run_confpol_native.py`, ladder `confpol-native-u*.pt`) if a
+  deeper n≥5 farm of one rung is ever wanted; prior says it ties/loses. Full
+  detail in the *Active line* archive below.
 
 ### The one problem that dominates AE: the local→cloud transfer gap
 
@@ -251,27 +257,81 @@ historical ~1M steps), from-scratch init, and their hyperparams.
   - **Never select an AE checkpoint by local eval** — it picks the overfit one.
     Save periodic checkpoints next run; the cloud-optimum is likely even earlier
     than u860 (we didn't keep intermediates to test).
-  - **Phase 2 (self-play) auto-ran** from the most-overfit u1400 checkpoint;
-    at u116/782 eval-vs-self 0.33, entropy recovered 0.025→0.34 (re-exploring).
-    Low prior it beats 0.634 (only prior self-play run cloud'd 0.41); side-quest.
+  - **Phase 2 (self-play) — KILLED 31 May at u224/782, flat.** Warm-started from
+    phase1-`latest` (u1563, baseline greedy eval **0.7242**, loaded fine — NOT a
+    load failure). One update at the reset lr (2.5e-5→**2.5e-4**, 10×) + re-armed
+    entropy bonus drove entropy 0.030→0.20 and the GREEDY eval 0.7242→0.3412 in a
+    single update — the argmax flipped on many near-tie states. Nothing was
+    "destroyed" (features intact, 0.7242 confirmed loaded); it was *deliberately
+    re-stochasticized* and then **never recovered**: best froze at 0.3743 (u60),
+    eval bounced 0.19–0.37 flat for 160 updates. Right death (re-exploring,
+    finding nothing better); its cloudsuite gate is the wrong selector anyway.
+    Superseded by confpol-native below.
 
-  **NEXT BIG BET — "confpol-native" gated PPO (train/deploy match).** Smoking-gun
-  evidence (31 May): the SAME extra training (u860→u1400) moved PURE policy UP
+  **NEXT BIG BET — "confpol-native" gated PPO — BUILT + LAUNCHED 31 May.**
+  Smoking-gun evidence: the SAME extra training (u860→u1400) moved PURE policy UP
   (0.507→0.550, n=4) but CONFPOL DOWN (0.634→0.600). Opposite responses ⇒ the
   policy is trained as a global *controller* but deployed as a *consultant* on
   the heuristic's hard ticks — a train/deploy mismatch. Fix = train the raw CNN
-  policy ON the deployed distribution: during rollouts the confidence wrapper
-  acts (heuristic on confident ticks; PPO acts AND collects transitions ONLY on
-  low-confidence ticks), and the save-gate scores the wrapped `confpol` policy.
-  Caveats: (a) the *macro* version of this was tried 27–28 May (confidence-gated
-  PPO → conf-hybrid-v3/v4, cloud 0.507–0.549, below heuristic) — but our RAW CNN
-  policy already beats that as a consultant (0.634), so gated-specializing it
-  should help; (b) still trains on local opponents → MUST save periodic
-  checkpoints + early-stop + select by the wrapped score, never raw local eval
-  (that's what overfit u1400). Infra: `confidence_policy_hybrid_manager.py`
-  exists; port the gated-rollout loop from `train_tactical_ppo.py --confidence-gated`
-  to the raw-action `train_ppo.py`. **Meanwhile SHIP confpol-u860 (0.634) as the
-  floor — independent of this bet.**
+  policy ON the deployed distribution. **Implemented** in
+  [../training/ae/train_ppo.py](../training/ae/train_ppo.py):
+  - `--confidence-gated` → `collect_rollouts_gated`: heuristic (`planner.ae`)
+    runs every tick (owns confidence + bomb-safety); on **confident** ticks it
+    plays the heuristic action, does NOT advance the frame-stacker, logs no
+    transition (reward accrues to the last logged low-conf transition, semi-MDP);
+    on **low-conf** ticks the policy acts AND logs. Critical match: the deploy
+    `PolicyAEManager.ae()` only `observe()`s its stacker when called (= on
+    low-conf ticks), so training must too — that's why the stacker is skipped on
+    confident ticks. Gate replicates the deploy wrapper exactly (eps 5.0 / floor
+    10.0 / override_target_none) — see `_confpol_low_confidence`.
+  - `evaluate()` gains a gated path (scores the live actor through the same
+    heuristic-first gate, not the misleading pure-policy score).
+  - `--checkpoint-every` writes an unconditional `-u<N>` ladder — fixes last
+    run's fatal "kept no intermediates" (local eval is anti-correlated with
+    cloud-consultant value past ~u860, so we FARM the ladder, never trust the
+    best-by-eval).
+  - Launcher [../training/ae/run_confpol_native.py](../training/ae/run_confpol_native.py):
+    warm-start u860 (actor+critic), **gentle lr 1e-4** (NOT 2.5e-4 — phase-2
+    proved high lr+entropy on a warm policy is destructive), full-rl opponent
+    mix, eval-every 20, checkpoint-every 25, ~2976 updates (~2.7-day budget).
+    Run: `nohup caffeinate -is .venv/bin/python -u training/ae/run_confpol_native.py`
+    → `confpol-native.log`; kill `pkill -f run_confpol_native.py`. Smoke-verified
+    31 May: warm-start ok, gate fires consult%≈33–42 (matches the ~46% deploy
+    measurement), gated eval > heuristic baseline, ladder checkpoints write.
+  - Caveat (still trains on local opponents): the macro version of this failed
+    27–28 May (conf-hybrid-v3/v4, cloud 0.507–0.549) — but our RAW policy already
+    beats that as a consultant (0.634), so gated-specializing it should help.
+  - **Promotion gate:** farm 3–4 ladder rungs (early/mid/late) under
+    `AE_MODE=confidence_policy_hybrid` on cloud (n≥5), re-farm the incumbent
+    heuristic n≥5 in the same window, promote a rung only if it clears 0.634 by a
+    visible margin. **confpol-u860 (0.634) remains the deploy floor regardless.**
+
+  **RESULTS (1 Jun, early n=1 reads — VERDICT: matched u860, no lift).** Three
+  single cloud submissions (0/30 errors each), logged in the ledger as
+  `confpol-native-u100/u200/u360`:
+  | rung | cloud acc | speed | local eval / entropy at save |
+  |---|---:|---:|---|
+  | u100 | 0.551 | 0.842 | 0.520 / ent 0.147 (still exploring) |
+  | u200 | 0.621 | 0.844 | 0.535 / ent 0.109 |
+  | u360 | 0.624 | 0.838 | 0.561 / ent 0.028 (collapsed) |
+
+  **Read:** at n=1 (±0.10) the three are statistically indistinguishable from
+  each other (pairwise gaps ≤1σ) — cannot rank the rungs. More important, the
+  cluster (avg ~0.599, best single 0.624) does **NOT** beat the **farmed**
+  `pandemonium-confpol` u860 (0.6342, n=13) — a single 0.624 draw is below a
+  farmed 0.634 and single highs reliably regress here. confpol-native landed in
+  the **same ~0.60–0.63 consultant band as u860**: the train/deploy-match
+  hypothesis did **not** produce a visible cloud lift. (The "early-is-better"
+  inverted-U prediction also didn't appear — u100 was *lowest* — but that's
+  within noise too.) The local run plateaued (flat 0.56 eval, entropy collapsed
+  to ~0.01 from ~u280) and cloud confirms later rungs don't separate, so more
+  training is low-prior. **Decision is now farming, not steps.** If anyone wants
+  to truly settle it: farm the best rung (u200 or u360) to n≥5 and check the
+  *mean* vs 0.634 — but the strong prior is it ties/loses. **Ship/keep
+  confpol-u860 (0.634).** The confpol-native run (`run_confpol_native.py`) was
+  still running at u502/2976 when this was written — low value, fine to
+  `pkill -f run_confpol_native.py`; the ladder `confpol-native-u*.pt` is on disk
+  if a deeper farm is ever wanted.
 
 ### Key files
 
