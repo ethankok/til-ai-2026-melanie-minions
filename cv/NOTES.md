@@ -168,14 +168,25 @@ YOLO11l champ        ~0.92                  0.671     ~0.25
   objects (more pixels) while blowing medium/large out of the learned scale +
   degrading interpolated pos-embeds → net loss. A 952 *serve-time* submission
   would regress (predicted ~0.61 cloud); not worth submitting.
-- **IN FLIGHT (30 May): native 952 retrain (`rfdetr-base-952-v1`).** The serve-res
-  sweep's +0.072 small-AP signal motivates training *natively* at 952, where the
-  model learns medium/large at that scale too instead of having them blown OOD —
-  testing whether the small gain survives without the med/large collapse. Same
-  offset-1 dataset (resolution-independent). T4: `BATCH=2 GRAD_ACCUM=8` (auto-set
-  by `train_rfdetr.py` for res>840). Still a long shot vs the champion (RF-DETR is
-  behind on cloud and slower at 952 → harder blended math), but it's the one
-  remaining *real-mechanism* RF-DETR experiment. Run concurrently with AE work.
+- **VERDICT (31 May): native 952 retrain (`rfdetr-base-952-v1`) — LOST, RF-DETR
+  thread closed.** Trained natively at 952 (batch=2/accum=8, no OOM; best EMA mAP
+  ~0.951, plateaued ~ep20). Locally it *did* what the serve-res sweep couldn't:
+  test-sweep total mAP **0.946** with small **0.831** (+0.108 vs 728's 0.723) AND
+  medium/large held (0.915/0.959) — native training escaped the serve-time
+  med/large collapse. **But cloud acc = 0.664, statistically identical to 728's
+  0.666** (blended 0.725 < champion 0.7473). The +0.029 local gain produced ZERO
+  cloud movement → local mAP is flatly **non-predictive** of cloud for RF-DETR.
+  Then tested the YOLO upscale trick on the native-952 weights: serve-res sweep
+  (952/1008/1064) kept total mAP flat (~0.946–0.948, noise) while small AP climbed
+  cleanly 0.831→0.879 (gentle 1.12× interp, no med/large collapse this time — so
+  the earlier 728-serve collapse prediction was too pessimistic). Submitted the
+  best-small config @1064 (`rfdetr-base-952-up1064`) → **cloud 0.623, WORSE**
+  (blended 0.690): the DETR pos-embed interpolation penalty that local masks shows
+  up on cloud — the opposite of conv-based YOLO. **Net: three RF-DETR submissions
+  (728 / 952-native / 1064-serve) all cluster at 0.62–0.67 cloud against local
+  mAPs 0.917–0.948. RF-DETR is hard-capped ~0.665 cloud here regardless of
+  resolution; upscaling hurts it. Champion YOLO11l-1408 stays. Do NOT re-run.** EV
+  is in AE (~0.15 headroom, 40% weight).
 - **Optional, LOW priority:** RFDETRLarge *might* squeak past the champion if its
   cloud-acc gain outpaces its (certain) speed cost — but the blended math is a
   coin-flip and **AE (~0.15 headroom) + noise-robustness are far higher EV.** Not
