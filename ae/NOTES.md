@@ -231,20 +231,25 @@ Semis-realistic selector.**
   - **Net: confpol-native-u100 (0.661) stays the ship pick; nothing local
     dethrones it.** Effort should go to Stage B (close the farming-race /
     adversarial holes via the foreign curriculum), not to re-submitting old rungs.
-- **Stage B — LAUNCHED 2 Jun (tag `confpol-semis`, warm-start u860, ~4-day
-  CPU budget).** Command:
-  `EXP_DISABLE_NUMBA=1 USE_PARALLEL_GOALS=0 PYTHONHASHSEED=0 PYTORCH_ENABLE_MPS_FALLBACK=1 nohup caffeinate -is .venv/bin/python -u training/ae/run_confpol_native.py --opponent-mix-preset semis-foreign --tag confpol-semis > training/ae/checkpoints/confpol-semis.run.log 2>&1 &`
-  Watch `training/ae/checkpoints/confpol-semis.log`; kill `pkill -f run_confpol_native.py`.
-  Verified at launch: `config: preset=full-rl ... opponent_mix=semis-foreign`
-  (the preset no longer clobbers the explicit mix — `apply_preset` fix +
-  launcher `--opponent-mix-preset` passthrough, committed 4995ca7). Warm-start
-  u860 is deliberate: **same warm-start as the existing confpol-native ladder so
-  Stage B is a clean controlled swap of ONLY the opponent distribution**
-  (foreign non-mirror vs full-rl local-mirror) — lets us compare the two ladders
-  rung-for-rung. Dense `confpol-semis-u<N>.pt` ladder every 25 updates.
+- **Stage B — LAUNCHED 2 Jun (tag `confpol-semis2`, warm-start
+  `confpol-native-u100` = the cloud-best 0.661, ~4-day CPU budget).** Command:
+  `EXP_DISABLE_NUMBA=1 USE_PARALLEL_GOALS=0 PYTHONHASHSEED=0 PYTORCH_ENABLE_MPS_FALLBACK=1 nohup caffeinate -is .venv/bin/python -u training/ae/run_confpol_native.py --opponent-mix-preset semis-foreign --tag confpol-semis2 --warmstart training/ae/checkpoints/confpol-native-u100.pt > training/ae/checkpoints/confpol-semis2.run.log 2>&1 &`
+  Watch `training/ae/checkpoints/confpol-semis2.log`; kill `pkill -f run_confpol_native.py`.
+  Verified at launch: `warm-started actor from confpol-native-u100.pt` +
+  `config: preset=full-rl ... opponent_mix=semis-foreign` (the preset no longer
+  clobbers the explicit mix — `apply_preset` fix + launcher passthrough, 4995ca7).
+  **Decision (2 Jun): build on the current best, not a clean A/B.** We warm-start
+  from the cloud-best u100 (not u860) and fine-tune on the foreign curriculum —
+  goal is the single best deployable, not a controlled comparison. (A short
+  u860-warm-started `confpol-semis` run was launched first then killed before any
+  rung — superseded.) Dense `confpol-semis2-u<N>.pt` ladder every 25 updates.
+  **NOTE the overfit risk this raises:** u100 is already the cloud peak and the
+  whole line shows an inverted-U (more training past the peak LOSES cloud value).
+  Fine-tuning *from* the peak means the FIRST few rungs (u25/u50) are the most
+  likely winners; later rungs probably regress. Gate aggressively and early.
   **WHAT TO WATCH (in priority order):**
   1. **The EVAL_ONLY holdout is the kill-switch.** Gate ladder rungs with
-     `melee_eval.py --confpol-ckpt semis-u<N>=...checkpoints/confpol-semis-u<N>.pt`
+     `melee_eval.py --confpol-ckpt semis2-u<N>=...checkpoints/confpol-semis2-u<N>.pt`
      and compare placement/margin on TRAIN_OK-heavy brackets vs the EVAL_ONLY
      opponents (`curry_fortress`/`self_tactical`/`aggressive_proxy`/`anti_aggro_exploiter`,
      concentrated in `all_farmer`/`adversarial`). If TRAIN-side improves but
