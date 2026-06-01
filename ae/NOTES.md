@@ -231,11 +231,37 @@ Semis-realistic selector.**
   - **Net: confpol-native-u100 (0.661) stays the ship pick; nothing local
     dethrones it.** Effort should go to Stage B (close the farming-race /
     adversarial holes via the foreign curriculum), not to re-submitting old rungs.
-- **Stage B (NOT yet run — 1 manual 4-day curriculum fits before 06-10):**
-  warm-start the confpol-native line with `--opponent-mix-preset semis-foreign`,
-  gate every checkpoint with `melee_eval.py`, **watch the EVAL_ONLY holdout** —
-  if TRAIN_OK placement improves but held-out does not, STOP (proxy overfit).
-  Curry/self_policy in the rollout make it slower than the all-AEManager suites.
+- **Stage B — LAUNCHED 2 Jun (tag `confpol-semis`, warm-start u860, ~4-day
+  CPU budget).** Command:
+  `EXP_DISABLE_NUMBA=1 USE_PARALLEL_GOALS=0 PYTHONHASHSEED=0 PYTORCH_ENABLE_MPS_FALLBACK=1 nohup caffeinate -is .venv/bin/python -u training/ae/run_confpol_native.py --opponent-mix-preset semis-foreign --tag confpol-semis > training/ae/checkpoints/confpol-semis.run.log 2>&1 &`
+  Watch `training/ae/checkpoints/confpol-semis.log`; kill `pkill -f run_confpol_native.py`.
+  Verified at launch: `config: preset=full-rl ... opponent_mix=semis-foreign`
+  (the preset no longer clobbers the explicit mix — `apply_preset` fix +
+  launcher `--opponent-mix-preset` passthrough, committed 4995ca7). Warm-start
+  u860 is deliberate: **same warm-start as the existing confpol-native ladder so
+  Stage B is a clean controlled swap of ONLY the opponent distribution**
+  (foreign non-mirror vs full-rl local-mirror) — lets us compare the two ladders
+  rung-for-rung. Dense `confpol-semis-u<N>.pt` ladder every 25 updates.
+  **WHAT TO WATCH (in priority order):**
+  1. **The EVAL_ONLY holdout is the kill-switch.** Gate ladder rungs with
+     `melee_eval.py --confpol-ckpt semis-u<N>=...checkpoints/confpol-semis-u<N>.pt`
+     and compare placement/margin on TRAIN_OK-heavy brackets vs the EVAL_ONLY
+     opponents (`curry_fortress`/`self_tactical`/`aggressive_proxy`/`anti_aggro_exploiter`,
+     concentrated in `all_farmer`/`adversarial`). If TRAIN-side improves but
+     held-out does NOT → proxy-overfit, STOP (this is the failure that killed
+     every prior line; the holdout is the early-warning we never had).
+  2. **In-training entropy** (`confpol-semis.log`): u860 sits ~0.06–0.15.
+     Gentle lr 1e-4 should keep it from collapsing to ~0.02 fast; a sudden
+     entropy crash = over-confident overfit (the inverted-U) — favor EARLY rungs.
+  3. **Do NOT promote on the in-training gated eval** — it's anti-correlated with
+     cloud-consultant value past ~u860. Selection = melee gate + a cloud submit.
+  4. **The two holes Stage B must close** (from the re-rank weakness map):
+     `all_farmer` (native-u100 margin −291.8) and `adversarial`. Improvement
+     there on the EVAL_ONLY opponents is the win condition; anywhere else is
+     likely proxy memorization.
+  - **Promotion bar:** beat `confpol-native-u100` (cloud 0.661) by a visible
+    margin on a real cloud submit. `confpol-native-u100` stays the deploy floor
+    regardless. Cloud rebuild+submit happens on the Workbench (not this Mac).
 
 ### The novice-determinism lever (the fixed seed-42 map) — LIVE, under-exploited
 
