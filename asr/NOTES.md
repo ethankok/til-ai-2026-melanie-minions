@@ -30,58 +30,78 @@ Local Mac validation done: `test/test_build_ngram_lm.py` +
 `test/test_ngram_lm_decoding_cfg.py` (10 tests, the pure text-collection and
 decoding-config logic).
 
-### Workbench runbook
+### Environment reality (probed 02 Jun 2026)
+
+- **Container** (pinned commit `ccbbfbb…`): **has** NGPU-LM `malsd_batch`
+  (confirmed: the commit ships `tdt_malsd_batched_computer.py`). This is where
+  serving runs, so fusion works in prod.
+- **Workbench host `(base)`**: NeMo **2.0.0** — has only the *classic*
+  n-gram/`maes` beam decoders, **no `malsd_batch`**. Too old to run the NGPU-LM
+  sweep, but new enough to **build the n-gram LM** (it can load the TDT tokenizer
+  + run KenLM). The base env is **conda**, so KenLM binaries are one
+  `conda install` away.
+
+Key fact that makes the cheap path work: the n-gram ARPA is keyed to the **BPE
+tokenizer** (baked into the `.nemo`, identical across NeMo versions), so an ARPA
+built on host NeMo 2.0.0 is valid for the container's `malsd_batch`, which
+accepts a `.ARPA` directly. **Do NOT** `pip install -r requirements-nemo.txt`
+into base (documented torch-downgrade cascade).
+
+### Workbench runbook — cheap & blind path (build ARPA on host, tune via til test)
+
+No local sweep (host can't run `malsd_batch`); ship defaults `alpha=0.3 beam=4`
+and tune alpha across 1–2 `til test` runs.
 
 ```bash
 cd /home/jupyter/til && git pull origin main
 export TIL_FOLDER=/home/jupyter/til
 
-# 0. Probe whether the pinned NeMo build ships NGPU-LM (malsd_batch + ngram_lm).
-#    If this errors, fusion will fall back to greedy at runtime (safe); decide
-#    whether to use the classic `maes` + .ARPA fallback or bump the NeMo pin.
-python -c "import importlib; importlib.import_module('nemo.collections.asr.parts.submodules.ngram_lm'); print('NGPU-LM present')" \
-  || echo "NGPU-LM NOT on this NeMo build — see fallback in spec"
+# 1. KenLM binaries + the train_kenlm.py matching the HOST NeMo (2.0.0).
+conda install -y -c conda-forge kenlm
+curl -sSL -o /tmp/train_kenlm.py \
+  https://raw.githubusercontent.com/NVIDIA/NeMo/v2.0.0/scripts/asr_language_modeling/ngram_lm/train_kenlm.py
 
-# 1. Build the n-gram LM from ASR transcripts + NLP corpus, tokenized with the
-#    deployed model's tokenizer. Stages models/ngram_lm.nemo (+ .ARPA).
+# 2. Build the n-gram LM as a .ARPA (NO --save-nemo: 2.0.0 lacks NGPU-LM .nemo
+#    packaging; the container loads the .ARPA directly). The script prints the
+#    exact output file paths at the end.
 python training/asr/build_ngram_lm.py \
     --asr-jsonl /home/jupyter/novice/asr/asr.jsonl \
     --nlp-dir /home/jupyter/novice/nlp \
     --nemo-model asr/models/parakeet-tdt-0.6b-v2.nemo \
-    --out asr/models/ngram_lm.nemo \
+    --out asr/models/ngram_lm \
     --ngram-length 6 \
-    --train-kenlm $(python -c "import nemo,os;print(os.path.join(os.path.dirname(nemo.__file__),'..','scripts','asr_language_modeling','ngram_lm','train_kenlm.py'))")
-# (If --train-kenlm path resolution fails, the script prints the exact
-#  train_kenlm.py command to run by hand.)
+    --train-kenlm /tmp/train_kenlm.py \
+    --kenlm-bin "$(dirname "$(which lmplz)")"
+# -> note the printed .ARPA path; e.g. asr/models/ngram_lm.tmp.arpa
 
-# 2. Pick alpha/beam on the held-out val proxy (ranking only; cloud is truth).
-python training/asr/sweep_lm_fusion.py \
-    --asr-jsonl /home/jupyter/novice/asr/asr.jsonl \
-    --audio-dir /home/jupyter/novice/asr \
-    --nemo-model asr/models/parakeet-tdt-0.6b-v2.nemo \
-    --ngram-lm asr/models/ngram_lm.nemo \
-    --alphas 0.1 0.2 0.3 0.4 0.5 --beams 2 4
+# 3. Point the image at that ARPA. In asr/Dockerfile uncomment + set:
+#      ENV ASR_NGRAM_LM=/workspace/models/asr/<the .arpa filename>
+#      ENV ASR_NGRAM_LM_ALPHA=0.3   ENV ASR_BEAM_SIZE=4
+#      ENV ASR_LM_STRATEGY=malsd_batch ENV ASR_LM_PRUNING=late
+#      ENV ASR_LM_BLANK_MODE=lm_weighted_full
 
-# 3. Gate the OFF image first (proves the LM bakes in + nothing regressed).
+# 4. Gate the OFF image first (LM unset) — this is the "any errors?" check.
+#    (Leave ASR_NGRAM_LM commented out for this build.)
 til build asr ngram-lm-off
 til test  asr ngram-lm-off        # must match nemo-ft-v3 behaviour exactly
 
-# 4. Flip ON: uncomment the ENV block in asr/Dockerfile (set alpha/beam from the
-#    sweep), then build + test. Promote ONLY if it clears the gate below.
+# 5. Flip ON (uncomment the ENV block) and test/submit against the gate.
 til build asr ngram-lm-on
-til test  asr ngram-lm-on
+til test  asr ngram-lm-on         # check WER ↑ and speed ≥ 0.92
 til submit asr ngram-lm-on
+# Tune: if alpha=0.3 helps but speed is fine, try 0.2 / 0.4 in 1–2 more til tests.
 ```
 
 **Promotion gate:** `til test` speed ≥ 0.92 AND blended > `nemo-ft-v3` 0.964
 (0/400 errors, schema unchanged). Otherwise keep `nemo-ft-v3`; leaderboard keeps
 the higher score so a regression cannot demote us.
 
-**Fallbacks if NGPU-LM is absent on the pinned NeMo:** the manager already falls
-back to greedy at runtime (no crash). `build_ngram_lm.py` keeps `preserve_arpa`
-so the `.ARPA` is usable by the classic `maes` strategy
-(`ASR_LM_STRATEGY=maes`). Bumping the NeMo pin is the documented-risky path
-(torch downgrade cascade) — only if the above paths are exhausted.
+**Container support is confirmed** — the pinned commit ships
+`tdt_malsd_batched_computer.py`, so `malsd_batch` NGPU-LM fusion works at serve
+time without any pin bump. If `malsd_batch` ever misbehaves at runtime the
+manager falls back to greedy (no crash), and `preserve_arpa` keeps a `.ARPA`
+usable by the classic `maes` strategy (`ASR_LM_STRATEGY=maes`) as a manual
+fallback. (Verified 02 Jun 2026 against commit `ccbbfbb…` on GitHub.)
 
 ## nemo-ft-v3 (27/05) — additional spelling post-processing fixes (new blended high)
 

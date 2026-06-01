@@ -130,6 +130,16 @@ def main() -> None:
     )
     ap.add_argument("--kenlm-bin", type=Path, default=None, help="KenLM bin folder (kenlm_bin_path=).")
     ap.add_argument(
+        "--save-nemo",
+        action="store_true",
+        help=(
+            "Pass save_nemo=True to wrap the LM into the NGPU-LM .nemo format. "
+            "Requires a NeMo new enough to have NGPU-LM (the pinned container "
+            "commit). OMIT on the host NeMo 2.0.0 — preserve_arpa still emits a "
+            ".ARPA, and the container's malsd_batch loads .ARPA directly."
+        ),
+    )
+    ap.add_argument(
         "--text-out",
         type=Path,
         default=None,
@@ -164,8 +174,9 @@ def main() -> None:
         f"kenlm_model_file={args.out}",
         f"ngram_length={args.ngram_length}",
         "preserve_arpa=true",
-        "save_nemo=True",
     ]
+    if args.save_nemo:
+        cmd.append("save_nemo=True")
     if args.kenlm_bin is not None:
         cmd.append(f"kenlm_bin_path={args.kenlm_bin}")
 
@@ -177,7 +188,19 @@ def main() -> None:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     print("Running: " + " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True)
-    print(f"Wrote n-gram LM -> {args.out}", flush=True)
+
+    # train_kenlm names outputs off kenlm_model_file (binary) + a sibling .arpa
+    # when preserve_arpa=true; exact suffixes vary by NeMo version. Report what
+    # actually landed so you know which path to set ASR_NGRAM_LM to.
+    produced = sorted(args.out.parent.glob(args.out.name + "*"))
+    print("\nProduced files:", flush=True)
+    for p in produced:
+        print(f"  {p}  ({p.stat().st_size} bytes)", flush=True)
+    print(
+        "\nSet ASR_NGRAM_LM to the .ARPA (or the .nemo if you used --save-nemo). "
+        "The container's malsd_batch accepts either.",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
