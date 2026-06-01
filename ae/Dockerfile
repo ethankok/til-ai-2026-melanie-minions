@@ -59,9 +59,19 @@ WORKDIR /workspace
 # and variance-farm vs confpol-alone. Promote only if it clears 0.634 on cloud
 # (the heuristic-gated version did NOT; this one fixes the planner-mismatch but
 # the opponent transfer gap is still untested).
-# Default deploy = confpol-u860 alone (proven 0.634): stage
-# pandemonium-v1-best-u860.pt -> ae/models/bc.pt on the Workbench (gitignored).
-# Canary: `til test` log "AE policy loaded … epoch=860" (NOT "falling back").
+# ⭐ 1 Jun (eval went DETERMINISTIC → 1 submit = true score). Full re-rank of all
+# historical images on the new eval found a NEW BEST:
+#   confpol-native-u100 = 0.661  (vs confpol-u860 0.626, tether/heuristic 0.605/0.591,
+#   opening-v2 0.626, pand-policy 0.525). The EARLY gated-PPO rung wins — it looked
+#   worst on the old noisy eval (0.551, a low-tail draw); deterministic eval reveals
+#   it's the champion (validates "earlier = less overfit"). The confpol NN is worth
+#   it (0.626 > best heuristic 0.605); u100 beats everything by +0.035.
+# DEPLOY = confpol-native-u100: stage training/ae/checkpoints/confpol-native-u100.pt
+#   -> ae/models/bc.pt on the Workbench (gitignored), AE_MODE=confidence_policy_hybrid.
+#   The image melanie-minions-ae:confpol-native-u100 is ALREADY built+submitted (0.661)
+#   — `til submit ae confpol-native-u100` re-submits it without a rebuild.
+#   Canary: `til test` log "AE policy loaded …" (NOT "falling back to heuristic").
+# Follow-up: test even-earlier rungs (u25/u50/u75) — the inverted-U peak may be < u100.
 ENV AE_MODE=confidence_policy_hybrid
 # C+bomb7 baseline profile.
 ENV AE_ITEM_MISSION_VALUE=80

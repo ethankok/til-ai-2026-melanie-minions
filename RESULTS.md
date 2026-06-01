@@ -8,9 +8,17 @@ Last updated: **1 June 2026 (eval went DETERMINISTIC; opening-book line closed; 
   non-determinism; "may change deployed opponent models away from BenBots"). Proven:
   byte-identical resubmits give identical scores. **Variance farming is obsolete —
   1 `til submit` = the true score.** All "farmed mean" numbers below are OLD-eval.
-- **New-eval scores:** `confpol-u860` (`AE_MODE=confidence_policy_hybrid`, bc.pt =
-  `pandemonium-v1-best-u860`) = **0.626 / ~0.84** (was 0.634 old). This is the
-  current deployed best.
+- **🏆 NEW BEST (deterministic re-rank): `confpol-native-u100` = 0.661 / 0.832.**
+  Full re-rank of distinct historical images on the new eval (1 submit each =
+  exact): confpol-native-u100 **0.661** » confpol-u860 0.626 = opening-v2 0.626 >
+  tether-v1 / confpol-native-u360 / pand-hybrid 0.605 > heuristic-c-bomb7 0.591 >
+  confpol-native-u200 0.559 > pand-policy 0.525 > heuristic-a-bomb7 0.515. Reads:
+  (a) the confpol NN is worth it — 0.626 > best pure heuristic 0.605; (b) the
+  **early gated-PPO rung wins** — u100 scored *worst* on the old noisy eval (0.551,
+  a low-tail draw) but is the champion on the deterministic eval, confirming
+  "earlier = less overfit". Deploy = confpol-native-u100 (stage that .pt as bc.pt,
+  `AE_MODE=confidence_policy_hybrid`; image already built+submitted at 0.661).
+  Follow-up: test u25/u50/u75 — the peak may be earlier than u100.
 - **Opening-book line (built + closed this session).** Divergence-gated Novice
   opening prefix. v1 (gate locked over the bare heuristic) **regressed** confpol on
   cloud (0.584 vs 0.634). Re-locked over confpol (v2, enables spawns 9,13/2,6/6,2):
@@ -20,10 +28,8 @@ Last updated: **1 June 2026 (eval went DETERMINISTIC; opening-book line closed; 
 - **Competitor intel:** `curryfarmer`/royal-recruits public repo = **0.715/0.807**
   via deep novice-determinism exploitation (opening book + dist/opponent LUTs +
   forward-sim planner + "defense wins / immortality" model). The bar to chase.
-- **IN PROGRESS:** re-ranking every distinct historical AE image on the new
-  deterministic eval (`training/ae/resubmit_rerank.sh`) — heuristic baselines,
-  confpol-native rungs, pure policy/hybrid. Resubmit needs no rebuild (images
-  persist as `melanie-minions-ae:<tag>`). Pending: log scores, pick true best, ship.
+- **Re-rank DONE** (`resubmit_rerank.sh`, 8 distinct images, 1 submit each) — see
+  the new-best line above. Next: test even-earlier confpol-native rungs (u25/u50/u75).
 
 ---
 

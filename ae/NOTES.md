@@ -25,17 +25,23 @@
      true score; **variance farming is dead** (see *Measurement reality*). Re-rank
      by submitting old image tags — they persist on the Workbench
      (`docker images | grep ae`; `til submit ae <tag>` needs no rebuild).
-  2. **Deployed/best = confpol-u860 (`AE_MODE=confidence_policy_hybrid`) = 0.626**
-     on the new eval. That's the number to beat.
+  2. **🏆 NEW BEST = `confpol-native-u100` = 0.661** (deterministic eval, exact).
+     Deploy it: stage `training/ae/checkpoints/confpol-native-u100.pt` →
+     `ae/models/bc.pt`, `AE_MODE=confidence_policy_hybrid`. The image
+     `melanie-minions-ae:confpol-native-u100` is already built+submitted (0.661) —
+     `til submit ae confpol-native-u100` ships it with no rebuild.
   3. **Opening-book line is CLOSED** for the eval: v1 (heuristic gate) regressed
-     to 0.584; v2 (confpol-correct gate) = **0.626 = confpol exactly** → the
-     opening never fires on our eval spawn (∈ {13,9/3,12/12,3}, which confpol
-     opens well). All infra kept; not the default.
-  4. **IN PROGRESS:** re-ranking every distinct historical model on the new
-     deterministic eval (`training/ae/resubmit_rerank.sh` — tether/heuristic
-     baselines, confpol-native rungs, pure policy/hybrid). **Pending: log those
-     scores, pick the true best, ship it.** Key question: does the bare heuristic
-     tie confpol at ~0.62 (→ drop the NN) or not?
+     to 0.584; v2 (confpol-correct gate) = 0.626 = confpol exactly → opening never
+     fires on our eval spawn (∈ {13,9/3,12/12,3}). All infra kept; not the default.
+  4. **Re-rank DONE (1 Jun PM):** confpol-native-u100 **0.661** » confpol-u860
+     0.626 = opening-v2 0.626 > tether-v1 / confpol-native-u360 / pand-hybrid 0.605
+     > heuristic-c-bomb7 0.591 > confpol-native-u200 0.559 > pand-policy 0.525 >
+     heuristic-a-bomb7 0.515. Reads: the NN IS worth it (0.626 > best heuristic
+     0.605); the **early gated-PPO rung wins** (u100 looked *worst* on the old
+     noisy eval at 0.551 — a low-tail draw — but is the champion on the
+     deterministic eval → "earlier = less overfit"). **Next: test even-earlier
+     rungs (u25/u50/u75) — the inverted-U peak may be < u100** (needs a rebuild
+     each: stage the .pt → `til build/submit`).
 - **Phase:** Qualifiers closed. Semifinals prep runs through **2026-06-10**. We
   placed 15th on the Novice path, so the expected Semifinals Match-1 bracket is
   seeds ≈ 3/8/9/14/15/20. AE is 40% of the score and our single biggest lever —
@@ -115,6 +121,59 @@
   stands; the determinism *lever* is still under-exploited vs the competitor
   (distance/opponent LUTs, forward-sim planner) — but a naive item-farm opening
   doesn't help a planner that already opens well.
+
+### Semifinals melee eval — BUILT (1 Jun, Stage A complete)
+
+Implemented the approved redesign (`docs/superpowers/specs/2026-06-01-ae-semis-eval-design.md`):
+a head-to-head **6-team melee** gate built on a **foreign (non-mirror) opponent
+pool**, replacing the absolute-reward-vs-our-own-mirrors suites that mis-predict
+Semis. **The old `validate_cloud_suite.py`/`multi_seed_eval.py` suites still
+exist and remain valid as a cheap local pre-filter; the melee gate is the new
+Semis-realistic selector.**
+
+- **Foreign pool** ([../training/ae/foreign_opponents.py](../training/ae/foreign_opponents.py)) —
+  `curry_aggro`/`curry_fortress` (vendored competitor A*+forward-sim heuristic,
+  two weight-personas), `self_policy` (our raw u860 CNN-PPO in FULL control),
+  `self_tactical` (our 12-way tactical-macro hybrid), `self_heuristic` (shipped
+  C+bomb7), and 3 purpose-built non-mirror bots `evbot` (nominal-reward EV
+  maximizer — the *opposite* of our base-underweighting calibration),
+  `aggressive_proxy`, `anti_aggro_exploiter`. Curry is **vendored gitignored** at
+  `training/ae/foreign/curry/` (`EXP_DISABLE_NUMBA=1 USE_PARALLEL_GOALS=0`,
+  personas pinned per-instance via `set_persona`+`dynamic_persona=False`, NOT the
+  process-global `EXPERIMENTAL_VARIANT` env). **Do not commit competitor code.**
+- **Hard train/eval split (enforced in code):** `FOREIGN_TRAIN_OK = [curry_aggro,
+  self_policy, self_heuristic, evbot]`; `FOREIGN_EVAL_ONLY = [curry_fortress,
+  self_tactical, aggressive_proxy, anti_aggro_exploiter]`. Stage-B training may
+  draw ONLY from TRAIN_OK (`train_ppo.py` mode `foreign_train` / preset
+  `semis-foreign`; `_foreign_train_blend()` aborts if an EVAL_ONLY name leaks).
+  Held-out lift that fails to appear on EVAL_ONLY = the local proxy-overfit
+  early-warning (the transfer-gap proxy we never had).
+- **Melee metric** (`simulate.py`): per-round `placement` (rank of 6) + `margin`
+  (us − best opponent) alongside `total_reward`; aggregated to `mean_placement`,
+  `win_rate`, `mean_margin`, `placement_hist`. **`total_reward` unchanged** so
+  the old local-reject filter still works.
+- **4 brackets** (`opponents.MELEE_BRACKETS`): `semis_mixed`, `all_aggressive`,
+  `all_farmer`, `adversarial` (worst-case probe). `make_opponent` now delegates
+  unknown names to the foreign factory, so `--suites semis_mixed` "just works".
+- **Gate** ([../training/ae/melee_eval.py](../training/ae/melee_eval.py)) —
+  per-(hash_seed,sim_seed) subprocess pattern (one bracket/worker, isolates the
+  policy_manager model cache). **Minimax-plus-margin promotion (all 3 must hold):**
+  (1) worst-bracket `mean_placement` ≤ incumbent's; (2) `mean_margin ≥ 0` every
+  bracket; (3) `semis_mixed` `mean_score` ≥ incumbent. Run:
+  `.venv/bin/python training/ae/melee_eval.py --rounds 12 --hash-seeds 0 1 2 --sim-seeds 42 137 --summary-out training/ae/data/melee-rerank.json`
+  (add ladder rungs with `--confpol-ckpt LABEL=PATH`). **confpol-u860 (0.626
+  cloud) stays the deploy floor regardless.**
+- **Early read (smoke + tiny re-rank):** against the foreign field the **bare
+  C+bomb7 heuristic is exposed** — placed 4th/6 in `semis_mixed` (margin −169)
+  and **6th/last in `all_farmer`** (margin −381): it loses the low-conflict
+  farming race, the exact dynamic curryfarmer exploits. confpol-u860 was more
+  robust (lower worst-bracket placement) in the smoke. Full re-rank numbers:
+  see `training/ae/data/melee-rerank.json` once the run lands.
+- **Stage B (NOT yet run — 1 manual 4-day curriculum fits before 06-10):**
+  warm-start the confpol-native line with `--opponent-mix-preset semis-foreign`,
+  gate every checkpoint with `melee_eval.py`, **watch the EVAL_ONLY holdout** —
+  if TRAIN_OK placement improves but held-out does not, STOP (proxy overfit).
+  Curry/self_policy in the rollout make it slower than the all-AEManager suites.
 
 ### The novice-determinism lever (the fixed seed-42 map) — LIVE, under-exploited
 
