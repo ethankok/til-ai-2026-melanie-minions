@@ -23,26 +23,29 @@
   seeds ≈ 3/8/9/14/15/20. AE is 40% of the score and our single biggest lever —
   this is where a match is won or lost. **Semis = Novice path = the fixed
   seed-42 map** (see the determinism section below — this is now the top lever).
-- **Shipped Docker default** ([Dockerfile](Dockerfile)) — as of 1 Jun this is
-  **`AE_MODE=opening_hybrid` + `AE_OPENING_PLANNER=confidence_policy_hybrid`**:
-  divergence-gated Novice opening prefix in front of the confpol planner.
-  - **Opening gate** ([ae/src/openings_gate.json](src/openings_gate.json)):
-    per-spawn locked openings — ON for spawns `13,9 / 9,13 / 3,12 / 12,3`, the
-    planner runs from tick 0 on `2,6 / 6,2`. `max(planner, opening)` per spawn by
-    construction (never worse). Built + validated this session (see archive 1 Jun).
-  - **Inner planner = confpol-u860** (heuristic-first C+bomb7 + PPO consultant).
-    **Still requires staging `pandemonium-v1-best-u860.pt` → `ae/models/bc.pt` on
-    the Workbench** (gitignored, not committed). If bc.pt is absent the inner
-    planner degrades to the bare C+bomb7 heuristic and the opening still fires.
-  - C+bomb7 profile + base-tether + `PYTHONHASHSEED=0` unchanged (all baked in).
-  - **Canary (`til test`):** `AE policy loaded … epoch=860` AND `opening_hybrid
-    ready … opening-enabled spawns=['13,9','9,13','3,12','12,3']`.
-  - To drop the opening prefix: `AE_MODE=confidence_policy_hybrid`. To drop the
-    NN too: `AE_MODE=heuristic`.
-- **⚠ Not yet cloud-confirmed.** Both layers need variance-farming: confpol-u860
-  is farmed (0.634), but the opening gate's +0.067 is a *local* (cloudsuite)
-  signal, and opening+confpol as a *combo* is unfarmed. Variance-farm the shipped
-  build vs confpol-u860 before trusting the lift.
+- **Shipped Docker default** ([Dockerfile](Dockerfile)) — **`AE_MODE=confidence_policy_hybrid`
+  = confpol-u860** (heuristic-first C+bomb7 + PPO consultant; farmed mean 0.634).
+  - **Still requires staging `pandemonium-v1-best-u860.pt` → `ae/models/bc.pt` on
+    the Workbench** (gitignored). If bc.pt is absent → degrades to bare C+bomb7.
+  - C+bomb7 profile + base-tether + `PYTHONHASHSEED=0` baked in.
+  - **Canary (`til test`):** `AE policy loaded … epoch=860` (NOT "falling back to
+    heuristic").
+- **❌ Opening book (opening_hybrid) — SHIPPED then REVERTED 1 Jun (cloud-negative
+  over confpol).** Cloud farm of opening+confpol: **mean 0.584 (n=9, CI
+  [0.564,0.604]) vs confpol-u860 0.634** — the opening *regressed* confpol by
+  ~0.05 (non-overlapping CIs). The confpol diagnostic
+  ([../training/ae/diagnose_opening_over_confpol.py](../training/ae/diagnose_opening_over_confpol.py))
+  nailed the mechanism: the gate was locked over the **bare heuristic**, but
+  confpol is a **better opener**, so the fixed opening overwrites confpol's good
+  early play. Over confpol the gate is **net −0.014 local** — 3 of 4 enabled
+  spawns flip negative (only `9,13`, where confpol still opens poorly at 0.211,
+  helps +0.086). Local sign matches cloud sign → not a transfer gap, a
+  planner-mismatch in the gate. **The +0.067 lift was real but only over the
+  *bare heuristic*** (`AE_MODE=opening_hybrid AE_OPENING_PLANNER=heuristic` still
+  gives it; kept in tree, not default). A confpol-gated re-lock would enable only
+  `9,13` → ≈+0.014 aggregate, **below the cloud-resolvable floor** — not worth
+  farming. Lesson: validate the opening gate against the *actual deployed planner*,
+  and openings only pay when the planner opens that spawn poorly.
 - **Honest cloud performance: no AE config has a variance-farmed mean
   meaningfully above ~0.59**, except confpol-u860. The famous heuristic "highs"
   are all upper-tail single draws, not means:
@@ -75,9 +78,13 @@
   **Key finding: the opening is a regression-to-the-mean operator** — it lifts
   spawns where the planner opens weakly and *hurts* spawns where it already opens
   well, so it MUST be per-slot gated. Per-slot sweep (`sweep_openings.py` →
-  `lock_gate.py`) locked 4/6 spawns ON (+0.067 local). Now the shipped default.
-  **Still under-exploited vs the competitor** (no distance/opponent LUTs, no
-  forward-sim planner). See *"The novice-determinism lever"* / *"Competitor intel"*.
+  `lock_gate.py`) locked 4/6 spawns ON (+0.067 over the *bare heuristic*).
+  **Shipped then REVERTED (1 Jun): over confpol it's cloud-negative (0.584 vs
+  0.634) — the gate was validated against the wrong planner.** See the
+  ❌ bullet under *Current state* and archive §4. The +0.067-over-heuristic result
+  stands; the determinism *lever* is still under-exploited vs the competitor
+  (distance/opponent LUTs, forward-sim planner) — but a naive item-farm opening
+  doesn't help a planner that already opens well.
 
 ### The novice-determinism lever (the fixed seed-42 map) — LIVE, under-exploited
 
@@ -568,10 +575,23 @@ Full pipeline, all TDD (parity against the real env is the spine):
   0%). **Locked gate** ([src/openings_gate.json](src/openings_gate.json)):
   13,9 H16 +0.072 z5.2 · 9,13 H8 +0.196 z3.2 · 3,12 H8 +0.050 z4.5 · 12,3 H16
   +0.087 z2.2 ON; 2,6 / 6,2 → planner. **+0.067 expected aggregate (local).**
-- Shipped as `AE_MODE=opening_hybrid` over confpol-u860 (graceful fallback to
-  heuristic if no bc.pt). `lock_gate.py` re-derives the gate from the sweep log
-  without re-running games (measurement ⊥ selection). **Pending: cloud
-  variance-farm the combined build vs confpol-u860 (0.634).**
+- Shipped as `AE_MODE=opening_hybrid` over confpol-u860, then **REVERTED**.
+  `lock_gate.py` re-derives the gate from the sweep log without re-running games
+  (measurement ⊥ selection).
+- **Cloud result (1 Jun) — NEGATIVE over confpol.** Farm opening+confpol: mean
+  **0.584** (n=9: .596/.574/.577/.592/.614/.532/.576/.566/.632) vs confpol-u860
+  **0.634** (n=13) — regressed ~0.05, non-overlapping CIs.
+- **Diagnostic (`diagnose_opening_over_confpol.py`, n=8 cloudsuite) — root cause.**
+  Re-ran the per-spawn comparison with confpol as the planner instead of the
+  heuristic. Per-spawn Δ *over confpol* (vs Δ over heuristic in the lock):
+  13,9 **−0.026** (+0.072) · 9,13 **+0.086** (+0.196) · 3,12 **−0.062** (+0.050) ·
+  12,3 **−0.054** (+0.087); disabled 2,6 / 6,2 = exactly 0.000 (harness sanity).
+  Enabled mean **−0.014**. Three of four enabled spawns flip negative because
+  confpol's own opening is strong there (baselines 0.42/0.35/0.36 vs the
+  heuristic's 0.29/0.30/0.30) — the fixed opening overwrites better play. Local
+  sign matches cloud sign ⇒ planner-mismatch, not transfer gap. **Reverted to
+  `AE_MODE=confidence_policy_hybrid`.** Takeaway: lock opening gates against the
+  *deployed* planner; openings only pay where that planner opens the spawn poorly.
 
 ## 26 May 2026 (late) — methodology + calibration session
 

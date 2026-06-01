@@ -39,20 +39,20 @@ WORKDIR /workspace
 # (0.590) which was heuristic + C+bomb7 with NO tether. Isolating the tether as
 # the single variable. Revert to AE_MODE=confidence_hybrid to restore the prior
 # shipped image.
-# 1 Jun 2026: opening_hybrid — divergence-gated Novice opening prefix (locked in
-# ae/src/openings_gate.json: spawns 13,9 / 9,13 / 3,12 / 12,3 ON; 2,6 / 6,2 run
-# the planner from tick 0) in front of the confpol planner. AE_OPENING_PLANNER
-# selects the inner planner; confidence_policy_hybrid = the u860 confpol agent
-# (heuristic-first + PPO consultant). Stage the checkpoint as ae/models/bc.pt
-# before `til build` (NOT committed). If bc.pt is absent the inner planner
-# degrades to the C+bomb7 heuristic and the opening still fires.
-# Canary in the `til test` log: "AE policy loaded … epoch=860" AND
-# "opening_hybrid ready … opening-enabled spawns=['13,9','9,13','3,12','12,3']".
-# Local validation (cloudsuite, paired): +0.067 expected aggregate lift over the
-# bare planner; cloud variance-farm before trusting it. Revert to
-# AE_MODE=confidence_policy_hybrid (or =heuristic) to drop the opening prefix.
-ENV AE_MODE=opening_hybrid
-ENV AE_OPENING_PLANNER=confidence_policy_hybrid
+# 1 Jun 2026: shipped opening_hybrid (opening prefix + confpol), then REVERTED.
+# Cloud variance-farm of opening+confpol: mean 0.584 (n=9) vs confpol-u860 alone
+# 0.634 (n=13) — the opening REGRESSED confpol by ~0.05. The confpol diagnostic
+# (training/ae/diagnose_opening_over_confpol.py) explains it: the gate was locked
+# over the bare heuristic, but confpol is a *better opener*, so the fixed opening
+# overwrites confpol's good early play. Over confpol the gate is net −0.014 local
+# (only spawn 9,13 — where confpol opens poorly — still helps); 3 of 4 enabled
+# spawns flip negative. Opening code/gate kept in tree (AE_MODE=opening_hybrid +
+# AE_OPENING_PLANNER=heuristic still gives the validated +0.067 over the bare
+# heuristic if confpol is ever dropped) but NOT the default.
+# Deploy = confpol-u860: stage pandemonium-v1-best-u860.pt -> ae/models/bc.pt on
+# the Workbench (gitignored). Canary: `til test` log "AE policy loaded … epoch=860"
+# (NOT "falling back to heuristic"). Without bc.pt this degrades to C+bomb7.
+ENV AE_MODE=confidence_policy_hybrid
 # C+bomb7 baseline profile.
 ENV AE_ITEM_MISSION_VALUE=80
 ENV AE_ITEM_RESOURCE_VALUE=40
