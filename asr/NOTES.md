@@ -16,6 +16,73 @@ This model builds on `nemo-ft-v2` by adding post-processing rules for additional
 
 Decision: **closed.**
 
+## NGPU-LM n-gram fusion prototype (02 Jun 2026 — Semis prep, default-OFF)
+
+Design of record: [docs/superpowers/specs/2026-06-02-asr-ngram-lm-fusion-design.md](../docs/superpowers/specs/2026-06-02-asr-ngram-lm-fusion-design.md).
+
+Adds GPU-resident n-gram (NGPU-LM) shallow fusion to the Parakeet-TDT decode
+path to attack the residual in-world proper-noun WER. **Default-OFF**: with
+`ASR_NGRAM_LM` unset the decoder stays greedy and the image is behaviourally
+identical to `nemo-ft-v3`. Code shipped locally (unit-tested on Mac); the build,
+sweep, and `til test` run on Workbench.
+
+Local Mac validation done: `test/test_build_ngram_lm.py` +
+`test/test_ngram_lm_decoding_cfg.py` (10 tests, the pure text-collection and
+decoding-config logic).
+
+### Workbench runbook
+
+```bash
+cd /home/jupyter/til && git pull origin main
+export TIL_FOLDER=/home/jupyter/til
+
+# 0. Probe whether the pinned NeMo build ships NGPU-LM (malsd_batch + ngram_lm).
+#    If this errors, fusion will fall back to greedy at runtime (safe); decide
+#    whether to use the classic `maes` + .ARPA fallback or bump the NeMo pin.
+python -c "import importlib; importlib.import_module('nemo.collections.asr.parts.submodules.ngram_lm'); print('NGPU-LM present')" \
+  || echo "NGPU-LM NOT on this NeMo build — see fallback in spec"
+
+# 1. Build the n-gram LM from ASR transcripts + NLP corpus, tokenized with the
+#    deployed model's tokenizer. Stages models/ngram_lm.nemo (+ .ARPA).
+python training/asr/build_ngram_lm.py \
+    --asr-jsonl /home/jupyter/novice/asr/asr.jsonl \
+    --nlp-dir /home/jupyter/novice/nlp \
+    --nemo-model asr/models/parakeet-tdt-0.6b-v2.nemo \
+    --out asr/models/ngram_lm.nemo \
+    --ngram-length 6 \
+    --train-kenlm $(python -c "import nemo,os;print(os.path.join(os.path.dirname(nemo.__file__),'..','scripts','asr_language_modeling','ngram_lm','train_kenlm.py'))")
+# (If --train-kenlm path resolution fails, the script prints the exact
+#  train_kenlm.py command to run by hand.)
+
+# 2. Pick alpha/beam on the held-out val proxy (ranking only; cloud is truth).
+python training/asr/sweep_lm_fusion.py \
+    --asr-jsonl /home/jupyter/novice/asr/asr.jsonl \
+    --audio-dir /home/jupyter/novice/asr \
+    --nemo-model asr/models/parakeet-tdt-0.6b-v2.nemo \
+    --ngram-lm asr/models/ngram_lm.nemo \
+    --alphas 0.1 0.2 0.3 0.4 0.5 --beams 2 4
+
+# 3. Gate the OFF image first (proves the LM bakes in + nothing regressed).
+til build asr ngram-lm-off
+til test  asr ngram-lm-off        # must match nemo-ft-v3 behaviour exactly
+
+# 4. Flip ON: uncomment the ENV block in asr/Dockerfile (set alpha/beam from the
+#    sweep), then build + test. Promote ONLY if it clears the gate below.
+til build asr ngram-lm-on
+til test  asr ngram-lm-on
+til submit asr ngram-lm-on
+```
+
+**Promotion gate:** `til test` speed ≥ 0.92 AND blended > `nemo-ft-v3` 0.964
+(0/400 errors, schema unchanged). Otherwise keep `nemo-ft-v3`; leaderboard keeps
+the higher score so a regression cannot demote us.
+
+**Fallbacks if NGPU-LM is absent on the pinned NeMo:** the manager already falls
+back to greedy at runtime (no crash). `build_ngram_lm.py` keeps `preserve_arpa`
+so the `.ARPA` is usable by the classic `maes` strategy
+(`ASR_LM_STRATEGY=maes`). Bumping the NeMo pin is the documented-risky path
+(torch downgrade cascade) — only if the above paths are exhausted.
+
 ## nemo-ft-v3 (27/05) — additional spelling post-processing fixes (new blended high)
 
 Status: current shipped tag and blended high score.

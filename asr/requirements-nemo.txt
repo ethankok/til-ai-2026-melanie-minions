@@ -27,3 +27,10 @@ nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@ccbbfbbdb3a4e4a4a8c06
 soundfile>=0.12.1
 librosa>=0.10.0
 numpy
+
+# NGPU-LM n-gram shallow fusion (default-OFF; see asr/NOTES.md): inference loads
+# the .nemo n-gram LM through NeMo's built-in NGPU-LM decoder, so NO extra
+# runtime dep is expected here. KenLM itself is BUILD-TIME only (run
+# training/asr/build_ngram_lm.py on Workbench, which shells out to NeMo's
+# train_kenlm.py). If a Workbench probe shows NGPU-LM needs a runtime package on
+# the pinned NeMo commit, pin it here then.

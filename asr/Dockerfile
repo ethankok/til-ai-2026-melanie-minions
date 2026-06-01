@@ -20,6 +20,16 @@ ENV TRANSFORMERS_OFFLINE=1
 # Switch the server to the NeMo backend and select the staged TDT model.
 ENV ASR_BACKEND=nemo
 ENV ASR_NEMO_MODEL=parakeet-tdt-0.6b-v2.nemo
+# NGPU-LM n-gram shallow fusion. DEFAULT-OFF: with ASR_NGRAM_LM unset the
+# decoder stays greedy and this image is behaviourally identical to nemo-ft-v3.
+# To enable after the sweep + til-test gate clears (see asr/NOTES.md), build the
+# LM with training/asr/build_ngram_lm.py into models/ngram_lm.nemo and uncomment:
+#   ENV ASR_NGRAM_LM=/workspace/models/asr/ngram_lm.nemo
+#   ENV ASR_NGRAM_LM_ALPHA=0.3
+#   ENV ASR_BEAM_SIZE=4
+#   ENV ASR_LM_STRATEGY=malsd_batch
+#   ENV ASR_LM_PRUNING=late
+#   ENV ASR_LM_BLANK_MODE=lm_weighted_full
 WORKDIR /workspace
 
 # Install dependencies. NeMo is a heavy install; this is the longest layer.

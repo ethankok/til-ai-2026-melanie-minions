@@ -47,6 +47,35 @@ except ImportError:
     _HAS_TORCH = False
 
 
+def _build_lm_decoding_cfg(
+    base_cfg: dict,
+    *,
+    lm_path: str,
+    alpha: float,
+    beam_size: int,
+    strategy: str,
+    pruning_mode: str,
+    blank_lm_score_mode: str,
+) -> dict:
+    """Return a decoding-config dict that enables NGPU-LM n-gram fusion.
+
+    Pure dict transform — no NeMo import — so it is unit-testable on the Mac.
+    Sets the top-level ``strategy`` and the NGPU-LM fields under ``beam.*`` per
+    the NeMo RNNT/TDT NGPU-LM API. Does not mutate ``base_cfg``; existing keys
+    (including unrelated ``beam.*`` sub-keys) are preserved.
+    """
+    cfg = dict(base_cfg)
+    beam = dict(cfg.get("beam") or {})
+    beam["beam_size"] = beam_size
+    beam["ngram_lm_model"] = lm_path
+    beam["ngram_lm_alpha"] = alpha
+    beam["pruning_mode"] = pruning_mode
+    beam["blank_lm_score_mode"] = blank_lm_score_mode
+    cfg["beam"] = beam
+    cfg["strategy"] = strategy
+    return cfg
+
+
 class NemoASRManager:
     """English ASR backed by a local NeMo ASR `.nemo` checkpoint."""
 
@@ -82,6 +111,7 @@ class NemoASRManager:
         self.slang_terms = self._load_slang_terms()
         self._load_model()
         self._configure_biasing()
+        self._configure_lm_fusion()
         self._warmup()
 
     # ------------------------------------------------------------------ #
@@ -206,6 +236,63 @@ class NemoASRManager:
         if cfg_set:
             print(
                 "[NemoASRManager] decoding strategy set; no context-biasing API found",
+                flush=True,
+            )
+
+    def _configure_lm_fusion(self) -> None:
+        """Enable NGPU-LM n-gram shallow fusion if an LM path is configured.
+
+        Default-OFF: when ``ASR_NGRAM_LM`` is unset the decoder is left exactly
+        as ``_configure_biasing`` left it (greedy), so the shipped image is
+        behaviourally identical to nemo-ft-v3 until the env is set.
+
+        Mirrors the ``_configure_biasing`` safety contract: any failure (NGPU-LM
+        unavailable on this NeMo build, bad config, missing LM file) is logged
+        and the decoder stays on its current strategy — we never crash. The
+        ``.ARPA`` emitted alongside the LM keeps the classic ``maes`` strategy
+        available as a manual fallback.
+        """
+        lm_path = os.environ.get("ASR_NGRAM_LM")
+        if not lm_path:
+            return
+        if not os.path.exists(lm_path):
+            print(
+                f"[NemoASRManager] ASR_NGRAM_LM={lm_path} not found; fusion OFF",
+                flush=True,
+            )
+            return
+
+        alpha = float(os.environ.get("ASR_NGRAM_LM_ALPHA", "0.3"))
+        beam_size = int(os.environ.get("ASR_BEAM_SIZE", "4"))
+        strategy = os.environ.get("ASR_LM_STRATEGY", "malsd_batch")
+        pruning_mode = os.environ.get("ASR_LM_PRUNING", "late")
+        blank_mode = os.environ.get("ASR_LM_BLANK_MODE", "lm_weighted_full")
+
+        try:
+            from omegaconf import OmegaConf  # type: ignore
+
+            decoding_cfg = self.model.cfg.decoding if hasattr(self.model, "cfg") else None
+            base = OmegaConf.to_container(decoding_cfg, resolve=True) if decoding_cfg is not None else {}
+            if not isinstance(base, dict):
+                base = {}
+            cfg = _build_lm_decoding_cfg(
+                base,
+                lm_path=lm_path,
+                alpha=alpha,
+                beam_size=beam_size,
+                strategy=strategy,
+                pruning_mode=pruning_mode,
+                blank_lm_score_mode=blank_mode,
+            )
+            self.model.change_decoding_strategy(OmegaConf.create(cfg))
+            print(
+                f"[NemoASRManager] NGPU-LM fusion ON: lm={lm_path} strategy={strategy} "
+                f"beam={beam_size} alpha={alpha} pruning={pruning_mode} blank={blank_mode}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"[NemoASRManager] LM fusion setup failed ({exc}); staying on greedy",
                 flush=True,
             )
 
