@@ -42,10 +42,22 @@
   helps +0.086). Local sign matches cloud sign → not a transfer gap, a
   planner-mismatch in the gate. **The +0.067 lift was real but only over the
   *bare heuristic*** (`AE_MODE=opening_hybrid AE_OPENING_PLANNER=heuristic` still
-  gives it; kept in tree, not default). A confpol-gated re-lock would enable only
-  `9,13` → ≈+0.014 aggregate, **below the cloud-resolvable floor** — not worth
-  farming. Lesson: validate the opening gate against the *actual deployed planner*,
-  and openings only pay when the planner opens that spawn poorly.
+  gives it; kept in tree, not default).
+- **🔬 Opening book v2 — confpol-correct gate, BUILT, TO FARM (1 Jun).** Re-swept
+  the gate OVER CONFPOL across all horizons (`sweep_openings.py --planner confpol`).
+  The confpol-correct gate is **almost disjoint** from the heuristic one: enables
+  **9,13 (H20, +0.174 z9.7) / 2,6 (H8, +0.119 z4.6) / 6,2 (H12, +0.117 z2.8)**,
+  disables 13,9 / 3,12 / 12,3. Why different: confpol opens 0/2/5 *well* (no room)
+  but opens **3/4 *worse* than the heuristic** (baselines 0.33/0.35 vs the
+  heuristic's 0.34/0.52), so a *short* opening fills that gap. **Local +0.068 over
+  confpol**, all enabled spawns complete 100%, strong z. Baked into
+  [ae/src/openings_gate.json](src/openings_gate.json) (now the confpol-specific
+  gate). **This is the clean farm experiment** — it fixes the planner-mismatch
+  that sank v1; the only remaining risk is the local→cloud *opponent* gap. Farm
+  `AE_MODE=opening_hybrid` (confpol planner) vs confpol-alone; promote only if it
+  clears 0.634. If a *correctly-specified* gate also fails on cloud, fixed
+  openings simply don't transfer → close the line. **Lesson: lock opening gates
+  against the actual deployed planner; openings only pay where it opens poorly.**
 - **Honest cloud performance: no AE config has a variance-farmed mean
   meaningfully above ~0.59**, except confpol-u860. The famous heuristic "highs"
   are all upper-tail single draws, not means:

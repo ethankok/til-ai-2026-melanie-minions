@@ -47,9 +47,20 @@ def _obs(step, loc, d, base, frozen=0):
             "action_mask": [1, 1, 1, 1, 1, 1]}
 
 
+def _key_to_base(k):
+    return tuple(int(v) for v in k.split(","))
+
+
+# Derive an enabled and a disabled spawn from the gate (robust to gate changes).
+ENABLED_KEY = next(k for k, v in GATE.items() if v)
+DISABLED_KEY = next(k for k, v in GATE.items() if not v)
+ENABLED_BASE = _key_to_base(ENABLED_KEY)
+DISABLED_BASE = _key_to_base(DISABLED_KEY)
+
+
 def test_enabled_slot_plays_baked_opening_then_delegates():
-    base = (13, 9)
-    cand = GATE["13,9"][0]
+    base = ENABLED_BASE
+    cand = GATE[ENABLED_KEY][0]
     seq, traj = cand["actions"], cand["traj"]
     stub = StubPlanner()
     mgr = OpeningHybridManager(planner=stub)
@@ -63,18 +74,17 @@ def test_enabled_slot_plays_baked_opening_then_delegates():
 
 
 def test_disabled_slot_delegates_to_planner():
-    base = (2, 6)  # planner slot (gate entry is [])
-    assert GATE["2,6"] == []
+    base = DISABLED_BASE  # planner slot (gate entry is [])
+    assert GATE[DISABLED_KEY] == []
     stub = StubPlanner()
     mgr = OpeningHybridManager(planner=stub)
-    a = mgr.ae(_obs(0, (2, 7), 1, base))
+    a = mgr.ae(_obs(0, (base[0], base[1] + 1), 0, base))
     assert a == STUB and mgr.aborted
 
 
 def test_divergence_aborts():
-    base = (9, 13)
-    cand = GATE["9,13"][0]
-    traj = cand["traj"]
+    base = ENABLED_BASE
+    traj = GATE[ENABLED_KEY][0]["traj"]
     stub = StubPlanner()
     mgr = OpeningHybridManager(planner=stub)
     mgr.ae(_obs(0, traj[0][:2], traj[0][2], base))  # ok
@@ -84,8 +94,8 @@ def test_divergence_aborts():
 
 
 def test_planner_kept_warm_every_tick():
-    base = (13, 9)
-    traj = GATE["13,9"][0]["traj"]
+    base = ENABLED_BASE
+    traj = GATE[ENABLED_KEY][0]["traj"]
     stub = StubPlanner()
     mgr = OpeningHybridManager(planner=stub)
     for k in range(3):

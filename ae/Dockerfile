@@ -49,9 +49,19 @@ WORKDIR /workspace
 # spawns flip negative. Opening code/gate kept in tree (AE_MODE=opening_hybrid +
 # AE_OPENING_PLANNER=heuristic still gives the validated +0.067 over the bare
 # heuristic if confpol is ever dropped) but NOT the default.
-# Deploy = confpol-u860: stage pandemonium-v1-best-u860.pt -> ae/models/bc.pt on
-# the Workbench (gitignored). Canary: `til test` log "AE policy loaded … epoch=860"
-# (NOT "falling back to heuristic"). Without bc.pt this degrades to C+bomb7.
+# 1 Jun (later): re-swept the opening gate OVER CONFPOL (sweep_openings.py
+# --planner confpol). The confpol-correct gate is DIFFERENT — enables spawns
+# 9,13 (H20) / 2,6 (H8) / 6,2 (H12), disables 13,9 / 3,12 / 12,3 — because
+# confpol opens 0/2/5 well but opens 3/4 *worse* than the heuristic. Local
+# +0.068 over confpol (z 9.7/4.6/2.8, all complete). This confpol-specific gate
+# is now baked into ae/src/openings_gate.json. It is the FARM EXPERIMENT, not the
+# default: set AE_MODE=opening_hybrid (keep AE_OPENING_PLANNER=confidence_policy_hybrid)
+# and variance-farm vs confpol-alone. Promote only if it clears 0.634 on cloud
+# (the heuristic-gated version did NOT; this one fixes the planner-mismatch but
+# the opponent transfer gap is still untested).
+# Default deploy = confpol-u860 alone (proven 0.634): stage
+# pandemonium-v1-best-u860.pt -> ae/models/bc.pt on the Workbench (gitignored).
+# Canary: `til test` log "AE policy loaded … epoch=860" (NOT "falling back").
 ENV AE_MODE=confidence_policy_hybrid
 # C+bomb7 baseline profile.
 ENV AE_ITEM_MISSION_VALUE=80
