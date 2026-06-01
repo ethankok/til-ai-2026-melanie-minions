@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -119,13 +120,26 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=Path("asr/models/ngram_lm.nemo"))
     ap.add_argument("--ngram-length", type=int, default=6, help="NeMo recommends 6 for BPE.")
     ap.add_argument(
+        "--nemo-root",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a NeMo *source checkout* (git clone). Required for the "
+            "train_kenlm step: train_kenlm.py does `from scripts...import "
+            "kenlm_utils`, which only resolves with the repo root on PYTHONPATH. "
+            "When set, --train-kenlm defaults to "
+            "<nemo-root>/scripts/asr_language_modeling/ngram_lm/train_kenlm.py "
+            "and the subprocess runs with PYTHONPATH=<nemo-root>."
+        ),
+    )
+    ap.add_argument(
         "--train-kenlm",
         type=Path,
         default=None,
         help=(
-            "Path to NeMo's scripts/asr_language_modeling/ngram_lm/train_kenlm.py. "
-            "If omitted, only the corpus text file is written (--text-only behaviour) "
-            "and the train_kenlm command is printed for you to run."
+            "Explicit path to train_kenlm.py (overrides the --nemo-root default). "
+            "If neither this nor --nemo-root is given, only the corpus text file "
+            "is written and the train_kenlm command is printed for you to run."
         ),
     )
     ap.add_argument("--kenlm-bin", type=Path, default=None, help="KenLM bin folder (kenlm_bin_path=).")
@@ -165,9 +179,17 @@ def main() -> None:
     text_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Collected {len(lines)} unique lines -> {text_path}", flush=True)
 
+    # Resolve train_kenlm.py: explicit --train-kenlm wins, else derive from
+    # --nemo-root. train_kenlm.py is NOT standalone — it imports
+    # scripts.asr_language_modeling.ngram_lm.kenlm_utils, so the NeMo repo root
+    # must be on PYTHONPATH (that's the `No module named 'scripts'` error).
+    train_kenlm = args.train_kenlm
+    if train_kenlm is None and args.nemo_root is not None:
+        train_kenlm = args.nemo_root / "scripts" / "asr_language_modeling" / "ngram_lm" / "train_kenlm.py"
+
     cmd = [
         sys.executable,
-        str(args.train_kenlm) if args.train_kenlm else
+        str(train_kenlm) if train_kenlm else
         "<NeMo>/scripts/asr_language_modeling/ngram_lm/train_kenlm.py",
         f"nemo_model_file={args.nemo_model}",
         f"train_paths=[{text_path}]",
@@ -180,14 +202,24 @@ def main() -> None:
     if args.kenlm_bin is not None:
         cmd.append(f"kenlm_bin_path={args.kenlm_bin}")
 
-    if args.train_kenlm is None:
-        print("\n--train-kenlm not given. Run NeMo's trainer yourself:\n")
+    # Subprocess env: put the NeMo repo root on PYTHONPATH so `from scripts...`
+    # resolves. Without this train_kenlm.py dies with ModuleNotFoundError.
+    env = os.environ.copy()
+    if args.nemo_root is not None:
+        nemo_root = str(args.nemo_root.resolve())
+        env["PYTHONPATH"] = nemo_root + os.pathsep + env.get("PYTHONPATH", "")
+
+    if train_kenlm is None:
+        print("\nNeither --train-kenlm nor --nemo-root given. Run it yourself "
+              "from a NeMo checkout (PYTHONPATH=<nemo-root>):\n")
         print("  " + " ".join(cmd))
         return
+    if not Path(train_kenlm).exists():
+        raise SystemExit(f"train_kenlm.py not found at {train_kenlm} (check --nemo-root)")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    print("Running: " + " ".join(cmd), flush=True)
-    subprocess.run(cmd, check=True)
+    print("Running (PYTHONPATH=%s): %s" % (env.get("PYTHONPATH", ""), " ".join(cmd)), flush=True)
+    subprocess.run(cmd, check=True, env=env)
 
     # train_kenlm names outputs off kenlm_model_file (binary) + a sibling .arpa
     # when preserve_arpa=true; exact suffixes vary by NeMo version. Report what

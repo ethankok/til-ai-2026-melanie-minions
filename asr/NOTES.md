@@ -52,45 +52,65 @@ into base (documented torch-downgrade cascade).
 No local sweep (host can't run `malsd_batch`); ship defaults `alpha=0.3 beam=4`
 and tune alpha across 1–2 `til test` runs.
 
+**Two hard requirements `train_kenlm.py` has (both bit us once):**
+1. It is **not standalone** — it does `from scripts.asr_language_modeling.ngram_lm
+   import kenlm_utils`, so you need a **NeMo source checkout** on `PYTHONPATH`
+   (`build_ngram_lm.py --nemo-root` handles this). A lone `curl` of the file
+   fails with `No module named 'scripts'`.
+2. `kenlm_bin_path` is **mandatory and must point at pre-built `lmplz` /
+   `build_binary`** — there is no pip/conda one-liner; build KenLM from source.
+
 ```bash
 cd /home/jupyter/til && git pull origin main
 export TIL_FOLDER=/home/jupyter/til
 
-# 1. KenLM binaries + the train_kenlm.py matching the HOST NeMo (2.0.0).
-conda install -y -c conda-forge kenlm
-curl -sSL -o /tmp/train_kenlm.py \
-  https://raw.githubusercontent.com/NVIDIA/NeMo/v2.0.0/scripts/asr_language_modeling/ngram_lm/train_kenlm.py
+# 1. Build KenLM from source (conda toolchain — no sudo). conda-forge has no
+#    usable `kenlm` binary pkg, so we compile lmplz/build_binary ourselves.
+micromamba install -y -c conda-forge cxx-compiler cmake make libboost-devel joblib tqdm
+git clone --depth 1 https://github.com/kpu/kenlm /tmp/kenlm
+cmake -S /tmp/kenlm -B /tmp/kenlm/build -DCMAKE_PREFIX_PATH="$CONDA_PREFIX"
+cmake --build /tmp/kenlm/build -j4
+ls /tmp/kenlm/build/bin            # expect: lmplz  build_binary  ...
 
-# 2. Build the n-gram LM as a .ARPA (NO --save-nemo: 2.0.0 lacks NGPU-LM .nemo
-#    packaging; the container loads the .ARPA directly). The script prints the
-#    exact output file paths at the end.
+# 2. NeMo source checkout (for train_kenlm.py + kenlm_utils.py), tag-matched to
+#    the host NeMo runtime (2.0.0).
+git clone --depth 1 --branch v2.0.0 https://github.com/NVIDIA/NeMo /tmp/NeMo
+
+# 3. Build the n-gram LM. --nemo-root puts the repo on PYTHONPATH; no --save-nemo
+#    (2.0.0 lacks NGPU-LM .nemo packaging — the container loads the .ARPA). The
+#    script prints the produced files; preserve_arpa gives ngram_lm.tmp.arpa.
 python training/asr/build_ngram_lm.py \
     --asr-jsonl /home/jupyter/novice/asr/asr.jsonl \
     --nlp-dir /home/jupyter/novice/nlp \
     --nemo-model asr/models/parakeet-tdt-0.6b-v2.nemo \
     --out asr/models/ngram_lm \
     --ngram-length 6 \
-    --train-kenlm /tmp/train_kenlm.py \
-    --kenlm-bin "$(dirname "$(which lmplz)")"
-# -> note the printed .ARPA path; e.g. asr/models/ngram_lm.tmp.arpa
+    --nemo-root /tmp/NeMo \
+    --kenlm-bin /tmp/kenlm/build/bin
+mv asr/models/ngram_lm.tmp.arpa asr/models/ngram_lm.arpa   # clean name for baking
 
-# 3. Point the image at that ARPA. In asr/Dockerfile uncomment + set:
-#      ENV ASR_NGRAM_LM=/workspace/models/asr/<the .arpa filename>
+# 4. Point the image at the ARPA. In asr/Dockerfile uncomment + set:
+#      ENV ASR_NGRAM_LM=/workspace/models/asr/ngram_lm.arpa
 #      ENV ASR_NGRAM_LM_ALPHA=0.3   ENV ASR_BEAM_SIZE=4
 #      ENV ASR_LM_STRATEGY=malsd_batch ENV ASR_LM_PRUNING=late
 #      ENV ASR_LM_BLANK_MODE=lm_weighted_full
 
-# 4. Gate the OFF image first (LM unset) — this is the "any errors?" check.
-#    (Leave ASR_NGRAM_LM commented out for this build.)
+# 5. Gate the OFF image first (LM unset) — the "any errors?" check.
 til build asr ngram-lm-off
 til test  asr ngram-lm-off        # must match nemo-ft-v3 behaviour exactly
 
-# 5. Flip ON (uncomment the ENV block) and test/submit against the gate.
+# 6. Flip ON (uncomment the ENV block) and test/submit against the gate.
 til build asr ngram-lm-on
 til test  asr ngram-lm-on         # check WER ↑ and speed ≥ 0.92
 til submit asr ngram-lm-on
-# Tune: if alpha=0.3 helps but speed is fine, try 0.2 / 0.4 in 1–2 more til tests.
+# Tune: if alpha=0.3 helps and speed is fine, try 0.2 / 0.4 in 1–2 more til tests.
 ```
+
+Residual blind risk: the ARPA is built with v2.0.0's `DEFAULT_TOKEN_OFFSET`; if
+the container's pinned NeMo changed that constant the LM would be silently wrong
+(tell: `til test` ON shows garbage or zero WER change). Unlikely (it's a
+long-stable constant). Fallback if so: build the LM inside the OFF container
+(exact pinned NeMo) with `--save-nemo` and point `ASR_NGRAM_LM` at the `.nemo`.
 
 **Promotion gate:** `til test` speed ≥ 0.92 AND blended > `nemo-ft-v3` 0.964
 (0/400 errors, schema unchanged). Otherwise keep `nemo-ft-v3`; leaderboard keeps
