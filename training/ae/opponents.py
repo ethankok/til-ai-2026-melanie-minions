@@ -776,10 +776,19 @@ OPPONENT_SUITES = {
     "adversarial": [
         "aggressive_proxy", "curry_aggro", "anti_aggro_exploiter", "curry_fortress", "self_policy",
     ],
+    # Mixed-strength field weighted toward the two REAL vendored competitors we
+    # have (curry = strong/0.715 semifinalist; peroxide = weak/0.443 non-semi).
+    # The most "real Novice bracket"-like spread (we are seeded 15th of a mixed
+    # field). Added 2 Jun; the 4 brackets above are unchanged so the earlier
+    # weakness map stays comparable.
+    "real_field": [
+        "curry_aggro", "peroxide_astar", "self_policy", "anti_aggro_exploiter", "self_heuristic",
+    ],
 }
 
-# The 4 melee brackets, in report order (worst-case probe last).
-MELEE_BRACKETS = ["semis_mixed", "all_aggressive", "all_farmer", "adversarial"]
+# The melee brackets, in report order (worst-case probe `adversarial`, then the
+# realistic mixed-strength `real_field`).
+MELEE_BRACKETS = ["semis_mixed", "all_aggressive", "all_farmer", "adversarial", "real_field"]
 
 
 def _foreign_names() -> tuple[str, ...]:

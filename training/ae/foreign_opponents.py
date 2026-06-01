@@ -59,9 +59,10 @@ REPO_ROOT = THIS_DIR.parents[1]
 AE_SRC = REPO_ROOT / "ae" / "src"
 TIL_AE = REPO_ROOT / "til-26-ae"
 CURRY_PATH = THIS_DIR / "foreign" / "curry"           # gitignored vendored snapshot
+PEROXIDE_PATH = THIS_DIR / "foreign" / "peroxide"     # gitignored vendored snapshot
 CHECKPOINTS = THIS_DIR / "checkpoints"
 
-for _p in (str(AE_SRC), str(THIS_DIR), str(TIL_AE), str(CURRY_PATH)):
+for _p in (str(AE_SRC), str(THIS_DIR), str(TIL_AE), str(CURRY_PATH), str(PEROXIDE_PATH)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -73,7 +74,8 @@ from ae_manager import AEManager  # noqa: E402
 # --------------------------------------------------------------------------
 FOREIGN_TRAIN_OK = ["curry_aggro", "self_policy", "self_heuristic", "evbot"]
 FOREIGN_EVAL_ONLY = ["curry_fortress", "self_tactical",
-                     "aggressive_proxy", "anti_aggro_exploiter"]
+                     "aggressive_proxy", "anti_aggro_exploiter",
+                     "peroxide_astar"]
 FOREIGN_NAMES = tuple(FOREIGN_TRAIN_OK + FOREIGN_EVAL_ONLY)
 
 
@@ -365,6 +367,39 @@ class CurryOpponent:
 
 
 # --------------------------------------------------------------------------
+# Vendored competitor heuristic #2 (team peroxide-dev).
+# --------------------------------------------------------------------------
+class PeroxideOpponent:
+    """Adapter around the vendored peroxide-dev planner: an orientation-aware
+    A* over (x,y,facing) state with partial-map memory, time-layered danger
+    sets, base-siege with bomb-commitment tracking, and a base-anchor inference
+    trick (rotate own base around grid-center by pi/3 to guess the other spawns).
+
+    A genuinely DIFFERENT decision architecture from ours (greedy priority +
+    Dijkstra) and from curry (forward-sim plan scoring) — the only SECOND
+    foreign architecture we have. **WEAK competitor: qualifier 0.443, did NOT
+    reach Semifinals.** Kept EVAL_ONLY as (a) architecture diversity for the
+    held-out robustness probe and (b) a realistic mid/low-strength field member
+    (we are seeded 15th; the real bracket has weaker teams too). Do NOT read
+    beating peroxide as evidence of strength. Self-contained (numpy only); the
+    env delivers an already-unpacked (7,5,25) viewcone, which its decoder wants.
+    """
+
+    def __init__(self, seed: int | None = None) -> None:
+        self._agent = self._new_agent()
+
+    def _new_agent(self):
+        from peroxide_planner import AEManager as _PeroxideAE
+        return _PeroxideAE()
+
+    def reset_for_game(self) -> None:
+        self._agent.reset()
+
+    def __call__(self, obs: dict) -> int:
+        return int(self._agent.ae(obs))
+
+
+# --------------------------------------------------------------------------
 # Self-policy opponents (our learned checkpoints, run as full-control players).
 # --------------------------------------------------------------------------
 def _load_isolated_policy(checkpoint: Path):
@@ -465,6 +500,8 @@ def make_foreign_opponent(name: str, seed: int | None = None):
         return SelfTacticalOpponent(seed=seed)
     if key == "self_heuristic":
         return SelfHeuristicOpponent(seed=seed)
+    if key == "peroxide_astar":
+        return PeroxideOpponent(seed=seed)
     if key == "evbot":
         return EVBot()
     if key == "aggressive_proxy":

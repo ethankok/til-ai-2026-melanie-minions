@@ -335,6 +335,44 @@ Public GitHub repo `curryfarmer/til-26-ae` (team royal-recruits), cloud
   for the same tie-break-determinism reason. **We're slightly FASTER** (~0.84 vs
   their 0.807) — speed is not our problem; accuracy is.
 
+### Public-repo scrape (2 Jun) — full field of TIL-26 AE repos
+
+Scraped GitHub (forks of `til-ai/til-26{,-ae,-finals}` + keyword/code search).
+Of ~12 candidate repos, **4 had real AE work** beyond the 663-byte stock
+template; the rest are the untouched scaffold. Findings + vendoring decisions:
+
+| Repo | Track | Architecture | Weights | Strength | Decision |
+|---|---|---|---|---|---|
+| `curryfarmer` (royal-recruits) | — | portfolio-A* + forward-sim | (heuristic) | **0.715, semifinalist** | already vendored (curry_aggro/fortress) |
+| `peroxide-dev/til-26` | — | orientation-aware A* + base-anchor inference | none needed | **0.443, NON-semifinalist (weak)** | **VENDORED `peroxide_astar` (EVAL_ONLY)** |
+| `AndreLiu1225/til-26` | general (`novice:false`) | CNN+MLP masked PPO | 3 committed | team did poorly | **rejected** (user call) |
+| `Pushkaltoocool/til-26` | — | **DQN** (value-based) | none | unknown | not runnable (no weights) |
+| `Parachuters/til-26` | **Advanced** | masked **recurrent** PPO | none | off our Novice bracket | not runnable / off-bracket |
+
+- **Why vendor a *weak* agent (peroxide):** it is the only **second genuinely
+  foreign decision architecture** we can obtain (A* portfolio, distinct from
+  curry's forward-sim and our greedy-Dijkstra). For the EVAL_ONLY holdout,
+  *architecture diversity > strength*; and as a realistic mid/low-strength field
+  member it fits our 15th seed (the real bracket has weaker teams too). It's
+  numpy-only, self-contained, and the env's already-unpacked (7,5,25) viewcone
+  matches its decoder (verified it decodes + acts, not blind). **Do NOT read
+  beating peroxide as signal** — it's a field-filler, not a bar. New bracket
+  `real_field` (curry + peroxide + self_policy + anti_aggro + self_heuristic)
+  added to `MELEE_BRACKETS`; the original 4 brackets are unchanged so the prior
+  weakness map stays comparable. Vendored gitignored at
+  `training/ae/foreign/peroxide/` (do NOT commit competitor code).
+- **Why NOT restore an old model of ours as an opponent:** it would be a 4th
+  MIRROR (we already have self_policy/self_tactical/self_heuristic), trained
+  against our own opponents so it shares our blind spots — the opposite of what
+  the foreign pool is for. The spec warns against over-weighting one source.
+- **Intel worth keeping:** (1) **two teams went DQN self-play** (peroxide,
+  Pushkaltoocool) — a value-based line we never tried (no evidence it scored
+  well, though). (2) **peroxide's base-inference trick** — guess the other 5
+  spawns by rotating own base around grid-center by π/3 on the symmetric layout;
+  borrowable into our own planner. (3) Most public repos are stock template;
+  the strong semifinalists' code is private, so curry remains our only *strong*
+  real-competitor proxy.
+
 ### Reward calibration: why we DON'T use nominal game rewards as candidate values
 
 Recurring question — settled here so we don't re-litigate. Real game rewards:
