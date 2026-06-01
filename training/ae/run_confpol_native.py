@@ -102,6 +102,9 @@ def main() -> None:
     ap.add_argument("--conf-override-target-none", type=int, default=1)
     ap.add_argument("--warmstart", default=str(DEFAULT_WARMSTART))
     ap.add_argument("--tag", default="confpol-native")
+    ap.add_argument("--opponent-mix-preset", default=None,
+                    help="override the full-rl opponent mix (Stage B: semis-foreign). "
+                         "Keeps full-rl's shaping/entropy/selection; only swaps WHO we train against.")
     args = ap.parse_args()
 
     warm = Path(args.warmstart)
@@ -135,6 +138,8 @@ def main() -> None:
         "--out", str(out), "--latest-out", str(latest),
         "--seed", "0",
     ]
+    if args.opponent_mix_preset:
+        cmd += ["--opponent-mix-preset", args.opponent_mix_preset]
 
     print(f"confpol-native (confidence-gated raw-policy PPO)  tag={args.tag}")
     print(f"  warm-start : {warm.name}  (best consultant, confpol farmed 0.634)")

@@ -1521,7 +1521,12 @@ def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
 
     if args.preset == "full-rl":
         args.curriculum = "none"
-        args.opponent_mix_preset = "full-rl"
+        # full-rl's opponent mix is the default, but an explicitly-passed
+        # --opponent-mix-preset wins (Stage-B Semis uses --preset full-rl for the
+        # proven shaping/entropy/selection knobs + semis-foreign for the mix).
+        args.opponent_mix_preset = (
+            args.opponent_mix_preset if args.opponent_mix_preset != "none" else "full-rl"
+        )
         args.opponents = "scripted"
         args.eval_opponents = "cloudsuite"
         args.selection_manager = "policy"
