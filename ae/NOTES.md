@@ -264,9 +264,19 @@ Semis-realistic selector.**
      `all_farmer` (native-u100 margin −291.8) and `adversarial`. Improvement
      there on the EVAL_ONLY opponents is the win condition; anywhere else is
      likely proxy memorization.
-  - **Promotion bar:** beat `confpol-native-u100` (cloud 0.661) by a visible
-    margin on a real cloud submit. `confpol-native-u100` stays the deploy floor
-    regardless. Cloud rebuild+submit happens on the Workbench (not this Mac).
+  - **Promotion bar (REVISED 2 Jun — Semis objective is competitive placement,
+    not cloud reward):** the **melee gate is now the PRIMARY selector** — a rung
+    is promotable if it beats `confpol-native-u100` on worst-bracket
+    `mean_placement` + margin AND that gain shows up on the **EVAL_ONLY holdout**
+    (not just trained opponents). **Cloud is demoted to a cheap final
+    cross-check on the 1–2 finalists** (catch local self-deception; we do NOT
+    submit every rung). Rationale: Semis is a 6-team placement race vs other
+    teams' models, so the melee metric models the real goal; cloud measures
+    absolute reward (possibly still the stale qualifier eval). Caveat that keeps
+    cloud in the loop: the melee runs on OUR proxies and has false-positived
+    hard (self_policy melee-1st, cloud 0.507) — cloud is the only INDEPENDENT
+    signal, so a finalist must not crater on it. `confpol-native-u100` stays the
+    deploy floor regardless. Cloud rebuild+submit is Workbench-only (not this Mac).
 
 ### The novice-determinism lever (the fixed seed-42 map) — LIVE, under-exploited
 
