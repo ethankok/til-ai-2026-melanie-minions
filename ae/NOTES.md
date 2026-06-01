@@ -9,15 +9,33 @@
 > commands. The archive is intentionally redundant with the digest; you only
 > need it when you want the exact per-submission detail behind a claim here.
 >
-> _Digest last refreshed: 1 June 2026 (competitor teardown + novice-determinism
-> correction + reward-calibration ruling)._
+> _Digest last refreshed: 1 June 2026 evening (eval went DETERMINISTIC → variance
+> farming dead; opening-book line closed for the eval at 0.626 = confpol;
+> field re-rank in progress. Earlier today: competitor teardown +
+> novice-determinism correction + reward-calibration ruling)._
 
 ---
 
 ## Read this first
 
-### Current state (1 June 2026)
+### Current state (1 June 2026, evening)
 
+- **🎯 TL;DR for the next session:**
+  1. **The cloud AE eval is now DETERMINISTIC** (org seeded it 1 Jun). 1 submit =
+     true score; **variance farming is dead** (see *Measurement reality*). Re-rank
+     by submitting old image tags — they persist on the Workbench
+     (`docker images | grep ae`; `til submit ae <tag>` needs no rebuild).
+  2. **Deployed/best = confpol-u860 (`AE_MODE=confidence_policy_hybrid`) = 0.626**
+     on the new eval. That's the number to beat.
+  3. **Opening-book line is CLOSED** for the eval: v1 (heuristic gate) regressed
+     to 0.584; v2 (confpol-correct gate) = **0.626 = confpol exactly** → the
+     opening never fires on our eval spawn (∈ {13,9/3,12/12,3}, which confpol
+     opens well). All infra kept; not the default.
+  4. **IN PROGRESS:** re-ranking every distinct historical model on the new
+     deterministic eval (`training/ae/resubmit_rerank.sh` — tether/heuristic
+     baselines, confpol-native rungs, pure policy/hybrid). **Pending: log those
+     scores, pick the true best, ship it.** Key question: does the bare heuristic
+     tie confpol at ~0.62 (→ drop the NN) or not?
 - **Phase:** Qualifiers closed. Semifinals prep runs through **2026-06-10**. We
   placed 15th on the Novice path, so the expected Semifinals Match-1 bracket is
   seeds ≈ 3/8/9/14/15/20. AE is 40% of the score and our single biggest lever —
@@ -197,35 +215,45 @@ heuristic transfers best precisely because it does not learn local-opponent
 quirks.** Any new learning attempt must have a credible answer to "why won't
 this overfit the local opponents like the last ten attempts did?"
 
-### Measurement reality (read before trusting any cloud number)
+### Measurement reality — ⚠ CHANGED 1 Jun: the cloud eval is now DETERMINISTIC
 
-- **Cloud σ ≈ 0.053 on a byte-identical image.** A single cloud submission
-  carries ~±0.10 (95% CI = ±2σ) of pure measurement noise from opponent-seed
-  sampling at the evaluator. Speed score is stable (σ ≈ 0.004); only accuracy
-  varies. **A single cloud score proves almost nothing.**
-- **Power reality:** at σ=0.053, a +0.05 effect needs ~18 submissions/arm to
-  resolve; +0.02 needs ~111/arm. Sub-0.05 cloud effects are **not resolvable**
-  with any realistic submission budget. Cloud is for confirming *large* moves,
-  not ranking near-ties.
-- Cloud submissions are **unlimited** (the old "3/week budget" assumption was
-  wrong). Only build/test wall-clock costs anything.
+- **As of 1 Jun the organisers SEEDED the AE eval and removed non-determinism.**
+  Proven empirically: confpol-u860 farmed **0.626 ×3 byte-identical**, opening-v2
+  **0.626 ×5 byte-identical** — zero variance. **Same image → same score.**
+- **Consequence: 1 submission = the true score. Variance farming is OBSOLETE.**
+  The whole `variance_farm.py` / σ=0.053 / "n≥18 to resolve +0.05" apparatus
+  below was built for the OLD noisy eval and **no longer applies** — do NOT
+  re-submit the same image n times; do NOT discount a single score as noise.
+  One submit per distinct image now cleanly ranks everything.
+- **The eval appears to evaluate us at a FIXED spawn ∈ {13,9 / 3,12 / 12,3}**
+  (inferred 1 Jun: opening-v1, which enabled those spawns, scored 0.584 ≠ confpol;
+  opening-v2, which disables them, scored 0.626 = confpol *exactly* → the opening
+  never fires ⇒ our eval spawn is one v2 disables, i.e. one confpol opens well).
+  Not 100% confirmed; semis *bracket* matches may assign other spawns.
+- **Org also said they "may change the deployed opponent models"** (away from the
+  BenBots, toward other teams' models). If/when that happens the whole ranking
+  can shift — re-rank the field again (cheap now, 1 submit each).
+- ⤵ **HISTORICAL (pre-1-Jun noisy eval, kept for context):** cloud σ ≈ 0.053 on a
+  byte-identical image (±0.10 per single submit); +0.05 needed ~18 submits/arm to
+  resolve; `variance_farm.py` + the `cloud_samples.json` ledger existed to farm
+  n≥5 and compare. All the farmed means in this file (0.634, 0.599, 0.584 …) are
+  old-eval numbers; the new deterministic eval supersedes them (confpol = 0.626).
 
 ### How to evaluate properly (the gate)
 
-1. **Local gate = `training/ae/multi_seed_eval.py`**, n≥5 hash seeds × sim seeds
-   × 6 rounds, against the canonical `heuristic-C+bomb7` baseline
-   (`w3_2_C_bomb7_n5.json`, weighted_mean 0.2842 ± 0.0074). Promotion bar:
-   beat baseline by **>1σ**, with no semifinals-relevant suite collapsing.
-   Single-seed in-training eval is hash-noise overfit (~0.08–0.09 weighted gap
-   to multi-seed) — **never gate on it.**
-   - `PYTHONHASHSEED` is auto-pinned to 0 in all entry points; unpinned hashing
-     was silently adding 0.10+ drift to every pre-24-May sweep.
-2. **Cloud decision tool = `training/ae/variance_farm.py`** (`summary`,
-   `compare`, `plan`, `add`) reading the append-only ledger
-   `training/ae/data/cloud_samples.json`. Use it to (a) variance-farm n≥5
-   resubmissions of an identical image before claiming a cloud result, and
-   (b) check whether two configs are even statistically distinguishable before
-   spending submissions.
+1. **Local gate = `training/ae/multi_seed_eval.py`** (still valid as a *local*
+   pre-filter), n≥5 hash seeds × sim seeds × 6 rounds vs the `heuristic-C+bomb7`
+   baseline (`w3_2_C_bomb7_n5.json`, 0.2842 ± 0.0074). `PYTHONHASHSEED` auto-pinned
+   to 0 everywhere. BUT: local lift has repeatedly NOT transferred to cloud — use
+   local only to reject obviously-bad candidates, not to predict cloud rank.
+2. **Cloud is now the cheap ground truth: 1 `til submit` = the score.** Re-rank by
+   submitting one tag per distinct image (see `training/ae/resubmit_rerank.sh`).
+   `variance_farm.py` is retained only as a tidy ledger/ranker (`add`/`summary`);
+   its variance/power math is moot under the deterministic eval.
+   - **Resubmit old models WITHOUT rebuilding:** `til build` images persist in the
+     Workbench Docker daemon as `melanie-minions-ae:<tag>`; `til submit ae <tag>`
+     re-uploads the existing image. `docker images | grep ae` lists them. Lets us
+     re-score every historical build on the new eval for free.
 
 ### What works / keep doing
 
@@ -234,10 +262,11 @@ this overfit the local opponents like the last ten attempts did?"
   inference cost.
 - The **C+bomb7** profile is the best-ranked heuristic config at the calibrated
   local gate (+1.13σ over baseline; wins defense_trap/top_seed_proxy/
-  bracket_proxy — every semifinals-relevant suite; only loses pressure2). Use it
-  for any cloud variance-farming.
-- Multi-seed local eval + variance-farm cloud confirmation is the only honest
-  measurement loop. Use it.
+  bracket_proxy — every semifinals-relevant suite; only loses pressure2).
+- **Measurement loop (post-1-Jun):** local multi-seed eval to *reject* bad
+  candidates, then **a single `til submit` per config = the true cloud score**
+  (eval is deterministic now). Local lift has repeatedly failed to transfer, so
+  trust cloud for the rank; local only filters the obviously-bad.
 
 ### Dead ends — DO NOT REDO (each cost a session; all confirmed negative)
 
@@ -604,6 +633,25 @@ Full pipeline, all TDD (parity against the real env is the spine):
   sign matches cloud sign ⇒ planner-mismatch, not transfer gap. **Reverted to
   `AE_MODE=confidence_policy_hybrid`.** Takeaway: lock opening gates against the
   *deployed* planner; openings only pay where that planner opens the spawn poorly.
+
+### 5. opening v2 + the eval went DETERMINISTIC (1 Jun PM)
+
+- **opening v2 (confpol-correct gate) built.** Re-swept all horizons over confpol
+  (`sweep_openings.py --planner confpol`) → enables **9,13 (H20 +0.174) / 2,6 (H8
+  +0.119) / 6,2 (H12 +0.117)**, +0.068 local. Baked to `ae/src/openings_gate.json`
+  via `pack_deploy_gate.py`.
+- **⚡ Eval went DETERMINISTIC (org, ~1 Jun PM):** "AE advanced now seeded,
+  non-determinism removed; may change deployed models so teams see performance vs
+  other models rather than BenBots." Confirmed: byte-identical resubmits → identical
+  scores. **Variance farming obsolete; 1 submit = true score.**
+- **New-eval scores:** confpol-u860 = **0.626** (vf2/4/6 all 0.626); opening-v2 =
+  **0.626 ×5** — *= confpol exactly* ⇒ opening never fires on the eval spawn. Since
+  v1 (enabled 13,9/3,12/12,3) *did* differ (0.584), **eval spawn ∈ {13,9/3,12/12,3}**
+  — one confpol opens well, so no opening helps. **Opening line closed for the eval.**
+- **Re-rank launched** (`resubmit_rerank.sh`): 1 submit per distinct historical
+  image (tether-v1, heuristic-c-bomb7, confpol-native-u100/200/360, heuristic-a-bomb7,
+  pand-policy, pand-hybrid). **Pending at session end — log results, pick true best,
+  deploy.** Resubmit needs no rebuild (images persist as `melanie-minions-ae:<tag>`).
 
 ## 26 May 2026 (late) — methodology + calibration session
 

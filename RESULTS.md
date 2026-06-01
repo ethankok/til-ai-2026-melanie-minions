@@ -1,6 +1,32 @@
 # TIL-AI 2026 Submission Results
 
 Team: `melanie-minions`
+Last updated: **1 June 2026 (eval went DETERMINISTIC; opening-book line closed; field re-rank in progress).**
+
+**1 Jun 2026 — headline events (full detail in [ae/NOTES.md](ae/NOTES.md)):**
+- **⚡ The cloud AE eval became DETERMINISTIC** (org seeded it + removed
+  non-determinism; "may change deployed opponent models away from BenBots"). Proven:
+  byte-identical resubmits give identical scores. **Variance farming is obsolete —
+  1 `til submit` = the true score.** All "farmed mean" numbers below are OLD-eval.
+- **New-eval scores:** `confpol-u860` (`AE_MODE=confidence_policy_hybrid`, bc.pt =
+  `pandemonium-v1-best-u860`) = **0.626 / ~0.84** (was 0.634 old). This is the
+  current deployed best.
+- **Opening-book line (built + closed this session).** Divergence-gated Novice
+  opening prefix. v1 (gate locked over the bare heuristic) **regressed** confpol on
+  cloud (0.584 vs 0.634). Re-locked over confpol (v2, enables spawns 9,13/2,6/6,2):
+  on the new eval **= 0.626, identical to confpol** → the opening never fires on
+  our eval spawn (∈ {13,9/3,12/12,3}, which confpol opens well). Infra kept; not the
+  default. Lesson: validate opening gates against the *deployed* planner.
+- **Competitor intel:** `curryfarmer`/royal-recruits public repo = **0.715/0.807**
+  via deep novice-determinism exploitation (opening book + dist/opponent LUTs +
+  forward-sim planner + "defense wins / immortality" model). The bar to chase.
+- **IN PROGRESS:** re-ranking every distinct historical AE image on the new
+  deterministic eval (`training/ae/resubmit_rerank.sh`) — heuristic baselines,
+  confpol-native rungs, pure policy/hybrid. Resubmit needs no rebuild (images
+  persist as `melanie-minions-ae:<tag>`). Pending: log scores, pick true best, ship.
+
+---
+
 Last updated: 29 May 2026 (LLM rationale-mining + base-tether cloud A/B).
 Ran an LLM-as-player experiment then pivoted to mining LLM rationales of
 heuristic actions for heuristic tweaks. Submitted the one surviving lead
