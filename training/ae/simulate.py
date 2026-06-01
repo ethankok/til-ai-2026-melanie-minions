@@ -174,6 +174,15 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
     if name == "confidence_hybrid":
         from confidence_hybrid_manager import ConfidenceHybridAEManager
         return ConfidenceHybridAEManager(**kwargs)
+    if name in ("confidence_policy_hybrid", "confpol"):
+        # The deployed Pandemonium incumbent: heuristic-first, raw PPO policy
+        # consulted only on low-confidence ticks. Checkpoint via
+        # AE_POLICY_CHECKPOINT (local: training/ae/checkpoints/...-u860.pt).
+        from confidence_policy_hybrid_manager import ConfidencePolicyHybridAEManager
+        return ConfidencePolicyHybridAEManager(**kwargs)
+    if name == "policy":
+        from policy_manager import PolicyAEManager
+        return PolicyAEManager(**kwargs)
     if name == "scripted_hybrid":
         from scripted_hybrid_manager import ScriptedHybridAEManager
         return ScriptedHybridAEManager(**kwargs)
@@ -320,6 +329,10 @@ def run_one_round(
             op._reset_memory()
 
     cumulative_us = 0.0
+    # Per-agent cumulative reward for the head-to-head melee metric (placement +
+    # margin). The PettingZoo AEC loop calls env.last() for every agent on its
+    # turn, so we can accumulate all 6 cumulative rewards in the same pass.
+    cumulative: defaultdict[str, float] = defaultdict(float)
     action_counter: Counter[int] = Counter()
     component_totals: Counter[str] = Counter()
     base_failure_counter: Counter[str] = Counter()
@@ -343,6 +356,7 @@ def run_one_round(
 
     for agent in env.agent_iter():
         observation, reward, termination, truncation, info = env.last()
+        cumulative[agent] += float(reward)   # every agent, before the term continue
         if agent == agent_id_us:
             cumulative_us += float(reward)
             terminated_us = bool(termination or truncation)
@@ -438,9 +452,22 @@ def run_one_round(
         # which we treat as one G_t per game).
         traj["rewards"] = [0.0] * len(traj["state_keys"])
 
+    # Head-to-head melee summary. Placement = our rank among the 6 by cumulative
+    # reward (1 = best); ties broken consistently by agent index. Margin = our
+    # cumulative reward minus the best opponent's.
+    all_agents = list(env.possible_agents)
+    us_reward = cumulative[agent_id_us]
+    other_rewards = [cumulative[a] for a in other_ids]
+    margin = us_reward - (max(other_rewards) if other_rewards else 0.0)
+    ranked = sorted(all_agents, key=lambda a: (-cumulative[a], all_agents.index(a)))
+    placement = ranked.index(agent_id_us) + 1
+
     return {
         "score": cumulative_us / 1000.0,  # matches the cloud's /1000 scaling
         "total_reward": cumulative_us,
+        "placement": placement,
+        "margin": margin,
+        "cumulative_all": {a: float(cumulative[a]) for a in all_agents},
         "traj": traj,
         "diagnostics": {
             "action_counts": {ACTION_NAMES[a]: c for a, c in sorted(action_counter.items()) if 0 <= a < len(ACTION_NAMES)},
@@ -505,6 +532,8 @@ def run_simulation(
 
     scores: list[float] = []
     totals: list[float] = []
+    placements: list[int] = []
+    margins: list[float] = []
     diagnostics: list[dict] = []
     all_traj = {
         "state_keys": [],
@@ -522,6 +551,8 @@ def run_simulation(
         )
         scores.append(result["score"])
         totals.append(result["total_reward"])
+        placements.append(int(result["placement"]))
+        margins.append(float(result["margin"]))
         diagnostics.append(result["diagnostics"])
 
         if log_traj:
@@ -580,6 +611,14 @@ def run_simulation(
         "p50": float(np.percentile(scores, 50)),
         "p75": float(np.percentile(scores, 75)),
         "scores": [float(s) for s in scores],
+        # Head-to-head melee aggregates (6-team placement race). mean_placement
+        # is the headline robustness number; win_rate = fraction we place 1st;
+        # mean_margin = mean lead over the best opponent (negative = we lose the
+        # field on average). placement_hist counts 1st..6th finishes.
+        "mean_placement": float(np.mean(placements)) if placements else 0.0,
+        "mean_margin": float(np.mean(margins)) if margins else 0.0,
+        "win_rate": float(np.mean([p == 1 for p in placements])) if placements else 0.0,
+        "placement_hist": {str(k): int(sum(1 for p in placements if p == k)) for k in range(1, 7)},
         "diagnostics": {
             "mean_bombs_placed": _mean_diag("bombs_placed"),
             "mean_unique_cells_visited": _mean_diag("unique_cells_visited"),

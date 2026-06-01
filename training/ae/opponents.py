@@ -756,7 +756,40 @@ OPPONENT_SUITES = {
         "counter_defender",
         "cluster_hunter",
     ],
+    # ---------------------------------------------------------------------
+    # Semifinals melee brackets (1 Jun 2026). Each is the 5 opponent slots of
+    # one 6-team melee, filled with the FOREIGN (non-mirror) pool from
+    # foreign_opponents.py — see docs/superpowers/specs/2026-06-01-ae-semis-eval-design.md.
+    # These deliberately MIX train-ok and eval-only foreign opponents so the
+    # melee gate always sees held-out opponents; the train/eval split only
+    # constrains Stage-B training, not these eval brackets.
+    # ---------------------------------------------------------------------
+    "semis_mixed": [
+        "curry_aggro", "self_policy", "evbot", "anti_aggro_exploiter", "self_heuristic",
+    ],
+    "all_aggressive": [
+        "aggressive_proxy", "aggressive_proxy", "curry_aggro", "aggressive_proxy", "evbot",
+    ],
+    "all_farmer": [
+        "anti_aggro_exploiter", "self_heuristic", "curry_fortress", "anti_aggro_exploiter", "self_tactical",
+    ],
+    "adversarial": [
+        "aggressive_proxy", "curry_aggro", "anti_aggro_exploiter", "curry_fortress", "self_policy",
+    ],
 }
+
+# The 4 melee brackets, in report order (worst-case probe last).
+MELEE_BRACKETS = ["semis_mixed", "all_aggressive", "all_farmer", "adversarial"]
+
+
+def _foreign_names() -> tuple[str, ...]:
+    """Lazy import to avoid paying foreign_opponents' import cost (torch, curry)
+    unless a foreign opponent is actually requested."""
+    try:
+        from foreign_opponents import FOREIGN_NAMES
+        return FOREIGN_NAMES
+    except Exception:
+        return ()
 
 
 def resolve_opponent_spec(spec: str) -> list[str]:
@@ -770,7 +803,8 @@ def resolve_opponent_spec(spec: str) -> list[str]:
         names = names * 5
     if len(names) != 5:
         raise ValueError(f"need 5 opponent names (got {len(names)}): {names}")
-    unknown = [n for n in names if n not in OPPONENT_NAMES]
+    known = set(OPPONENT_NAMES) | set(_foreign_names())
+    unknown = [n for n in names if n not in known]
     if unknown:
         raise ValueError(f"unknown opponent names: {unknown}")
     return names
@@ -821,6 +855,12 @@ def make_opponent(name: str, seed: int | None = None) -> OpponentFn:
         return StrongMixedOpponent(seed)
     if name == "mixed":
         return MixedOpponent(seed)
+    # Delegate unknown names to the foreign (non-mirror) pool so named brackets
+    # and `validate_cloud_suite.py --suites semis_mixed` "just work" through the
+    # existing harness. make_pool seeds each foreign instance independently.
+    from foreign_opponents import FOREIGN_NAMES, make_foreign_opponent
+    if name in FOREIGN_NAMES:
+        return make_foreign_opponent(name, seed=seed)
     raise ValueError(f"unknown opponent name: {name!r}")
 
 

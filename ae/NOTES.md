@@ -163,12 +163,74 @@ Semis-realistic selector.**
   `.venv/bin/python training/ae/melee_eval.py --rounds 12 --hash-seeds 0 1 2 --sim-seeds 42 137 --summary-out training/ae/data/melee-rerank.json`
   (add ladder rungs with `--confpol-ckpt LABEL=PATH`). **confpol-u860 (0.626
   cloud) stays the deploy floor regardless.**
-- **Early read (smoke + tiny re-rank):** against the foreign field the **bare
-  C+bomb7 heuristic is exposed** — placed 4th/6 in `semis_mixed` (margin −169)
-  and **6th/last in `all_farmer`** (margin −381): it loses the low-conflict
-  farming race, the exact dynamic curryfarmer exploits. confpol-u860 was more
-  robust (lower worst-bracket placement) in the smoke. Full re-rank numbers:
-  see `training/ae/data/melee-rerank.json` once the run lands.
+- **First full re-rank (1 Jun, n=3 hash × 6 rounds/bracket, `melee-rerank.json`).**
+  Worst-bracket `mean_placement` (lower=less exploitable) / min-margin / semis_mixed score:
+  | candidate | semis_mixed | all_aggr | all_farmer | adversarial | worst-place | verdict |
+  |---|---|---|---|---|---|---|
+  | confpol-u860 (incumbent) | 2.33 (−60) | 2.89 (−34) | **1.00 (+14)** | **5.78 (−259)** | 5.78 | — |
+  | heuristic-cbomb7 | 3.94 (−162) | 1.00 (+29) | 4.56 (−388) | 1.78 (−46) | 4.56 | not promotable |
+  | self-policy-u860 | **1.00 (+165)** | **1.17 (+107)** | **1.11 (+142)** | 3.28 (−108) | **3.28** | not promotable |
+
+  **⚠ READ THIS, do NOT over-react:** raw `self_policy` (full control) *dominates
+  the local melee* (1st in 3/4 brackets, best worst-place 3.28) — **but this is a
+  textbook FALSE POSITIVE of the exact overfit disease this whole project fights.**
+  Cloud ground truth already says raw-policy-full-control = **0.507** (NOTES
+  "Pandemonium RESULTS"), far below confpol 0.626. The melee inflates it because
+  (a) `self_policy` is partly IN the opponent pool (semis_mixed/adversarial), so
+  it's beating near-copies of itself, and (b) the slot-0 fixed-Novice spawn it
+  trained on. **Lesson: the melee is a better RELATIVE/robustness gate and a great
+  weakness map, but it is still LOCAL — never read absolute local dominance as a
+  cloud promotion; the cloud submit (deterministic, 1=truth) is the arbiter.** The
+  minimax-plus-margin conjunction *correctly withheld promotion* from self_policy
+  (fails margin≥0 in adversarial), which is the gate doing its job.
+- **Durable findings from the weakness map** (these are robust, not overfit):
+  (1) the **`adversarial` bracket is everyone's worst** — confpol 5.78th/−259,
+  even self_policy only 3.28th; base-siege+counter-aggressors+strong-farmer is the
+  hole to close. (2) The **bare heuristic loses the farming race** (`all_farmer`
+  4.56th, −388) — exactly the curryfarmer "immortality/defense-wins" dynamic.
+  (3) confpol is the most *balanced* deployable (no bracket worse than ~3 except
+  adversarial). **No candidate is promotable over confpol-u860 under the full
+  conjunction → confpol stays deployed.** Re-run with the new cloud-best
+  `confpol-native-u100` (0.661) as incumbent via
+  `--confpol-ckpt native-u100=training/ae/checkpoints/confpol-native-u100.pt`.
+- **Second re-rank DONE (2 Jun, `melee-rerank-u100.json`, incumbent =
+  `confpol-native-u100`, + early rungs u25/u50/u75).** Same config (n=3 hash ×
+  6 rounds, sim 42). Worst-bracket `mean_placement` / min-margin / semis_mixed:
+  | candidate | semis_mixed | all_aggr | all_farmer | adversarial | worst-place | min-margin | verdict |
+  |---|---|---|---|---|---|---|---|
+  | native-u100 (incumbent) | 2.72 | 4.39 | 4.17 | 4.83 | **4.83** | −291.8 | — |
+  | confpol-u860 (old deploy) | 2.22 | 3.00 | **1.33** | 5.83 | 5.83 | −275.2 | not promotable |
+  | heuristic-cbomb7 | 4.06 | **1.22** | 4.78 | 2.11 | 4.78 | −418.3 | not promotable |
+  | self-policy-u860 | **1.00** | 1.67 | **1.06** | 3.28 | **3.28** | −129.3 | not promotable (false-pos) |
+  | native-u25 | 2.00 | 1.83 | 4.00 | 4.61 | 4.61 | −181.8 | not promotable |
+  | native-u50 | 2.67 | 6.00 | 3.94 | 5.00 | 6.00 | −236.0 | not promotable |
+  | native-u75 | 1.22 | 3.89 | 4.61 | 4.83 | 4.83 | −267.9 | not promotable |
+
+  **Two real takeaways:**
+  1. **The melee gate AGREES with the deterministic cloud re-rank on the one
+     comparison where we have ground truth:** native-u100 (cloud 0.661) is *not
+     beaten* by the old deploy confpol-u860 (cloud 0.626) — u860 fails all three
+     gate criteria (worst-place 5.83 > 4.83, margin, semis_mixed). First time the
+     melee gate has been cross-checked against cloud truth and it picked the same
+     direction. (Caveat: n=1 comparison; self_policy still false-positives — see
+     below — so this is a *weak* validation, not a license to trust local melee
+     for absolute rank.)
+  2. **The "inverted-U peak might be < u100" hypothesis is NOT supported locally
+     → do NOT spend cloud rebuilds on u25/u50/u75.** None of the earlier rungs
+     improves the worst-bracket minimax over u100; u50 is actively bad (last in
+     `all_aggressive`, worst-place 6.00); u75 has a strong `semis_mixed` (1.22,
+     0.89 win) but collapses in `all_farmer`/`adversarial` (4.61/4.83). u100 is
+     the most *balanced* native rung. The melee says the earlier rungs are not
+     worth a Workbench rebuild+submit — closes that "Next" item.
+  - **self-policy false-positive reproduced exactly** (dominates 3/4 brackets,
+    best worst-place 3.28) and the conjunction **correctly withheld promotion**
+    (margin ✗ in adversarial −129.3). Cloud truth for raw-policy-full-control is
+    0.507 ≪ confpol — the gate doing its job.
+  - Durable holes unchanged: `adversarial` + `all_farmer` are everyone's worst;
+    native-u100's deepest loss is the farming race (`all_farmer` margin −291.8).
+  - **Net: confpol-native-u100 (0.661) stays the ship pick; nothing local
+    dethrones it.** Effort should go to Stage B (close the farming-race /
+    adversarial holes via the foreign curriculum), not to re-submitting old rungs.
 - **Stage B (NOT yet run — 1 manual 4-day curriculum fits before 06-10):**
   warm-start the confpol-native line with `--opponent-mix-preset semis-foreign`,
   gate every checkpoint with `melee_eval.py`, **watch the EVAL_ONLY holdout** —

@@ -86,6 +86,10 @@ OPPONENT_MODES = (
     "bracket_proxy",
     "top_seed_proxy",
     "defense_trap",
+    # Stage-B Semifinals curriculum: draw opponents from the FOREIGN
+    # (non-mirror) TRAIN-OK pool, mixed with one legacy scripted slot. The
+    # sampler is hard-gated against FOREIGN_EVAL_ONLY (see _foreign_train_blend).
+    "foreign_train",
 )
 
 OPPONENT_MIX_PRESETS = {
@@ -93,7 +97,39 @@ OPPONENT_MIX_PRESETS = {
     # local random is known-misleading, while small planner/aggressive/league
     # slices keep the policy from overfitting one handcrafted proxy.
     "full-rl": "scripted:0.35,cloudsuite:0.35,pressure2:0.15,planner:0.05,aggressive:0.05,league:0.05",
+    # Stage-B Semifinals blend: half the games face the FOREIGN non-mirror
+    # TRAIN-OK pool (curry / self_policy / evbot / self_heuristic), the rest the
+    # legacy scripted/cloudsuite proxies for diversity. The FOREIGN_EVAL_ONLY
+    # holdout is NEVER sampled here (enforced in _foreign_train_blend) — that is
+    # the only local guard against proxy-overfit. Warm-start the confpol-native
+    # line and gate every checkpoint with melee_eval.py.
+    "semis-foreign": "foreign_train:0.5,scripted:0.25,cloudsuite:0.25",
 }
+
+
+def _foreign_train_blend() -> list[str]:
+    """The 5-slot Stage-B foreign training blend, hard-filtered against the
+    EVAL-ONLY holdout. Overridable via AE_FOREIGN_TRAIN_BLEND (comma list); the
+    EVAL-ONLY guard is applied regardless of the override.
+
+    This is the single most important guard in the redesign: training against
+    the same opponents we *select* on just replaces "overfit our heuristics"
+    with "overfit the proxy". If any EVAL-ONLY name leaks in, we abort loudly."""
+    from foreign_opponents import FOREIGN_EVAL_ONLY, FOREIGN_TRAIN_OK
+    raw = os.environ.get("AE_FOREIGN_TRAIN_BLEND")
+    if raw:
+        names = [n.strip() for n in raw.split(",") if n.strip()]
+    else:
+        # 4 foreign TRAIN-OK + 1 legacy scripted for behavioral diversity.
+        names = ["curry_aggro", "self_policy", "evbot", "self_heuristic", "rusher"]
+    leaked = [n for n in names if n in set(FOREIGN_EVAL_ONLY)]
+    if leaked:
+        raise SystemExit(
+            f"[train_ppo] FOREIGN_EVAL_ONLY opponents must NEVER be trained "
+            f"against (would defeat the held-out transfer probe): {leaked}. "
+            f"Allowed foreign-train names: {FOREIGN_TRAIN_OK}."
+        )
+    return names
 
 CURRICULA = {
     # Warm up on easy legal-action pressure, then move into the opponent
@@ -676,7 +712,7 @@ def _make_opponents(
         choices.append(AggressivePlannerOpponent())
     if mode in {"frozen", "mixed", "league", "selfplay"}:
         choices.append(FrozenPolicyOpponent(_frozen_opponent_actor(), device, n_frames))
-    if mode in {"scripted", "cloudsuite", "pressure2", "strong_realistic", "base_rush_exploit", "bracket_proxy", "top_seed_proxy", "defense_trap"}:
+    if mode in {"scripted", "cloudsuite", "pressure2", "strong_realistic", "base_rush_exploit", "bracket_proxy", "top_seed_proxy", "defense_trap", "foreign_train"}:
         # Tier 2 #9: train against the same scripted library we use in
         # training/ae/simulate.py so the policy learns to be robust across
         # the strategy space cloud opponents likely occupy. ``cloudsuite``
@@ -694,7 +730,10 @@ def _make_opponents(
             print(f"[train_ppo] scripted opponents unavailable ({exc}); using random", flush=True)
             choices = [_random_opponent]
         else:
-            scripted_names = resolve_opponent_spec("library" if mode == "scripted" else mode)
+            if mode == "foreign_train":
+                scripted_names = _foreign_train_blend()
+            else:
+                scripted_names = resolve_opponent_spec("library" if mode == "scripted" else mode)
 
             class _ScriptedAdapter:
                 """Wrap one scripted opponent for the (env, agent, obs_py)
@@ -707,10 +746,15 @@ def _make_opponents(
                     self._op = make_opponent(name, seed=seed)
 
                 def reset(self):
-                    # Re-instantiate the inner opponent so belief state is
-                    # zeroed at game boundaries. Cheap; AEManager init is
-                    # ~ms.
-                    self._op = make_opponent(self._name, seed=self._seed)
+                    # Zero belief state at game boundaries. Prefer the
+                    # opponent's own reset_for_game() when present — for the
+                    # foreign self_policy/self_tactical bots that resets the
+                    # frame-stack WITHOUT reloading the (expensive) network;
+                    # re-instantiation would reload the checkpoint every game.
+                    if hasattr(self._op, "reset_for_game"):
+                        self._op.reset_for_game()
+                    else:
+                        self._op = make_opponent(self._name, seed=self._seed)
 
                 def __call__(self, _env, _agent: str, obs_py: dict) -> int:
                     if obs_py.get("step") == 0:
