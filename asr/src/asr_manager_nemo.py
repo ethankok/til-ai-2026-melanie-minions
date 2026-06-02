@@ -28,6 +28,7 @@ from __future__ import annotations
 import io
 import inspect
 import os
+import time
 from typing import Any
 
 import numpy as np
@@ -45,6 +46,16 @@ try:  # CUDA detection without forcing a hard torch dep at import time.
     _HAS_TORCH = True
 except ImportError:
     _HAS_TORCH = False
+
+
+# Optional per-batch latency logging for Finals speed tuning. Set ASR_TIMING=1
+# to emit one "[ASR-TIMING] ..." line per batch: the decode-vs-infer split plus
+# an estimated Finals per-batch time_score. Default-OFF — zero cost and no
+# behaviour change when unset. Read at import; the Dockerfile/run sets the env
+# before the process starts. NOTE the estimate is manager-only (decode + infer);
+# it excludes the server's b64-decode + HTTP, so the harness `time=` is slightly
+# lower. Good enough to locate the bottleneck.
+_TIMING = bool(os.environ.get("ASR_TIMING"))
 
 
 def _build_lm_decoding_cfg(
@@ -434,12 +445,14 @@ class NemoASRManager:
         if not audio_bytes_list:
             return []
 
+        _t_decode = time.perf_counter() if _TIMING else 0.0
         audios: list[np.ndarray | None] = []
         for blob in audio_bytes_list:
             try:
                 audios.append(self._decode_wav(blob))
             except Exception:
                 audios.append(None)
+        _decode_ms = (time.perf_counter() - _t_decode) * 1000.0 if _TIMING else 0.0
 
         # Build the subset that actually goes into the model; carry indices so
         # we can reassemble in input order with empty strings for silences and
@@ -458,6 +471,7 @@ class NemoASRManager:
         if not audios_to_run:
             return results
 
+        _t_infer = time.perf_counter() if _TIMING else 0.0
         try:
             transcripts = self._transcribe_batch(audios_to_run)
         except Exception as exc:
@@ -472,6 +486,17 @@ class NemoASRManager:
                     return results
             else:
                 return results
+
+        if _TIMING:
+            _infer_ms = (time.perf_counter() - _t_infer) * 1000.0
+            _total_ms = _decode_ms + _infer_ms
+            _time_score = 1.0 - min(_total_ms / 1000.0, 5.0) / 5.0
+            print(
+                f"[ASR-TIMING] n={len(audios)} run={len(audios_to_run)} "
+                f"decode={_decode_ms:.0f}ms infer={_infer_ms:.0f}ms "
+                f"total={_total_ms:.0f}ms time_score~={_time_score:.3f}",
+                flush=True,
+            )
 
         for idx, text in zip(idx_to_run, transcripts):
             text = (text or "").strip()
