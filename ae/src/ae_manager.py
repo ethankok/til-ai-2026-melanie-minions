@@ -1071,6 +1071,29 @@ class AEManager:
                 cells.add(pos)
         return list(cells)
 
+    def _opponent_distance_map(
+        self, sources: list[tuple[int, int]]
+    ) -> dict[tuple[int, int], int]:
+        """Multi-source BFS: distance to the nearest believed opponent for every
+        reachable cell. Reuses self._neighbors (which respects known walls), so it
+        is geometric on the known map -- NOT restricted to self.seen and NOT
+        avoiding our danger cells (opponents path freely).
+        """
+        distance: dict[tuple[int, int], int] = {}
+        queue: deque[tuple[int, int]] = deque()
+        for cell in sources:
+            if cell not in distance:
+                distance[cell] = 0
+                queue.append(cell)
+        while queue:
+            current = queue.popleft()
+            for nxt in self._neighbors(current):
+                if nxt in distance:
+                    continue
+                distance[nxt] = distance[current] + 1
+                queue.append(nxt)
+        return distance
+
     def _bfs(
         self,
         start: tuple[int, int],

@@ -96,3 +96,20 @@ def test_believed_opponents_spawn_seed_expires_after_topen(monkeypatch):
     m.base_location = (13, 9)
     m.enemy_agents = {}
     assert m._believed_opponents(41) == []  # step > TOPEN (40) -> no spawn seed
+
+
+def test_opponent_distance_map_multisource(monkeypatch):
+    m = _open_grid_manager(monkeypatch)
+    d = m._opponent_distance_map([(0, 0), (5, 5)])
+    assert d[(0, 0)] == 0
+    assert d[(5, 5)] == 0
+    assert d[(0, 1)] == 1
+    assert d[(2, 0)] == 2
+    assert d[(5, 4)] == 1
+    assert d[(3, 5)] == 2  # nearest source (5,5): |3-5|+|5-5| = 2
+    assert d[(3, 4)] == 3  # min( (0,0)->7, (5,5)->3 ) = 3
+
+
+def test_opponent_distance_map_empty_sources(monkeypatch):
+    m = _open_grid_manager(monkeypatch)
+    assert m._opponent_distance_map([]) == {}
