@@ -1561,10 +1561,16 @@ def train(args: argparse.Namespace) -> None:
     np.random.seed(args.seed or 0)
     torch.manual_seed(args.seed or 0)
 
-    device = torch.device(
-        "cuda" if torch.cuda.is_available()
-        else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
-    )
+    if os.environ.get("AE_FORCE_CPU") == "1":
+        # MPS on long unattended runs has crashed the machine (MTLCompilerService
+        # broken pipe, 2 Jun). The net is tiny and the bottleneck is the opponent
+        # planners (CPU), so the GPU barely helps — force CPU for reliability.
+        device = torch.device("cpu")
+    else:
+        device = torch.device(
+            "cuda" if torch.cuda.is_available()
+            else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu")
+        )
     print(f"device: {device}")
     if os.environ.get("PYTHONHASHSEED") in {None, "", "random"}:
         print(

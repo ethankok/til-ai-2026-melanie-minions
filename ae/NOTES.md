@@ -243,6 +243,17 @@ Semis-realistic selector.**
   goal is the single best deployable, not a controlled comparison. (A short
   u860-warm-started `confpol-semis` run was launched first then killed before any
   rung — superseded.) Dense `confpol-semis2-u<N>.pt` ladder every 25 updates.
+  - **⚠ CRASHED + RESUMED 2 Jun (~u80).** The MacBook hard-restarted at 07:24
+    (MPS/Metal failure: `Unable to reach MTLCompilerService` — broken pipe).
+    Surviving ladder: `confpol-semis2-u25/u50/u75.pt` + `-latest.pt` (epoch 80).
+    **Resumed** warm-started from `confpol-semis2-latest.pt` under a NEW tag
+    **`confpol-semis2b`** (so the original u25/u50/u75 rungs are NOT clobbered) —
+    so `confpol-semis2b-u<N>` ≈ original **u80 + N** in real training terms.
+    **Forced CPU (`AE_FORCE_CPU=1`)** to avoid another Metal crash on the long
+    unattended run (added to `train_ppo.py`; the net is tiny + the bottleneck is
+    the opponent planners, so MPS barely helped anyway). Relaunch:
+    `AE_FORCE_CPU=1 EXP_DISABLE_NUMBA=1 USE_PARALLEL_GOALS=0 PYTHONHASHSEED=0 nohup caffeinate -is .venv/bin/python -u training/ae/run_confpol_native.py --opponent-mix-preset semis-foreign --tag confpol-semis2b --warmstart training/ae/checkpoints/confpol-semis2-latest.pt > training/ae/checkpoints/confpol-semis2b.run.log 2>&1 &`
+    Gate rungs from BOTH ladders (semis2 u25/u50/u75 + semis2b-u*) together.
   **NOTE the overfit risk this raises:** u100 is already the cloud peak and the
   whole line shows an inverted-U (more training past the peak LOSES cloud value).
   Fine-tuning *from* the peak means the FIRST few rungs (u25/u50) are the most
