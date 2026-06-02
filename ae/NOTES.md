@@ -25,11 +25,19 @@
      true score; **variance farming is dead** (see *Measurement reality*). Re-rank
      by submitting old image tags — they persist on the Workbench
      (`docker images | grep ae`; `til submit ae <tag>` needs no rebuild).
-  2. **🏆 NEW BEST = `confpol-native-u100` = 0.661** (deterministic eval, exact).
-     Deploy it: stage `training/ae/checkpoints/confpol-native-u100.pt` →
-     `ae/models/bc.pt`, `AE_MODE=confidence_policy_hybrid`. The image
-     `melanie-minions-ae:confpol-native-u100` is already built+submitted (0.661) —
-     `til submit ae confpol-native-u100` ships it with no rebuild.
+  2. **🏆 NEW BEST = `confpol-semis2b-u75` = 0.671** (cloud, 2 Jun A/B; beats
+     prior best `confpol-native-u100` = 0.661, which RE-submitted to 0.661 exactly
+     same-day → same-conditions, deterministic eval intact, **+0.010 is a real
+     delta**). This is the **Stage-B foreign-curriculum** candidate (confpol-native
+     line fine-tuned vs the FOREIGN non-mirror pool) — **first Stage-B rung to
+     validate on cloud, and the melee gate correctly predicted it** (2nd
+     melee→cloud agreement). Deploy: stage
+     `training/ae/checkpoints/confpol-semis2b-u75.pt` → `ae/models/bc.pt`,
+     `AE_MODE=confidence_policy_hybrid` (image `melanie-minions-ae:confpol-semis2b-u75`
+     built+submitted; staged at `gs://melanie-minions-bucket-til-26/handoff/confpol-semis2b-u75.pt`).
+     Magnitude is modest (+0.010); the real result is that the foreign curriculum
+     TRANSFERS — Stage B (`confpol-semis2c`) is still running and climbing, so
+     later rungs may go higher. `confpol-native-u100` (0.661) is the fallback floor.
   3. **Opening-book line is CLOSED** for the eval: v1 (heuristic gate) regressed
      to 0.584; v2 (confpol-correct gate) = 0.626 = confpol exactly → opening never
      fires on our eval spawn (∈ {13,9/3,12/12,3}). All infra kept; not the default.
@@ -283,6 +291,17 @@ Semis-realistic selector.**
     - **RESUMED again (tag `confpol-semis2c`, warm-start `confpol-semis2b-latest`
       ≈ real u173, CPU).** semis2c-uN ≈ real u173+N. Keep gating new rungs; stop
       only when worst-bracket placement stops improving OR held-out gains stall.
+  - **🟢🟢 CLOUD A/B 2 Jun 16:33 → semis2b-u75 = 0.671 vs native-u100 = 0.661
+    (+0.010, 0/30 errors, speed 0.844/0.849).** native-u100 RE-submitted to
+    **0.661 exactly** same session → eval opponents unchanged + still
+    deterministic ⇒ +0.010 is a REAL resolvable delta (the old "sub-0.05
+    unresolvable" caveat was the noisy eval; retired). **The melee gate's verdict
+    (semis2b-u75 > u100) TRANSFERRED to cloud** — 2nd melee→cloud agreement
+    (u100>u860, now semis2b-u75>u100) and the FIRST Stage-B foreign-curriculum
+    candidate to validate on the independent signal. Magnitude modest but the
+    method works end-to-end → keep training + gating; later semis2c rungs may go
+    higher. **`confpol-semis2b-u75` (0.671) is the new deploy pick; u100 (0.661)
+    the fallback floor.**
   **NOTE the overfit risk this raises:** u100 is already the cloud peak and the
   whole line shows an inverted-U (more training past the peak LOSES cloud value).
   Fine-tuning *from* the peak means the FIRST few rungs (u25/u50) are the most
