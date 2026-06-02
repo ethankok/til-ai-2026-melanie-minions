@@ -9,16 +9,18 @@
 > commands. The archive is intentionally redundant with the digest; you only
 > need it when you want the exact per-submission detail behind a claim here.
 >
-> _Digest last refreshed: 1 June 2026 evening (eval went DETERMINISTIC → variance
-> farming dead; opening-book line closed for the eval at 0.626 = confpol;
-> field re-rank in progress. Earlier today: competitor teardown +
-> novice-determinism correction + reward-calibration ruling)._
+> _Digest last refreshed: 2 June 2026 (Stage-B foreign-curriculum line run end to
+> end: NEW BEST `confpol-semis2b-u75` = 0.671 cloud, melee-gate-selected + cloud
+> A/B-validated vs native-u100 0.661; Stage B CONCLUDED — peak found, later rungs
+> overfit, training stopped. Also added: foreign melee eval (Stage A), peroxide
+> vendored EVAL_ONLY, public-repo scrape, AE_FORCE_CPU. Prior 1 Jun: eval went
+> DETERMINISTIC → variance farming dead; opening-book closed; competitor teardown)._
 
 ---
 
 ## Read this first
 
-### Current state (1 June 2026, evening)
+### Current state (2 June 2026)
 
 - **🎯 TL;DR for the next session:**
   1. **The cloud AE eval is now DETERMINISTIC** (org seeded it 1 Jun). 1 submit =
@@ -36,8 +38,13 @@
      `AE_MODE=confidence_policy_hybrid` (image `melanie-minions-ae:confpol-semis2b-u75`
      built+submitted; staged at `gs://melanie-minions-bucket-til-26/handoff/confpol-semis2b-u75.pt`).
      Magnitude is modest (+0.010); the real result is that the foreign curriculum
-     TRANSFERS — Stage B (`confpol-semis2c`) is still running and climbing, so
-     later rungs may go higher. `confpol-native-u100` (0.661) is the fallback floor.
+     TRANSFERS. **Stage B is now CONCLUDED (2 Jun): semis2b-u75 is the PEAK** —
+     continued training (semis2c, real u273/u348) DEGRADED it (worst-bracket melee
+     placement 3.39→3.67→5.78 on held-out brackets; over-specialized into
+     all_aggressive). Training stopped. `confpol-native-u100` (0.661) is the
+     fallback floor. **To beat 0.671 toward curryfarmer's 0.715 needs a NEW lever**
+     (different warm-start / foreign mix / peroxide base-inference trick), not more
+     of this curriculum — see the Stage B "CONCLUDED" bullet for the full trajectory.
   3. **Opening-book line is CLOSED** for the eval: v1 (heuristic gate) regressed
      to 0.584; v2 (confpol-correct gate) = 0.626 = confpol exactly → opening never
      fires on our eval spawn (∈ {13,9/3,12/12,3}). All infra kept; not the default.
