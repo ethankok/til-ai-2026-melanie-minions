@@ -254,6 +254,35 @@ Semis-realistic selector.**
     the opponent planners, so MPS barely helped anyway). Relaunch:
     `AE_FORCE_CPU=1 EXP_DISABLE_NUMBA=1 USE_PARALLEL_GOALS=0 PYTHONHASHSEED=0 nohup caffeinate -is .venv/bin/python -u training/ae/run_confpol_native.py --opponent-mix-preset semis-foreign --tag confpol-semis2b --warmstart training/ae/checkpoints/confpol-semis2-latest.pt > training/ae/checkpoints/confpol-semis2b.run.log 2>&1 &`
     Gate rungs from BOTH ladders (semis2 u25/u50/u75 + semis2b-u*) together.
+  - **🟢 STOP-CHECK 2 Jun (`melee-stopcheck.json`) → VERDICT: KEEP TRAINING, the
+    foreign curriculum is WORKING.** Gated native-u100 (incumbent) vs semis2-u25
+    (real u25) vs semis2b-u75 (real ~u155), 5 brackets, n=3 hash × 6 rounds.
+    Worst-bracket `mean_placement` (lower=less exploitable) **improves
+    monotonically with training: u100 4.61 → u25 3.89 → u155 3.33**, and the
+    gains appear on the **EVAL_ONLY held-out brackets**, not just trained
+    opponents — the generalization check passes:
+    | bracket | u100 | →u155 | held-out content |
+    |---|---|---|---|
+    | all_farmer | 4.17 | **2.17** | curry_fortress/self_tactical/anti_aggro (NO self_policy → not self-similarity) |
+    | real_field | 2.00 | **1.06** (0.94 win) | peroxide + curry |
+    | adversarial | 4.61 | **3.33** | curry_fortress |
+    | semis_mixed | 1.56 | **1.33** (+60 margin) | mixed |
+    Neither is "promotable" under the strict conjunction (both still margin<0 in
+    all_farmer/adversarial — but so is u100, which is net-negative in 4/5
+    brackets), yet semis2b-u75 is unambiguously the best of the three.
+    **`semis2b-u75` is the leading CANDIDATE** for the eventual cloud
+    cross-check; `native-u100` (0.661) stays the cloud-verified deploy floor
+    until a finalist earns its submit.
+    - **Why the entropy-collapse "stop" prior was WRONG here:** entropy fell
+      0.20→0.03-0.06, which historically = mirror-overfit + cloud regression.
+      But that pattern was on the LOCAL full-rl (mirror) curriculum. On the
+      FOREIGN curriculum measured against a FOREIGN held-out gate, the collapse
+      is the policy *specializing against real-competitor-like opponents* and it
+      TRANSFERS (held-out brackets improve). Lesson: judge Stage B by the melee +
+      EVAL_ONLY holdout, NOT by entropy or the historical inverted-U intuition.
+    - **RESUMED again (tag `confpol-semis2c`, warm-start `confpol-semis2b-latest`
+      ≈ real u173, CPU).** semis2c-uN ≈ real u173+N. Keep gating new rungs; stop
+      only when worst-bracket placement stops improving OR held-out gains stall.
   **NOTE the overfit risk this raises:** u100 is already the cloud peak and the
   whole line shows an inverted-U (more training past the peak LOSES cloud value).
   Fine-tuning *from* the peak means the FIRST few rungs (u25/u50) are the most
