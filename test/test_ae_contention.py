@@ -60,3 +60,39 @@ def test_is_item_kind(monkeypatch):
     assert m._is_item_kind("respawn_resource") is True
     assert m._is_item_kind("enemy_base") is False
     assert m._is_item_kind("low_visit") is False
+
+
+def test_believed_opponents_live_sightings_fresh_only(monkeypatch):
+    m = _open_grid_manager(monkeypatch)
+    m.enemy_agents = {(1, 0): 5, (8, 8): 1}  # last_seen steps
+    # step 6: (1,0) stale=1 (<=3 kept); (8,8) stale=5 (>3 dropped)
+    opps = m._believed_opponents(6)
+    assert (1, 0) in opps
+    assert (8, 8) not in opps
+
+
+def test_believed_opponents_excludes_own_spawn_on_fixed_map(monkeypatch):
+    m = _open_grid_manager(monkeypatch)
+    m.is_fixed_novice_map = True
+    m.base_location = (13, 9)  # BASE_LOCATIONS[0] -> spawn STARTING_LOCATIONS[0]=(14,9)
+    m.enemy_agents = {}
+    opps = m._believed_opponents(0)
+    assert (14, 9) not in opps  # our own spawn excluded
+    assert (9, 14) in opps      # slot 1 spawn included
+    assert len(opps) == 5
+
+
+def test_believed_opponents_no_spawn_seed_off_fixed_map(monkeypatch):
+    m = _open_grid_manager(monkeypatch)
+    m.is_fixed_novice_map = False  # not the fixed novice map
+    m.base_location = (13, 9)
+    m.enemy_agents = {}
+    assert m._believed_opponents(0) == []
+
+
+def test_believed_opponents_spawn_seed_expires_after_topen(monkeypatch):
+    m = _open_grid_manager(monkeypatch)
+    m.is_fixed_novice_map = True
+    m.base_location = (13, 9)
+    m.enemy_agents = {}
+    assert m._believed_opponents(41) == []  # step > TOPEN (40) -> no spawn seed

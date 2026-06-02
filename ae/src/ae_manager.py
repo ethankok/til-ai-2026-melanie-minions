@@ -1040,6 +1040,37 @@ class AEManager:
         """True for the farmable item candidate kinds produced by _choose_target."""
         return kind.startswith("item_") or kind.startswith("respawn_")
 
+    def _believed_opponents(self, step: int) -> list[tuple[int, int]]:
+        """Believed opponent cells: fixed-map spawns (opening window only) plus
+        fresh viewcone sightings. Staleness is applied as a cutoff, not returned.
+        Empty when we have no credible opponent position (post-opening, nobody in
+        view) -- the conservative no-op that keeps the lever transfer-safe.
+        """
+        cells: set[tuple[int, int]] = set()
+        if (
+            getattr(self, "is_fixed_novice_map", False)
+            and step <= self.contention_topen
+            and self.base_location is not None
+        ):
+            try:
+                from novice_map_data import BASE_LOCATIONS, STARTING_LOCATIONS
+            except ImportError:  # pragma: no cover - tables ship with the manager
+                BASE_LOCATIONS = STARTING_LOCATIONS = None
+            if BASE_LOCATIONS and STARTING_LOCATIONS:
+                our = tuple(self.base_location)
+                our_slot = next(
+                    (i for i, b in enumerate(BASE_LOCATIONS) if tuple(b) == our),
+                    None,
+                )
+                if our_slot is not None:
+                    for i, sp in enumerate(STARTING_LOCATIONS):
+                        if i != our_slot:
+                            cells.add((int(sp[0]), int(sp[1])))
+        for pos, last_seen in self.enemy_agents.items():
+            if step - int(last_seen) <= self.contention_tfresh:
+                cells.add(pos)
+        return list(cells)
+
     def _bfs(
         self,
         start: tuple[int, int],
