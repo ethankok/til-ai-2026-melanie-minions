@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections import Counter, deque
 from dataclasses import dataclass
-from math import inf
+from math import exp, inf
 import os
 import time
 from typing import Iterable
@@ -255,6 +255,16 @@ class AEManager:
         # steady item income); the demotion half is curry's real benefit
         # ("discount a base to ~0 when the bomb won't land").
         self.plan_rescore_demote_only = _env_flag("AE_PLAN_RESCORE_DEMOTE_ONLY", True)
+        # Contention-aware item valuation (AE_CONTENTION, default OFF). Discounts
+        # item targets an opponent will reach first, using free fixed-map spawn
+        # geometry + live viewcone sightings. Demote-only, item-vs-item; the
+        # confidence signal stays in static units (see _choose_target /
+        # _apply_contention) so the confidence_policy_hybrid gate is unperturbed.
+        self.contention_enabled = _env_flag("AE_CONTENTION", False)
+        self.contention_scale = max(0.1, _env_float("AE_CONTENTION_SCALE", 2.5))
+        self.contention_pfloor = min(1.0, max(0.0, _env_float("AE_CONTENTION_PFLOOR", 0.15)))
+        self.contention_topen = _env_int("AE_CONTENTION_TOPEN", 40)
+        self.contention_tfresh = _env_int("AE_CONTENTION_TFRESH", 3)
         self.item_mission_value = _env_float("AE_ITEM_MISSION_VALUE", 50.0)
         self.item_resource_value = _env_float("AE_ITEM_RESOURCE_VALUE", 25.0)
         self.item_recon_value = _env_float("AE_ITEM_RECON_VALUE", 10.0)
@@ -1024,6 +1034,11 @@ class AEManager:
         if best_pos != static_target and best_proj >= static_proj + self.plan_rescore_margin:
             return best_pos, best_kind
         return static_target, static_kind
+
+    @staticmethod
+    def _is_item_kind(kind: str) -> bool:
+        """True for the farmable item candidate kinds produced by _choose_target."""
+        return kind.startswith("item_") or kind.startswith("respawn_")
 
     def _bfs(
         self,
