@@ -1094,6 +1094,48 @@ class AEManager:
                 queue.append(nxt)
         return distance
 
+    def _apply_contention(
+        self,
+        start: tuple[int, int],
+        scored: list[tuple[float, tuple[int, int], str]],
+        opp_dist: dict[tuple[int, int], int],
+        distance: dict[tuple[int, int], float],
+        best_target: tuple[int, int],
+        best_kind: str,
+    ) -> tuple[tuple[int, int], str]:
+        """Demote-only, item-vs-item contention re-rank.
+
+        Only fires when the static winner is an item (we are farming this tick).
+        Each item's value is scaled by ``mult = max(PFLOOR, p_win)`` where
+        ``p_win = sigmoid((d_opp - d_us)/SCALE)``; the static penalty terms are
+        preserved via the delta ``adj = score - base_value*(1-mult)``. Returns the
+        best surviving item (ties on ``pos`` -> PYTHONHASHSEED-independent). A
+        non-item is never promoted. ``last_decision_confidence`` (set by the
+        caller from the static scores) is untouched, so the confpol gate is
+        unperturbed.
+        """
+        if not self._is_item_kind(best_kind):
+            return best_target, best_kind
+        best: tuple[float, tuple[int, int], str] | None = None
+        for score, pos, kind in scored:
+            if not self._is_item_kind(kind) or pos not in distance:
+                continue
+            if kind.startswith("item_"):
+                base_value = self.ITEM_VALUES.get(kind[5:], 1.0)
+            else:  # respawn_
+                base_value = 0.5 * self.ITEM_VALUES.get(kind[8:], 1.0)
+            d_us = distance[pos]
+            d_opp = opp_dist.get(pos, inf)
+            x = max(-30.0, min(30.0, (d_opp - d_us) / self.contention_scale))
+            p_win = 1.0 / (1.0 + exp(-x))
+            mult = max(self.contention_pfloor, p_win)
+            adj = score - base_value * (1.0 - mult)
+            if best is None or adj > best[0] or (adj == best[0] and pos < best[1]):
+                best = (adj, pos, kind)
+        if best is None:
+            return best_target, best_kind
+        return best[1], best[2]
+
     def _bfs(
         self,
         start: tuple[int, int],

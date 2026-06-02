@@ -113,3 +113,54 @@ def test_opponent_distance_map_multisource(monkeypatch):
 def test_opponent_distance_map_empty_sources(monkeypatch):
     m = _open_grid_manager(monkeypatch)
     assert m._opponent_distance_map([]) == {}
+
+
+def test_apply_contention_flips_to_uncontested_item(monkeypatch):
+    m = _open_grid_manager(monkeypatch)
+    # A (1,0) closer, static winner, but an opponent sits on it; B (0,4) farther,
+    # uncontested. Static scores use DIST_PENALTY=1.15: A=48.85, B=45.40.
+    scored = [(48.85, (1, 0), "item_mission"), (45.40, (0, 4), "item_mission")]
+    distance = {(1, 0): 1, (0, 4): 4}
+    opp_dist = {(1, 0): 0, (0, 4): 5}
+    target, kind = m._apply_contention(
+        (0, 0), scored, opp_dist, distance, (1, 0), "item_mission"
+    )
+    # A_adj = 48.85 - 50*(1-0.401) = 18.90 ; B_adj = 45.40 - 50*(1-0.599) = 25.35
+    assert target == (0, 4)
+    assert kind == "item_mission"
+
+
+def test_apply_contention_keeps_item_when_we_win_race(monkeypatch):
+    m = _open_grid_manager(monkeypatch)
+    scored = [(48.85, (1, 0), "item_mission"), (45.40, (0, 4), "item_mission")]
+    distance = {(1, 0): 1, (0, 4): 4}
+    opp_dist = {(1, 0): 12, (0, 4): 15}  # opponents far -> p_win ~ 1, no demotion
+    target, kind = m._apply_contention(
+        (0, 0), scored, opp_dist, distance, (1, 0), "item_mission"
+    )
+    assert target == (1, 0)
+
+
+def test_apply_contention_pfloor_one_disables(monkeypatch):
+    m = _open_grid_manager(monkeypatch, AE_CONTENTION_PFLOOR="1.0")
+    scored = [(48.85, (1, 0), "item_mission"), (45.40, (0, 4), "item_mission")]
+    distance = {(1, 0): 1, (0, 4): 4}
+    opp_dist = {(1, 0): 0, (0, 4): 5}
+    target, _ = m._apply_contention(
+        (0, 0), scored, opp_dist, distance, (1, 0), "item_mission"
+    )
+    assert target == (1, 0)  # mult clamped to 1 -> no discount -> static winner
+
+
+def test_apply_contention_item_vs_item_only(monkeypatch):
+    m = _open_grid_manager(monkeypatch)
+    # Static winner is a base -> contention must not touch it, even with an
+    # opponent sitting on a nearby item.
+    scored = [(100.0, (5, 6), "enemy_base"), (40.0, (1, 0), "item_mission")]
+    distance = {(5, 6): 2, (1, 0): 1}
+    opp_dist = {(1, 0): 0}
+    target, kind = m._apply_contention(
+        (0, 0), scored, opp_dist, distance, (5, 6), "enemy_base"
+    )
+    assert target == (5, 6)
+    assert kind == "enemy_base"
