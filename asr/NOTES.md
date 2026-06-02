@@ -66,20 +66,29 @@ export TIL_FOLDER=/home/jupyter/til
 
 # 1. Build KenLM from source (conda toolchain — no sudo). conda-forge has no
 #    usable `kenlm` binary pkg, so we compile lmplz/build_binary ourselves.
-micromamba install -y -c conda-forge cxx-compiler cmake make libboost-devel joblib tqdm
+#    NOTE: pin cmake<4. CMake 4 removed the bundled FindBoost module (CMP0167),
+#    which forces Boost's own config and fails to find the header-only
+#    boost_system component KenLM still requests. cmake 3.x's FindBoost handles
+#    it; -DBoost_NO_BOOST_CMAKE=ON keeps it in module mode.
+# Pin libboost-devel=1.85: cmake 3.31's FindBoost table doesn't know Boost 1.91
+# (fails "Could NOT find Boost (missing: system)"); 1.85 is in its known list.
+micromamba install -y -c conda-forge cxx-compiler "cmake<4" make "libboost-devel=1.85" joblib tqdm
 git clone --depth 1 https://github.com/kpu/kenlm /tmp/kenlm
-cmake -S /tmp/kenlm -B /tmp/kenlm/build -DCMAKE_PREFIX_PATH="$CONDA_PREFIX"
+cmake -S /tmp/kenlm -B /tmp/kenlm/build \
+  -DCMAKE_PREFIX_PATH="$CONDA_PREFIX" -DBOOST_ROOT="$CONDA_PREFIX" -DBoost_NO_BOOST_CMAKE=ON
 cmake --build /tmp/kenlm/build -j4
-ls /tmp/kenlm/build/bin            # expect: lmplz  build_binary  ...
+ls /tmp/kenlm/build/bin            # expect: lmplz  build_binary  ... (verified 02 Jun 2026)
 
 # 2. NeMo source checkout (for train_kenlm.py + kenlm_utils.py), tag-matched to
 #    the host NeMo runtime (2.0.0).
 git clone --depth 1 --branch v2.0.0 https://github.com/NVIDIA/NeMo /tmp/NeMo
 
-# 3. Build the n-gram LM. --nemo-root puts the repo on PYTHONPATH; no --save-nemo
-#    (2.0.0 lacks NGPU-LM .nemo packaging — the container loads the .ARPA). The
-#    script prints the produced files; preserve_arpa gives ngram_lm.tmp.arpa.
-python training/asr/build_ngram_lm.py \
+# 3. Build the n-gram LM. RUN UNDER THE NeMo ENV (`jupyterlab`) — NeMo + omegaconf
+#    live there, not in micromamba `base`; otherwise train_kenlm dies with
+#    `No module named 'omegaconf'`. --nemo-root puts the repo on PYTHONPATH; no
+#    --save-nemo (2.0.0 lacks NGPU-LM .nemo packaging — the container loads the
+#    .ARPA). The script prints produced files; preserve_arpa gives *.tmp.arpa.
+micromamba run -n jupyterlab python training/asr/build_ngram_lm.py \
     --asr-jsonl /home/jupyter/novice/asr/asr.jsonl \
     --nlp-dir /home/jupyter/novice/nlp \
     --nemo-model asr/models/parakeet-tdt-0.6b-v2.nemo \
@@ -87,6 +96,8 @@ python training/asr/build_ngram_lm.py \
     --ngram-length 6 \
     --nemo-root /tmp/NeMo \
     --kenlm-bin /tmp/kenlm/build/bin
+# (Alt: pass --python /opt/micromamba/envs/jupyterlab/bin/python instead of
+#  micromamba run. If lmplz can't find libboost, prefix: LD_LIBRARY_PATH=/opt/micromamba/lib)
 mv asr/models/ngram_lm.tmp.arpa asr/models/ngram_lm.arpa   # clean name for baking
 
 # 4. Point the image at the ARPA. In asr/Dockerfile uncomment + set:

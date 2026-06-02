@@ -252,6 +252,13 @@ class NemoASRManager:
         ``.ARPA`` emitted alongside the LM keeps the classic ``maes`` strategy
         available as a manual fallback.
         """
+        # Runtime-fallback bookkeeping. If the fused (malsd_batch) decode raises
+        # at inference time on the eval GPU, we revert to greedy instead of
+        # returning empty transcripts (which score exactly 0.000). Initialised
+        # here so the attrs always exist, even when fusion is OFF.
+        self._lm_fusion_active = False
+        self._greedy_decoding_cfg = None
+
         lm_path = os.environ.get("ASR_NGRAM_LM")
         if not lm_path:
             return
@@ -275,6 +282,11 @@ class NemoASRManager:
             base = OmegaConf.to_container(decoding_cfg, resolve=True) if decoding_cfg is not None else {}
             if not isinstance(base, dict):
                 base = {}
+            # Snapshot the current greedy strategy BEFORE switching, so a
+            # malsd_batch runtime failure can revert to it (see
+            # _fallback_to_greedy). _build_lm_decoding_cfg copies base, so this
+            # snapshot is unaffected by the switch.
+            self._greedy_decoding_cfg = dict(base)
             cfg = _build_lm_decoding_cfg(
                 base,
                 lm_path=lm_path,
@@ -285,6 +297,7 @@ class NemoASRManager:
                 blank_lm_score_mode=blank_mode,
             )
             self.model.change_decoding_strategy(OmegaConf.create(cfg))
+            self._lm_fusion_active = True
             print(
                 f"[NemoASRManager] NGPU-LM fusion ON: lm={lm_path} strategy={strategy} "
                 f"beam={beam_size} alpha={alpha} pruning={pruning_mode} blank={blank_mode}",
@@ -296,12 +309,57 @@ class NemoASRManager:
                 flush=True,
             )
 
+    def _fallback_to_greedy(self, reason: str) -> bool:
+        """Revert from fused (malsd_batch) decoding to greedy after a runtime
+        failure on the serving GPU.
+
+        malsd_batch decodes correctly on the Workbench T4 but the cloud eval
+        runs different hardware where the CUDA-graph beam path can raise for
+        every batch. The old behaviour swallowed that into empty transcripts
+        (cloud score 0.000). Now the first failure permanently reverts the
+        decoder to the greedy strategy captured in `_configure_lm_fusion`, so the
+        worst case is greedy accuracy, never blank output.
+
+        Returns True if the decoder is now greedy and the caller may retry.
+        One-shot: once malsd_batch fails on this hardware it will keep failing,
+        so we stop attempting it for the rest of the process.
+        """
+        if not self._lm_fusion_active or self._greedy_decoding_cfg is None:
+            return False
+        self._lm_fusion_active = False
+        try:
+            from omegaconf import OmegaConf  # type: ignore
+
+            self.model.change_decoding_strategy(
+                OmegaConf.create(dict(self._greedy_decoding_cfg))
+            )
+            print(
+                f"[NemoASRManager] fused decode failed ({reason}); permanently "
+                "reverted to greedy for the rest of this process",
+                flush=True,
+            )
+            return True
+        except Exception as exc:
+            print(
+                f"[NemoASRManager] greedy fallback ALSO failed ({exc})",
+                flush=True,
+            )
+            return False
+
     def _warmup(self) -> None:
         silence = np.zeros(self.TARGET_SR, dtype=np.float32)
         try:
             self._transcribe_batch([silence])
         except Exception as exc:
             print(f"[NemoASRManager] warmup transcribe failed: {exc}", flush=True)
+            # A warmup failure under fusion means malsd_batch is broken on this
+            # GPU; revert now so request #1 already serves on greedy.
+            if self._fallback_to_greedy(f"warmup: {exc}"):
+                try:
+                    self._transcribe_batch([silence])
+                    print("[NemoASRManager] warmup OK after greedy fallback", flush=True)
+                except Exception as exc2:
+                    print(f"[NemoASRManager] warmup greedy also failed: {exc2}", flush=True)
 
     # ------------------------------------------------------------------ #
     # Audio decode                                                         #
@@ -404,7 +462,16 @@ class NemoASRManager:
             transcripts = self._transcribe_batch(audios_to_run)
         except Exception as exc:
             print(f"[NemoASRManager] batch transcribe failed: {exc}", flush=True)
-            return results
+            # Never ship empty transcripts (they score 0). If fused decoding
+            # broke on this GPU, revert to greedy and retry this batch once.
+            if self._fallback_to_greedy(str(exc)):
+                try:
+                    transcripts = self._transcribe_batch(audios_to_run)
+                except Exception as exc2:
+                    print(f"[NemoASRManager] greedy retry failed: {exc2}", flush=True)
+                    return results
+            else:
+                return results
 
         for idx, text in zip(idx_to_run, transcripts):
             text = (text or "").strip()

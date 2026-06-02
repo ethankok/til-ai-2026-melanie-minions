@@ -20,16 +20,19 @@ ENV TRANSFORMERS_OFFLINE=1
 # Switch the server to the NeMo backend and select the staged TDT model.
 ENV ASR_BACKEND=nemo
 ENV ASR_NEMO_MODEL=parakeet-tdt-0.6b-v2.nemo
-# NGPU-LM n-gram shallow fusion. DEFAULT-OFF: with ASR_NGRAM_LM unset the
-# decoder stays greedy and this image is behaviourally identical to nemo-ft-v3.
-# To enable after the sweep + til-test gate clears (see asr/NOTES.md), build the
-# LM with training/asr/build_ngram_lm.py into models/ngram_lm.nemo and uncomment:
-#   ENV ASR_NGRAM_LM=/workspace/models/asr/ngram_lm.nemo
-#   ENV ASR_NGRAM_LM_ALPHA=0.3
-#   ENV ASR_BEAM_SIZE=4
-#   ENV ASR_LM_STRATEGY=malsd_batch
-#   ENV ASR_LM_PRUNING=late
-#   ENV ASR_LM_BLANK_MODE=lm_weighted_full
+# NGPU-LM n-gram shallow fusion. ENABLED (ngram-lm-on). ASR_NGRAM_LM points at
+# the baked .arpa so the TDT decoder runs malsd_batch beam search with shallow
+# n-gram fusion (local WER 0.0209 -> 0.0124). SAFE TO SHIP: if malsd_batch
+# raises on the eval GPU, the manager permanently reverts to greedy and retries
+# (never blank output / 0.000 score). To disable, comment ASR_NGRAM_LM (the
+# others are no-ops without it). To try the hardware-robust CPU-KenLM path,
+# point ASR_NGRAM_LM at the binary (models/ngram_lm) and set ASR_LM_STRATEGY=maes.
+ENV ASR_NGRAM_LM=/workspace/models/asr/ngram_lm.arpa
+ENV ASR_NGRAM_LM_ALPHA=0.3
+ENV ASR_BEAM_SIZE=4
+ENV ASR_LM_STRATEGY=malsd_batch
+ENV ASR_LM_PRUNING=late
+ENV ASR_LM_BLANK_MODE=lm_weighted_full
 WORKDIR /workspace
 
 # Install dependencies. NeMo is a heavy install; this is the longest layer.

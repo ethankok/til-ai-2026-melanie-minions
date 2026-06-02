@@ -144,6 +144,17 @@ def main() -> None:
     )
     ap.add_argument("--kenlm-bin", type=Path, default=None, help="KenLM bin folder (kenlm_bin_path=).")
     ap.add_argument(
+        "--python",
+        type=str,
+        default=sys.executable,
+        help=(
+            "Interpreter used to run train_kenlm.py. Defaults to the one running "
+            "this script. Point it at the env that has NeMo + omegaconf if they "
+            "differ (e.g. /opt/micromamba/envs/jupyterlab/bin/python), or just run "
+            "this whole script via `micromamba run -n <env> python ...`."
+        ),
+    )
+    ap.add_argument(
         "--save-nemo",
         action="store_true",
         help=(
@@ -188,7 +199,7 @@ def main() -> None:
         train_kenlm = args.nemo_root / "scripts" / "asr_language_modeling" / "ngram_lm" / "train_kenlm.py"
 
     cmd = [
-        sys.executable,
+        args.python,
         str(train_kenlm) if train_kenlm else
         "<NeMo>/scripts/asr_language_modeling/ngram_lm/train_kenlm.py",
         f"nemo_model_file={args.nemo_model}",
