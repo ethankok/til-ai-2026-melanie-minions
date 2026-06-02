@@ -302,6 +302,22 @@ Semis-realistic selector.**
     method works end-to-end → keep training + gating; later semis2c rungs may go
     higher. **`confpol-semis2b-u75` (0.671) is the new deploy pick; u100 (0.661)
     the fallback floor.**
+  - **🛑 STAGE B CONCLUDED 2 Jun (`melee-semis2c.json`) → PEAK FOUND, STOPPED.**
+    Gated the later semis2c rungs vs incumbent semis2b-u75. Worst-bracket
+    placement gets monotonically WORSE past the peak: **semis2b-u75 (≈u155) 3.39
+    → semis2c-u100 (≈u273) 3.67 → semis2c-u175 (≈u348) 5.78** — and the decline
+    is on the HELD-OUT brackets (adversarial 3.39→5.78 / −392 margin; real_field
+    1.17→2.89; semis_mixed 1.72→2.94). Mechanism: the policy over-specializes
+    into `all_aggressive` (2.89→1.00→1.00, wins everything there) and loses
+    balanced robustness everywhere else — the classic inverted-U, now on held-out
+    opponents. **The melee peak (semis2b-u75, worst-bracket ~3.3–3.4) coincides
+    with the cloud peak (0.671)** — both independent signals agree. **TRAINING
+    STOPPED; `confpol-semis2b-u75` = 0.671 is the final Stage-B deploy pick.** Not
+    worth submitting untested intermediates (real u198–248): they'd each need a
+    cloud submit to beat a validated 0.671, and the melee trend says they won't.
+    To push past 0.671 toward curryfarmer's 0.715 needs a DIFFERENT lever (new
+    warm-start / foreign mix / the peroxide base-inference trick), not more of
+    this curriculum — it has peaked.
   **NOTE the overfit risk this raises:** u100 is already the cloud peak and the
   whole line shows an inverted-U (more training past the peak LOSES cloud value).
   Fine-tuning *from* the peak means the FIRST few rungs (u25/u50) are the most
