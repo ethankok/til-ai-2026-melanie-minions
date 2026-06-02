@@ -552,6 +552,45 @@ that keeps it out of the dypm/pessimistic-search grave).
   --our heuristic --preset furnished --hash-seeds 0 1 2 --sim-seeds 42
   --extra-env AE_PLAN_RESCORE=1 --summary-out <out>.json`.
 
+### Contention-aware item valuation — BUILT, default-OFF, PENDING GATE (3 Jun)
+
+The **first AE lever that adds the opponent dimension.** Every dead action-policy
+lever (opening book, dypm-veto, plan-rescore) only re-weighted *our own* plan with
+no opponent model; our heuristic `_choose_target` scorer is **opponent-blind**
+(`value − DIST_PENALTY·dist − …`). But Semis = the fixed seed-42 Novice map, so
+`novice_map_data.STARTING_LOCATIONS` hands us all 6 spawns for free, and
+`self.enemy_agents` already tracks live viewcone sightings. This lever uses that to
+discount items an opponent reaches first — aimed squarely at the **`all_farmer`
+hole** (the −388/−291 farming-race margins). Design/plan:
+`docs/superpowers/specs/2026-06-03-ae-contention-aware-valuation-design.md` +
+`docs/superpowers/plans/2026-06-03-ae-contention-aware-valuation.md`.
+
+- **Code** ([src/ae_manager.py](src/ae_manager.py), behind **`AE_CONTENTION`
+  (default 0)**): `_believed_opponents` (fixed-map spawns in the opening +
+  fresh sightings), `_opponent_distance_map` (one multi-source BFS, reuses
+  `_neighbors`), `_apply_contention` (demote-only, **item-vs-item**: scales each
+  item by `mult=max(PFLOOR, sigmoid((d_opp−d_us)/SCALE))` via the delta
+  `adj=score−base_value·(1−mult)`; never promotes a non-item). Spliced into
+  `_choose_target` **after** the static loop, parallel to the plan-rescore block —
+  **flag-off path byte-identical**, `last_decision_confidence` stays in static
+  units (confpol gate unperturbed). `scored` tuple + `_rescore_top_k` untouched
+  (base_value recovered from `kind`). Knobs: `AE_CONTENTION_SCALE`(2.5)
+  `_PFLOOR`(0.15, =1.0 disables) `_TOPEN`(40) `_TFRESH`(3). 18 TDD tests in
+  [test/test_ae_contention.py](../test/test_ae_contention.py); plan-rescore suite
+  still 9/9.
+- **Why it might differ from the graveyard:** new *information* (opponent geometry,
+  ground-truth not learned), demote-only + soft + floored, and it **no-ops whenever
+  we have no credible opponent position** (post-opening, nobody in view) — that
+  conservatism is the transfer-safety. Still an action-policy lever though; could
+  still hit the "helps low-pressure / hurts high-pressure / cancels" wall.
+- **NOT YET GATED.** Next: local reject `multi_seed_eval.py --our heuristic
+  --extra-env AE_CONTENTION=1`; then the **melee gate** (`melee_eval.py` with
+  `confpol-semis2b-u75` + `AE_CONTENTION=1` vs flag-off — promote only if
+  `all_farmer` worst-place improves AND the EVAL_ONLY holdout doesn't regress);
+  then **one** cloud submit vs the flag-off 0.671. `confpol-semis2b-u75` (0.671)
+  stays deploy floor; ships OFF unless it clears the gate. **Kill criterion:**
+  `all_farmer` improves locally but EVAL_ONLY regresses → proxy-overfit → stop.
+
 ### The one problem that dominates AE: the local→cloud transfer gap
 
 Every learned-policy line (BC, PPO, self-play, belief-map, MCTS, macro/tactical
