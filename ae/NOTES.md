@@ -485,6 +485,65 @@ damage +1/HP. Our candidate values: mission 80, resource 40, base 100/130.
   AE_ENEMY_BASE_VALUE=50` + `multi_seed_eval.py`. Strong prior: regresses unless
   `DIST_PENALTY` is also retuned.
 
+### Forward-sim plan re-score — BUILT, FAILS local gate, default-OFF (3 Jun)
+
+The one structural lever curry (0.715) has and we don't: re-score plans by
+*projected realized reward* instead of static `value − dist`. Adopted the
+**principle, not curry's code** (no Rust kernel, no persona-FSM, no respawn/stun
+model). **Contained:** reuses the manager's existing forward-sim primitives
+(`_lookahead_step`/`_blast_cells`/`_lookahead_escape`, real env reward units) to
+re-rank **only the top-K static target candidates** — NOT the dead `mcts-light`
+full-width beam (that timed out / −0.254 speed). **Opponent-light:** projects our
+own plan on the known map only — no opponent rollout, no safety veto (the line
+that keeps it out of the dypm/pessimistic-search grave).
+
+- **Code** ([src/ae_manager.py](src/ae_manager.py)): `_project_plan_reward`
+  (items en route + base value *only if the bomb from `path[-2]` reaches the base
+  and an escape exists* + time tax) and `_rescore_top_k` (margin-gated override,
+  ties broken on `pos` so it's `PYTHONHASHSEED`-independent), spliced into
+  `_choose_target` behind **`AE_PLAN_RESCORE` (default 0)**. The `scored` list is
+  only built when the flag is on ⇒ **flag-off path is byte-identical**.
+  `last_decision_confidence` stays in static units ⇒ the deployed
+  `confidence_policy_hybrid` gate is unperturbed; only the *executed* target
+  changes. Knobs: `_K`(4) `_MARGIN`(1.0) `_TIME_TAX`(0.35) `_BASE_W`(1.0)
+  `_DEMOTE_ONLY`(1). 9 TDD tests in
+  [test/test_ae_plan_rescore.py](../test/test_ae_plan_rescore.py).
+- **⚠ KEY FINDING — promotion regresses, demotion is the only viable half.**
+  First smoke (n=2 hash × 6 rounds, `--our heuristic`, furnished) with the naive
+  *symmetric* re-score (credit landable bases at full 55): weighted **0.1935 vs
+  off 0.273 (−0.080)**; `top_seed_proxy` 0.472→0.190, `pressure2` went *negative*.
+  This is exactly the calibration-section prediction: crediting a landable base at
+  full realized value makes the planner abandon steady item income to chase bases.
+  Fix = **asymmetric `AE_PLAN_RESCORE_DEMOTE_ONLY` (now default ON):** projection
+  may DEMOTE a static-winner phantom base toward a realizable alternative, but may
+  never PROMOTE a base over a non-base static winner. That is curry's actual
+  documented benefit ("discount a base to ~0 when the bomb won't land"), without
+  the over-aggression. Demote-only smoke: weighted **0.2795 vs off 0.273
+  (+0.0065)** — recovers the regression but is **flat at the noise floor**, and it
+  REDISTRIBUTES (wins pressure2 +0.072 / strong_realistic +0.055 / cloudsuite
+  +0.049; loses top_seed_proxy −0.137 / defense_trap −0.072 / base_rush −0.062) —
+  the classic "helps low-pressure, hurts high-pressure, cancels" AE pattern.
+- **Verdict (3 Jun): FAILS the local reject gate → stays OFF, documented
+  negative.** Proper n=3 hash × 12-round gate (`plan-rescore-gate-{off,demote}.json`)
+  CONFIRMED the smoke: weighted **0.2757 vs off 0.2661 (+0.0096, flat — inside the
+  validator's ~0.03 cross-seed σ)**, but **worst-per-run 0.1265 vs 0.1384 (−0.012)**
+  and **top_seed_proxy 0.335 vs 0.472 (−0.137)** — the most cloud-predictive suite.
+  A flat mean that worsens the worst suite + the cloud proxy does not clear the
+  reject gate, so it never reached the melee/cloud rungs. **Tuning won't rescue
+  it:** the same base-demotions that win pressure2/strong_realistic (+0.07) are
+  what lose top_seed_proxy, so raising `_MARGIN` just collapses it back to
+  baseline (flat→zero), it can't go positive. Same "helps low-pressure, hurts
+  high-pressure, cancels" wall as every prior action-policy lever (opening book,
+  dypm-veto, aggression sweeps). **The contained top-K-projection mechanism is
+  sound and stays in-tree (default-OFF) as reusable infra, but the structural gap
+  to curry's 0.715 is NOT closed by self-plan projection alone** — curry's edge
+  also prices respawn/stun downtime in `score_plan` (a 200-tick farming-race
+  model our projection still omits) and runs a persona-FSM. A different mechanism
+  is needed; do not re-run base-value calibration on the greedy scorer.
+  Reproduce: `.venv/bin/python training/ae/multi_seed_eval.py --rounds 12 --our
+  heuristic --preset furnished --hash-seeds 0 1 2 --sim-seeds 42 --extra-env
+  AE_PLAN_RESCORE=1 --summary-out <out>.json`.
+
 ### The one problem that dominates AE: the local→cloud transfer gap
 
 Every learned-policy line (BC, PPO, self-play, belief-map, MCTS, macro/tactical
@@ -560,6 +619,7 @@ this overfit the local opponents like the last ten attempts did?"
 | **Tactical BC** (400/800-game outcome-weighted) | Behavior-clone good macros | 400-game "win" was legacy-gate variance; 800-game overfit and collapsed base/top/bracket suites. |
 | **Belief-map / memory BC** (`bc-belief-hybrid`) | 704k-param CNN belief input | Fit local *better* (val_acc 0.897) but **widened** cloud gap by +0.044. Rich state against random opponents = more ways to overfit. |
 | **MCTS as primary planner** (`mcts-light`) | Depth/width search per tick | Either times out (no latency cap) or, when capped, regresses accuracy −0.068 and speed −0.254. Workshop teaches no MCTS; top teams aren't doing it. |
+| **Forward-sim plan re-score** (`AE_PLAN_RESCORE`, top-K projection, 3 Jun) | Re-rank top-K target candidates by projected realized reward (curry's `score_plan` principle, contained — not the dead full-width beam) | Symmetric (promote landable bases) **−0.080 weighted** (over-aggression, as the calibration section predicted). Asymmetric **demote-only** (default) recovers to **flat (+0.0096, n=3×12)** but worsens worst-suite −0.012 and `top_seed_proxy` −0.137 → **fails the reject gate**; tuning can't go positive (the demotions that win pressure suites lose top_seed_proxy). Self-plan projection alone doesn't close the gap to curry's 0.715 (which also prices respawn/stun). Code in-tree default-OFF. See *Forward-sim plan re-score* above. |
 | **Scripted M5 port** (`scripted_hybrid`, full ScriptedBaseAttackPolicy) | Port the 0.731 team's full decision tree | **−3.35σ LOSS** at the local gate. M5's 0.731 is codebase-specific, not primitive-additive. |
 | **Three M5 primitives** (spawn-first-target table, enemy-bomb-only escape, orientation-aware A*) | Bolt-on env flags | All noise-to-catastrophic (orientation-aware A* −0.142; our DIST_PENALTY is tuned for grid, not orientation distance). All default-OFF. |
 | **Memorized-route / rusher / camping cheese** (RIGID) | Precompute a greedy route per fixed-Novice spawn, replay blindly | RIGID replay loses to per-tick re-evaluation. **⚠ But see below: a DIVERGENCE-GATED opening book is NOT this** — the competitor ships one and scores 0.715. Re-open with abort-on-divergence (the rigid version is what failed, not the concept). |

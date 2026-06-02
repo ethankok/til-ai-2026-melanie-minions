@@ -236,6 +236,25 @@ class AEManager:
         self.PATH_THREAT_PENALTY = _env_float("AE_PATH_THREAT_PENALTY", 2.0)
         self.ENEMY_CHASE_VALUE = _env_float("AE_ENEMY_CHASE_VALUE", 0.0)
         self.ENEMY_CHASE_RADIUS = _env_int("AE_ENEMY_CHASE_RADIUS", 4)
+        # Forward-sim plan re-score (default OFF). Re-ranks only the top-K
+        # static target candidates by a short self-plan projection on the known
+        # map (items collected en route + whether a bomb actually lands on a
+        # target base + a time tax), in real env reward units. Opponent-light:
+        # no opponent rollout, no safety veto. The confidence signal stays in
+        # static units (see _choose_target), so the confidence_policy_hybrid
+        # gate is unperturbed; only the *executed* target can change.
+        self.plan_rescore_enabled = _env_flag("AE_PLAN_RESCORE", False)
+        self.plan_rescore_k = max(1, _env_int("AE_PLAN_RESCORE_K", 4))
+        self.plan_rescore_margin = _env_float("AE_PLAN_RESCORE_MARGIN", 1.0)
+        self.plan_rescore_time_tax = _env_float("AE_PLAN_RESCORE_TIME_TAX", 0.35)
+        self.plan_rescore_base_w = _env_float("AE_PLAN_RESCORE_BASE_W", 1.0)
+        # Asymmetric (default): projection may DEMOTE a static-winner phantom
+        # base toward a realizable alternative, but may never PROMOTE a base
+        # above a static non-base winner. The promotion half is the documented
+        # over-aggression failure mode (chases landable bases at the expense of
+        # steady item income); the demotion half is curry's real benefit
+        # ("discount a base to ~0 when the bomb won't land").
+        self.plan_rescore_demote_only = _env_flag("AE_PLAN_RESCORE_DEMOTE_ONLY", True)
         self.item_mission_value = _env_float("AE_ITEM_MISSION_VALUE", 50.0)
         self.item_resource_value = _env_float("AE_ITEM_RESOURCE_VALUE", 25.0)
         self.item_recon_value = _env_float("AE_ITEM_RECON_VALUE", 10.0)
@@ -814,6 +833,9 @@ class AEManager:
         # no effect on best_target / best_kind / returned path.
         runner_up_score = -inf
         n_scored = 0
+        # Only materialised when the plan re-score is enabled, so the flag-off
+        # hot path is byte-identical to the legacy planner.
+        scored: list[tuple[float, tuple[int, int], str]] = []
         for base_value, pos, kind in candidates:
             if pos == start or pos not in distance:
                 continue
@@ -850,6 +872,8 @@ class AEManager:
                     cursor = parent.get(cursor)
                 score -= self.PATH_THREAT_PENALTY * path_threat
             n_scored += 1
+            if self.plan_rescore_enabled:
+                scored.append((score, pos, kind))
             if score > best_score:
                 runner_up_score = best_score  # demote old best
                 best_score = score
@@ -857,6 +881,15 @@ class AEManager:
                 best_kind = kind
             elif score > runner_up_score:
                 runner_up_score = score
+
+        # Forward-sim plan re-score (opt-in). Re-rank only the top-K static
+        # winners by projected realized reward; override the executed target
+        # only when a different candidate beats the static winner's projection
+        # by a margin. last_decision_confidence below stays in static units.
+        if self.plan_rescore_enabled and best_target is not None and n_scored > 1:
+            best_target, best_kind = self._rescore_top_k(
+                start, scored, parent, best_target, best_kind
+            )
 
         if best_target is None:
             self.current_path = None
@@ -889,6 +922,108 @@ class AEManager:
         self.current_path = path
         self.last_target_kind = best_kind
         return best_target, path
+
+    # Real env reward units (NOT the static ITEM_VALUES priority weights):
+    # the whole point of plan projection is to score in realized-reward units
+    # so a base only earns its reward when the bomb actually lands.
+    _PLAN_ITEM_REWARD = {"mission": 5.0, "resource": 2.0, "recon": 1.0}
+
+    def _project_plan_reward(
+        self,
+        start: tuple[int, int],
+        target: tuple[int, int],
+        kind: str,
+        path: list[tuple[int, int]],
+    ) -> float:
+        """Projected realized reward of walking ``path`` to ``target``.
+
+        Opponent-light self-plan projection on the known map:
+        - items collected en route (real env reward, dedup'd),
+        - for an ``enemy_base`` target: the base value ONLY if a bomb placed
+          from the approach cell (``path[-2]``) actually reaches the base and
+          an escape exists — otherwise the base contributes nothing (a phantom
+          base is demoted),
+        - minus a per-step time tax so closer plans win ties.
+
+        No opponent rollout and no safety veto: survival is proxied by the
+        same escape check the planner already uses for bomb placement.
+        """
+
+        total = 0.0
+        seen_cells: set[tuple[int, int]] = set()
+        for cell in path:
+            if cell == start or cell in seen_cells:
+                continue
+            seen_cells.add(cell)
+            item = self.last_seen_items.get(cell)
+            if item is not None:
+                total += self._PLAN_ITEM_REWARD.get(item[0], 0.0)
+
+        if (
+            kind == "enemy_base"
+            and int(getattr(self, "team_bombs", 0)) > 0
+            and len(path) >= 2
+        ):
+            bomb_from = path[-2]
+            blast = self._blast_cells(bomb_from)
+            if target in blast and self._lookahead_escape(
+                bomb_from, blast, self.BOMB_TIMER
+            ) is not None:
+                base_value = (
+                    self.SHARED_CREDIT_BASE_VALUE if self.tier1_shared_credit else 55.0
+                )
+                total += self.plan_rescore_base_w * base_value
+
+        total -= self.plan_rescore_time_tax * max(0, len(path) - 1)
+        return total
+
+    def _rescore_top_k(
+        self,
+        start: tuple[int, int],
+        scored: list[tuple[float, tuple[int, int], str]],
+        parent: dict[tuple[int, int], tuple[int, int] | None],
+        static_target: tuple[int, int],
+        static_kind: str,
+    ) -> tuple[tuple[int, int], str]:
+        """Re-rank the top-K static candidates by projected realized reward.
+
+        Returns the overridden ``(target, kind)`` only when a candidate other
+        than the static winner beats the static winner's projection by
+        ``plan_rescore_margin``; otherwise the static winner is kept. Ties are
+        broken on ``pos`` (not dict-iteration order) so the result is
+        deterministic regardless of ``PYTHONHASHSEED``.
+        """
+
+        top = sorted(scored, key=lambda t: (-t[0], t[1]))[: self.plan_rescore_k]
+        projections: list[tuple[float, tuple[int, int], str]] = []
+        static_proj: float | None = None
+        for _score, pos, kind in top:
+            path = self._reconstruct_path(parent, start, pos)
+            if not path:
+                continue
+            proj = self._project_plan_reward(start, pos, kind, path)
+            projections.append((proj, pos, kind))
+            if pos == static_target:
+                static_proj = proj
+
+        if static_proj is None or not projections:
+            return static_target, static_kind
+
+        # Demote-only: a base may stay if it is the static winner, but may never
+        # be promoted over a different (non-base) static winner.
+        override_pool = projections
+        if self.plan_rescore_demote_only:
+            override_pool = [
+                p for p in projections
+                if p[2] != "enemy_base" or p[1] == static_target
+            ]
+            if not override_pool:
+                return static_target, static_kind
+
+        best_proj, best_pos, best_kind = max(override_pool, key=lambda t: (t[0], t[1]))
+        if best_pos != static_target and best_proj >= static_proj + self.plan_rescore_margin:
+            return best_pos, best_kind
+        return static_target, static_kind
 
     def _bfs(
         self,

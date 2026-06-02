@@ -112,6 +112,22 @@ ENV AE_MCTS_MIN_SCORE=12
 ENV AE_HYBRID_TRUST_MCTS=0
 ENV AE_HYBRID_MCTS_MIN_SCORE=12
 
+# Forward-sim plan re-score (3 Jun). Re-ranks the top-K static target
+# candidates in _choose_target by projected realized reward. DEFAULT OFF: it
+# FAILED the local reject gate (demote-only flat +0.0096 weighted but
+# top_seed_proxy -0.137; symmetric -0.080). See ae/NOTES.md "Forward-sim plan
+# re-score". Kept here only to run the cloud A/B that the local gate can't
+# settle: set AE_PLAN_RESCORE=1, build a SEPARATE tag (e.g. `planrescore`),
+# submit it, and compare to the confpol-semis2b-u75 baseline (0.671). The
+# demote-only guard is on by default so the cloud test never ships the
+# catastrophic base-promotion variant.
+ENV AE_PLAN_RESCORE=0
+ENV AE_PLAN_RESCORE_K=4
+ENV AE_PLAN_RESCORE_MARGIN=1.0
+ENV AE_PLAN_RESCORE_TIME_TAX=0.35
+ENV AE_PLAN_RESCORE_BASE_W=1.0
+ENV AE_PLAN_RESCORE_DEMOTE_ONLY=1
+
 # Tier-1 / Tier-2 toggles. Bisect on 100-200 round local sims (17 May 2026)
 # showed individual changes are net-positive, but the 5-toggle bundle has
 # negative interaction (planner thrashes between defense / kill / item).
