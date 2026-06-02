@@ -20,11 +20,6 @@ ENV TRANSFORMERS_OFFLINE=1
 # Switch the server to the NeMo backend and select the staged TDT model.
 ENV ASR_BACKEND=nemo
 ENV ASR_NEMO_MODEL=parakeet-tdt-0.6b-v2.nemo
-# Per-batch latency diagnostics (Finals speed tuning). DEFAULT-OFF. Uncomment for
-# a measurement build only: the manager then logs one "[ASR-TIMING] ... decode=
-# Xms infer=Yms total=Zms" line per batch (grep it from `docker logs`). Re-comment
-# before any real submit so the shipped image stays quiet.
-#   ENV ASR_TIMING=1
 # NGPU-LM n-gram shallow fusion. DEFAULT-OFF (PARKED 02 Jun 2026): with
 # ASR_NGRAM_LM unset the decoder stays greedy and this image is behaviourally
 # identical to nemo-ft-v3 (the shipped high). Fusion was built + tested this

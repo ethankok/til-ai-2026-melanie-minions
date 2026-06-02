@@ -204,6 +204,64 @@ ships fusion **OFF** (== `nemo-ft-v3`).
 to measure its T4 wall-clock vs greedy as a speed proxy before spending a cloud
 submit. If maes is >1.5× slower locally it's dead on the speed gate → stop.
 
+## Finals per-batch speed probe — measured, NOT worth pursuing + ⚠ cuda-python/CUDA-13 timeout risk (03 Jun 2026)
+
+Investigated "speed up ASR while keeping accuracy" for Finals. Outcome: **drop the
+speed work; ASR accuracy is at ceiling and the speed prize is marginal.** But the
+probe surfaced a real Finals landmine (cuda-python ↔ CUDA-13) worth validating on
+the MBS hardware. No code shipped — the timing instrumentation added this session
+(commit `1b78845`) was reverted back to a clean slate.
+
+### The metric that actually matters in Finals (not the Qualifier 0.947)
+- Qualifier "speed" `0.947` is **whole-set** (`1 - min(t_elapsed, 30min)/30min`) and
+  is dead — Qualifiers are closed. Optimising it is the wrong target.
+- **Finals speed is per-batch:** `time_score = 1 - min(batch_elapsed, 5s)/5s`, a
+  batch of 4, with a hard **10s `MISSION_BATCH_TIMEOUT_SEC`** (miss it → all 4 score
+  **0**). Read it directly from `bash finals.sh test`: each line is
+  `task=ASR acc=… time=<time_score> … <batch_elapsed>s`.
+- The two metrics weight fixed per-request overhead differently: whole-set dilutes
+  it across 400 clips (parked ~0.946, insensitive to decoder speedups — cf. the
+  cuda-python CUDA-graph null result, NOTES line ~626); per-batch hits it on every
+  batch of 4, so it's far more sensitive.
+
+### Measured (Workbench T4 finals harness, shipped 20:30 `finals` image)
+- **Accuracy ~0.978 per batch — at ceiling.** Speed is the only ASR lever left.
+- **~1.8s per batch → `time_score` ~0.64.** ASR is the speed laggard: NLP ~0.1s
+  (time ~0.98), CV ~1.1s (time ~0.77), **ASR ~1.8s (time ~0.64)**.
+- Closing that gap is worth ~**+0.065 ASR blended ≈ +0.013 overall** (ASR is 20%).
+  Marginal — and the decode-vs-infer split was never captured (see below), so we
+  don't even know if it's the `transcribe()` wrapper or audio decode.
+
+**Decision: not worth more cycles.** Accuracy maxed; gain marginal; can't validate
+on the real 5070 Ti from here; AE is the Semis priority.
+
+**The lever if ever revisited:** replace NeMo's high-level `model.transcribe()`
+(rebuilds a temp dataloader every call — pure fixed overhead) with a direct
+`preprocessor → encoder → decoder` forward + persistent setup. Same greedy output,
+zero accuracy risk; attacks exactly the fixed per-call overhead that per-batch
+timing punishes. Confirm the split first with a flag-gated timer (the reverted
+`ASR_TIMING` instrumentation) before investing.
+
+### ⚠ cuda-python / CUDA-13 → CUDA-graph-disabled → ASR timeout (UNRESOLVED, validate on MBS)
+A **locally-rebuilt** asr image (Workbench T4, host **Driver 580 / CUDA 13.0**)
+**timed out >10s on EVERY ASR batch** in the orchestrated `finals.sh test` match →
+score **0**, while the shipped 20:30 image ran ~1.8s. Root cause **unconfirmed**
+(standalone repro was inconclusive — empty logs). Two candidates:
+1. **`cuda-python>=12.3,<13` can't drive CUDA-graph TDT decode under CUDA 13.0** →
+   falls back to eager decode (5–10× slower). This repo already documents that exact
+   slow path: *"No conditional node support for Cuda. Cuda graphs with while loops
+   are disabled… No `cuda-python` module."*
+2. GPU contention with the concurrent AE/CV/NLP load on the shared T4.
+
+**Why it matters:** the real Finals box is a newer **Blackwell (CUDA 13+)**. If CUDA
+graphs are disabled there, ASR eager-decodes, blows the 10s batch timeout, and scores
+**0 on a 20%-weight task** — catastrophic, and unrelated to the speed micro-opt.
+**Action before 10 Jun (on the MBS on-hardware test):** confirm ASR per-batch latency
+is well under 10s *and* the asr startup log shows `use_cuda_graph_decoder: true` with
+no "graphs disabled" warning. If disabled, bump `cuda-python` in
+`asr/requirements-nemo.txt` to a CUDA-13-compatible build. Cheap check, big downside
+if skipped.
+
 ## nemo-ft-v3 (27/05) — additional spelling post-processing fixes (new blended high)
 
 Status: current shipped tag and blended high score.
