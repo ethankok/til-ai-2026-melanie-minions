@@ -134,6 +134,76 @@ manager falls back to greedy (no crash), and `preserve_arpa` keeps a `.ARPA`
 usable by the classic `maes` strategy (`ASR_LM_STRATEGY=maes`) as a manual
 fallback. (Verified 02 Jun 2026 against commit `ccbbfbb…` on GitHub.)
 
+### Result (02 Jun 2026) — works locally, broken on the cloud GPU; **PARKED**
+
+The cheap & blind path ran end-to-end. **Conclusion: real local accuracy gain
+that does NOT survive the cloud eval hardware. Shipped tag stays `nemo-ft-v3`;
+fusion left OFF.** Full chain:
+
+1. **LM build (Workbench) — success.** The runbook above worked verbatim once
+   run under the `jupyterlab` env (omegaconf lives there) with KenLM built from
+   source (cmake<4 + libboost 1.85). Produced `ngram_lm.arpa` (123 MB, the
+   NGPU-LM/`malsd_batch` input) + `ngram_lm` (34 MB KenLM binary, the `maes`
+   input). 86 141 unique training lines (ASR gold transcripts + NLP corpus).
+2. **Local `til test` — big win.** `ngram-lm-off`: WER `0.0209` (== `nemo-ft-v3`).
+   `ngram-lm-on`: **WER `0.0124`** (1−MER `0.99691`), a ~40% relative error cut.
+   `docker logs … | grep NemoASRManager` confirmed `NGPU-LM fusion ON:
+   …ngram_lm.arpa strategy=malsd_batch beam=4 alpha=0.3`. **The LM genuinely
+   works.** Container NeMo reports `2.8.0rc0` (the pinned `ccbbfbb` commit).
+3. **Cloud submit `ngram-lm-on` (v1) — 0.000, a misconfig not a result.** The
+   uncommented Dockerfile ENV still pointed at `ngram_lm.nemo` (old plan) but we
+   built `.arpa`; the file wasn't found → log `ASR_NGRAM_LM=…ngram_lm.nemo not
+   found; fusion OFF` → ran greedy, byte-identical to OFF. **Lesson: the ENV path
+   must be the `.arpa`.** (Dockerfile comment fixed.)
+4. **Cloud submit `ngram-lm-on-v2` (correct `.arpa`) — Score `0.000`, Speed
+   `0.956`, 0/400 errors.** Local same image = `0.0124`. Root cause: on the cloud
+   GPU `malsd_batch` **raises for every batch**; the manager's batch-level
+   try/except (`asr_batch`) pre-fills `[""] * n` and *returned the empties*
+   (HTTP 200, no "error"). All-empty hyps = 100% error = **exactly 0.000** (a
+   garbage-but-nonempty output would score *slightly above* 0; exactly 0.000 is
+   the empty-string signature). Works on Workbench T4, not on the cloud GPU —
+   `malsd_batch` is a newer CUDA-graph-heavy beam path and is more
+   hardware-fragile than greedy. **We cannot see the cloud exception** (eval is
+   air-gapped; no ASR failure pack in the bucket, only NLP has one).
+5. **Protective greedy fallback added (this session, shipped in
+   `asr_manager_nemo.py`).** `_configure_lm_fusion` now snapshots the greedy cfg
+   before switching; new `_fallback_to_greedy()` permanently reverts to greedy on
+   the first fused-decode failure (one-shot); `_warmup()` triggers it at startup;
+   `asr_batch()` reverts + **retries the batch** instead of returning blanks.
+   **This permanently kills the silent-0.000 failure mode** — worst case is
+   greedy accuracy, never empty output.
+6. **Cloud submit `ngram-lm-on-v3` (fallback + `.arpa`) — Score `0.970`, Speed
+   `0.943`, 0/400 errors.** Local still `0.0124`. Cloud `0.970` is *exactly*
+   `nemo-ft-v3`'s greedy score → **the fallback fired; `malsd_batch` never ran on
+   cloud**, every clip decoded greedily. (Not "missing a few edge cases" — that
+   would land off-greedy; matching greedy to the thousandth is the fallback
+   signature.) Speed `0.943` < greedy `0.947` = the one-time cost of attempting
+   malsd then reverting.
+
+**Decision — PARK at `nemo-ft-v3`.** `ngram-lm-on-v3` blended
+`0.75*0.970 + 0.25*0.943 = 0.9633` < `nemo-ft-v3` `0.96425`, so not promotable.
+Why not pursue the cloud failure further:
+- **Can't debug it** — the cloud exception is invisible (air-gapped, no failure
+  pack), so any fix is blind guess-and-check across expensive submits.
+- **`maes` (CPU-KenLM) is the obvious hardware-robust swap** (env-only:
+  `ASR_NGRAM_LM=…/ngram_lm` binary + `ASR_LM_STRATEGY=maes`) but its CPU beam
+  rescoring is typically slow enough (~2–4× greedy) to **fail the speed gate**
+  even if accuracy hits ~0.98.
+- **Even best-case malsd-on-cloud is uncertain**: beam-4 speed unknown on cloud
+  (it never ran); if it hits its "near-greedy speed" design goal blended ~0.97
+  (a win), if it runs at typical beam-4 speed the +0.0075 accuracy is eaten by
+  the speed loss → wash. Unmeasurable without landing it.
+- **AE is the Semis priority** (see MEMORY); ASR was already at its ceiling.
+
+**What's kept:** the protective fallback code stays merged (permanent safety
+net; dormant unless `ASR_NGRAM_LM` is set). The LM artifacts (`ngram_lm.arpa`,
+`ngram_lm`) and the build runbook stay for any future attempt. The Dockerfile
+ships fusion **OFF** (== `nemo-ft-v3`).
+
+**If ever resumed:** the one zero-cloud-cost probe is a *local* `maes` `til test`
+to measure its T4 wall-clock vs greedy as a speed proxy before spending a cloud
+submit. If maes is >1.5× slower locally it's dead on the speed gate → stop.
+
 ## nemo-ft-v3 (27/05) — additional spelling post-processing fixes (new blended high)
 
 Status: current shipped tag and blended high score.
@@ -980,14 +1050,20 @@ so recovery was fast.
 
 ## State of remaining ASR work
 
-ASR is **parked at the `nemo-zs-v7` / `nemo-zs-v6` blended tie**:
+ASR is **parked at `nemo-ft-v3` (`0.970 / 0.947`, blended `0.96425`)** — the
+shipped high since 27 May. Prior tie (`nemo-zs-v7` / `nemo-zs-v6` at blended
+`0.9620`) is superseded.
 
-- `nemo-zs-v7`: `0.969 / 0.941`, blended `0.9620`, raw accuracy high.
-- `nemo-zs-v6`: `0.967 / 0.947`, blended `0.9620`, faster fallback.
+Last experiment (02 Jun 2026, Semis prep): **NGPU-LM n-gram shallow fusion** —
+big local gain (T4 WER `0.0209 -> 0.0124`) but `malsd_batch` raises on the cloud
+GPU, so cloud falls back to greedy (`0.970 / 0.943`, blended `0.9633` < gate).
+**Rejected / parked**; protective greedy fallback kept in the manager as a
+permanent safety net. See "NGPU-LM n-gram fusion prototype → Result" above for
+the full postmortem and the one resume-probe (local `maes` timing) if revisited.
 
-Marginal ASR time is no longer justified before the deadline. Do not run beam,
-prompt, model, or runtime experiments unless organisers change scoring or a hard
-failure appears. Put time into unresolved task scores or final packaging.
+Marginal ASR time is no longer justified. Do not run beam, prompt, model, LM, or
+runtime experiments unless organisers change scoring or a hard failure appears.
+**AE is the Semifinals priority** (see MEMORY). Put time there.
 
 ## Reproducibility / pointers
 

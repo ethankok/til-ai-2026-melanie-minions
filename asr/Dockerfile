@@ -20,19 +20,22 @@ ENV TRANSFORMERS_OFFLINE=1
 # Switch the server to the NeMo backend and select the staged TDT model.
 ENV ASR_BACKEND=nemo
 ENV ASR_NEMO_MODEL=parakeet-tdt-0.6b-v2.nemo
-# NGPU-LM n-gram shallow fusion. ENABLED (ngram-lm-on). ASR_NGRAM_LM points at
-# the baked .arpa so the TDT decoder runs malsd_batch beam search with shallow
-# n-gram fusion (local WER 0.0209 -> 0.0124). SAFE TO SHIP: if malsd_batch
-# raises on the eval GPU, the manager permanently reverts to greedy and retries
-# (never blank output / 0.000 score). To disable, comment ASR_NGRAM_LM (the
-# others are no-ops without it). To try the hardware-robust CPU-KenLM path,
-# point ASR_NGRAM_LM at the binary (models/ngram_lm) and set ASR_LM_STRATEGY=maes.
-ENV ASR_NGRAM_LM=/workspace/models/asr/ngram_lm.arpa
-ENV ASR_NGRAM_LM_ALPHA=0.3
-ENV ASR_BEAM_SIZE=4
-ENV ASR_LM_STRATEGY=malsd_batch
-ENV ASR_LM_PRUNING=late
-ENV ASR_LM_BLANK_MODE=lm_weighted_full
+# NGPU-LM n-gram shallow fusion. DEFAULT-OFF (PARKED 02 Jun 2026): with
+# ASR_NGRAM_LM unset the decoder stays greedy and this image is behaviourally
+# identical to nemo-ft-v3 (the shipped high). Fusion was built + tested this
+# session: it gives a large LOCAL gain (T4 WER 0.0209 -> 0.0124) but malsd_batch
+# RAISES on the cloud eval GPU for every batch, so on cloud the manager's
+# protective fallback reverts to greedy (cloud score == greedy 0.970, never the
+# 0.000 we saw before the fallback existed). Net blended 0.9633 < nemo-ft-v3
+# 0.96425 -> not promotable; left OFF. See asr/NOTES.md "Result" for the full
+# postmortem. To re-enable for further work, uncomment (path is the .arpa, NOT
+# .nemo). The protective fallback in asr_manager_nemo.py makes ON safe to test.
+#   ENV ASR_NGRAM_LM=/workspace/models/asr/ngram_lm.arpa
+#   ENV ASR_NGRAM_LM_ALPHA=0.3
+#   ENV ASR_BEAM_SIZE=4
+#   ENV ASR_LM_STRATEGY=malsd_batch
+#   ENV ASR_LM_PRUNING=late
+#   ENV ASR_LM_BLANK_MODE=lm_weighted_full
 WORKDIR /workspace
 
 # Install dependencies. NeMo is a heavy install; this is the longest layer.
