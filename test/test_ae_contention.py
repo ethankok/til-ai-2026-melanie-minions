@@ -164,3 +164,62 @@ def test_apply_contention_item_vs_item_only(monkeypatch):
     )
     assert target == (5, 6)
     assert kind == "enemy_base"
+
+
+def _two_item_scenario(m, *, enemy=None, last_step=1):
+    """A=mission (1,0) closer (static winner); B=mission (0,4) farther."""
+    m.last_seen_items = {(1, 0): ("mission", 0), (0, 4): ("mission", 0)}
+    if enemy is not None:
+        m.enemy_agents = dict(enemy)
+    m.last_step = last_step
+
+
+def test_e2e_flag_off_keeps_static_target(monkeypatch):
+    m = _open_grid_manager(monkeypatch, flag=None)
+    _two_item_scenario(m, enemy={(1, 0): 1})  # opponent on A, but flag OFF
+    target, _ = m._choose_target((0, 0), set())
+    assert target == (1, 0)
+
+
+def test_e2e_opponent_on_item_flips_to_uncontested(monkeypatch):
+    m = _open_grid_manager(monkeypatch, flag="1")
+    _two_item_scenario(m, enemy={(1, 0): 1})  # fresh opponent on A
+    target, _ = m._choose_target((0, 0), set())
+    assert target == (0, 4)
+
+
+def test_e2e_no_opponents_noop(monkeypatch):
+    m = _open_grid_manager(monkeypatch, flag="1")
+    _two_item_scenario(m, enemy={})  # no opponents -> no contention
+    target, _ = m._choose_target((0, 0), set())
+    assert target == (1, 0)
+
+
+def test_e2e_stale_sighting_noop(monkeypatch):
+    m = _open_grid_manager(monkeypatch, flag="1")
+    _two_item_scenario(m, enemy={(1, 0): 0}, last_step=10)  # stale=10 > TFRESH 3
+    target, _ = m._choose_target((0, 0), set())
+    assert target == (1, 0)
+
+
+def test_e2e_pfloor_one_noop(monkeypatch):
+    m = _open_grid_manager(monkeypatch, flag="1", AE_CONTENTION_PFLOOR="1.0")
+    _two_item_scenario(m, enemy={(1, 0): 1})
+    target, _ = m._choose_target((0, 0), set())
+    assert target == (1, 0)
+
+
+def test_e2e_confidence_invariant_on_off(monkeypatch):
+    def run(flag):
+        m = _open_grid_manager(monkeypatch, flag=flag)
+        _two_item_scenario(m, enemy={(1, 0): 1})
+        m._choose_target((0, 0), set())
+        return m.last_decision_confidence
+
+    on = run("1")
+    off = run(None)
+    assert on["top_score"] == pytest.approx(off["top_score"])
+    assert on["runner_up_score"] == pytest.approx(off["runner_up_score"])
+    assert on["margin"] == pytest.approx(off["margin"])
+    assert on["n_candidates"] == off["n_candidates"]
+    assert on["decision_path"] == off["decision_path"]

@@ -882,7 +882,7 @@ class AEManager:
                     cursor = parent.get(cursor)
                 score -= self.PATH_THREAT_PENALTY * path_threat
             n_scored += 1
-            if self.plan_rescore_enabled:
+            if self.plan_rescore_enabled or self.contention_enabled:
                 scored.append((score, pos, kind))
             if score > best_score:
                 runner_up_score = best_score  # demote old best
@@ -900,6 +900,24 @@ class AEManager:
             best_target, best_kind = self._rescore_top_k(
                 start, scored, parent, best_target, best_kind
             )
+
+        # Contention-aware item valuation (opt-in). Demote-only, item-vs-item:
+        # discount item targets an opponent reaches first and pick the best item
+        # we win the race to. Only the executed target changes; the
+        # last_decision_confidence set below stays in static units, so the
+        # confidence_policy_hybrid gate is unperturbed (as with plan-rescore).
+        if (
+            self.contention_enabled
+            and best_target is not None
+            and self._is_item_kind(best_kind)
+            and n_scored > 1
+        ):
+            sources = self._believed_opponents(step)
+            if sources:
+                opp_dist = self._opponent_distance_map(sources)
+                best_target, best_kind = self._apply_contention(
+                    start, scored, opp_dist, distance, best_target, best_kind
+                )
 
         if best_target is None:
             self.current_path = None
