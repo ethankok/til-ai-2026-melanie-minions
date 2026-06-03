@@ -887,7 +887,10 @@ class AEManager:
                     if cursor in threats:
                         path_threat += 1
                     cursor = parent.get(cursor)
-                score -= self.PATH_THREAT_PENALTY * path_threat
+                penalty = self.PATH_THREAT_PENALTY
+                if self.stun_tax_enabled and self._is_item_kind(kind):
+                    penalty *= self.stun_tax_mult
+                score -= penalty * path_threat
             n_scored += 1
             if self.plan_rescore_enabled or self.contention_enabled:
                 scored.append((score, pos, kind))
