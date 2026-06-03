@@ -552,7 +552,7 @@ that keeps it out of the dypm/pessimistic-search grave).
   --our heuristic --preset furnished --hash-seeds 0 1 2 --sim-seeds 42
   --extra-env AE_PLAN_RESCORE=1 --summary-out <out>.json`.
 
-### Contention-aware item valuation — BUILT, default-OFF, PENDING GATE (3 Jun)
+### Contention-aware item valuation — BUILT, local gate NEUTRAL, cloud A/B PENDING (3 Jun)
 
 The **first AE lever that adds the opponent dimension.** Every dead action-policy
 lever (opening book, dypm-veto, plan-rescore) only re-weighted *our own* plan with
@@ -583,13 +583,46 @@ hole** (the −388/−291 farming-race margins). Design/plan:
   we have no credible opponent position** (post-opening, nobody in view) — that
   conservatism is the transfer-safety. Still an action-policy lever though; could
   still hit the "helps low-pressure / hurts high-pressure / cancels" wall.
-- **NOT YET GATED.** Next: local reject `multi_seed_eval.py --our heuristic
-  --extra-env AE_CONTENTION=1`; then the **melee gate** (`melee_eval.py` with
-  `confpol-semis2b-u75` + `AE_CONTENTION=1` vs flag-off — promote only if
-  `all_farmer` worst-place improves AND the EVAL_ONLY holdout doesn't regress);
-  then **one** cloud submit vs the flag-off 0.671. `confpol-semis2b-u75` (0.671)
-  stays deploy floor; ships OFF unless it clears the gate. **Kill criterion:**
-  `all_farmer` improves locally but EVAL_ONLY regresses → proxy-overfit → stop.
+- **Local gate RUN 3 Jun → NEUTRAL/inconclusive (not a reject).**
+  - **Step 1 (multi_seed reject, n=3 hash):** weighted **−0.009** (flat); all 8
+    suites within ±0.07; `defense_trap` exactly 0.000 (item-vs-item doesn't touch
+    defense). **The cloud-predictive `top_seed_proxy` = +0.037** — the same suite
+    that was −0.137 for plan-rescore and correctly foreshadowed its cloud death;
+    here it points the *opposite* way. Did NOT reject.
+  - **Step 2 (melee gate) — first run was CONFOUNDED.** Every opponent
+    subclasses/contains our `AEManager`, so with `AE_CONTENTION=1` in the shared
+    env the self-mirror opponents (`self_heuristic`, `self_tactical`) and the
+    purpose-built bots' `super()._choose_target` fallback ALSO got contention,
+    buffing them. **Fixed the harness** (commit): `AE_CONTENTION=0` baked into
+    `self_heuristic`/`self_tactical` `_EnvOverride` (durable across their per-round
+    rebuilds) + a `contention_enabled=False` guard on direct-subclass opponents in
+    `simulate.run_simulation`. our_agent builds first and resets in-place, so it
+    keeps contention; probe-verified (ours True, every opponent False). No-op when
+    the flag is off (OFF baseline unchanged). **General lesson: an experimental
+    AE_* flag must be scoped to our agent in the melee or it buffs the opponent
+    mirrors too.**
+  - **Clean melee (de-contaminated, n=3) = NEUTRAL.** `all_farmer` placement
+    nominally improved (2.39→2.17 — the lever's target) but its **score is flat**
+    (0.278→0.279). `semis_mixed` looked like a −0.204 score crater at n=3, **but
+    that was chaotic-cascade VARIANCE** — re-run at **n=5 it is −0.006** (OFF 0.407
+    vs ON 0.401). Contention only fires mid-game (opening targets aren't contested
+    enough to flip), so a single mid-game target swap cascades unpredictably →
+    per-seed `semis_mixed` ON ranged ~0.20–0.70 while OFF stayed ~0.40. **The
+    melee at n=3 simply cannot resolve a lever this small.**
+- **Verdict: locally NEUTRAL (no clear win, no reject); the deterministic cloud is
+  the only instrument that can settle it, and the one non-neutral signal (the
+  `top_seed_proxy` canary, +0.037) FAVORS it** — genuinely different from the
+  action-policy graveyard (which was negative-local → negative-cloud). **Decision
+  (user, 3 Jun): take it to the cloud A/B.**
+- **Cloud A/B runbook (Workbench — not the Mac).** Dockerfile flag added
+  (`ENV AE_CONTENTION=0`, default-off, documented next to the plan-rescore block).
+  On the Workbench: `git pull` the `ethanAE` branch → stage
+  `confpol-semis2b-u75.pt` → `ae/models/bc.pt` (gitignored, from bucket
+  `handoff/`) → flip `ENV AE_CONTENTION=0`→`1` in `ae/Dockerfile` →
+  `til build ae contention && til submit ae contention` → compare to the flag-off
+  **0.671** (re-submit the OFF image same session for the matched baseline; eval is
+  deterministic). Promote to default only if it clears 0.671 by a real margin;
+  else revert the flag to 0. `confpol-semis2b-u75` (0.671) stays the deploy floor.
 
 ### The one problem that dominates AE: the local→cloud transfer gap
 
