@@ -453,7 +453,12 @@ class SelfTacticalOpponent:
         self._mgr = self._new()
 
     def _new(self):
-        with _EnvOverride({"AE_TACTICAL_POLICY_CHECKPOINT": str(self._checkpoint)}):
+        # AE_CONTENTION is OUR deployed agent's experimental flag; an opponent
+        # proxy must never inherit it (it would confound a contention A/B by
+        # buffing the opponent too). Forced off here so it holds across the
+        # per-round rebuilds in reset_for_game().
+        with _EnvOverride({"AE_TACTICAL_POLICY_CHECKPOINT": str(self._checkpoint),
+                           "AE_CONTENTION": "0"}):
             from tactical_hybrid_manager import TacticalHybridAEManager
             return TacticalHybridAEManager()
 
@@ -472,7 +477,9 @@ class SelfHeuristicOpponent:
         self._mgr = self._new()
 
     def _new(self) -> AEManager:
-        with _EnvOverride(CBOMB7_ENV):
+        # Never let an opponent proxy inherit OUR AE_CONTENTION flag (see
+        # SelfTacticalOpponent._new for the rationale).
+        with _EnvOverride({**CBOMB7_ENV, "AE_CONTENTION": "0"}):
             return AEManager()
 
     def reset_for_game(self) -> None:

@@ -529,6 +529,15 @@ def run_simulation(
     # seed for stochastic opponents, but the AEManager-based ones reset their
     # internal belief inside `run_one_round`.
     opponents = [make_opponent(n, seed=seed_start + 1000 + i) for i, n in enumerate(names)]
+    # Scope AE_CONTENTION to OUR agent only. The direct AEManager-subclass
+    # opponents (purpose-built bots, scripted bots) would otherwise read it from
+    # the shared env and confound a contention A/B by buffing the opponents too.
+    # (The wrapper opponents self_heuristic/self_tactical force it off inside
+    # their own _EnvOverride, durably across per-round rebuilds.) our_agent is
+    # already built above and resets in-place, so it keeps its contention.
+    for _op in opponents:
+        if hasattr(_op, "contention_enabled"):
+            _op.contention_enabled = False
 
     scores: list[float] = []
     totals: list[float] = []
