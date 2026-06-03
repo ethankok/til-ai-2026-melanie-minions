@@ -458,7 +458,8 @@ class SelfTacticalOpponent:
         # buffing the opponent too). Forced off here so it holds across the
         # per-round rebuilds in reset_for_game().
         with _EnvOverride({"AE_TACTICAL_POLICY_CHECKPOINT": str(self._checkpoint),
-                           "AE_CONTENTION": "0"}):
+                           "AE_CONTENTION": "0", "AE_STUN_TAX": "0",
+                           "AE_FORTRESS": "0"}):
             from tactical_hybrid_manager import TacticalHybridAEManager
             return TacticalHybridAEManager()
 
@@ -479,7 +480,8 @@ class SelfHeuristicOpponent:
     def _new(self) -> AEManager:
         # Never let an opponent proxy inherit OUR AE_CONTENTION flag (see
         # SelfTacticalOpponent._new for the rationale).
-        with _EnvOverride({**CBOMB7_ENV, "AE_CONTENTION": "0"}):
+        with _EnvOverride({**CBOMB7_ENV, "AE_CONTENTION": "0",
+                           "AE_STUN_TAX": "0", "AE_FORTRESS": "0"}):
             return AEManager()
 
     def reset_for_game(self) -> None:
