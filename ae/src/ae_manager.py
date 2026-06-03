@@ -783,6 +783,7 @@ class AEManager:
     ) -> tuple[tuple[int, int] | None, list[tuple[int, int]] | None]:
         threats = self._enemy_threat_cells()
         step = self.last_step if self.last_step is not None else 0
+        posture = self._posture(step)
 
         # Single multi-source BFS gives distance to every reachable cell at
         # roughly the cost of one of the old per-target BFS calls.
@@ -827,6 +828,8 @@ class AEManager:
                     value = 130.0
                 else:
                     value = 35.0 if self.tier1_shared_credit else self.ENEMY_BASE_VALUE
+                if posture == "fortress":
+                    value *= self.fortress_base_mult
                 # W2.1a spawn-aware first-target boost. Lazy import keeps the
                 # symbol off the hot path until enabled; the function is a
                 # ~5-line dict lookup. None rank -> 0.0 boost (no change).
@@ -843,7 +846,8 @@ class AEManager:
                     if step - int(last_seen) > self.ENEMY_STALENESS:
                         continue
                     if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
-                        candidates.append((60.0, pos, "base_defense"))
+                        dval = 60.0 * (self.fortress_defense_mult if posture == "fortress" else 1.0)
+                        candidates.append((dval, pos, "base_defense"))
             # Target nearby enemy agents aggressively (chase & kill) if enabled
             if self.ENEMY_CHASE_VALUE > 0.0:
                 for pos, last_seen in self.enemy_agents.items():
@@ -902,6 +906,15 @@ class AEManager:
                 damage_frac = 1.0 - (self.base_health / max(1.0, self.lead_tether_health))
                 damage_frac = max(0.0, min(1.0, damage_frac))
                 score -= self.lead_tether_weight * damage_frac * self._manhattan(pos, self.base_location)
+            # Fortress posture tether: keep near home and farm safe. Phase-gated
+            # (independent of base_health, unlike lead_base_tether). Skips
+            # base_defense targets (we want those near base anyway).
+            if (
+                posture == "fortress"
+                and self.base_location is not None
+                and kind != "base_defense"
+            ):
+                score -= self.fortress_tether_w * self._manhattan(pos, self.base_location)
             # Lead ③: recon distance discount. Recon is only +1, so only worth
             # grabbing when close; add an extra distance penalty to recon
             # targets to stop far-corner recon chasing.
@@ -920,6 +933,8 @@ class AEManager:
                 penalty = self.PATH_THREAT_PENALTY
                 if self.stun_tax_enabled and self._is_item_kind(kind):
                     penalty *= self.stun_tax_mult
+                if posture == "fortress":
+                    penalty *= self.fortress_threat_mult
                 score -= penalty * path_threat
             n_scored += 1
             if self.plan_rescore_enabled or self.contention_enabled:

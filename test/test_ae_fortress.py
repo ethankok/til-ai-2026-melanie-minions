@@ -68,3 +68,49 @@ def test_posture_fortress_on_base_threat(monkeypatch):
     m.base_location = (5, 5)
     m.enemy_agents = {(6, 6): 0}  # within BASE_DEFENSE_RADIUS, fresh
     assert m._posture(1) == "fortress"  # early, but base is threatened
+
+
+def test_fortress_demotes_enemy_base_to_item(monkeypatch):
+    # enemy_base (3,0) value=100 -> farm score 100-1.15*3 = 96.55 (wins).
+    # fortress base_mult=0.5 -> 50-3.45 = 46.55 ; item (0,2) = 50-2.3 = 47.70 -> item wins.
+    m = _open_grid_fortress(monkeypatch, flag="1")
+    m.ENEMY_BASE_VALUE = 100.0
+    m.tier1_shared_credit = False
+    m.team_bombs = 1
+    m.base_location = None  # isolate base_mult from the tether
+    m.enemy_bases = {(3, 0)}
+    m.last_seen_items = {(0, 2): ("mission", 0)}
+    m.enemy_agents = {}
+    m.last_step = 130  # late phase -> fortress
+    target, _ = m._choose_target((0, 0), set())
+    assert target == (0, 2)
+
+
+def test_flag_off_keeps_enemy_base(monkeypatch):
+    m = _open_grid_fortress(monkeypatch, flag=None)
+    m.ENEMY_BASE_VALUE = 100.0
+    m.tier1_shared_credit = False
+    m.team_bombs = 1
+    m.base_location = None
+    m.enemy_bases = {(3, 0)}
+    m.last_seen_items = {(0, 2): ("mission", 0)}
+    m.enemy_agents = {}
+    m.last_step = 130
+    target, _ = m._choose_target((0, 0), set())
+    assert target == (3, 0)  # farm: base (96.55) beats item (47.70)
+
+
+def test_fortress_tether_reduces_far_target_score(monkeypatch):
+    # Single item (0,5), base (0,0): manhattan 5. Tether (w=0.3) lowers top_score
+    # by 0.3*5 = 1.5 vs farm. No threats -> threat_mult irrelevant.
+    def top(flag):
+        m = _open_grid_fortress(monkeypatch, flag=flag)
+        m.base_location = (0, 0)
+        m.enemy_bases = set()
+        m.enemy_agents = {}
+        m.last_seen_items = {(0, 5): ("mission", 0)}
+        m.last_step = 130
+        m._choose_target((0, 0), set())
+        return m.last_decision_confidence["top_score"]
+
+    assert top("1") == pytest.approx(top(None) - 0.3 * 5)
