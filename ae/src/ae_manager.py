@@ -265,6 +265,13 @@ class AEManager:
         self.contention_pfloor = min(1.0, max(0.0, _env_float("AE_CONTENTION_PFLOOR", 0.15)))
         self.contention_topen = _env_int("AE_CONTENTION_TOPEN", 40)
         self.contention_tfresh = _env_int("AE_CONTENTION_TFRESH", 3)
+        # Stun tax (AE_STUN_TAX, default OFF). A freeze opportunity-cost penalty
+        # on farming-target paths: scales the existing path-threat penalty for
+        # ITEM kinds only, so we can ask "does the farming race want more
+        # freeze-aversion than the calibrated PATH_THREAT_PENALTY?" MULT=1.0 is
+        # a no-op. Phase A of the farming-race model.
+        self.stun_tax_enabled = _env_flag("AE_STUN_TAX", False)
+        self.stun_tax_mult = max(0.0, _env_float("AE_STUN_TAX_MULT", 2.0))
         self.item_mission_value = _env_float("AE_ITEM_MISSION_VALUE", 50.0)
         self.item_resource_value = _env_float("AE_ITEM_RESOURCE_VALUE", 25.0)
         self.item_recon_value = _env_float("AE_ITEM_RECON_VALUE", 10.0)
