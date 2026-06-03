@@ -152,6 +152,8 @@ class AEManager:
     # via perlin noise, so a collected tile is back well before step+40 in
     # expectation. Reconsider at 20 with a 0.5x discount.
     TILE_RESPAWN_STEPS = 20
+    # Env episode length (fixed). Used by the fortress posture's phase trigger.
+    MATCH_STEPS = 200
     # Soft cap on how long we keep an unseen enemy_agent record around. Past
     # this we drop the entry entirely (planning code also has its own
     # staleness filter at ENEMY_STALENESS for threat scoring).
@@ -272,6 +274,16 @@ class AEManager:
         # a no-op. Phase A of the farming-race model.
         self.stun_tax_enabled = _env_flag("AE_STUN_TAX", False)
         self.stun_tax_mult = max(0.0, _env_float("AE_STUN_TAX_MULT", 2.0))
+        # Fortress posture (AE_FORTRESS, default OFF). A lead-gated farm<->fortress
+        # switch on observable signals only (game phase + base threat; NO
+        # "are-we-ahead" estimate -- we have no opponent scoreboard). Phase B of
+        # the farming-race model.
+        self.fortress_enabled = _env_flag("AE_FORTRESS", False)
+        self.fortress_phase = _env_float("AE_FORTRESS_PHASE", 0.6)
+        self.fortress_base_mult = _env_float("AE_FORTRESS_BASE_MULT", 0.5)
+        self.fortress_defense_mult = _env_float("AE_FORTRESS_DEFENSE_MULT", 1.5)
+        self.fortress_threat_mult = _env_float("AE_FORTRESS_THREAT_MULT", 1.5)
+        self.fortress_tether_w = _env_float("AE_FORTRESS_TETHER_W", 0.3)
         self.item_mission_value = _env_float("AE_ITEM_MISSION_VALUE", 50.0)
         self.item_resource_value = _env_float("AE_ITEM_RESOURCE_VALUE", 25.0)
         self.item_recon_value = _env_float("AE_ITEM_RECON_VALUE", 10.0)
@@ -744,6 +756,24 @@ class AEManager:
     # ------------------------------------------------------------------
     # Planning
     # ------------------------------------------------------------------
+    def _posture(self, step: int) -> str:
+        """'fortress' when late-game or our base is threatened; else 'farm'.
+
+        Observable-signal only (no opponent scoreboard). Flag-off => always
+        'farm', so the scorer is byte-identical when AE_FORTRESS=0.
+        """
+        if not self.fortress_enabled:
+            return "farm"
+        if step >= self.fortress_phase * self.MATCH_STEPS:
+            return "fortress"
+        if self.base_location is not None:
+            for pos, last_seen in self.enemy_agents.items():
+                if step - int(last_seen) > self.ENEMY_STALENESS:
+                    continue
+                if self._manhattan(pos, self.base_location) <= self.BASE_DEFENSE_RADIUS:
+                    return "fortress"
+        return "farm"
+
     def _choose_target(
         self,
         start: tuple[int, int],
