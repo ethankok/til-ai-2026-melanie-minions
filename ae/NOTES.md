@@ -9,7 +9,10 @@
 > redundant with the digest; you only need it when you want the exact
 > per-submission detail behind a claim here.
 >
-> _Digest last refreshed: 2 June 2026 (Stage-B foreign-curriculum line run end to
+> _Digest last refreshed: 4 June 2026 — ⚠ CLOUD EVAL CHANGED (org opponent swap; all cloud
+> numbers re-based, byte-identical champion 0.671→0.414; see "Current state (4 June 2026)").
+> Also this session: respawn-loophole fix + pandemonium-v2 run launched + strategic pivot to a
+> stronger planner. Prior 2 June: Stage-B foreign-curriculum line run end to
 > end: NEW BEST `confpol-semis2b-u75` = 0.671 cloud, melee-gate-selected + cloud
 > A/B-validated vs native-u100 0.661; Stage B CONCLUDED — peak found, later rungs
 > overfit, training stopped. Also added: foreign melee eval (Stage A), peroxide
@@ -19,6 +22,75 @@
 ---
 
 ## Read this first
+
+### Current state (4 June 2026) — ⚠ CLOUD EVAL CHANGED; RL washed out; pivot to a stronger PLANNER
+
+- **🛑 THE CLOUD EVAL CHANGED ~4 Jun (org's pre-announced Semis opponent swap). ALL prior
+  cloud numbers (0.671 / 0.661 / 0.634 / 0.626 …) are STALE.** Proof: re-submitting the
+  BYTE-IDENTICAL `confpol-semis2b-u75` image (no rebuild) scored **0.414** vs its **0.671**
+  on 2–3 Jun (**−0.257**). Speed also dropped uniformly (~0.84 → ~0.74) across heterogeneous
+  models including the unchanged-inference incumbent — accuracy *and* speed dropping together
+  = an environment change, not a per-model regression. Still deterministic (double-submits
+  return identical scores → new opponents are fixed/seeded). **Action: re-rank the whole field
+  on the new eval (1 submit each — still deterministic).** Possibly infra-wide — other tasks
+  should re-check a known image too.
+- **New-eval re-rank (4 Jun, 0/30 err each):**
+  | image | NEW score | OLD score |
+  |---|---|---|
+  | confpol-semis2b-u75 (deploy champion) | **0.414** | 0.671 |
+  | confpol-u860 (rebuild) | **0.414** | 0.626 |
+  | respawnfix-u400 | 0.312 | — |
+  | respawnfix-u720 | 0.286 | — |
+  | respawnfix-u580 | 0.259 | — |
+  - **⚠ CORRECTED (4 Jun, bare-heuristic submit): the RL consultant did NOT wash out — it
+    adds +0.152.** `AE_MODE=heuristic` (bare planner, same flags) = **0.262**, so the two
+    champions at 0.414 are **two STRONG consultants coinciding**, NOT a collapse to the
+    heuristic. The earlier "washed-out / tie-at-backbone" read was an inference from the exact
+    tie and is FALSIFIED. (The submit comparison is also the canary: 0.414 ≠ 0.262 proves the
+    policy loaded + helps; the `til test` log grep was empty/moot.) **Field on the new eval:**
+    bare heuristic 0.262 (weak) < respawnfix rungs 0.259–0.312 (weak consultants, ~heuristic
+    level — the from-scratch run made INFERIOR policies) < the two foreign-curriculum champions
+    **0.414 (+0.152)**. **KEEP the policy; do NOT ship bare heuristic (−0.15). Deploy stays
+    `confpol-semis2b-u75` = 0.414.** "Heuristic alone is weak on the new opponents" = confirmed.
+  - **Semis is melee PLACEMENT, not this absolute number** → keep gating on melee regardless
+    (and our foreign pool is now arguably a *better* proxy than the retired BenBots).
+- **This session also shipped: the respawn-loophole fix** — `train_ppo.py`
+  `AdaptiveRewardShaper._health_delta_bonus` now clamps the agent-health delta negative-only
+  (`min(0.0, Δhealth)`) so the 0→100 respawn jump no longer refunds a life's damage penalty
+  (6 TDD tests, `test/test_reward_shaper_respawn.py`). Launched `pandemonium-v2-respawnfix`
+  (fresh from-scratch CNN-PPO, CPU-forced; patched `run_pandemonium_v1.py` to add
+  `--checkpoint-every 25` for a dense `-u<N>` ladder). Run is HEALTHY (eval −0.22→0.66,
+  plateaued; entropy in the 0.06–0.15 sweet spot ~u500–600) but the new-eval rungs above
+  already say it won't beat the heuristic on cloud. Gate phase-1 rungs on melee placement
+  before the final call.
+- **🧭 STRATEGIC PIVOT (4 Jun, agreed): the ceiling-raiser is a STRONGER PLANNER, not more RL.**
+  Evidence: curry's **0.715 is a hand-coded forward-sim planner, not RL** (their RL failed
+  transfer too); our RL has been the LOWER-ceiling / fragile path (pure ~0.43–0.51; consultant
+  +0.045 that just washed out on the new eval). The headroom above our **greedy one-step** scorer
+  is *multi-step value*, best captured by **forward-sim SEARCH** (transfers — reasons about the
+  *game*, not the *opponents*), not opponent-overfitting RL. **Three directions for the next
+  session (1 is the foundation for 2):**
+  1. **Forward-sim + respawn/stun ("farming-race") plan scorer** — curry's 0.715 mechanism. We
+     built the self-plan half (`AE_PLAN_RESCORE`, cloud-dead ALONE) but OMITTED the stun-downtime
+     pricing that is curry's actual edge. Highest evidence.
+  2. **RL anchored to the planner** (heuristic/planner as BC teacher + RL residual/opponent —
+     curry's own semis plan): "some form of RL" but with a real answer to "why won't it overfit
+     like the last ten times" — pure-RL's target (the cloud opponents) is moving/unlearnable;
+     a planner has no such dependency.
+  3. **Finish `pandemonium-v2-respawnfix` → gate on melee placement** before discarding it; do
+     NOT judge it by the now-negative cloud number.
+- **Phase-0 farming-race diagnosis (4 Jun, `diagnose_farming_race.py`, all_farmer n=24):** verdict =
+  **hypothesis (ii) base-rush dominant** — `mean_final_base_health=0.0` (base dead EVERY game),
+  `own_base_destroyed −1680`/`base_damage −480`, placement 5.875 / margin −406.7. Freeze moderate
+  (9.7 ticks, secondary) and offense is actually high (`destroy_enemy_base +3150`, but
+  `self_damage −7798`) → **not** out-collected (hypothesis-iii STOP does NOT fire). → Build Phase B
+  with the **base-threat trigger as the dominant `_posture` lever** (defense+tether); de-emphasize A.
+- **Phase-A `AE_STUN_TAX` gate verdict (4 Jun, melee A/B, deploy confpol-semis2b-u75, n=3×1, 3 brackets):**
+  **FLAT — not shipped, `AE_STUN_TAX=0`** (as predicted, redundant with the calibrated
+  `PATH_THREAT_PENALTY=2.0`). `all_farmer` placement **2.17→2.17 (unchanged)**; adversarial 3.19→3.03,
+  semis_mixed 1.03→1.06; margins nudge ~+15 on loss brackets but inside n=3 noise. Smoke not cratered
+  (`top_seed_proxy` 0.472). Code stays (default-OFF, byte-identical); the lever folds into Phase B's
+  `fortress_threat_mult` anyway. → Phase B is the real bet.
 
 ### Current state (2 June 2026)
 
@@ -661,7 +733,7 @@ heuristic transfers best precisely because it does not learn local-opponent
 quirks.** Any new learning attempt must have a credible answer to "why won't
 this overfit the local opponents like the last ten attempts did?"
 
-### Measurement reality — ⚠ CHANGED 1 Jun: the cloud eval is now DETERMINISTIC
+### Measurement reality — ⚠ CHANGED 1 Jun: DETERMINISTIC; ⚠⚠ CHANGED AGAIN 4 Jun: OPPONENTS SWAPPED (all numbers below re-based — see "Current state (4 June 2026)")
 
 - **As of 1 Jun the organisers SEEDED the AE eval and removed non-determinism.**
   Proven empirically: confpol-u860 farmed **0.626 ×3 byte-identical**, opening-v2
