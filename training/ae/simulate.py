@@ -635,6 +635,7 @@ def run_simulation(
             "mean_final_base_health": _mean_diag("final_base_health"),
             "mean_final_team_bombs": _mean_diag("final_team_bombs"),
             "mean_final_team_resources": _mean_diag("final_team_resources"),
+            "mean_freeze_ticks": _mean_diag("freeze_ticks_seen"),
             "mean_base_pressure_overrides": _mean_diag("base_pressure_overrides"),
             "early_end_rate": sum(1 for d in diagnostics if d.get("early_end")) / max(1, len(diagnostics)),
             "terminated_rate": sum(1 for d in diagnostics if d.get("terminated_us")) / max(1, len(diagnostics)),
