@@ -130,15 +130,16 @@ ENV AE_PLAN_RESCORE_DEMOTE_ONLY=1
 
 # Contention-aware item valuation (3 Jun). _choose_target discounts item targets
 # an opponent reaches first, using free fixed-map spawn geometry + live viewcone
-# sightings. Demote-only, item-vs-item; flag-off path byte-identical. DEFAULT OFF
-# and STAYS OFF: CLOUD-CONFIRMED INERT (tag `contention-aware` = 0.671 = the
-# flag-off score exactly, 0/30 err, speed 0.840; the image really had
-# AE_CONTENTION=1, so it was a valid test). The flag fires but changes the
-# executed target only ~1.3x/game -- too rarely fueled (we have no trustworthy
-# mid-game opponent positions vs unknown teams; only spawns are known). Do NOT
-# re-submit. Kept default-off as reusable opponent-tracker infra + 18 TDD tests.
-# See ae/NOTES.md "Contention-aware item valuation".
-ENV AE_CONTENTION=0
+# sightings. Demote-only, item-vs-item; flag-off path byte-identical. **SHIPPED ON
+# (AE_CONTENTION=1)** as a near-zero-downside option for the Semis MELEE. The cloud
+# A/B proved it NEUTRAL on the qualifier-style eval (tag `contention-aware` = 0.671
+# = flag-off exactly, 0/30 err, speed 0.840 ~= baseline) -- but the cloud measures
+# absolute reward at a FIXED spawn, NOT melee PLACEMENT vs other teams, which is
+# the real Semis objective and the only place this lever can help. The
+# de-contaminated melee showed nominal help (all_farmer placement 2.39->2.17,
+# small/noisy). Downside is cloud-proven ~0; revert is ONE line (set to 0). See
+# ae/NOTES.md "Contention-aware item valuation".
+ENV AE_CONTENTION=1
 ENV AE_CONTENTION_SCALE=2.5
 ENV AE_CONTENTION_PFLOOR=0.15
 ENV AE_CONTENTION_TOPEN=40

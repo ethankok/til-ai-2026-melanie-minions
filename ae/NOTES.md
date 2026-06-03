@@ -552,7 +552,7 @@ that keeps it out of the dypm/pessimistic-search grave).
   --our heuristic --preset furnished --hash-seeds 0 1 2 --sim-seeds 42
   --extra-env AE_PLAN_RESCORE=1 --summary-out <out>.json`.
 
-### Contention-aware item valuation — CLOUD-CONFIRMED INERT, default-OFF (3 Jun)
+### Contention-aware item valuation — CLOUD-NEUTRAL, SHIPPED ON for the Semis melee (3 Jun)
 
 The **first AE lever that adds the opponent dimension.** Every dead action-policy
 lever (opening book, dypm-veto, plan-rescore) only re-weighted *our own* plan with
@@ -635,13 +635,19 @@ hole** (the −388/−291 farming-race margins). Design/plan:
   contention — and any opponent-aware action lever — is inert-or-overfit-risky
   until we have a credible source of live opponent positions. **Don't re-pursue
   this family expecting it to fire; a different lever is needed.**
-- **STATUS: code in-tree, default-OFF** (Dockerfile `AE_CONTENTION=0`), 18 TDD
-  tests pass, flag-off byte-identical. **Do NOT re-submit as-is.** Kept as reusable
-  infra (the `_believed_opponents`/`_opponent_distance_map` tracker is the seed for
-  any future opponent-aware work). The **melee de-contamination fix**
+- **STATUS: SHIPPED ON (user call, 3 Jun) — Dockerfile default flipped to
+  `AE_CONTENTION=1`.** Rationale: the cloud A/B is NEUTRAL (0.671 = flag-off, 0/30
+  err, speed 0.840 ≈ baseline → downside cloud-proven ~0), but the cloud measures
+  absolute reward at a fixed spawn, **not melee placement vs other teams — the real
+  Semis objective and the only thing this lever targets** (de-contaminated melee:
+  `all_farmer` 2.39→2.17, small/noisy). So we ship it as a near-zero-downside bet on
+  the melee. **Caveat (honest):** the melee upside is from noisy local proxies, not
+  proven; if anything looks off in-person, revert is ONE line (`AE_CONTENTION=0`).
+  18 TDD tests pass; flag-off path byte-identical (instant rollback). The deployed
+  image is the same one validated at 0.671 (tag `contention-aware`). `confpol-semis2b-u75`
+  is still the policy/checkpoint (0.671). The **melee de-contamination fix**
   (`foreign_opponents`/`simulate`) is a permanent keeper — experimental `AE_*` flags
-  no longer leak to the opponent mirrors. `confpol-semis2b-u75` (0.671) stays the
-  deploy pick.
+  no longer leak to the opponent mirrors.
 
 ### The one problem that dominates AE: the local→cloud transfer gap
 
@@ -719,7 +725,7 @@ this overfit the local opponents like the last ten attempts did?"
 | **Belief-map / memory BC** (`bc-belief-hybrid`) | 704k-param CNN belief input | Fit local *better* (val_acc 0.897) but **widened** cloud gap by +0.044. Rich state against random opponents = more ways to overfit. |
 | **MCTS as primary planner** (`mcts-light`) | Depth/width search per tick | Either times out (no latency cap) or, when capped, regresses accuracy −0.068 and speed −0.254. Workshop teaches no MCTS; top teams aren't doing it. |
 | **Forward-sim plan re-score** (`AE_PLAN_RESCORE`, top-K projection, 3 Jun) | Re-rank top-K target candidates by projected realized reward (curry's `score_plan` principle, contained — not the dead full-width beam) | **CLOUD-CONFIRMED DEAD: tag `planrescore` = 0.590 vs champion 0.671 (−0.081, deterministic, 0/30 err, speed 0.833).** Demote-only read flat locally (+0.0096 n=3×12) but cloud −0.081; symmetric −0.080 local. top_seed_proxy −0.137 correctly foreshadowed it. Self-plan projection alone doesn't close the gap to curry's 0.715 (curry also prices respawn/stun). Code in-tree default-OFF. Do NOT re-run. See *Forward-sim plan re-score* above. |
-| **Contention-aware item valuation** (`AE_CONTENTION`, opponent-aware scorer, 3 Jun) | Discount item targets an opponent reaches first, using free fixed-map spawns + live viewcone sightings (demote-only, item-vs-item) | **CLOUD-CONFIRMED INERT: tag `contention-aware` = 0.671 = flag-off exactly (0/30 err, speed 0.840); image confirmed AE_CONTENTION=1.** Flag IS on and fires, but changes the executed target only ~1.3×/game (diagnosed: `_apply_contention` ran 21× / changed 4× over 3 games) — too rare to move the score. Bottleneck = no trustworthy mid-game opponent positions vs unknown teams (only spawns known). Local was NEUTRAL (step1 −0.009; melee semis_mixed n=3 −0.204 was variance → n=5 −0.006). Code in-tree default-OFF, 18 TDD tests; melee de-contamination fix kept. Don't re-pursue opponent-aware levers without a live opponent-position source. See *Contention-aware item valuation* above. |
+| **Contention-aware item valuation** (`AE_CONTENTION`, opponent-aware scorer, 3 Jun) | Discount item targets an opponent reaches first, using free fixed-map spawns + live viewcone sightings (demote-only, item-vs-item) | **CLOUD-NEUTRAL, not negative: tag `contention-aware` = 0.671 = flag-off exactly (0/30 err, speed 0.840; image confirmed AE_CONTENTION=1).** Flag fires but changes the target only ~1.3×/game (`_apply_contention` ran 21× / changed 4× over 3 games). **SHIPPED ON anyway** (Dockerfile `AE_CONTENTION=1`, user call) as a near-zero-downside bet on melee PLACEMENT — which the cloud can't measure (de-contam melee `all_farmer` 2.39→2.17, small/noisy); revert = one line. **LESSON (why it's in this table):** an opponent-aware ACTION lever can't move the cloud/reward number — bottlenecked by no trustworthy mid-game opponent positions vs unknown teams (only spawns known); don't build another expecting cloud gains. 18 TDD tests; melee de-contamination fix kept. See *Contention-aware item valuation* above. |
 | **Scripted M5 port** (`scripted_hybrid`, full ScriptedBaseAttackPolicy) | Port the 0.731 team's full decision tree | **−3.35σ LOSS** at the local gate. M5's 0.731 is codebase-specific, not primitive-additive. |
 | **Three M5 primitives** (spawn-first-target table, enemy-bomb-only escape, orientation-aware A*) | Bolt-on env flags | All noise-to-catastrophic (orientation-aware A* −0.142; our DIST_PENALTY is tuned for grid, not orientation distance). All default-OFF. |
 | **Memorized-route / rusher / camping cheese** (RIGID) | Precompute a greedy route per fixed-Novice spawn, replay blindly | RIGID replay loses to per-tick re-evaluation. **⚠ But see below: a DIVERGENCE-GATED opening book is NOT this** — the competitor ships one and scores 0.715. Re-open with abort-on-divergence (the rigid version is what failed, not the concept). |
