@@ -91,6 +91,18 @@
   semis_mixed 1.03→1.06; margins nudge ~+15 on loss brackets but inside n=3 noise. Smoke not cratered
   (`top_seed_proxy` 0.472). Code stays (default-OFF, byte-identical); the lever folds into Phase B's
   `fortress_threat_mult` anyway. → Phase B is the real bet.
+- **Phase-B `AE_FORTRESS` gate verdict (4 Jun, melee on-vs-flag-off, deploy confpol-semis2b-u75, n=3×1):**
+  **KILLED — NOT shipped, `AE_FORTRESS=0`.** Fortress regresses EVERY bracket: all_farmer **2.17→4.69**,
+  adversarial **3.19→4.25**, semis_mixed **1.03→1.50** (worst-bracket placement 3.19→4.69); the reject smoke
+  also cratered the cloud-predictive suite (`top_seed_proxy` 0.472→0.120, while defensive suites held).
+  **Why the Phase-0 lever didn't transfer:** base-rush was real on the BARE heuristic (placement 5.875) but
+  the DEPLOYED confpol consultant already handles all_farmer (2.17 flag-off); forcing a defensive posture on
+  top makes the strong agent passive → out-farmed, placement tanks. Same action-policy wall as
+  contention/plan-rescore (helps the wrong regime). Default-OFF ships nothing; deploy stays
+  `confpol-semis2b-u75`. Code retained (flag-off byte-identical, TDD-guarded) but both farming-race levers
+  (`AE_STUN_TAX`, `AE_FORTRESS`) are DEAD on the melee. **Next ceiling-raiser must be a different shape** —
+  a planner that improves WITHOUT a global posture switch, or Dir-2 (RL anchored to the planner) — not more
+  heuristic posture levers.
 
 ### Current state (2 June 2026)
 
