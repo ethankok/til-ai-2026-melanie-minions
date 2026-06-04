@@ -26,7 +26,32 @@ from model import PolicyNetwork, num_parameters
 
 
 class BCDataset(Dataset):
-    def __init__(self, npz_path: Path):
+    """Load a BC dataset from either a legacy ``.npz`` file or a memmap directory.
+
+    Directory format (written by ``collect_bc.py --stream-dir``):
+      <dir>/agent_views.npy   float16
+      <dir>/base_views.npy    float16
+      <dir>/beliefs.npy       float16  (optional, when with_belief=True)
+      <dir>/scalars.npy       float16
+      <dir>/action_masks.npy  uint8
+      <dir>/actions.npy       int8
+      <dir>/meta.json         {"n_frames": int, "with_belief": bool,
+                               "n_samples": int, "fields": {...}}
+
+    All arrays are memory-mapped read-only so RAM stays O(1) in dataset size.
+    ``__getitem__`` casts to the same dtypes as the legacy npz path so the
+    rest of the training code (``_unpack_batch``, model forward) works
+    unchanged.
+    """
+
+    def __init__(self, data_path: Path):
+        data_path = Path(data_path)
+        if data_path.is_dir():
+            self._init_from_dir(data_path)
+        else:
+            self._init_from_npz(data_path)
+
+    def _init_from_npz(self, npz_path: Path) -> None:
         data = np.load(npz_path)
         self.agent_views = torch.from_numpy(data["agent_views"]).float()
         self.base_views = torch.from_numpy(data["base_views"]).float()
@@ -45,27 +70,62 @@ class BCDataset(Dataset):
         else:
             self.beliefs = None
             self.has_belief = False
+        self._n_samples = self.actions.shape[0]
+        self._use_mmap = False
+
+    def _init_from_dir(self, dir_path: Path) -> None:
+        import json as _json
+        meta = _json.loads((dir_path / "meta.json").read_text())
+        self.n_frames = int(meta["n_frames"])
+        self.has_belief = bool(meta.get("with_belief", False))
+        self._n_samples = int(meta["n_samples"])
+        self._use_mmap = True
+
+        # Memory-map each field lazily — load returns an ndarray view,
+        # no data copied to RAM until __getitem__ accesses a row.
+        self._mm_agent  = np.load(str(dir_path / "agent_views.npy"), mmap_mode="r")
+        self._mm_base   = np.load(str(dir_path / "base_views.npy"),  mmap_mode="r")
+        self._mm_scalar = np.load(str(dir_path / "scalars.npy"),     mmap_mode="r")
+        self._mm_mask   = np.load(str(dir_path / "action_masks.npy"), mmap_mode="r")
+        self._mm_action = np.load(str(dir_path / "actions.npy"),     mmap_mode="r")
+        if self.has_belief:
+            self._mm_belief = np.load(str(dir_path / "beliefs.npy"), mmap_mode="r")
+        else:
+            self._mm_belief = None
 
     def __len__(self) -> int:
-        return self.actions.shape[0]
+        return self._n_samples
 
     def __getitem__(self, idx: int):
-        if self.has_belief:
+        if self._use_mmap:
+            # np.asarray copies the mmap slice into a plain ndarray so the
+            # returned tensor does not hold a mmap view alive.
+            agent_v  = torch.from_numpy(np.asarray(self._mm_agent[idx],  dtype=np.float32))
+            base_v   = torch.from_numpy(np.asarray(self._mm_base[idx],   dtype=np.float32))
+            scalars  = torch.from_numpy(np.asarray(self._mm_scalar[idx], dtype=np.float32))
+            mask     = torch.from_numpy(np.asarray(self._mm_mask[idx],   dtype=np.float32))
+            action   = torch.tensor(int(self._mm_action[idx]), dtype=torch.long)
+            if self.has_belief:
+                belief = torch.from_numpy(np.asarray(self._mm_belief[idx], dtype=np.float32))
+                return (agent_v, base_v, scalars, mask, belief, action)
+            return (agent_v, base_v, scalars, mask, action)
+        else:
+            if self.has_belief:
+                return (
+                    self.agent_views[idx],
+                    self.base_views[idx],
+                    self.scalars[idx],
+                    self.action_masks[idx],
+                    self.beliefs[idx],
+                    self.actions[idx],
+                )
             return (
                 self.agent_views[idx],
                 self.base_views[idx],
                 self.scalars[idx],
                 self.action_masks[idx],
-                self.beliefs[idx],
                 self.actions[idx],
             )
-        return (
-            self.agent_views[idx],
-            self.base_views[idx],
-            self.scalars[idx],
-            self.action_masks[idx],
-            self.actions[idx],
-        )
 
 
 def _masked_logits(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
