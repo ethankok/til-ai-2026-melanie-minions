@@ -281,3 +281,63 @@ class TestBCDatasetRoundTrip:
         item = ds[0]
         assert len(item) == 5, f"expected 5-tuple without belief, got {len(item)}"
         assert item[-1].dtype == torch.long
+
+
+class TestStreamDirOverwriteGuard:
+    """C2: collect_dataset_streaming must refuse to clobber an existing dir.
+
+    Tests the guard logic directly (no env / collection) by writing a minimal
+    memmap dir and calling the guard-path through the function's early-exit.
+    """
+
+    def _write_minimal_dir(self, dir_path: Path) -> None:
+        """Write a single .npy + meta.json into dir_path to simulate an existing run."""
+        dir_path.mkdir(parents=True, exist_ok=True)
+        rng = np.random.default_rng(0)
+        data = _make_synthetic(rng)
+        _write_memmap_dir(data, dir_path)
+
+    def test_raises_without_overwrite(self, tmp_path):
+        """Second write attempt without --overwrite must raise SystemExit."""
+        # We import here to avoid polluting the module namespace at collection time.
+        import sys as _sys
+        sys.path.insert(0, str(TRAINING_AE))
+        from collect_bc import collect_dataset_streaming  # noqa: E402
+
+        stream_dir = tmp_path / "stream"
+        self._write_minimal_dir(stream_dir)
+
+        with pytest.raises(SystemExit) as exc_info:
+            collect_dataset_streaming(
+                games=1,
+                stream_dir=stream_dir,
+                overwrite=False,
+            )
+        assert "already has data" in str(exc_info.value)
+
+    def test_succeeds_with_overwrite_and_no_stale_fields(self, tmp_path):
+        """--overwrite clears old files then writes a fresh run; no stale meta fields survive."""
+        import sys as _sys
+        sys.path.insert(0, str(TRAINING_AE))
+        from collect_bc import collect_dataset_streaming  # noqa: E402
+
+        stream_dir = tmp_path / "stream2"
+        self._write_minimal_dir(stream_dir)
+
+        # Inject a stale extra key into meta to verify it is removed on overwrite.
+        meta_path = stream_dir / "meta.json"
+        stale_meta = json.loads(meta_path.read_text())
+        stale_meta["stale_key"] = "should_disappear"
+        meta_path.write_text(json.dumps(stale_meta))
+
+        # Run a real 1-game collection with --overwrite.
+        collect_dataset_streaming(
+            games=1,
+            stream_dir=stream_dir,
+            overwrite=True,
+        )
+
+        new_meta = json.loads(meta_path.read_text())
+        assert "stale_key" not in new_meta, "stale meta key survived --overwrite"
+        assert "n_samples" in new_meta
+        assert "skipped" in new_meta

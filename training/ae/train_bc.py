@@ -10,6 +10,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -74,8 +75,7 @@ class BCDataset(Dataset):
         self._use_mmap = False
 
     def _init_from_dir(self, dir_path: Path) -> None:
-        import json as _json
-        meta = _json.loads((dir_path / "meta.json").read_text())
+        meta = json.loads((dir_path / "meta.json").read_text())
         self.n_frames = int(meta["n_frames"])
         self.has_belief = bool(meta.get("with_belief", False))
         self._n_samples = int(meta["n_samples"])

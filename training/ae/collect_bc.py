@@ -57,6 +57,7 @@ class _MemmapWriter:
         n = games * self.SAMPLES_PER_GAME
         self._n_max = n
         self._i = 0
+        self._skipped = 0
         self._with_belief = with_belief
         self._n_frames = n_frames
 
@@ -89,14 +90,16 @@ class _MemmapWriter:
         self._action_counts = np.zeros(6, dtype=np.int64)
 
     def write(self, agent_view, base_view, scalar, action_mask, action,
-              belief=None) -> None:
-        """Write one sample directly to disk.  Caps silently if over budget."""
+              belief=None) -> None:  # belief may be passed positionally or as keyword
+        """Write one sample directly to disk.  Counts and reports dropped overflow samples."""
         if self._i >= self._n_max:
-            warnings.warn(
-                f"collect_bc streaming: more than {self._n_max} samples "
-                f"(games*{self.SAMPLES_PER_GAME}) — extra samples dropped.",
-                stacklevel=2,
-            )
+            if self._skipped == 0:
+                warnings.warn(
+                    f"collect_bc streaming: more than {self._n_max} samples "
+                    f"(games*{self.SAMPLES_PER_GAME}) — extra samples dropped.",
+                    stacklevel=2,
+                )
+            self._skipped += 1
             return
         i = self._i
         self._mm_agent[i]  = agent_view.astype(np.float16)
@@ -129,11 +132,20 @@ class _MemmapWriter:
         if self._with_belief:
             fields["beliefs"] = {"shape": list(self._belief_shape), "store_dtype": "float16"}
 
+        if self._skipped > 0:
+            print(
+                f"[collect_bc] WARNING: dropped {self._skipped} overflow samples "
+                f"(>{self._n_max} preallocated) — increase --games sizing",
+                file=sys.stderr,
+                flush=True,
+            )
+
         meta = {
-            "n_frames":   self._n_frames,
+            "n_frames":    self._n_frames,
             "with_belief": self._with_belief,
-            "n_samples":  self._i,
-            "fields":     fields,
+            "n_samples":   self._i,
+            "skipped":     self._skipped,
+            "fields":      fields,
         }
         (self._out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
         return self._i
@@ -372,6 +384,7 @@ def collect_dataset_streaming(
     n_frames: int = 4,
     with_belief: bool = True,
     opponents_spec: str = "library",
+    overwrite: bool = False,
 ) -> None:
     """Collect a BC dataset using disk-backed memmaps (low-RAM streaming path).
 
@@ -390,6 +403,23 @@ def collect_dataset_streaming(
           actions.npy       int8     (games*200,)
           meta.json
     """
+    # C2: refuse to silently clobber an existing stream dir unless --overwrite is set.
+    _existing = stream_dir.is_dir() and (
+        list(stream_dir.glob("*.npy")) or (stream_dir / "meta.json").exists()
+    )
+    if _existing and not overwrite:
+        raise SystemExit(
+            f"--stream-dir {stream_dir} already has data; "
+            "pass --overwrite to replace it or choose a new dir"
+        )
+    if _existing and overwrite:
+        import glob as _glob
+        for _f in stream_dir.glob("*.npy"):
+            _f.unlink()
+        _meta = stream_dir / "meta.json"
+        if _meta.exists():
+            _meta.unlink()
+
     config = default_config()
     config.env.novice = novice
     env = bomberman_env.basic_env(env_wrappers=[], cfg=config)
@@ -445,12 +475,9 @@ def collect_dataset_streaming(
         _agent_shape, _base_shape, _belief_shape, _scalar_shape,
     )
 
-    def _on_sample(av, bv, sc, am, act, bel):
-        writer.write(av, bv, sc, am, act, belief=bel)
-
     n_collected, elapsed = _run_game_loop(
         env, our_agent, other_ids, opponents,
-        games, seed, n_frames, with_belief, _on_sample,
+        games, seed, n_frames, with_belief, writer.write,
     )
     env.close()
     n_written = writer.flush_and_finalize()
@@ -460,12 +487,6 @@ def collect_dataset_streaming(
         f"({n_collected / max(elapsed, 1):.1f} samples/sec)"
     )
     print(f"Written {n_written:,} samples → {stream_dir}")
-    if n_written < n_collected:
-        warnings.warn(
-            f"Wrote {n_written} samples but collected {n_collected}; "
-            f"capped at games*{_MemmapWriter.SAMPLES_PER_GAME}={games * _MemmapWriter.SAMPLES_PER_GAME}",
-            stacklevel=2,
-        )
     print(f"Shapes: agent_views={_agent_shape}, base_views={_base_shape}, "
           f"scalars={_scalar_shape}"
           + (f", beliefs={_belief_shape}" if with_belief and _belief_shape else ""))
@@ -508,6 +529,14 @@ def main() -> None:
             "'pressure2', legacy 'random', or 5 comma-separated names."
         ),
     )
+    parser.add_argument(
+        "--overwrite", action="store_true", default=False,
+        help=(
+            "Allow overwriting an existing --stream-dir. "
+            "Stale .npy and meta.json files are removed before collection begins. "
+            "Without this flag, collecting into a non-empty dir raises an error."
+        ),
+    )
     parser.set_defaults(with_belief=True)
     args = parser.parse_args()
 
@@ -524,6 +553,7 @@ def main() -> None:
             n_frames=args.n_frames,
             with_belief=args.with_belief,
             opponents_spec=args.opponents,
+            overwrite=args.overwrite,
         )
     else:
         # --- Legacy npz path (default) ---
