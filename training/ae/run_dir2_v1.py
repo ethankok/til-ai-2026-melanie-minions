@@ -11,17 +11,32 @@ The key differences from Stage-B:
     data.  BC gives a strong behavioral prior BEFORE any RL pressure — the
     hypothesis is that RL from a BC init escapes the ~0.60–0.63 consultant band
     that three RL-from-scratch runs all hit.
-  * `semis-foreign` opponent mix: 50% foreign TRAIN-OK opponents
-    (curry_aggro / self_policy / evbot / self_heuristic) + 25% scripted + 25%
-    cloudsuite.  All four TRAIN-OK foreign opponents are fast NN/heuristic — NO
-    slow planner (A* forward-sim curry_fortress / peroxide_astar).  The slow
-    planner opponents were the prior 3-4-day bottleneck; this run excludes them.
-    FOREIGN_EVAL_ONLY names are NEVER sampled here — train_ppo's
-    `_foreign_train_blend()` hard-aborts if any leak in.
+  * Explicit opponent mix (NOT the semis-foreign preset):
+      foreign_train:0.45, selfplay:0.25, scripted:0.15, cloudsuite:0.15
+    - `selfplay:0.25` is the critical NEW self-play league layer.  The `selfplay`
+      mode in train_ppo's _make_opponents() is the ONLY mode (besides frozen/
+      mixed/league) that constructs a FrozenPolicyOpponent from the SnapshotPool.
+      Without this slice the pool is populated but NEVER drawn from — the run
+      would be a plain foreign curriculum with no league layer at all.  We use
+      `selfplay` (NOT `league`) deliberately: `league` also injects the slow
+      PlannerOpponent + AggressivePlannerOpponent (the 3-4-day bottleneck); this
+      run favours fast opponents only.
+    - `foreign_train:0.45` keeps the proven Stage-B foreign curriculum (the
+      champion confpol-semis2b-u75 came from it) AND provides the heuristic
+      anchor: _foreign_train_blend includes self_heuristic (C+bomb7), so we do
+      NOT need a separate slow-planner slice.  Note: the blend is 4 foreign
+      TRAIN-OK opponents (curry_aggro, self_policy, evbot, self_heuristic) plus
+      the local scripted `rusher` proxy — so NOT 5 foreign opponents; `rusher` is
+      a fast local heuristic included for behavioral diversity, not a foreign team.
+      FOREIGN_EVAL_ONLY names are NEVER sampled — train_ppo's
+      _foreign_train_blend() hard-aborts if any leak in.
+    - `scripted:0.15, cloudsuite:0.15` keep fast behavioral diversity.
+    - Net: ~0.70 weight on (fast NN foreign + self-play snapshots), NO slow
+      planner/aggressive slices.
   * Snapshot self-play (`--snapshot-interval 10`, `--snapshot-pool-size 8`):
     the SnapshotPool adds our OWN policy at various historical snapshots to
-    the league mix, giving genuine self-play diversity on top of the foreign
-    curriculum.  These are fast (NN inference only).
+    the league mix via the `selfplay` slice above.  These are fast (NN inference
+    only); the pool falls back to the live actor while it is still empty.
   * Gentle lr 1e-4, NOT the 2.5e-4 from-scratch value.  The blowup history
     (hitting a warm policy with 10x lr re-stochasticizes it in one update) means
     we refine, we don't shake.
@@ -131,14 +146,20 @@ def main() -> None:
 
     n = args.updates or updates_for(TARGET_STEPS, args.games_per_update)
 
+    # Explicit mix — DO NOT use --opponent-mix-preset here.  The preset
+    # `semis-foreign` expands to foreign_train:0.5,scripted:0.25,cloudsuite:0.25,
+    # NONE of which draws from the SnapshotPool (only `selfplay`/`frozen`/`mixed`/
+    # `league` modes do).  The selfplay:0.25 slice below is what makes this a real
+    # league rather than a plain foreign curriculum.
+    OPPONENT_MIX = "foreign_train:0.45,selfplay:0.25,scripted:0.15,cloudsuite:0.15"
+
     cmd = [
         sys.executable, "-u", str(TRAIN),
-        # Opponent mix: semis-foreign = foreign_train:0.5 + scripted:0.25 + cloudsuite:0.25.
-        # ALL foreign_train opponents are TRAIN_OK and fast (NN/heuristic).
-        # FOREIGN_EVAL_ONLY is hard-blocked by train_ppo's _foreign_train_blend().
-        "--opponent-mix-preset", "semis-foreign",
-        # Self-play snapshots layered on top of the foreign mix (through league slot
-        # in the rollout sampler). The snapshot pool gives genuine self-play diversity.
+        # Explicit mix: foreign heuristic anchor (0.45) + self-play league layer
+        # (0.25) + fast diversity (scripted 0.15, cloudsuite 0.15).  See docstring.
+        "--opponent-mix", OPPONENT_MIX,
+        # Self-play snapshots: the selfplay slice above draws from this pool.
+        # Now MEANINGFUL — without the selfplay slice the pool is built but unused.
         "--snapshot-interval", str(args.snapshot_interval),
         "--snapshot-pool-size", str(args.snapshot_pool_size),
         # BC warm-start: actor (always) + critic (avoids cold value bootstrap).
@@ -160,7 +181,7 @@ def main() -> None:
 
     print(f"Dir-2 v1 BC warm-start league  tag={args.tag}")
     print(f"  warm-start : {warm.name}")
-    print(f"  opponent mix : semis-foreign (foreign_train:0.50 + scripted:0.25 + cloudsuite:0.25)")
+    print(f"  opponent mix : {OPPONENT_MIX}")
     print(f"  snapshots  : every {args.snapshot_interval} updates, pool size {args.snapshot_pool_size}")
     print(f"  lr={args.lr}  gamma=0.99  gae_lambda=0.95")
     print(f"  updates={n}  (~{n * args.games_per_update * STEPS_PER_GAME:,} steps,"
