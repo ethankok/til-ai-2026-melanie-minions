@@ -104,6 +104,14 @@ OPPONENT_MIX_PRESETS = {
     # the only local guard against proxy-overfit. Warm-start the confpol-native
     # line and gate every checkpoint with melee_eval.py.
     "semis-foreign": "foreign_train:0.5,scripted:0.25,cloudsuite:0.25",
+    # Dir-2 league: the proven semis-foreign FOREIGN curriculum (heuristic
+    # anchor = self_heuristic ∈ foreign_train) PLUS a real self-play layer —
+    # `selfplay` is pool-only FrozenPolicyOpponent, so it actually draws the
+    # SnapshotPool snapshots that --snapshot-interval populates (foreign_train/
+    # scripted/cloudsuite never draw from the pool). FAST opponents only — no
+    # `planner`/`aggressive`/`league` slices (those add the slow AEManager
+    # planners). Pair with `--preset full-rl` (Stage-B shaping) + BC warm-start.
+    "dir2-league": "foreign_train:0.45,selfplay:0.25,scripted:0.15,cloudsuite:0.15",
 }
 
 
@@ -238,7 +246,12 @@ class AdaptiveRewardShaper:
         health = _safe_float(obs_py.get("health"))
         if health is not None:
             if self.last_health is not None:
-                bonus += self.args.health_delta_coef * (health - self.last_health)
+                # Penalize taking damage/dying, but ignore positive jumps. The
+                # only positive agent-health delta is the 0->100 respawn refund,
+                # which would otherwise cancel a whole life's damage penalty and
+                # leave death with no net shaped deterrent (there are no heal
+                # items, so negative-only is respawn-specific in practice).
+                bonus += self.args.health_delta_coef * min(0.0, health - self.last_health)
             self.last_health = health
 
         base_health = _safe_float(obs_py.get("base_health"))

@@ -6,12 +6,21 @@ line (confpol-semis2b-u75, cloud 0.414 on the 4-Jun eval) exhausted its
 ceiling.  The ONE recipe we have never run is curry's actual Semifinals bet:
 BC-clone warm-start -> short self-play LEAGUE -> deploy as confpol consultant.
 
+Shaping recipe: `--preset full-rl` (the proven Stage-B shaping knobs:
+  entropy floor 0.008 → 0.003 anneal, clip 0.14/0.08, target_kl 0.015,
+  policy selection, load_critic=True, baseline_eval=True,
+  min_save_improvement 0.015) PLUS `--opponent-mix-preset dir2-league`
+  (the self-play-augmented fast mix below).  This mirrors exactly the pattern
+  that produced the champion confpol-semis2b-u75 (`--preset full-rl
+  --opponent-mix-preset semis-foreign`) but adds the self-play league layer.
+  lr is kept at 1e-4 (gentle warm-start); full-rl does NOT override lr.
+
 The key differences from Stage-B:
   * Warm-start from the BC clone (`dir2-bc.pt`) trained on curry's own play
     data.  BC gives a strong behavioral prior BEFORE any RL pressure — the
     hypothesis is that RL from a BC init escapes the ~0.60–0.63 consultant band
     that three RL-from-scratch runs all hit.
-  * Explicit opponent mix (NOT the semis-foreign preset):
+  * Opponent mix — `--opponent-mix-preset dir2-league`:
       foreign_train:0.45, selfplay:0.25, scripted:0.15, cloudsuite:0.15
     - `selfplay:0.25` is the critical NEW self-play league layer.  The `selfplay`
       mode in train_ppo's _make_opponents() is the ONLY mode (besides frozen/
@@ -146,25 +155,27 @@ def main() -> None:
 
     n = args.updates or updates_for(TARGET_STEPS, args.games_per_update)
 
-    # Explicit mix — DO NOT use --opponent-mix-preset here.  The preset
-    # `semis-foreign` expands to foreign_train:0.5,scripted:0.25,cloudsuite:0.25,
-    # NONE of which draws from the SnapshotPool (only `selfplay`/`frozen`/`mixed`/
-    # `league` modes do).  The selfplay:0.25 slice below is what makes this a real
-    # league rather than a plain foreign curriculum.
-    OPPONENT_MIX = "foreign_train:0.45,selfplay:0.25,scripted:0.15,cloudsuite:0.15"
-
     cmd = [
         sys.executable, "-u", str(TRAIN),
-        # Explicit mix: foreign heuristic anchor (0.45) + self-play league layer
-        # (0.25) + fast diversity (scripted 0.15, cloudsuite 0.15).  See docstring.
-        "--opponent-mix", OPPONENT_MIX,
+        # Stage-B shaping: entropy floor/anneal, clip 0.14/0.08, target_kl 0.015,
+        # policy selection, load_critic=True, baseline_eval=True,
+        # min_save_improvement=0.015.  apply_preset("full-rl") leaves
+        # opponent_mix_preset alone when it is already non-"none", so the
+        # dir2-league mix below is honoured without being overridden.
+        "--preset", "full-rl",
+        # Self-play-augmented fast mix (registered preset in train_ppo.py):
+        #   foreign_train:0.45 + selfplay:0.25 + scripted:0.15 + cloudsuite:0.15.
+        # The `selfplay` slice is what makes this a real league — it draws from
+        # the SnapshotPool that --snapshot-interval populates.  FAST opponents
+        # only: no planner/aggressive/league slices.
+        "--opponent-mix-preset", "dir2-league",
         # Self-play snapshots: the selfplay slice above draws from this pool.
-        # Now MEANINGFUL — without the selfplay slice the pool is built but unused.
         "--snapshot-interval", str(args.snapshot_interval),
         "--snapshot-pool-size", str(args.snapshot_pool_size),
-        # BC warm-start: actor (always) + critic (avoids cold value bootstrap).
-        "--bc-checkpoint", str(warm), "--load-critic",
-        # Gentle refinement hyperparams — same as confpol-native, proven safe.
+        # BC warm-start (actor always; critic avoids cold value bootstrap).
+        # --load-critic and --baseline-eval are already set by --preset full-rl.
+        "--bc-checkpoint", str(warm),
+        # Gentle refinement lr; full-rl does NOT override lr.
         "--lr", str(args.lr),
         "--games-per-update", str(args.games_per_update),
         "--ppo-epochs", str(args.ppo_epochs),
@@ -173,7 +184,6 @@ def main() -> None:
         "--eval-every", str(args.eval_every),
         # Dense ladder — the cloud-best rung is always early; we must have it.
         "--checkpoint-every", str(args.checkpoint_every),
-        "--baseline-eval",   # gate save-quality vs the BC warm-start eval
         "--updates", str(n),
         "--out", str(out), "--latest-out", str(latest),
         "--seed", "0",
@@ -181,7 +191,7 @@ def main() -> None:
 
     print(f"Dir-2 v1 BC warm-start league  tag={args.tag}")
     print(f"  warm-start : {warm.name}")
-    print(f"  opponent mix : {OPPONENT_MIX}")
+    print(f"  preset     : full-rl  opponent-mix-preset: dir2-league")
     print(f"  snapshots  : every {args.snapshot_interval} updates, pool size {args.snapshot_pool_size}")
     print(f"  lr={args.lr}  gamma=0.99  gae_lambda=0.95")
     print(f"  updates={n}  (~{n * args.games_per_update * STEPS_PER_GAME:,} steps,"
