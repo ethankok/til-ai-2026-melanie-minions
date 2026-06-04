@@ -64,6 +64,30 @@ def _cbomb7_env() -> dict[str, str]:
     return dict(CBOMB7_ENV)
 
 
+# label=path[@eps=E,floor=F,ovr=O] -> (label, env). The optional @-suffix sets the
+# confpol gate knobs for THIS candidate so one sweep registers the same checkpoint
+# at several consult thresholds. No @-suffix == checkpoint only (old behavior).
+_GATE_KEYS = {
+    "eps": "AE_CONFPOL_MARGIN_EPSILON",
+    "floor": "AE_CONFPOL_TOP_FLOOR",
+    "ovr": "AE_CONFPOL_OVERRIDE_TARGET_NONE",
+    "override": "AE_CONFPOL_OVERRIDE_TARGET_NONE",
+}
+
+
+def _parse_confpol_spec(spec_str: str) -> tuple[str, dict[str, str]]:
+    label, _, rest = spec_str.partition("=")
+    path_part, _, gate_part = rest.partition("@")
+    env: dict[str, str] = {"AE_POLICY_CHECKPOINT": str(Path(path_part).resolve())}
+    for kv in filter(None, gate_part.split(",")):
+        key, _, val = kv.partition("=")
+        env_name = _GATE_KEYS.get(key.strip().lower())
+        if env_name is None:
+            raise ValueError(f"unknown gate knob {key!r} in {spec_str!r}")
+        env[env_name] = val.strip()
+    return label, env
+
+
 # label -> {"our": <simulate _make_our_agent name>, "env": {extra env vars}}
 def _base_registry() -> dict[str, dict]:
     return {
@@ -248,9 +272,8 @@ def main(argv: list[str] | None = None) -> int:
 
     registry = _base_registry()
     for spec_str in args.confpol_ckpt:
-        label, _, path = spec_str.partition("=")
-        registry[label] = {"our": "confidence_policy_hybrid",
-                           "env": {"AE_POLICY_CHECKPOINT": str(Path(path).resolve())}}
+        label, env = _parse_confpol_spec(spec_str)
+        registry[label] = {"our": "confidence_policy_hybrid", "env": env}
     for spec_str in args.policy_ckpt:
         label, _, path = spec_str.partition("=")
         registry[label] = {"our": "policy",
