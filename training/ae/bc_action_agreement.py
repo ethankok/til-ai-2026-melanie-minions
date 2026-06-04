@@ -21,7 +21,7 @@ from model import PolicyNetwork  # noqa: E402
 from train_bc import BCDataset, _masked_logits, _unpack_batch  # noqa: E402
 
 
-def agreement_and_lift(pred: np.ndarray, true: np.ndarray, n_actions: int = 6):
+def agreement_and_lift(pred: np.ndarray, true: np.ndarray, n_actions: int = 6) -> tuple[float, float, float]:
     """Return (agreement, modal_baseline, lift). Pure; no model/IO."""
     pred = np.asarray(pred)
     true = np.asarray(true)
@@ -31,7 +31,8 @@ def agreement_and_lift(pred: np.ndarray, true: np.ndarray, n_actions: int = 6):
     return agreement, modal, agreement - modal
 
 
-def measure(clone_path: str, data_path: str, batch_size: int = 256):
+def measure(clone_path: str, data_path: str, batch_size: int = 256) -> tuple[float, float, float]:
+    """Load the clone + held-out demos, mirror train_bc.evaluate's forward, return (agreement, modal_baseline, lift). CPU-only (offline gate)."""
     device = torch.device("cpu")
     dataset = BCDataset(Path(data_path))
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
@@ -39,12 +40,12 @@ def measure(clone_path: str, data_path: str, batch_size: int = 256):
     # train_bc.py saves: {"model_state_dict": ..., "epoch": ..., "val_acc": ...}
     # (see train_bc.py ~line 191).  Fall back to older key names for compat.
     if isinstance(ckpt, dict):
-        state = (
-            ckpt.get("model_state_dict")
-            or ckpt.get("model_state")
-            or ckpt.get("model")
-            or ckpt
-        )
+        for key in ("model_state_dict", "model_state", "model"):
+            if key in ckpt:
+                state = ckpt[key]
+                break
+        else:
+            state = ckpt  # raw state dict (no wrapper)
     else:
         state = ckpt
     use_belief = bool(dataset.has_belief)
