@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -18,7 +19,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch import nn, optim
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset, Subset, random_split
 
 THIS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(THIS_DIR))
@@ -169,23 +170,36 @@ def evaluate(model: PolicyNetwork, loader: DataLoader, has_belief: bool,
 
 
 def train(args: argparse.Namespace) -> None:
-    device = torch.device(
-        "cuda" if torch.cuda.is_available()
-        else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-              else "cpu")
-    )
+    # AE_FORCE_CPU=1 forces CPU (repo convention). Needed because MPS + forked
+    # DataLoader workers (num_workers>0) crash on macOS ("leaked semaphores");
+    # CPU lets workers parallelize the mmap I/O safely.
+    if os.environ.get("AE_FORCE_CPU") == "1":
+        device = torch.device("cpu")
+    else:
+        device = torch.device(
+            "cuda" if torch.cuda.is_available()
+            else ("mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+                  else "cpu")
+        )
     print(f"device: {device}")
 
     data_path = Path(args.data)
     if not data_path.exists():
         raise SystemExit(f"Dataset not found at {data_path}. Run collect_bc.py first.")
     dataset = BCDataset(data_path)
-    print(f"samples: {len(dataset):,}")
+    # On a small-RAM machine a huge mmap dataset is I/O-bound (random reads
+    # cache-miss) and pressures memory. --max-samples caps to the first N rows
+    # (games are i.i.d. random draws, so the prefix is a valid subset) so the
+    # working set fits the page cache: fast + stable, even with num_workers=0.
+    n_total = len(dataset)
+    n_use = min(args.max_samples, n_total) if args.max_samples > 0 else n_total
+    split_source = dataset if n_use == n_total else Subset(dataset, range(n_use))
+    print(f"samples: {n_total:,}" + (f"  (using first {n_use:,})" if n_use != n_total else ""))
 
-    val_size = max(1, len(dataset) // 10)
-    train_size = len(dataset) - val_size
+    val_size = max(1, n_use // 10)
+    train_size = n_use - val_size
     train_set, val_set = random_split(
-        dataset, [train_size, val_size],
+        split_source, [train_size, val_size],
         generator=torch.Generator().manual_seed(0),
     )
     train_loader = DataLoader(
@@ -270,6 +284,9 @@ def main() -> None:
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--max-samples", type=int, default=0,
+                        help="Cap training to the first N samples (0=all). Keeps the "
+                             "working set in RAM page-cache on small-memory machines.")
     parser.add_argument("--no-belief", action="store_true",
                         help="Force-disable belief input even if the dataset has it.")
     train(parser.parse_args())
