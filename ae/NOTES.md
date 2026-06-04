@@ -11,8 +11,9 @@
 >
 > _Digest last refreshed: 4 June 2026 — ⚠ CLOUD EVAL CHANGED (org opponent swap; all cloud
 > numbers re-based, byte-identical champion 0.671→0.414; see "Current state (4 June 2026)").
-> Also this session: respawn-loophole fix + pandemonium-v2 run launched + strategic pivot to a
-> stronger planner. Prior 2 June: Stage-B foreign-curriculum line run end to
+> Also this session: respawn-loophole fix + pandemonium-v2 run launched, then GATED + KILLED
+> (confirmed-dead on cloud n=7 AND melee placement — no rung beats the incumbent; deploy
+> unchanged) + strategic pivot to a stronger planner. Prior 2 June: Stage-B foreign-curriculum line run end to
 > end: NEW BEST `confpol-semis2b-u75` = 0.671 cloud, melee-gate-selected + cloud
 > A/B-validated vs native-u100 0.661; Stage B CONCLUDED — peak found, later rungs
 > overfit, training stopped. Also added: foreign melee eval (Stage A), peroxide
@@ -63,6 +64,35 @@
   plateaued; entropy in the 0.06–0.15 sweet spot ~u500–600) but the new-eval rungs above
   already say it won't beat the heuristic on cloud. Gate phase-1 rungs on melee placement
   before the final call.
+- **`pandemonium-v2-respawnfix` FINAL VERDICT (4 Jun) — CONFIRMED-DEAD on BOTH axes; nothing
+  shipped, deploy unchanged = `confpol-semis2b-u75`.**
+  - **Cloud ladder n=7 (new eval, deterministic, 0/30 err each):** u100 0.274 / u200 **0.328** /
+    u300 0.292 / u400 0.312 / u580 0.259 / u720 0.286 / u1000 0.254 → **mean 0.286**, best u200
+    0.328, ALL sub-floor (champion 0.414; bare heuristic 0.262). Respawnfix-as-consultant adds
+    only **+0.024 avg** over bare heuristic vs semis2b's **+0.152** → a much weaker consultant.
+    NOT noise (eval deterministic) — a flat-dead lever; do NOT submit more rungs.
+  - **Melee gate (`melee-rerank-pmv2.json` run; rounds 12 × hash 0,1,2 × sim 42,137, all 5
+    brackets; killed after 6/8 candidates — verdict already decisive):** NO rung beats the
+    incumbent. Mean placement (lower=better): **semis2b-u75 2.25 (🏆)** ≪ rfx-u300 3.71 (best
+    rung) < rfx-u700 ~3.97 < rfx-u200 3.98 < rfx-u100 4.20 < rfx-u400 4.92. The incumbent's
+    *worst* bracket (adversarial 3.17) beats every rung's *mean*; it wins real_field 1.00/100%
+    and is never worse than 3.17 anywhere.
+  - **EVAL_ONLY kill-switch FIRED:** rfx-u200 dominates `adversarial` (place 1.32, win 0.93) but
+    is DEAD LAST on `all_aggressive` (6.00, win 0) → textbook proxy-overfit spike, not a robust
+    agent. No rung shows real held-out lift.
+  - **Early-best theory REFUTED on placement:** cloud rank (u200 best) ≠ melee rank (u300 best);
+    u100 worse than u300, u700 recovers above u400. The cloud ladder ordering does not map onto
+    melee placement → cloud structurally can't see placement (as expected). Neither metric
+    crowns a respawnfix rung.
+  - **Confirms the pivot:** more RL on this curriculum is dead on the real Semis metric too;
+    ceiling-raiser must be the planner. 42 rungs (u25–u1050) retained on disk, lineage discarded.
+  - **Harness note (verified empirical):** melee de-contamination holds — the `self_policy`
+    opponent loads u860, NOT the candidate rung (guards: `_self_policy_checkpoint()` reads the
+    dedicated `AE_SELF_POLICY_CHECKPOINT`, and `_load_isolated_policy()` overrides+restores
+    `AE_POLICY_CHECKPOINT` + the model cache). Existing re-ranks are clean too.
+  - **Process note:** the earlier "killed 4 Jun at u1050" was WRONG — `pkill -f run_pandemonium_v1.py`
+    only hits the launcher wrapper, not the `train_ppo.py` child; the run kept going to u1072 (~14h
+    wasted CPU). Kill the child: `pkill -f 'train_ppo.py.*<tag>'`.
 - **🧭 STRATEGIC PIVOT (4 Jun, agreed): the ceiling-raiser is a STRONGER PLANNER, not more RL.**
   Evidence: curry's **0.715 is a hand-coded forward-sim planner, not RL** (their RL failed
   transfer too); our RL has been the LOWER-ceiling / fragile path (pure ~0.43–0.51; consultant
@@ -77,8 +107,9 @@
      curry's own semis plan): "some form of RL" but with a real answer to "why won't it overfit
      like the last ten times" — pure-RL's target (the cloud opponents) is moving/unlearnable;
      a planner has no such dependency.
-  3. **Finish `pandemonium-v2-respawnfix` → gate on melee placement** before discarding it; do
-     NOT judge it by the now-negative cloud number.
+  3. **~~Finish `pandemonium-v2-respawnfix` → gate on melee placement~~ DONE 4 Jun → DISCARDED.**
+     Gated on melee placement (the metric cloud can't see); no rung beats the incumbent (mean
+     place 2.25 vs best rung 3.71). Confirmed-dead on both axes. See the FINAL VERDICT bullet above.
 - **Phase-0 farming-race diagnosis (4 Jun, `diagnose_farming_race.py`, all_farmer n=24):** verdict =
   **hypothesis (ii) base-rush dominant** — `mean_final_base_health=0.0` (base dead EVERY game),
   `own_base_destroyed −1680`/`base_damage −480`, placement 5.875 / margin −406.7. Freeze moderate
@@ -103,6 +134,38 @@
   (`AE_STUN_TAX`, `AE_FORTRESS`) are DEAD on the melee. **Next ceiling-raiser must be a different shape** —
   a planner that improves WITHOUT a global posture switch, or Dir-2 (RL anchored to the planner) — not more
   heuristic posture levers.
+
+### Consultant gate sweep (4 June 2026) — FLAT; default gate is the optimum → escalate to forward-sim
+
+First lever aimed at the **proven +0.152 consultant** instead of the dead greedy scorer: sweep the
+`confidence_policy_hybrid` consult-gate (`AE_CONFPOL_MARGIN_EPSILON`/`_TOP_FLOOR`/
+`_OVERRIDE_TARGET_NONE`, shipped at the inherited 5/10/1, never tuned). One-line `melee_eval.py`
+extension `--confpol-ckpt LABEL=PATH@eps=,floor=,ovr=` (TDD, commit 9ae9b05); 6-config coordinate
+sweep on `semis2b-u75`, melee-gated. Spec/plan: `docs/superpowers/{specs,plans}/2026-06-04-ae-consultant-gate-sweep*`.
+
+- **VERDICT: FLAT — no gate beats the default 5/10/1 on the full conjunction; deploy unchanged
+  (`semis2b-u75 @ default`).** Sole prune survivor `g-more-margin` (eps 5→10) FAILS the full
+  5-bracket `_promotion_verdict` (minimax ✗ / margin ✗ / semis_mixed ✗): it helps the holes
+  (all_aggressive 2.82→2.08, all_farmer 2.21→2.08) but **craters the two brackets the heuristic
+  WINS** — semis_mixed win 0.81→0.03 (1.19→1.99, score 0.448→0.369), real_field win 0.93→0.00
+  (1.12→2.04) — so worst-bracket placement 3.36→**4.74**. `g-less` (eps 2) is worse on the hard
+  brackets. **Mechanism: the consultant is a proven SPECIALIST but a weak GLOBAL controller (raw
+  policy 0.507 cloud); consulting it MORE pulls the agent off the heuristic's winning play. The
+  default 5/10/1 is the balance — routing is already optimal.**
+- **Two methodology lessons (save future sessions):** (1) **pruning on the hard/discriminating
+  brackets is a FALSE-POSITIVE trap** — it cannot see damage to the brackets we already win
+  (semis_mixed/real_field), exactly where over-consultation hurts. Gate on ALL brackets, not the
+  "interesting" ones. (2) **`adversarial` is high-variance even at FIXED seeds** — `g-more-margin`
+  scored 2.92 (prune) vs 4.74 (full) on the byte-identical invocation (same hash/sim seeds, same
+  one-bracket worker), while `g-default` was stable (3.40→3.36). The melee is not fully deterministic
+  run-to-run (foreign-opponent internals), and extra consultation raises trajectory variance; n=6
+  can't resolve ~±1 placement there. The robust kill signal was the win-rate collapse on
+  semis_mixed/real_field (72 rounds each), NOT the noisy adversarial number.
+- **→ Go/no-go fired: escalate to the forward-sim planner** (Dir-1, curry's 0.715 mechanism — the
+  only untried high-ceiling structural lever; needs its own brainstorm + a latency guard vs the 2s
+  cutoff). The consultant line is exhausted: proven +0.152 specialist, optimal routing, can't be
+  made a better generalist by routing alone. Gate-knob code kept as reusable infra (default
+  byte-identical). Artifacts: `training/ae/data/melee-gatesweep-{prune,full}.json`.
 
 ### Current state (2 June 2026)
 
@@ -804,6 +867,7 @@ this overfit the local opponents like the last ten attempts did?"
 |---|---|---|
 | **Plain PPO over raw actions** (`ppo-v1/v2`, selfplay, full-RL) | BC warm-start + PPO, frame-stacking, self-play snapshot league | Cloud ceiling ~0.43–0.51; transfer gap never closed. `ppo-full-rl-v1` farmed mean ~0.577. |
 | **Confidence-gated PPO** (`confidence_hybrid`, v2/v3/v4) | PPO consulted only on low-confidence heuristic ticks; multi-seed save gate | 3 independent retrains all fail local multi-seed (best Δ -0.008, never positive). v4 cloud-farmed **0.549** mean — below heuristic. **PPO-on-heuristic line is empirically closed.** |
+| **Respawn-loophole-fixed from-scratch CNN-PPO** (`pandemonium-v2-respawnfix`, 3–4 Jun) | Fresh from-scratch CNN-PPO with the agent-health reward delta clamped negative-only (`min(0.0,Δhealth)`) to kill the 0→100 respawn refund; dense `--checkpoint-every 25` ladder, 42 rungs | **DEAD on BOTH axes.** Cloud n=7 mean **0.286** (best u200 0.328), ALL sub-floor (champion 0.414); consultant lift only +0.024 vs semis2b's +0.152. Melee gate (12r×3h×2s, 5 brackets): NO rung beats incumbent (mean place **2.25** vs best rung u300 **3.71**); EVAL_ONLY kill-switch fired on u200's `adversarial` spike (1.32/win 0.93 but `all_aggressive` 6.00 last = overfit). Early-best theory **refuted on placement** (cloud rank ≠ melee rank). The respawn fix is a legit bug fix but doesn't touch the local→cloud transfer gap. Discarded; 42 rungs kept. See *FINAL VERDICT* in the 4-June digest. |
 | **Macro/tactical-hybrid PPO** (12-way macro selector) | Learn *when* to pick macros, planner owns movement | Harm-aware data on 800 games: **zero positive-EV transitions across all 90 prior/option pairs.** Heuristic beats random macro exploration everywhere. |
 | **Tactical BC** (400/800-game outcome-weighted) | Behavior-clone good macros | 400-game "win" was legacy-gate variance; 800-game overfit and collapsed base/top/bracket suites. |
 | **Belief-map / memory BC** (`bc-belief-hybrid`) | 704k-param CNN belief input | Fit local *better* (val_acc 0.897) but **widened** cloud gap by +0.044. Rich state against random opponents = more ways to overfit. |
