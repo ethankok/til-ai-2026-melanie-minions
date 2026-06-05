@@ -94,6 +94,10 @@ def main() -> None:
     ap.add_argument("--snapshot-interval", type=int, default=10)
     ap.add_argument("--snapshot-pool-size", type=int, default=8)
     ap.add_argument("--eval-every", type=int, default=20)
+    ap.add_argument("--checkpoint-every", type=int, default=25,
+                    help="Save an unconditional -u<update> ladder every N updates. "
+                         "Critical: the cloud-best checkpoint is always EARLY "
+                         "(inverted-U), so we farm the ladder, never the latest.")
     ap.add_argument("--skip-phase1", action="store_true")
     ap.add_argument("--tag", default="pandemonium-v1")
     args = ap.parse_args()
@@ -119,6 +123,7 @@ def main() -> None:
         "--snapshot-interval", str(args.snapshot_interval),
         "--snapshot-pool-size", str(args.snapshot_pool_size),
         "--eval-every", str(args.eval_every),
+        "--checkpoint-every", str(args.checkpoint_every),  # dense -u<N> ladder
         "--baseline-eval",  # gate vs the warm-start/scratch eval baseline
     ]
 
