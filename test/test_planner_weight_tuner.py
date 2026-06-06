@@ -238,3 +238,57 @@ def test_write_summary_creates_parent_and_stable_json(tmp_path):
     write_summary(path, payload)
     loaded = json.loads(path.read_text())
     assert loaded == payload
+
+
+from tune_planner_weights import (  # noqa: E402
+    docker_env_lines,
+    sample_generation,
+    values_from_summary,
+)
+
+
+def test_sample_generation_always_includes_incumbent_best_and_decodes_to_bounds():
+    rng = np.random.default_rng(123)
+    mu = default_vector()
+    sigma = np.full(len(PARAMS), 0.25, dtype=float)
+    best_values = incumbent_values() | {"AE_DIST_PENALTY": 1.4}
+    samples = sample_generation(
+        rng,
+        mu,
+        sigma,
+        pop_size=5,
+        include_incumbent=True,
+        best_values=best_values,
+        fixed_values=[],
+    )
+    assert len(samples) == 5
+    assert samples[0][0] == "incumbent"
+    assert samples[0][1] == incumbent_values()
+    assert samples[1][0] == "best"
+    assert samples[1][1] == best_values
+    for _label, values, vector in samples:
+        assert vector.shape == (len(PARAMS),)
+        for p in PARAMS:
+            assert p.lower <= values[p.name] <= p.upper
+
+
+def test_values_from_summary_reads_best_values(tmp_path):
+    path = tmp_path / "summary.json"
+    path.write_text(json.dumps({"best": {"values": incumbent_values()}}))
+    assert values_from_summary(path) == incumbent_values()
+
+
+def test_docker_env_lines_include_only_tuned_weights_in_param_order():
+    lines = docker_env_lines(incumbent_values())
+    assert lines == [
+        "ENV AE_ITEM_MISSION_VALUE=80.000000",
+        "ENV AE_ITEM_RESOURCE_VALUE=40.000000",
+        "ENV AE_ENEMY_BASE_VALUE=100.000000",
+        "ENV AE_DIST_PENALTY=1.150000",
+        "ENV AE_PATH_THREAT_PENALTY=2.000000",
+        "ENV AE_DIJKSTRA_BOMB_COST=7.000000",
+        "ENV AE_LEAD_TETHER_HEALTH=60.000000",
+        "ENV AE_LEAD_TETHER_WEIGHT=0.500000",
+        "ENV AE_CONTENTION_SCALE=2.500000",
+        "ENV AE_CONTENTION_PFLOOR=0.150000",
+    ]

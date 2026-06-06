@@ -272,3 +272,251 @@ def write_summary(path: Path, payload: dict[str, Any]) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _dedupe_fixed_values(rows: list[dict[str, float]]) -> list[dict[str, float]]:
+    seen: set[tuple[tuple[str, float], ...]] = set()
+    out: list[dict[str, float]] = []
+    for values in rows:
+        key = tuple(sorted((name, round(float(value), 9)) for name, value in values.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(values)
+    return out
+
+
+def sample_generation(
+    rng: np.random.Generator,
+    mu: np.ndarray,
+    sigma: np.ndarray,
+    *,
+    pop_size: int,
+    include_incumbent: bool,
+    best_values: dict[str, float] | None,
+    fixed_values: list[dict[str, float]],
+) -> list[tuple[str, dict[str, float], np.ndarray]]:
+    """Sample one CEM generation as `(label, decoded_values, encoded_vector)` rows."""
+
+    rows: list[tuple[str, dict[str, float], np.ndarray]] = []
+    fixed_rows: list[tuple[str, dict[str, float]]] = []
+    if include_incumbent:
+        fixed_rows.append(("incumbent", incumbent_values()))
+    if best_values is not None:
+        fixed_rows.append(("best", best_values))
+    for i, values in enumerate(_dedupe_fixed_values([v for _label, v in fixed_rows] + fixed_values)):
+        label = "incumbent" if values == incumbent_values() else "best" if best_values is not None and values == best_values else f"fixed-{i:02d}"
+        rows.append((label, values, encode_values(values)))
+        if len(rows) >= pop_size:
+            return rows
+    while len(rows) < pop_size:
+        idx = len(rows)
+        vector = rng.normal(mu, sigma).astype(float)
+        values = decode_vector(vector)
+        rows.append((f"sample-{idx:02d}", values, encode_values(values)))
+    return rows
+
+
+def values_from_summary(path: Path) -> dict[str, float]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    values = payload["best"]["values"]
+    return {p.name: float(values[p.name]) for p in PARAMS}
+
+
+def top_values_from_jsonl(path: Path, n: int) -> list[dict[str, float]]:
+    rows = [r for r in load_jsonl(path) if r.get("rank_key") is not None]
+    rows.sort(key=lambda r: tuple(r["rank_key"]))
+    return [{p.name: float(r["values"][p.name]) for p in PARAMS} for r in rows[:n]]
+
+
+def docker_env_lines(values: dict[str, float]) -> list[str]:
+    """Return Dockerfile ENV lines for the tuned scalar params only."""
+
+    env = encode_env(values)
+    return [f"ENV {p.name}={env[p.name]}" for p in PARAMS]
+
+
+def _parse_int_list(raw: str) -> list[int]:
+    return [int(part) for part in raw.replace(",", " ").split() if part]
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--out-dir", type=Path, default=THIS_DIR / "data" / "planner-weight-cem")
+    p.add_argument("--policy-ckpt", default=DEFAULT_POLICY_CKPT)
+    p.add_argument("--generations", type=int, default=4)
+    p.add_argument("--pop-size", type=int, default=12)
+    p.add_argument("--elite-count", type=int, default=3)
+    p.add_argument("--rounds", type=int, default=4)
+    p.add_argument("--hash-seeds", default="0")
+    p.add_argument("--sim-seeds", default="42")
+    p.add_argument("--brackets", nargs="+", default=None)
+    p.add_argument("--seed", type=int, default=20260606)
+    p.add_argument("--center-summary", type=Path, default=None,
+                   help="summary.json from a prior run; its best values become the new CEM mean")
+    p.add_argument("--include-top-from", type=Path, default=None,
+                   help="candidates.jsonl from a prior run; top values are evaluated as fixed candidates")
+    p.add_argument("--include-top-n", type=int, default=0)
+    p.add_argument("--init-sigma", type=float, default=0.35)
+    p.add_argument("--smoothing", type=float, default=0.70)
+    p.add_argument("--min-sigma", type=float, default=0.05)
+    p.add_argument("--max-sigma", type=float, default=0.80)
+    p.add_argument("--non-novice", action="store_true")
+    p.add_argument("--dry-run", action="store_true", help="sample and write config without melee evaluation")
+    return p
+
+
+def _record_for_candidate(
+    *,
+    generation: int,
+    label: str,
+    values: dict[str, float],
+    vector: np.ndarray,
+    result: dict[str, Any] | None,
+    incumbent_result: dict[str, Any] | None,
+    elapsed_s: float,
+) -> dict[str, Any]:
+    key = None
+    if result is not None and incumbent_result is not None:
+        key = list(rank_key(result, incumbent_result))
+    return {
+        "generation": generation,
+        "candidate": label,
+        "values": values,
+        "vector": [float(x) for x in vector],
+        "rank_key": key,
+        "result": result,
+        "elapsed_s": elapsed_s,
+    }
+
+
+def run_cem(args: argparse.Namespace) -> dict[str, Any]:
+    """Run the CEM search and return the final summary payload."""
+
+    from opponents import MELEE_BRACKETS  # noqa: WPS433
+
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    records_path = args.out_dir / "candidates.jsonl"
+    summary_path = args.out_dir / "summary.json"
+    brackets = args.brackets or list(MELEE_BRACKETS)
+    hash_seeds = _parse_int_list(args.hash_seeds)
+    sim_seeds = _parse_int_list(args.sim_seeds)
+
+    rng = np.random.default_rng(args.seed)
+    initial_values = values_from_summary(args.center_summary) if args.center_summary else incumbent_values()
+    fixed_values = top_values_from_jsonl(args.include_top_from, args.include_top_n) if args.include_top_from and args.include_top_n > 0 else []
+    mu = encode_values(initial_values)
+    sigma = np.full(len(PARAMS), float(args.init_sigma), dtype=float)
+    best_values: dict[str, float] | None = None if initial_values == incumbent_values() else initial_values
+    best_record: dict[str, Any] | None = None
+    generation_summaries: list[dict[str, Any]] = []
+
+    for generation in range(args.generations):
+        rows = sample_generation(
+            rng,
+            mu,
+            sigma,
+            pop_size=args.pop_size,
+            include_incumbent=True,
+            best_values=best_values,
+            fixed_values=fixed_values,
+        )
+        evaluated: list[dict[str, Any]] = []
+        incumbent_result: dict[str, Any] | None = None
+
+        for label, values, vector in rows:
+            candidate_label = "incumbent" if label == "incumbent" else f"g{generation:02d}-{label}"
+            started = time.monotonic()
+            if args.dry_run:
+                result = None
+            else:
+                result = evaluate_values(
+                    candidate_label,
+                    values,
+                    policy_ckpt=args.policy_ckpt,
+                    brackets=brackets,
+                    hash_seeds=hash_seeds,
+                    sim_seeds=sim_seeds,
+                    rounds=args.rounds,
+                    non_novice=args.non_novice,
+                )
+            elapsed_s = time.monotonic() - started
+            if label == "incumbent":
+                incumbent_result = result
+            record = _record_for_candidate(
+                generation=generation,
+                label=candidate_label,
+                values=values,
+                vector=vector,
+                result=result,
+                incumbent_result=incumbent_result,
+                elapsed_s=elapsed_s,
+            )
+            evaluated.append(record)
+            append_jsonl(records_path, record)
+
+        if args.dry_run:
+            elite_vectors = np.array([row[2] for row in rows[: args.elite_count]], dtype=float)
+            best_record = evaluated[0]
+        else:
+            if incumbent_result is None:
+                raise RuntimeError("incumbent result missing from generation")
+            for record in evaluated:
+                if record["rank_key"] is None and record["result"] is not None:
+                    record["rank_key"] = list(rank_key(record["result"], incumbent_result))
+            ranked = sorted(evaluated, key=lambda r: tuple(r["rank_key"]))
+            elites = ranked[: args.elite_count]
+            elite_vectors = np.array([np.array(r["vector"], dtype=float) for r in elites], dtype=float)
+            best_record = ranked[0] if best_record is None else min(
+                [best_record, ranked[0]],
+                key=lambda r: tuple(r["rank_key"]) if r["rank_key"] is not None else (float("inf"),),
+            )
+            best_values = {p.name: float(best_record["values"][p.name]) for p in PARAMS}
+
+        mu, sigma = cem_update(
+            mu,
+            sigma,
+            elite_vectors,
+            smoothing=args.smoothing,
+            min_sigma=args.min_sigma,
+            max_sigma=args.max_sigma,
+        )
+        generation_summaries.append({
+            "generation": generation,
+            "mu": [float(x) for x in mu],
+            "sigma": [float(x) for x in sigma],
+            "best_candidate": best_record["candidate"] if best_record else None,
+            "best_rank_key": best_record.get("rank_key") if best_record else None,
+        })
+        write_summary(summary_path, {
+            "args": vars(args) | {"out_dir": str(args.out_dir)},
+            "brackets": brackets,
+            "hash_seeds": hash_seeds,
+            "initial_values": initial_values,
+            "fixed_values": fixed_values,
+            "sim_seeds": sim_seeds,
+            "generations": generation_summaries,
+            "best": best_record,
+            "docker_env": docker_env_lines(best_record["values"]) if best_record else [],
+            "records_path": str(records_path),
+        })
+
+    return json.loads(summary_path.read_text(encoding="utf-8"))
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    if args.elite_count <= 0 or args.elite_count > args.pop_size:
+        raise SystemExit("--elite-count must be between 1 and --pop-size")
+    summary = run_cem(args)
+    print(json.dumps({
+        "summary": str(args.out_dir / "summary.json"),
+        "best_candidate": summary.get("best", {}).get("candidate"),
+        "best_rank_key": summary.get("best", {}).get("rank_key"),
+        "docker_env": summary.get("docker_env", []),
+    }, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
