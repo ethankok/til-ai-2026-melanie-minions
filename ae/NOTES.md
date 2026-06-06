@@ -24,6 +24,46 @@
 
 ## Read this first
 
+### Resource-reward env fix + bomb-timer finding (7 June 2026)
+
+**Org disclosure (6 Jun):** resource-tile pickups give **NO finals score** —
+`collect_resource:2.0` was a stray reward, removed upstream. Resources only yield
+0.5 fuel (→ bombs → enemy-base destruction, which scores). Our pinned env DID pay
+it: we run `default_config()` (the **dataclass**, not the yaml), and the old
+dataclass had `collect_resource=2.0` → +2.0 per pickup in all local eval/training.
+
+- **Pin bumped `til-26-ae` `beb81f8`→`b32af97`** (gitlink committed in parent; on the
+  Workbench run `git pull && git submodule update --init` to match). Surgical for us:
+  only the dataclass `collect_resource` removal affects us — the yaml's `timer 3→4` /
+  `attack_kill 30→15` were already correct in the dataclass we use; no
+  dynamics/obs/action-shape changes. `events/rewards.py` defaults a missing reward key
+  to `0.0` → resources now pay 0, no crash. The shipped container is unaffected (the
+  org runs the env); the pin is purely local training/eval fidelity.
+- **A/B verdict (same seed, resources-ON old pin vs OFF new pin, champion
+  `semis2b-u75 @ C+bomb7+contention`, hash0/sim42): PLACEMENT-NEUTRAL — deploy HOLDS.**
+  Per-bracket deltas small + mixed (semis_mixed 5.00→4.12, all_aggr 5.00→5.00,
+  all_farmer 3.00→2.75, adversarial 2.50→3.00, real_field 1.00→1.62). The champion
+  draws badly at this single seed under BOTH pins (a hard seed) — the scary n=1
+  resources-OFF numbers were the n=1-vs-n=72-historical trap, not a resource effect.
+  Artifacts: `training/ae/data/melee-resourcefix-confirm.*` (OFF),
+  `melee-resourceON-ab.*` (ON). **No RL retrain** (shaper has no resource bonus; RL
+  line flat). `AE_ITEM_RESOURCE_VALUE`=40 is NOT a proven miscalibration (the A/B
+  varied the env reward, not the heuristic value); the CEM plan widened its lower
+  bound 20→5 as harmless exploration only.
+
+**⚠ Bomb-timer finding (probe `training/ae/probe_bomb_timer.py`) — FLAGGED, NOT
+changed:** heuristic `BOMB_TIMER=3` ([ae_manager.py:142](src/ae_manager.py)) was
+copied from the old yaml. Measured in the live env: a freshly-placed bomb's observed
+timer counts 4→0 over our decision-turns 1–5 and the **blast fires in the cycle after
+turn 5 (observable at +6)** — i.e. ~5 decision-steps, not 3 (config `timer=4` +
+`Bomb.__post_init__` `+1` compensate). So `BOMB_TIMER=3` UNDER-estimates by ~2. BUT
+**the placer takes ZERO self-damage standing on its own bomb tile through detonation**
+(probe-confirmed) → own-bomb self-preservation is moot; the under-estimate only
+affects offensive/predictive timing (when our bomb lands on a wall/base), and
+enemy-bomb timing uses OBSERVED viewcone timers, not this constant. **Do NOT
+blind-fix** — it is a behavior change to the 40%-task deploy; gate any `BOMB_TIMER`
+A/B on the melee before shipping.
+
 ### Current state (6 June 2026) — Dir-2 RL pipeline (BC-clone + self-play league) RAN → FLAT; deploy unchanged
 
 **The one RL recipe we'd never tried — BC-clone the heuristic → self-play league from that warm-start → deploy as the confpol consultant (curry's documented semis bet) — was built, run end-to-end, and gated. Verdict: FLAT. It improves AVERAGE melee placement but never the WORST bracket, so it does NOT beat `confpol-semis2b-u75` as a consultant. Deploy stays `confpol-semis2b-u75 @ default`.** Plan/spec: `docs/superpowers/{plans,specs}/2026-06-04-ae-dir2-rl-pipeline*`.
