@@ -27,6 +27,9 @@ for _p in (str(THIS_DIR),):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from foreign_opponents import CBOMB7_ENV  # noqa: E402
+from melee_eval import _evaluate_candidate  # noqa: E402
+
 
 @dataclass(frozen=True)
 class ParamSpec:
@@ -205,3 +208,39 @@ def cem_update(
     new_sigma = (1.0 - smoothing) * old_sigma + smoothing * elite_sigma
     new_sigma = np.clip(new_sigma, min_sigma, max_sigma)
     return new_mu.astype(float), new_sigma.astype(float)
+
+
+def build_candidate_spec(values: dict[str, float], *, policy_ckpt: str) -> dict[str, Any]:
+    """Build a melee_eval candidate spec for one planner-weight vector."""
+
+    env: dict[str, str] = {}
+    env.update(CBOMB7_ENV)
+    env.update(FIXED_CANDIDATE_ENV)
+    env["AE_POLICY_CHECKPOINT"] = str(Path(policy_ckpt).resolve())
+    env.update(encode_env(values))
+    return {"our": "confidence_policy_hybrid", "env": env}
+
+
+def evaluate_values(
+    label: str,
+    values: dict[str, float],
+    *,
+    policy_ckpt: str,
+    brackets: list[str],
+    hash_seeds: list[int],
+    sim_seeds: list[int],
+    rounds: int,
+    non_novice: bool,
+) -> dict[str, Any]:
+    """Evaluate one decoded parameter vector using the existing melee harness."""
+
+    spec = build_candidate_spec(values, policy_ckpt=policy_ckpt)
+    return _evaluate_candidate(
+        label,
+        spec,
+        brackets,
+        hash_seeds,
+        sim_seeds,
+        rounds,
+        non_novice,
+    )

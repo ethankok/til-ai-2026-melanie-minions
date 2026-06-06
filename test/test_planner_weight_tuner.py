@@ -193,3 +193,23 @@ def test_cem_update_uses_elites_with_smoothing_and_sigma_floor():
     assert np.all(new_sigma >= 0.05)
     assert np.all(new_sigma <= 0.80)
     assert new_sigma.shape == old_sigma.shape
+
+
+from tune_planner_weights import build_candidate_spec  # noqa: E402
+
+
+def test_build_candidate_spec_combines_cbomb7_fixed_checkpoint_and_weights():
+    values = incumbent_values()
+    spec = build_candidate_spec(values, policy_ckpt="/tmp/policy.pt")
+    assert spec["our"] == "confidence_policy_hybrid"
+    env = spec["env"]
+    assert env["AE_POLICY_CHECKPOINT"] == str(Path("/tmp/policy.pt").resolve())
+    assert env["AE_MODE"] == "confidence_policy_hybrid"
+    assert env["AE_CONTENTION"] == "1"
+    assert env["AE_PLAN_RESCORE"] == "0"
+    assert env["AE_CONFPOL_MARGIN_EPSILON"] == "5.0"
+    assert env["AE_ITEM_MISSION_VALUE"] == "80.000000"
+    assert env["AE_ITEM_RESOURCE_VALUE"] == "40.000000"
+    assert env["AE_DIJKSTRA_BOMB_COST"] == "7.000000"
+    assert env["AE_LEAD_BASE_TETHER"] == "1"
+    assert env["AE_USE_PLAYBOOK"] == "0"
