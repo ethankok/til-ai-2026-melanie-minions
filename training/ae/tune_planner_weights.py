@@ -244,3 +244,31 @@ def evaluate_values(
         rounds,
         non_novice,
     )
+
+
+def append_jsonl(path: Path, record: dict[str, Any]) -> None:
+    """Append one JSON record to a JSONL artifact file."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Load JSONL records; return an empty list when the file does not exist."""
+
+    if not path.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped:
+            records.append(json.loads(stripped))
+    return records
+
+
+def write_summary(path: Path, payload: dict[str, Any]) -> None:
+    """Write a stable pretty JSON summary."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

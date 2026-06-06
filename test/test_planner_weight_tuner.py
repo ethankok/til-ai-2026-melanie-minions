@@ -213,3 +213,28 @@ def test_build_candidate_spec_combines_cbomb7_fixed_checkpoint_and_weights():
     assert env["AE_DIJKSTRA_BOMB_COST"] == "7.000000"
     assert env["AE_LEAD_BASE_TETHER"] == "1"
     assert env["AE_USE_PLAYBOOK"] == "0"
+
+
+from tune_planner_weights import append_jsonl, load_jsonl, write_summary  # noqa: E402
+
+
+def test_append_and_load_jsonl_round_trip(tmp_path):
+    path = tmp_path / "records.jsonl"
+    append_jsonl(path, {"candidate": "incumbent", "rank_key": [3.2, 0.0, 0.0, 2.1]})
+    append_jsonl(path, {"candidate": "g00_c01", "rank_key": [3.0, 0.0, 0.0, 2.0]})
+    assert load_jsonl(path) == [
+        {"candidate": "incumbent", "rank_key": [3.2, 0.0, 0.0, 2.1]},
+        {"candidate": "g00_c01", "rank_key": [3.0, 0.0, 0.0, 2.0]},
+    ]
+
+
+def test_load_jsonl_missing_file_returns_empty_list(tmp_path):
+    assert load_jsonl(tmp_path / "missing.jsonl") == []
+
+
+def test_write_summary_creates_parent_and_stable_json(tmp_path):
+    path = tmp_path / "nested" / "summary.json"
+    payload = {"best": {"candidate": "g00_c01"}, "docker_env": ["ENV AE_DIST_PENALTY=1.200000"]}
+    write_summary(path, payload)
+    loaded = json.loads(path.read_text())
+    assert loaded == payload
