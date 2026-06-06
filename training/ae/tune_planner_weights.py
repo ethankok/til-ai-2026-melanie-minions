@@ -390,6 +390,18 @@ def _record_for_candidate(
     }
 
 
+def jsonable_args(args: argparse.Namespace) -> dict[str, Any]:
+    """Return a JSON-serializable view of parsed args.
+
+    `argparse` stores `--out-dir`, `--center-summary`, and `--include-top-from`
+    as `Path` objects; `json.dumps` cannot serialize those. Stringify every
+    `Path` value so the per-generation summary write never raises on the staged
+    runs (Stage-1/final/held-out) that actually pass those path flags.
+    """
+
+    return {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
+
+
 def run_cem(args: argparse.Namespace) -> dict[str, Any]:
     """Run the CEM search and return the final summary payload."""
 
@@ -489,7 +501,7 @@ def run_cem(args: argparse.Namespace) -> dict[str, Any]:
             "best_rank_key": best_record.get("rank_key") if best_record else None,
         })
         write_summary(summary_path, {
-            "args": vars(args) | {"out_dir": str(args.out_dir)},
+            "args": jsonable_args(args),
             "brackets": brackets,
             "hash_seeds": hash_seeds,
             "initial_values": initial_values,

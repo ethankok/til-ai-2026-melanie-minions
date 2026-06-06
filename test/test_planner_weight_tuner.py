@@ -292,3 +292,22 @@ def test_docker_env_lines_include_only_tuned_weights_in_param_order():
         "ENV AE_CONTENTION_SCALE=2.500000",
         "ENV AE_CONTENTION_PFLOOR=0.150000",
     ]
+
+
+def test_jsonable_args_stringifies_path_values_for_summary_write():
+    """Regression: staged runs pass --center-summary/--include-top-from as Path
+    objects; the per-generation summary write must not raise on json.dumps."""
+    from tune_planner_weights import _build_parser, jsonable_args
+
+    args = _build_parser().parse_args([
+        "--out-dir", "training/ae/data/x",
+        "--center-summary", "training/ae/data/stage0/summary.json",
+        "--include-top-from", "training/ae/data/stage0/candidates.jsonl",
+        "--include-top-n", "6",
+    ])
+    payload = jsonable_args(args)
+    assert payload["out_dir"] == "training/ae/data/x"
+    assert payload["center_summary"] == "training/ae/data/stage0/summary.json"
+    assert payload["include_top_from"] == "training/ae/data/stage0/candidates.jsonl"
+    # Must round-trip through json without raising.
+    json.dumps(payload, sort_keys=True)
