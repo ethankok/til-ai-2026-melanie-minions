@@ -115,3 +115,93 @@ def encode_env(values: dict[str, float]) -> dict[str, str]:
     """Format concrete values as stable strings for subprocess env vars."""
 
     return {p.name: f"{float(values[p.name]):.6f}" for p in PARAMS}
+
+
+RankKey = tuple[float, float]
+
+# The promotion guard is applied ONLY to the low-variance, Semis-representative
+# brackets. The synthetic high-variance `adversarial` probe (and the worst-bracket
+# max / min-margin it dominates) is NOT gated: gating on it would reject genuinely
+# better candidates that drew an unlucky adversarial run. FIELD_GUARD_TOL absorbs the
+# residual noise on these stable brackets while still catching a real collapse.
+FIELD_GUARD_BRACKETS: tuple[str, ...] = ("semis_mixed", "real_field")
+FIELD_GUARD_TOL = 0.25
+_EPS = 1e-9
+
+
+def _mean_place(result: dict[str, Any]) -> float:
+    brackets = result.get("per_bracket", {})
+    if not brackets:
+        return float("inf")
+    return float(np.mean([float(b["mean_placement"]) for b in brackets.values()]))
+
+
+def _bracket_place(result: dict[str, Any], bracket: str) -> float | None:
+    b = result.get("per_bracket", {}).get(bracket)
+    return float(b["mean_placement"]) if b else None
+
+
+def _field_regression(candidate: dict[str, Any], incumbent: dict[str, Any]) -> float:
+    """Total placement regression on the guarded field brackets (0.0 if none)."""
+
+    total = 0.0
+    for bracket in FIELD_GUARD_BRACKETS:
+        cand = _bracket_place(candidate, bracket)
+        inc = _bracket_place(incumbent, bracket)
+        if cand is not None and inc is not None:
+            total += max(0.0, cand - inc)
+    return total
+
+
+def rank_key(candidate: dict[str, Any], incumbent: dict[str, Any]) -> RankKey:
+    """Lexicographic minimization key for CEM elite selection. Lower is better.
+
+    MEAN bracket placement is the PRIMARY objective: the low-variance, most direct
+    estimator of how the candidate places against the field. The synthetic
+    worst-bracket max is deliberately NOT used here (it is dominated by the noisy
+    `adversarial` probe and makes a poor optimizer signal). The secondary term is the
+    field-bracket regression vs the incumbent, so the search is gently biased away
+    from buying a better mean by sacrificing the Semis-representative brackets. The
+    promotion guard lives in `promotion_ok`.
+    """
+
+    return (_mean_place(candidate), _field_regression(candidate, incumbent))
+
+
+def promotion_ok(candidate: dict[str, Any], incumbent: dict[str, Any]) -> bool:
+    """Promote only if the candidate STRICTLY improves mean placement AND does not
+    regress (beyond FIELD_GUARD_TOL) on the low-variance field brackets
+    (semis_mixed / real_field), relative to the same-seed incumbent. Worst-bracket /
+    adversarial / margin are diagnostics only and are deliberately not gated."""
+
+    if not (_mean_place(candidate) < _mean_place(incumbent) - _EPS):
+        return False
+    for bracket in FIELD_GUARD_BRACKETS:
+        cand = _bracket_place(candidate, bracket)
+        inc = _bracket_place(incumbent, bracket)
+        if cand is None or inc is None:
+            return False  # fail closed if a guarded bracket was not evaluated
+        if cand > inc + FIELD_GUARD_TOL + _EPS:
+            return False
+    return True
+
+
+def cem_update(
+    old_mu: np.ndarray,
+    old_sigma: np.ndarray,
+    elite_vectors: np.ndarray,
+    *,
+    smoothing: float,
+    min_sigma: float,
+    max_sigma: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Update CEM Gaussian parameters from elite encoded vectors."""
+
+    if elite_vectors.ndim != 2:
+        raise ValueError(f"elite_vectors must be 2D, got shape {elite_vectors.shape}")
+    elite_mu = elite_vectors.mean(axis=0)
+    elite_sigma = elite_vectors.std(axis=0)
+    new_mu = (1.0 - smoothing) * old_mu + smoothing * elite_mu
+    new_sigma = (1.0 - smoothing) * old_sigma + smoothing * elite_sigma
+    new_sigma = np.clip(new_sigma, min_sigma, max_sigma)
+    return new_mu.astype(float), new_sigma.astype(float)
