@@ -73,10 +73,21 @@ WORKDIR /workspace
 #   Canary: `til test` log "AE policy loaded …" (NOT "falling back to heuristic").
 # Follow-up: test even-earlier rungs (u25/u50/u75) — the inverted-U peak may be < u100.
 ENV AE_MODE=confidence_policy_hybrid
-# C+bomb7 baseline profile.
-ENV AE_ITEM_MISSION_VALUE=80
-ENV AE_ITEM_RESOURCE_VALUE=40
-ENV AE_ENEMY_BASE_VALUE=100
+# Planner-weight CEM tuning (7 Jun 2026): PROMOTED on the melee mean-placement
+# gate. Objective = MEAN bracket placement; field guard = no regression on the
+# low-variance Semis-representative brackets (semis_mixed/real_field). Candidate
+# g00-fixed-03 Pareto-dominates the C+bomb7 incumbent on ALL 5 melee brackets,
+# consistent across 4 seed sets (stage0/stage1/final + held-out sim271): mean
+# placement 3.43 -> 1.89, real_field held at 1.0, zero field regression. The big
+# win is the aggressive/mixed brackets (all_aggressive 5.0 -> 1.0 vs FOREIGN bots
+# -> not a self-clone artifact). Source: training/ae/data/planner-weight-cem-
+# {final,heldout}/summary.json. WAS (C+bomb7): mission 80, resource 40, base 100,
+# dist 1.15, threat 2.0, bomb 7.0, scale 2.5, pfloor 0.15, tether 60.0/0.5.
+ENV AE_ITEM_MISSION_VALUE=51.157558
+ENV AE_ITEM_RESOURCE_VALUE=23.038170
+ENV AE_ENEMY_BASE_VALUE=89.398951
+ENV AE_DIST_PENALTY=1.060815
+ENV AE_PATH_THREAT_PENALTY=2.377860
 # Confidence-gate thresholds. Defaults validated in the 27 May confidence
 # distribution probe: at eps=5.0 / floor=10.0 the wrapper consults PPO on
 # ~29% of total ticks (14.7% low_margin + 13.5% target_none + 0.8%
@@ -140,8 +151,8 @@ ENV AE_PLAN_RESCORE_DEMOTE_ONLY=1
 # small/noisy). Downside is cloud-proven ~0; revert is ONE line (set to 0). See
 # ae/NOTES.md "Contention-aware item valuation".
 ENV AE_CONTENTION=1
-ENV AE_CONTENTION_SCALE=2.5
-ENV AE_CONTENTION_PFLOOR=0.15
+ENV AE_CONTENTION_SCALE=1.607649
+ENV AE_CONTENTION_PFLOOR=0.144418
 ENV AE_CONTENTION_TOPEN=40
 ENV AE_CONTENTION_TFRESH=3
 
@@ -180,7 +191,7 @@ ENV AE_USE_OPPONENT_MODEL=0
 #   AE_ASTAR_TIEBREAK — when =1, secondary heap key in _dijkstra_distance_map
 #     is Manhattan distance to enemy-base centroid, biasing equal-cost path
 #     reconstruction toward enemy territory. Optimal distances unchanged.
-ENV AE_DIJKSTRA_BOMB_COST=7.0
+ENV AE_DIJKSTRA_BOMB_COST=9.076016
 ENV AE_ASTAR_TIEBREAK=0
 
 # W2.1a — M5 spawn-aware first-target table. When AE_FIRST_TARGET_TABLE=1,
@@ -218,8 +229,8 @@ ENV AE_ORIENTATION_AWARE_TURN_COST=1.0
 # conclusive — variance-farm n≥5 before drawing any conclusion. Set
 # AE_LEAD_BASE_TETHER=0 to disable.
 ENV AE_LEAD_BASE_TETHER=1
-ENV AE_LEAD_TETHER_HEALTH=60.0
-ENV AE_LEAD_TETHER_WEIGHT=0.5
+ENV AE_LEAD_TETHER_HEALTH=54.267980
+ENV AE_LEAD_TETHER_WEIGHT=0.314212
 # Leads ② / ③ stayed below the gate; keep OFF.
 ENV AE_LEAD_BOMB_GATE_BASE=0
 ENV AE_LEAD_RECON_DISCOUNT=0

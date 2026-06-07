@@ -24,6 +24,56 @@
 
 ## Read this first
 
+### ⭐ Planner-weight CEM tuning (7 June 2026) — PROMOTED `g00-fixed-03` weights (first AE deploy change since semis2b-u75)
+
+Ran black-box CEM over 10 scalar planner env vars while preserving the shipped
+`confidence_policy_hybrid` core, `confpol-semis2b-u75` consultant, default consult
+gate, and `AE_CONTENTION=1`. Objective = **MEAN bracket placement** (low-variance,
+most-direct estimator of placement vs the field); the only promotion guard =
+no regression (±0.25 tol) on the low-variance, Semis-representative brackets
+`semis_mixed`/`real_field`. The synthetic high-variance `adversarial` probe and the
+worst-bracket max / min-margin are logged as diagnostics but **not** gated. All
+criteria are relative to the **same-seed incumbent** (= the deployed C+bomb7 config,
+verified byte-identical: code defaults `AE_DIST_PENALTY=1.15`/`AE_PATH_THREAT=2.0`
+match, and the Dockerfile already baked the other 8).
+
+Pipeline: Stage-0 (4 gen × 12 pop × 4 rounds, hash0/sim42) → Stage-1 (rounds 8,
+hash0,1) → Final (rounds 12, hash0,1,2, sim42,137) → **held-out (sim 271)**.
+Artifacts: `training/ae/data/planner-weight-cem-{stage0,stage1,final,heldout}/summary.json`.
+
+**VERDICT: PROMOTE.** Best **promotable** candidate `g00-fixed-03` (≡ Stage-0 best
+`g03-sample-08`) **Pareto-dominates the incumbent on all 5 brackets**, consistent
+across **4 independent seed sets**, with **zero field regression** every time:
+
+| bracket | incumbent | g00-fixed-03 | note |
+|---|---|---|---|
+| semis_mixed | ~4.8–5.0 | ~3.1 | improved |
+| all_aggressive | 5.0 | **1.0** | FOREIGN aggressive bots only — not a self-clone artifact |
+| all_farmer | ~3.2 | ~2.0 | improved |
+| adversarial | ~3.0 | ~2.1–2.3 | improved |
+| real_field | ~1.0 | ~1.0 | held |
+
+Mean placement **3.43 → 1.89**; held-out sim-271 reproduced it (`PROMOTABLE: True`,
+field_regression 0.000). Tuned weights = less item-greedy (mission 80→51.16,
+resource 40→23.04), more combat-cautious (bomb-cost 7→9.08, path-threat 2.0→2.38,
+base 100→89.40), looser tether (60/0.5→54.27/0.314), lower contention scale
+(2.5→1.61). The incumbent's CBOMB7 weights were hand-set and never jointly
+optimized — this closes the aggressive/mixed-bracket weakness without touching the
+real-field bracket the heuristic already wins.
+
+**⚠ Two important caveats on the automation + next step:**
+1. The campaign orchestrator's auto-verdict said "deploy unchanged" — a **logic gap**:
+   it checks `promotion_ok` only on the rank-1 candidate (`g00-fixed-02`), which
+   sorts first on mean but **fails the field guard** (tanks real_field 1.07→3.0).
+   The best *promotable* candidate (`g00-fixed-03`, rank-2) was found by manual
+   inspection + a corrected held-out run. If reusing the driver, gate on the best
+   candidate that passes `promotion_ok`, not the rank_key winner.
+2. **Cloud cross-check still owed (Workbench).** The melee gate is the PRIMARY Semis
+   selector and it passed convincingly, but per the eval loop run a deterministic
+   `til submit ae` cross-check as a non-crater sanity before finals. Stage the
+   `confpol-semis2b-u75.pt` checkpoint into `ae/models/bc.pt` first (unchanged —
+   only the 10 scalar ENVs changed). Revert = `git revert` the Dockerfile commit.
+
 ### Resource-reward env fix + bomb-timer finding (7 June 2026)
 
 **Org disclosure (6 Jun):** resource-tile pickups give **NO finals score** —
