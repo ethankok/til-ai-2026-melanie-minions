@@ -82,11 +82,17 @@ minimax (worst 4.00 < 4.94), reward floors, effect Δ+0.89, PoI Wilson-lo **0.75
 only `real_field` slips 1.06→1.18 (near-tie, both ~1st). **Transfers to the real
 field: held-out μ 2.55 vs 3.56** — the test g00-fixed-03 failed (gap +1.47), semis2c
 passes. The "semis2c degraded" verdict was an OLD-gate artifact; u75 is a better
-consultant than semis2b-u75. **NEXT to deploy: swap consultant `ae/models/bc.pt` =
-`confpol-semis2c-u75.pt` (Dockerfile ENV weights stay incumbent — CEM still reverted);
-Workbench `til submit ae` cloud NON-CRATER sanity only (a lower single-agent reward is
-EXPECTED + fine — melee gate is the selector). Operationally low-risk: same wrapper /
-loader / architecture as semis2b-u75, sibling curriculum branch.**
+consultant than semis2b-u75. **STAGED for deploy (8 Jun): consultant
+`confpol-semis2c-u75.pt` (sha256 `838f7847…769913`) uploaded to bucket
+`handoff/confpol-semis2c-u75.pt`; deploy = `ae/models/bc.pt = confpol-semis2c-u75.pt`
+(Dockerfile ENV weights stay incumbent — CEM still reverted). PENDING on the Workbench:
+`til build ae && til submit ae` cloud NON-CRATER sanity only (a lower single-agent
+reward is EXPECTED + fine — melee gate is the selector), then finals stack rebuild
+`bash finals.sh submit finals --submit_all` (`--build_all` mandatory to bake the new
+bc.pt; verify with `docker run --rm melanie-minions-ae:finals shasum -a 256
+/workspace/models/bc.pt`). Operationally low-risk: same wrapper / loader / architecture
+as semis2b-u75, sibling curriculum branch. Instant rollback: `handoff/confpol-semis2b-u75.pt`
+(also staged) → bc.pt → rebuild.**
 
 ### ⏳ Planner-weight CEM tuning (7 June 2026) — PROMOTED → REVERTED (safe default) → DEPLOY DECISION PENDING a transfer test. ⚠ See "eval-redesign" note below.
 
