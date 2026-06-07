@@ -24,6 +24,47 @@
 
 ## Read this first
 
+### ⛔ Planner-weight CEM tuning (7 June 2026) — PROMOTED then REVERTED (overfit to the local melee gate)
+
+Ran black-box CEM over 10 scalar planner env vars, gated on the local melee
+**mean-placement** metric (field guard on semis_mixed/real_field, held-out sim 271).
+Candidate `g00-fixed-03` looked like a big win: it Pareto-dominated the
+`confpol-semis2b-u75` incumbent on all 5 melee brackets across 4 seed sets (mean
+placement 3.43→1.89, real_field held). Promoted to `ae/Dockerfile` (commit
+`1f521ff`). **The cloud cross-check then KILLED it:**
+
+| image | cloud score | speed | errors |
+|---|---|---|---|
+| `confpol-semis2b-u75` (incumbent) | **0.414** | 0.748 | 0/30 |
+| `cem-weights-v1` (g00-fixed-03) | **0.279** | 0.747 | 0/30 |
+
+−0.135 (~33%) regression, 0 errors → not a crash, the agent just **earns far less
+reward**. **REVERTED** (commit `9f9c3eb`); deploy stays `confpol-semis2b-u75`.
+
+**Why it overfit (the lessons):**
+1. **Held-out seed ≠ held-out opponents/env.** Sim 271 only varied the RNG seed; it
+   kept the same foreign-opponent pool and same `til-26-ae` pin that CEM optimized
+   against for 4 stages. So it caught seed-luck but NOT the deeper overfit to our
+   bots/env. The cloud is genuinely out-of-distribution and it cratered → that is
+   the real generalization test, and it failed.
+2. **Placement-vs-our-bots ≠ finals reward.** The melee gate rewarded survival/
+   placement among our specific opponents, which favored a passive, less-greedy
+   style (resource 40→23, mission 80→51). But finals score = base destruction →
+   bombs → fuel → resource collection. Less item/fuel-seeking → fewer bombs → less
+   destruction → less reward, which is exactly what cloud measured. The gate
+   optimized a proxy that diverges from how points are actually scored.
+3. **A tell we under-weighted:** the battle-tested champion placing DEAD LAST (5.0)
+   in our own melee brackets should have impugned the BRACKETS, not validated the
+   candidate that beat it there.
+4. **Process:** the melee gate is the primary Semis selector, but the cloud
+   non-crater cross-check is a HARD gate — never ship a melee-gate win before the
+   cloud cross-check returns. We shipped early; the cross-check then forced a revert.
+
+**Status:** tuner infra (`training/ae/tune_planner_weights.py`, 18 tests) is sound
+and kept; the CEM *result* is discarded. To retry this lever it needs a gate whose
+objective tracks finals reward (base destruction), or per-candidate cloud
+validation before promotion — not more of the same placement proxy.
+
 ### Resource-reward env fix + bomb-timer finding (7 June 2026)
 
 **Org disclosure (6 Jun):** resource-tile pickups give **NO finals score** —
