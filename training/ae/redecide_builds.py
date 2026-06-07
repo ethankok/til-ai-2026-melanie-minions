@@ -77,8 +77,14 @@ def main() -> int:
         sim_seeds = [int(x) for x in os.environ.get("AE_REDECIDE_SIM", "42").split()]
         rounds = int(os.environ.get("AE_REDECIDE_ROUNDS", "8"))
         cands = CANDIDATES
+        only = os.environ.get("AE_REDECIDE_ONLY", "").split()
+        if only:  # subset by label, keeping the incumbent (CANDIDATES[0]) first
+            keep = {CANDIDATES[0][0], *only}
+            cands = [c for c in CANDIDATES if c[0] in keep]
         tune = list(MELEE_BRACKETS)
         held = dict(HELDOUT_COMPOSITIONS)
+
+    out_stem = os.environ.get("AE_REDECIDE_OUT", "redecide-builds")
 
     inc_label = cands[0][0]
     print(f"redecide_builds: {len(cands)} candidates | tune={tune} | heldout={list(held)} | "
@@ -150,9 +156,9 @@ def main() -> int:
                      for label in results if label != inc_label} if inc_label in results else {},
     }
     DATA.mkdir(parents=True, exist_ok=True)
-    (DATA / "redecide-builds.json").write_text(json.dumps(out, indent=2))
-    (DATA / "_redecide_DONE").write_text(json.dumps({"elapsed_s": elapsed, "errors": list(errors)}))
-    print(f"\nelapsed_s={elapsed:.1f}  summary -> data/redecide-builds.json")
+    (DATA / f"{out_stem}.json").write_text(json.dumps(out, indent=2))
+    (DATA / f"_{out_stem}_DONE").write_text(json.dumps({"elapsed_s": elapsed, "errors": list(errors)}))
+    print(f"\nelapsed_s={elapsed:.1f}  summary -> data/{out_stem}.json")
     return 0
 
 

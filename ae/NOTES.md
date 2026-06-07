@@ -57,6 +57,37 @@ ride-along on the Blackwell run: measure our real `mission_multiplier` in the lo
 finals stack (confirms `mult>0` default) and that we complete mission batches under
 the 10s timeout (the real `mult=0` risk).
 
+**⭐ FULL FIELD RE-RANKED under the new gate (7 Jun, `training/ae/redecide_builds.py`,
+out `data/redecide-builds.json`; 7 builds, deploy-faithful, hash[0,1,2] sim[42]
+rounds=8 — i.e. n=3/single-sim, PRELIMINARY).** Only **`semis2c-u75` is promotable**
+over the incumbent: less exploitable (worst-bracket 4.00 < 5.00), better on tune
+(μ 2.42) AND on the held-out REAL competitors (μ 2.56 < incumbent 3.18), real+reliable
+effect (Δ+0.94, 12W/2T/1L, Wilson-lo 0.62), flat gap (+0.13). It was the branch we'd
+called "degraded" — but that verdict was on the OLD worst-bracket-on-noisy-adversarial
+gate. **`g00-fixed-03` is now FORMALLY confirmed overfit by the RIGHT signal:** it
+crushes every tune bracket (Δ+1.55, fixes incumbent all_aggressive 5.00→1.00) and
+passes every gate EXCEPT the composition-gap (**+1.47** — edge evaporates on real
+competitors: held μ 3.29 ≈ incumbent 3.18). The cloud −33% was never the reason to
+revert; Reform 4 is. native-u100/pandemonium-v1 fail minimax (wrecked in
+adversarial/real_field); pandemonium-v2/dir2 within noise. **⚠ n=3/sim42 contradicts
+prior judgment → high-n confirm RUNNING** (incumbent vs semis2c-u75, hash[0,1,2]
+sim[42,137,271], out `data/redecide-confirm.json`). Holds → semis2c-u75 is the new
+deploy candidate (then Workbench cloud non-crater sanity); fails → semis2b-u75 stays.
+
+**✅ CONFIRMED at high n (8 Jun, `data/redecide-confirm.json`, 45 paired samples, 0
+err): `semis2c-u75` PROMOTABLE over the deployed `semis2b-u75`.** Every gate green —
+minimax (worst 4.00 < 4.94), reward floors, effect Δ+0.89, PoI Wilson-lo **0.75**
+(38W/3T/4L of 45), gap **+0.15 not widening**. Wins 4/5 tune brackets (semis_mixed
+4.94→3.99, all_aggressive 4.76→4.00, all_farmer 2.88→1.21, adversarial 2.79→1.62);
+only `real_field` slips 1.06→1.18 (near-tie, both ~1st). **Transfers to the real
+field: held-out μ 2.55 vs 3.56** — the test g00-fixed-03 failed (gap +1.47), semis2c
+passes. The "semis2c degraded" verdict was an OLD-gate artifact; u75 is a better
+consultant than semis2b-u75. **NEXT to deploy: swap consultant `ae/models/bc.pt` =
+`confpol-semis2c-u75.pt` (Dockerfile ENV weights stay incumbent — CEM still reverted);
+Workbench `til submit ae` cloud NON-CRATER sanity only (a lower single-agent reward is
+EXPECTED + fine — melee gate is the selector). Operationally low-risk: same wrapper /
+loader / architecture as semis2b-u75, sibling curriculum branch.**
+
 ### ⏳ Planner-weight CEM tuning (7 June 2026) — PROMOTED → REVERTED (safe default) → DEPLOY DECISION PENDING a transfer test. ⚠ See "eval-redesign" note below.
 
 **Sequence:** CEM over 10 scalar planner env vars, gated on the local melee
