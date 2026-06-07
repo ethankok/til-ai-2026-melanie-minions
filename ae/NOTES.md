@@ -24,46 +24,69 @@
 
 ## Read this first
 
-### ⛔ Planner-weight CEM tuning (7 June 2026) — PROMOTED then REVERTED (overfit to the local melee gate)
+### ⏳ Planner-weight CEM tuning (7 June 2026) — PROMOTED → REVERTED (safe default) → DEPLOY DECISION PENDING a transfer test. ⚠ See "eval-redesign" note below.
 
-Ran black-box CEM over 10 scalar planner env vars, gated on the local melee
-**mean-placement** metric (field guard on semis_mixed/real_field, held-out sim 271).
-Candidate `g00-fixed-03` looked like a big win: it Pareto-dominated the
-`confpol-semis2b-u75` incumbent on all 5 melee brackets across 4 seed sets (mean
-placement 3.43→1.89, real_field held). Promoted to `ae/Dockerfile` (commit
-`1f521ff`). **The cloud cross-check then KILLED it:**
+**Sequence:** CEM over 10 scalar planner env vars, gated on the local melee
+**mean-placement** metric (field guard semis_mixed/real_field, held-out seed sim 271).
+Candidate `g00-fixed-03` Pareto-dominated the `confpol-semis2b-u75` incumbent on all
+5 melee brackets across 4 seed sets (mean placement 3.43→1.89, real_field held).
+Promoted to `ae/Dockerfile` (`1f521ff`). Cloud cross-check then dropped hard:
 
 | image | cloud score | speed | errors |
 |---|---|---|---|
 | `confpol-semis2b-u75` (incumbent) | **0.414** | 0.748 | 0/30 |
 | `cem-weights-v1` (g00-fixed-03) | **0.279** | 0.747 | 0/30 |
 
-−0.135 (~33%) regression, 0 errors → not a crash, the agent just **earns far less
-reward**. **REVERTED** (commit `9f9c3eb`); deploy stays `confpol-semis2b-u75`.
+−33%, 0 errors (not a crash — earns less single-agent reward). **REVERTED** (`9f9c3eb`,
+doc `aca8fd9`); deploy currently `confpol-semis2b-u75`.
 
-**Why it overfit (the lessons):**
-1. **Held-out seed ≠ held-out opponents/env.** Sim 271 only varied the RNG seed; it
-   kept the same foreign-opponent pool and same `til-26-ae` pin that CEM optimized
-   against for 4 stages. So it caught seed-luck but NOT the deeper overfit to our
-   bots/env. The cloud is genuinely out-of-distribution and it cratered → that is
-   the real generalization test, and it failed.
-2. **Placement-vs-our-bots ≠ finals reward.** The melee gate rewarded survival/
-   placement among our specific opponents, which favored a passive, less-greedy
-   style (resource 40→23, mission 80→51). But finals score = base destruction →
-   bombs → fuel → resource collection. Less item/fuel-seeking → fewer bombs → less
-   destruction → less reward, which is exactly what cloud measured. The gate
-   optimized a proxy that diverges from how points are actually scored.
-3. **A tell we under-weighted:** the battle-tested champion placing DEAD LAST (5.0)
-   in our own melee brackets should have impugned the BRACKETS, not validated the
-   candidate that beat it there.
-4. **Process:** the melee gate is the primary Semis selector, but the cloud
-   non-crater cross-check is a HARD gate — never ship a melee-gate win before the
-   cloud cross-check returns. We shipped early; the cross-check then forced a revert.
+**⚠ DO NOT read the revert as "proven overfit, discarded."** A key fact surfaced
+AFTER the revert that re-opens it: **finals AE is scored by RELATIVE RANK vs
+opponents, NOT absolute accumulated reward.** That changes the metric weighting:
+- The **cloud single-agent reward number is the WRONG SHAPE** for a relative-rank
+  melee. A model can earn less absolute reward but place better (survive while
+  opponents over-extend and die). So the −33% cloud drop is the **expected signature
+  of retuning from single-agent-reward toward melee-placement**, not proof of being
+  worse. (The earlier "finals = base destruction reward" reasoning was wrong on this
+  point — relative rank dominates.)
+- The **champion `confpol-semis2b-u75` was selected in the QUALIFIER era when scoring
+  WAS single-agent reward** — it was optimized for the cloud-style metric, never for
+  melee placement. So its dead-last finish in our melee brackets is plausibly a REAL
+  weakness, consistent with the CEM retuning being directionally right.
+- By the eval-loop skill's OWN overfit kill-switch ("lift on trained brackets that
+  REGRESSES on EVAL_ONLY"), the CEM weights DON'T trip it — they held `real_field`
+  (the most-realistic, EVAL-leaning bracket) and regressed nothing.
 
-**Status:** tuner infra (`training/ae/tune_planner_weights.py`, 18 tests) is sound
-and kept; the CEM *result* is discarded. To retry this lever it needs a gate whose
-objective tracks finals reward (base destruction), or per-candidate cloud
-validation before promotion — not more of the same placement proxy.
+**The one genuine residual risk** (not absolute-vs-relative): CEM optimized against
+OUR specific synthetic opponent pool (`self_policy`/`aggressive_proxy`/
+`anti_aggro_exploiter`/…). Beating those in relative rank may not transfer to real
+unknown teams. **Transfer test RUNNING** (`training/ae/data/_cem_transfer_test.py`,
+bg job): incumbent vs g00-fixed-03 on 3 held-out fields of ONLY the real vendored
+competitors (curry semifinalist + peroxide), in compositions matching no tuning
+bracket. Results → `training/ae/data/_cem_transfer_{test.log,DONE}`.
+- Edge transfers → real melee skill → **un-revert and deploy CEM weights for finals**
+  (revert `9f9c3eb`; weights = commit `1f521ff`).
+- Edge vanishes → overfit to our synthetic pool → revert stands.
+Caveat: held-out *composition* of *seen* opponents (best available; we have only 2
+real external teams: curry, peroxide).
+
+**g00-fixed-03 weights** (if redeploying): mission 51.157558, resource 23.038170,
+base 89.398951, dist 1.060815, path_threat 2.377860, bomb 9.076016, tether_health
+54.267980, tether_weight 0.314212, contention_scale 1.607649, contention_pfloor
+0.144418. Source `training/ae/data/planner-weight-cem-{final,heldout}/summary.json`.
+
+**⭐ EVAL-REDESIGN (the real takeaway — next session is rebuilding the eval to match
+Semis goals).** This whole episode exposed that our eval signals are mis-aligned with
+relative-rank finals: (1) **cloud single-agent reward ≠ finals metric** — demote it
+to a functionality/non-crater sanity, not a selector; (2) **the melee brackets may be
+unrepresentative** — our own champion placing dead-last is a red flag the bracket
+*opponent mix* or *placement scoring* doesn't track the real field; (3) **we have
+only 2 real external opponents** (curry/peroxide); the rest are synthetic self_*/
+proxy bots, so "wins vs our pool" generalizes weakly. A finals-aligned eval should
+score **relative rank against the most realistic available field**, weight the real
+competitors heavily, hold out opponent COMPOSITIONS (not just seeds), and treat cloud
+as a sanity floor only. Tuner infra (`tune_planner_weights.py`, 18 tests) is sound and
+reusable once the gate's objective is fixed.
 
 ### Resource-reward env fix + bomb-timer finding (7 June 2026)
 
