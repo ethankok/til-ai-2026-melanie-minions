@@ -24,6 +24,39 @@
 
 ## Read this first
 
+### ✅ Finals-aligned eval gate SHIPPED (7 June 2026) — placement primary, absolute reward demoted to floors, paired-effect + composition-holdout gates added
+
+**Verified finals AE scoring (read before any gate work):** finals AE = teams sorted
+by `ae_reward × mission_multiplier` → **RELATIVE RANK is what's paid, not absolute
+reward** (`til-26-finals/test_competition_server/src/match.py:169-195`). `ae_reward` =
+per-step env-reward sum (destroy_enemy_base=50 dominates; `ae_loop.py:231`).
+`mission_multiplier` = mean of the team's ASR/CV/NLP/Noise **batch** scores
+(`0.75·acc+0.25·speed`, `missions.py:228`), **NOT an AE quantity**; `mult=0` cliff if a
+team completes zero mission batches all match (`DEFAULT_MISSION_MULTIPLIER=0`). →
+(1) cloud single-agent reward is the WRONG SHAPE (a retune can earn less reward but
+place better — the `g00-fixed-03` −33% cloud drop is EXPECTED, not regression);
+(2) you CANNOT proxy `mult` offline (it's the other 4 tasks' accuracy), so our
+placement-by-raw-reward key is ~right and the `ae×mult` re-rank idea was CUT.
+
+**The gate (`melee_eval.py`, run with `--heldout`) — `promotable` requires ALL:**
+`minimax_placement_ok` (worst-bracket mean_placement ≤ inc, PRIMARY) · `margin_noncrater_ok`
++ `score_noncrater_ok` (absolute reward = non-crater FLOORS, not selectors) ·
+`effect_ok` + `poi_ok` (paired per-seed placement gain is real: mean Δ≥0.3 rank AND
+Wilson-95 lower bound on Prob-of-Improvement > 0.5) · `gap_not_widening_ok`
+(train-vs-heldout composition gap doesn't widen — overfit alarm, supersedes the
+ad-hoc `data/_cem_transfer_test.py`). Thresholds env-overridable
+(`AE_GATE_{SCORE_FLOOR_FRAC=0.85,MARGIN_SLACK_FRAC=0.5,MIN_EFFECT_RANK=0.3,GAP_TOL=0.5}`).
+Spec: `docs/superpowers/specs/2026-06-07-ae-finals-aligned-eval-redesign.md`; tests
+`test/test_melee_eval_gate.py` (14 pass). Tuner gate (`tune_planner_weights.promotion_ok`)
+was ALREADY placement-primary — left untouched (18 tests still pass).
+
+**Re-decide the pending `g00-fixed-03` deploy on THIS gate** (run
+`melee_eval --heldout` incumbent vs g00-fixed-03): the cloud −33% no longer reverts;
+the deciding signal is held-out-composition placement + non-widening gap. Workbench
+ride-along on the Blackwell run: measure our real `mission_multiplier` in the local
+finals stack (confirms `mult>0` default) and that we complete mission batches under
+the 10s timeout (the real `mult=0` risk).
+
 ### ⏳ Planner-weight CEM tuning (7 June 2026) — PROMOTED → REVERTED (safe default) → DEPLOY DECISION PENDING a transfer test. ⚠ See "eval-redesign" note below.
 
 **Sequence:** CEM over 10 scalar planner env vars, gated on the local melee

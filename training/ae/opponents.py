@@ -790,6 +790,21 @@ OPPONENT_SUITES = {
 # realistic mixed-strength `real_field`).
 MELEE_BRACKETS = ["semis_mixed", "all_aggressive", "all_farmer", "adversarial", "real_field"]
 
+# Frozen held-out compositions for the standing transfer/overfit gate (Reform 4 of
+# the 2026-06-07 finals-aligned eval redesign; supersedes the ad-hoc
+# data/_cem_transfer_test.py). Real-competitor-weighted (curry = strong, peroxide =
+# weak), and disjoint from every MELEE_BRACKETS composition above. NEVER tuned
+# against — consumed only by `melee_eval --heldout` to compute the train-vs-heldout
+# placement GAP as an overfit alarm. CAVEAT: both real teams already appear in tune
+# brackets in OTHER mixes, so this is held-out COMPOSITION of SEEN opponents — the
+# honest claim is "less overfit", NOT "will transfer" (we have only 2 real teams).
+# Values are comma-joined opponent specs (resolved directly by run_simulation).
+HELDOUT_COMPOSITIONS = {
+    "curry_pure":     "curry_aggro,curry_aggro,curry_fortress,curry_fortress,curry_aggro",
+    "real_mix":       "curry_aggro,curry_fortress,peroxide_astar,peroxide_astar,curry_aggro",
+    "peroxide_heavy": "peroxide_astar,peroxide_astar,curry_aggro,peroxide_astar,curry_fortress",
+}
+
 
 def _foreign_names() -> tuple[str, ...]:
     """Lazy import to avoid paying foreign_opponents' import cost (torch, curry)

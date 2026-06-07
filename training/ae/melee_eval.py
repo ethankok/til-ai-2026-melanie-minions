@@ -1,12 +1,10 @@
-"""Head-to-head melee eval + minimax-plus-margin selection gate (AE Semifinals).
+"""Head-to-head melee eval + finals-aligned (relative-rank) selection gate (AE Semis).
 
-This is the realistic Semis gate: it scores candidate agents in the four 6-team
-melee brackets (``opponents.MELEE_BRACKETS``), against the FOREIGN (non-mirror)
-opponent pool, and reports **placement + margin + absolute reward** side by side
-per bracket — not absolute reward vs our own mirror heuristics (the old
-``validate_cloud_suite.py`` gate that mis-predicts Semis performance).
-
-See docs/superpowers/specs/2026-06-01-ae-semis-eval-design.md.
+This is the realistic Semis gate: it scores candidate agents in the 6-team melee
+brackets (``opponents.MELEE_BRACKETS``), against the FOREIGN (non-mirror) opponent
+pool, and ranks by **relative placement** — the shape finals actually scores. (Finals
+AE = teams sorted by ``ae_reward * mission_multiplier``; placement, not absolute
+reward, is what's paid. See docs/superpowers/specs/2026-06-07-ae-finals-aligned-eval-redesign.md.)
 
 Determinism: AEManager has hash-order-dependent branches, so — exactly like
 ``multi_seed_eval.py`` — we spawn a fresh interpreter per (hash_seed, sim_seed)
@@ -15,12 +13,25 @@ runs. One bracket per subprocess also isolates the per-process model cache
 (``policy_manager._MODEL_CACHE``) to a single candidate + that bracket's
 opponents.
 
-Promotion rule (report all three; gate on the conjunction) — a candidate is
-promotable over the incumbent (default ``confpol-u860``) only if ALL hold:
-  1. worst-bracket ``mean_placement`` (minimax over the 4 brackets) is
-     better-or-equal to the incumbent's worst-bracket placement;
-  2. ``mean_margin >= 0`` in every bracket;
-  3. ``mean_score`` (absolute reward) in ``semis_mixed`` >= incumbent.
+Promotion rule (2026-06-07 redesign — placement is PRIMARY, absolute reward is a
+non-crater FLOOR, and the gain must be real, not noise). A candidate is promotable
+over the incumbent only if ALL hold:
+  1. ``minimax_placement_ok`` — worst-bracket ``mean_placement`` (minimax) is
+     better-or-equal to the incumbent's. PRIMARY selector.
+  2. ``margin_noncrater_ok`` — worst-bracket margin has not CRATERED vs the
+     incumbent (``>= inc.min_margin - MARGIN_SLACK``); no longer a ``>=0`` hard gate.
+  3. ``score_noncrater_ok`` — ``semis_mixed`` absolute reward has not cratered
+     (``>= SCORE_FLOOR_FRAC * inc``); a moderate drop on a placement-retune is
+     EXPECTED, not a regression. (Cloud single-agent reward is likewise a
+     non-crater/0-error functionality check, never a revert trigger.)
+  4. ``effect_ok`` + ``poi_ok`` — the paired per-seed placement gain is real:
+     mean paired delta >= ``MIN_EFFECT_RANK`` AND the Wilson lower bound on
+     Probability-of-Improvement > 0.5. Stops within-noise flips from promoting.
+  5. ``gap_not_widening_ok`` (only with ``--heldout``) — the train-vs-heldout
+     composition placement GAP does not widen vs the incumbent (overfit alarm).
+
+Thresholds are env-overridable: AE_GATE_SCORE_FLOOR_FRAC (0.85),
+AE_GATE_MARGIN_SLACK_FRAC (0.5), AE_GATE_MIN_EFFECT_RANK (0.3), AE_GATE_GAP_TOL (0.5).
 
 Usage
 -----
@@ -40,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import statistics
 import subprocess
@@ -54,9 +66,17 @@ for _p in (str(THIS_DIR),):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from opponents import MELEE_BRACKETS  # noqa: E402
+from opponents import MELEE_BRACKETS, HELDOUT_COMPOSITIONS  # noqa: E402
 
 U860 = str((THIS_DIR / "checkpoints" / "pandemonium-v1-best-u860.pt").resolve())
+
+# --- Finals-aligned gate thresholds (2026-06-07 redesign; env-overridable) -------
+# Off-construct (absolute-reward) signals are non-crater FLOORS, not selectors; the
+# placement gain must clear a real effect size and a Probability-of-Improvement bar.
+SCORE_FLOOR_FRAC = float(os.environ.get("AE_GATE_SCORE_FLOOR_FRAC", "0.85"))
+MARGIN_SLACK_FRAC = float(os.environ.get("AE_GATE_MARGIN_SLACK_FRAC", "0.5"))
+MIN_EFFECT_RANK = float(os.environ.get("AE_GATE_MIN_EFFECT_RANK", "0.3"))
+GAP_TOL = float(os.environ.get("AE_GATE_GAP_TOL", "0.5"))
 
 
 def _cbomb7_env() -> dict[str, str]:
@@ -167,6 +187,75 @@ def _agg(values: list[float]) -> float:
     return statistics.mean(values) if values else 0.0
 
 
+# ---------------------------------------------------------------------------
+# Reform 3 — paired placement statistics (is the gain real, or noise?)
+# ---------------------------------------------------------------------------
+def _wilson_lower(successes: float, n: int, z: float = 1.96) -> float:
+    """Wilson score-interval lower bound for a binomial proportion.
+
+    Deterministic (no bootstrap RNG) and conservative on the bounded-ordinal
+    placement data, where Gaussian CIs would understate width. Ties count as 0.5
+    of a success, so ``successes`` may be fractional. Returns 0.0 for n<=0 and
+    clamps the lower bound at 0.
+    """
+    if n <= 0:
+        return 0.0
+    phat = successes / n
+    denom = 1.0 + z * z / n
+    center = phat + z * z / (2 * n)
+    margin = z * math.sqrt(max(0.0, phat * (1.0 - phat) / n + z * z / (4 * n * n)))
+    return max(0.0, (center - margin) / denom)
+
+
+def _paired_placement_stats(cand: dict, inc: dict) -> dict:
+    """Pair candidate vs incumbent per (suite, hash, sim) and quantify the edge.
+
+    Both ran identical (hash_seed, sim_seed) over identical brackets, so the runs
+    are paired (common random numbers). ``delta = inc_place - cand_place`` is
+    positive when the candidate places BETTER (lower placement is better).
+    """
+    inc_rows: dict[tuple, float] = {}
+    for suite, b in inc.get("per_bracket", {}).items():
+        for r in b.get("run_rows", []):
+            inc_rows[(suite, r["hash"], r["sim"])] = float(r["mean_placement"])
+    deltas: list[float] = []
+    wins = ties = losses = 0
+    for suite, b in cand.get("per_bracket", {}).items():
+        for r in b.get("run_rows", []):
+            key = (suite, r["hash"], r["sim"])
+            if key not in inc_rows:
+                continue
+            cp = float(r["mean_placement"])
+            ip = inc_rows[key]
+            deltas.append(ip - cp)
+            if cp < ip - 1e-9:
+                wins += 1
+            elif cp > ip + 1e-9:
+                losses += 1
+            else:
+                ties += 1
+    n = len(deltas)
+    succ = wins + 0.5 * ties
+    return {
+        "n_pairs": n,
+        "mean_delta": (sum(deltas) / n) if n else 0.0,
+        "poi": (succ / n) if n else 0.0,
+        "poi_lower": _wilson_lower(succ, n),
+        "wins": wins,
+        "ties": ties,
+        "losses": losses,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Reform 4 — held-out composition transfer gap (overfit alarm)
+# ---------------------------------------------------------------------------
+def _gap_not_widening(cand_gap: float, inc_gap: float, tol: float = GAP_TOL) -> bool:
+    """True when the candidate's (heldout - tune) placement gap does not widen
+    beyond the incumbent's by more than ``tol``. A widening gap = proxy-overfit."""
+    return cand_gap <= inc_gap + tol + 1e-9
+
+
 def _evaluate_candidate(label: str, spec: dict, brackets: list[str],
                         hash_seeds: list[int], sim_seeds: list[int],
                         rounds: int, non_novice: bool) -> dict:
@@ -175,14 +264,19 @@ def _evaluate_candidate(label: str, spec: dict, brackets: list[str],
         runs = []
         for h in hash_seeds:
             for s in sim_seeds:
-                runs.append(_spawn_worker(spec["our"], suite, h, s, rounds,
-                                          spec.get("env", {}), non_novice))
+                row = _spawn_worker(spec["our"], suite, h, s, rounds,
+                                    spec.get("env", {}), non_novice)
+                row["hash"] = h          # retain paired (hash, sim) key for Reform 3
+                row["sim"] = s
+                runs.append(row)
         per_bracket[suite] = {
             "runs": len(runs),
             "mean_placement": _agg([r["mean_placement"] for r in runs]),
             "win_rate": _agg([r["win_rate"] for r in runs]),
             "mean_margin": _agg([r["mean_margin"] for r in runs]),
             "mean_score": _agg([r["mean_score"] for r in runs]),
+            "run_rows": [{"hash": r["hash"], "sim": r["sim"],
+                          "mean_placement": r["mean_placement"]} for r in runs],
         }
         b = per_bracket[suite]
         print(f"    {suite:16s} place={b['mean_placement']:.2f} "
@@ -194,21 +288,45 @@ def _evaluate_candidate(label: str, spec: dict, brackets: list[str],
         "our": spec["our"],
         "per_bracket": per_bracket,
         "worst_bracket_placement": worst_placement,
+        "tune_mean_placement": _agg([b["mean_placement"] for b in per_bracket.values()]),
         "min_margin": min(b["mean_margin"] for b in per_bracket.values()),
         "semis_mixed_score": per_bracket.get("semis_mixed", {}).get("mean_score", 0.0),
     }
 
 
 def _promotion_verdict(cand: dict, inc: dict) -> dict:
+    """Finals-aligned promotion gate (2026-06-07). Placement is the PRIMARY selector;
+    absolute reward (margin, semis_mixed score) are non-crater FLOORS; the placement
+    gain must be real (effect size + Probability-of-Improvement), not noise; and with
+    held-out data the transfer GAP must not widen. See module docstring."""
+    # 1. PRIMARY — minimax worst-bracket placement (least exploitable in a melee).
     c1 = cand["worst_bracket_placement"] <= inc["worst_bracket_placement"] + 1e-9
-    c2 = cand["min_margin"] >= -1e-9
-    c3 = cand["semis_mixed_score"] >= inc["semis_mixed_score"] - 1e-9
-    return {
+    # 2. margin non-crater floor (no longer a >=0 hard gate that over-rejects retunes).
+    margin_floor = inc["min_margin"] - MARGIN_SLACK_FRAC * (abs(inc["min_margin"]) + 1.0)
+    c2 = cand["min_margin"] >= margin_floor - 1e-9
+    # 3. absolute-reward non-crater floor (a moderate drop on a placement-retune is OK).
+    score_floor = SCORE_FLOOR_FRAC * inc["semis_mixed_score"]
+    c3 = cand["semis_mixed_score"] >= score_floor - 1e-9
+    # 4. the gain is real, not noise — paired effect size + Prob-of-Improvement.
+    st = _paired_placement_stats(cand, inc)
+    effect_ok = st["n_pairs"] > 0 and st["mean_delta"] >= MIN_EFFECT_RANK - 1e-9
+    poi_ok = st["n_pairs"] > 0 and st["poi_lower"] > 0.5 + 1e-9
+    verdict = {
         "minimax_placement_ok": bool(c1),
-        "margin_nonneg_everywhere_ok": bool(c2),
-        "semis_mixed_score_ok": bool(c3),
-        "promotable": bool(c1 and c2 and c3),
+        "margin_noncrater_ok": bool(c2),
+        "score_noncrater_ok": bool(c3),
+        "effect_ok": bool(effect_ok),
+        "poi_ok": bool(poi_ok),
+        "paired": st,
     }
+    # 5. held-out composition transfer gap (only when --heldout populated both sides).
+    gap_ok = True
+    if "composition_gap" in cand and "composition_gap" in inc:
+        gap_ok = _gap_not_widening(cand["composition_gap"], inc["composition_gap"])
+        verdict["gap_not_widening_ok"] = bool(gap_ok)
+        verdict["composition_gap"] = cand["composition_gap"]
+    verdict["promotable"] = bool(c1 and c2 and c3 and effect_ok and poi_ok and gap_ok)
+    return verdict
 
 
 def _print_report(results: dict[str, dict], incumbent: str, brackets: list[str]) -> None:
@@ -225,16 +343,29 @@ def _print_report(results: dict[str, dict], incumbent: str, brackets: list[str])
             b = cand["per_bracket"][suite]
             print(f"    {suite:16s} {b['mean_placement']:6.2f} {b['win_rate']:6.2f} "
                   f"{b['mean_margin']:+9.1f} {b['mean_score']:8.4f}")
+        if "composition_gap" in cand:
+            print(f"    heldout-gap = {cand['composition_gap']:+.2f} "
+                  f"(heldout {cand.get('heldout_mean_placement', float('nan')):.2f} "
+                  f"- tune {cand['tune_mean_placement']:.2f})")
         if label != incumbent:
             v = _promotion_verdict(cand, inc)
+            st = v["paired"]
             flag = "PROMOTABLE ✓" if v["promotable"] else "not promotable"
-            print(f"    -> vs {incumbent}: {flag}  "
-                  f"(minimax {'✓' if v['minimax_placement_ok'] else '✗'}, "
-                  f"margin≥0 {'✓' if v['margin_nonneg_everywhere_ok'] else '✗'}, "
-                  f"semis_mixed≥inc {'✓' if v['semis_mixed_score_ok'] else '✗'})")
+            cks = [f"minimax {'✓' if v['minimax_placement_ok'] else '✗'}",
+                   f"margin-floor {'✓' if v['margin_noncrater_ok'] else '✗'}",
+                   f"score-floor {'✓' if v['score_noncrater_ok'] else '✗'}",
+                   f"effect {'✓' if v['effect_ok'] else '✗'}",
+                   f"PoI {'✓' if v['poi_ok'] else '✗'}"]
+            if "gap_not_widening_ok" in v:
+                cks.append(f"gap {'✓' if v['gap_not_widening_ok'] else '✗'}")
+            print(f"    -> vs {incumbent}: {flag}  ({', '.join(cks)})")
+            print(f"       paired: Δplace={st['mean_delta']:+.2f} "
+                  f"PoI={st['poi']:.2f} (Wilson95 lo={st['poi_lower']:.2f}) "
+                  f"W/T/L={st['wins']}/{st['ties']}/{st['losses']} n={st['n_pairs']}")
     print("\n" + "=" * 78)
-    print("  Headline = worst-bracket mean_placement (lower is less exploitable).")
-    print("  confpol-u860 (0.626 cloud) remains the deploy floor regardless.")
+    print("  PRIMARY = worst-bracket mean_placement (lower = less exploitable). Absolute")
+    print("  reward (margin/score/cloud) are non-crater FLOORS, not selectors; a moderate")
+    print("  reward drop on a placement-retune is EXPECTED (finals scores RELATIVE RANK).")
     print("=" * 78)
 
 
@@ -262,6 +393,10 @@ def main(argv: list[str] | None = None) -> int:
                    help=f"override brackets (default: {MELEE_BRACKETS})")
     p.add_argument("--hash-seeds", nargs="+", type=int, default=[0, 1, 2])
     p.add_argument("--sim-seeds", nargs="+", type=int, default=[42])
+    p.add_argument("--heldout", action="store_true",
+                   help="also evaluate each candidate on the frozen held-out real-competitor "
+                        "compositions (opponents.HELDOUT_COMPOSITIONS) and gate on the "
+                        "train-vs-heldout placement GAP (overfit alarm, Reform 4).")
     p.add_argument("--summary-out", type=Path, default=None)
     args = p.parse_args(argv)
 
@@ -295,10 +430,21 @@ def main(argv: list[str] | None = None) -> int:
     results: dict[str, dict] = {}
     for label in candidates:
         print(f"\n[candidate] {label} (our={registry[label]['our']})", flush=True)
-        results[label] = _evaluate_candidate(
+        res = _evaluate_candidate(
             label, registry[label], brackets,
             args.hash_seeds, args.sim_seeds, args.rounds, args.non_novice,
         )
+        if args.heldout:
+            print(f"  [heldout compositions] {label}", flush=True)
+            ho = _evaluate_candidate(
+                label, registry[label], list(HELDOUT_COMPOSITIONS.values()),
+                args.hash_seeds, args.sim_seeds, args.rounds, args.non_novice,
+            )
+            res["heldout_per_bracket"] = ho["per_bracket"]
+            res["heldout_mean_placement"] = ho["tune_mean_placement"]
+            res["heldout_worst_placement"] = ho["worst_bracket_placement"]
+            res["composition_gap"] = ho["tune_mean_placement"] - res["tune_mean_placement"]
+        results[label] = res
     elapsed = time.monotonic() - t0
 
     _print_report(results, incumbent, brackets)
