@@ -154,7 +154,23 @@ bc.pt; verify with `docker run --rm melanie-minions-ae:finals shasum -a 256
 as semis2b-u75, sibling curriculum branch. Instant rollback: `handoff/confpol-semis2b-u75.pt`
 (also staged) → bc.pt → rebuild.**
 
-### ⏳ Planner-weight CEM tuning (7 June 2026) — PROMOTED → REVERTED (safe default) → DEPLOY DECISION PENDING a transfer test. ⚠ See "eval-redesign" note below.
+### ⛔ Planner-weight CEM tuning (7 June 2026) — PROMOTED → REVERTED → real-hardware A/B CLOSED THE CASE (8 Jun): g00 is INERT on the finals seed, deploy = semis2b-u75. ⚠ See "eval-redesign" note below.
+
+**🔚 RESOLUTION (8 Jun 2026, on-hardware finals A/B — don't re-run).** Built g00-fixed-03
+as a finals image (semis2b-u75 consultant `bc.pt` + the 10 CEM env vars baked into
+`ae/Dockerfile`; weights confirmed in `docker inspect …ae:finals`) and ran it on the real
+Blackwell finals harness on the **same fixed seed** as the semis2b/semis2c runs. Result:
+**g00 trajectory is BYTE-IDENTICAL to plain semis2b-u75** — 0/200 full-field reward vectors
+differ, agent_0 moves differ at only the terminal step 200 (no score effect), total **516,
+1st place** (= semis2b exactly). That lone step-200 flip proves the weights WERE live (rules
+out stale image / compose override) and incidentally re-confirms `bc.pt = semis2b`. The CEM
+weights rescale values but preserve every consequential target ordering on this seed (base>
+mission>resource holds: 100>80>40 → 89>51>23), so they only ever change behavior on OTHER
+seeds/opponents — exactly the synthetic-bracket regime the finals-aligned gate already flagged
+**overfit (composition-gap +1.47)**. **No upside on the live (fixed) finals seed + residual
+overfit risk off it → CEM REVERTED, deploy = `confpol-semis2b-u75` at default weights** (Dockerfile
+block removed). Bonus: confirms the finals seed is deterministic (516/1st reproduces exactly).
+The earlier "transfer test" question is now moot — the real harness answered it directly.
 
 **Sequence:** CEM over 10 scalar planner env vars, gated on the local melee
 **mean-placement** metric (field guard semis_mixed/real_field, held-out seed sim 271).
