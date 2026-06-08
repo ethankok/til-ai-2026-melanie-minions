@@ -77,6 +77,10 @@ SCORE_FLOOR_FRAC = float(os.environ.get("AE_GATE_SCORE_FLOOR_FRAC", "0.85"))
 MARGIN_SLACK_FRAC = float(os.environ.get("AE_GATE_MARGIN_SLACK_FRAC", "0.5"))
 MIN_EFFECT_RANK = float(os.environ.get("AE_GATE_MIN_EFFECT_RANK", "0.3"))
 GAP_TOL = float(os.environ.get("AE_GATE_GAP_TOL", "0.5"))
+OUR_MULT = float(os.environ.get("AE_EVAL_OUR_MULT", "0.93"))
+OPP_MULTS = [float(x) for x in os.environ.get("AE_EVAL_OPP_MULTS", "0.24,0.7").split(",")]
+RAWAE_FLOOR_FRAC = float(os.environ.get("AE_GATE_RAWAE_FLOOR_FRAC", "0.75"))
+MIN_EFFECT_AXIS = float(os.environ.get("AE_GATE_MIN_EFFECT_AXIS", "0.0"))
 
 
 def _cbomb7_env() -> dict[str, str]:
@@ -128,6 +132,36 @@ RESULT_SENTINEL = "MELEE_RESULT "
 # ---------------------------------------------------------------------------
 # Worker: run ONE (candidate, bracket, seed) and emit a one-line JSON summary.
 # ---------------------------------------------------------------------------
+def _compute_worker_payload(summary: dict, suite: str, our: str, seed: int) -> dict:
+    """Build the worker result payload (paired-friendly) from a run_simulation
+    summary, applying the multiplier overlay and per-axis aggregation."""
+    pr = summary["per_round"]
+    usid = pr["us_agent_id"]
+    rounds = max(1, len(pr["cumulative_all"]))
+    wplace: dict[str, float] = {}
+    for om in OPP_MULTS:
+        places = [_weighted_placement(ca, usid, OUR_MULT, om) for ca in pr["cumulative_all"]]
+        wplace[f"{om:g}"] = float(sum(places) / rounds) if places else 0.0
+    raw_ae = float(sum(ca[usid] for ca in pr["cumulative_all"]) / rounds)
+    axes = [_axis_totals(c) for c in pr["reward_components"]]
+    mission_axis = float(sum(a["mission_axis"] for a in axes) / rounds) if axes else 0.0
+    base_defense_axis = float(sum(a["base_defense_axis"] for a in axes) / rounds) if axes else 0.0
+    opening_axis = float(sum(pr["opening_reward"]) / rounds) if pr["opening_reward"] else 0.0
+    return {
+        "suite": suite, "our": our, "seed": seed,
+        "mean_score": float(summary["mean_score"]),
+        "mean_placement": float(summary["mean_placement"]),
+        "mean_margin": float(summary["mean_margin"]),
+        "win_rate": float(summary["win_rate"]),
+        "placement_hist": summary["placement_hist"],
+        "weighted_placement": wplace,
+        "raw_ae": raw_ae,
+        "mission_axis": mission_axis,
+        "base_defense_axis": base_defense_axis,
+        "opening_axis": opening_axis,
+    }
+
+
 def _run_worker(args: argparse.Namespace) -> int:
     from simulate import run_simulation
     out = run_simulation(
@@ -139,16 +173,7 @@ def _run_worker(args: argparse.Namespace) -> int:
         novice=not args.non_novice,
     )
     s = out["summary"]
-    payload = {
-        "suite": args.suite,
-        "our": args.our,
-        "seed": args.seed,
-        "mean_score": float(s["mean_score"]),
-        "mean_placement": float(s["mean_placement"]),
-        "mean_margin": float(s["mean_margin"]),
-        "win_rate": float(s["win_rate"]),
-        "placement_hist": s["placement_hist"],
-    }
+    payload = _compute_worker_payload(s, args.suite, args.our, args.seed)
     print(RESULT_SENTINEL + json.dumps(payload), flush=True)
     return 0
 

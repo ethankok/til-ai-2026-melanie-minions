@@ -58,3 +58,30 @@ def test_paired_value_stats_higher_is_better():
     assert st["n_pairs"] == 2
     assert st["mean_delta"] == 0.0             # (+20 + -20)/2
     assert st["wins"] == 1 and st["losses"] == 1
+
+
+def test_worker_payload_has_finals_fields(monkeypatch):
+    import melee_eval as M
+
+    fake_summary = {
+        "mean_score": 0.5, "mean_placement": 1.0, "mean_margin": 10.0, "win_rate": 1.0,
+        "placement_hist": {str(k): 0 for k in range(1, 7)},
+        "per_round": {
+            "cumulative_all": [{"agent_0": 300.0, "agent_1": 100.0, "agent_2": 0.0,
+                                "agent_3": 0.0, "agent_4": 0.0, "agent_5": 0.0}],
+            "opening_reward": [12.0],
+            "reward_components": [{"collect_mission": 25.0, "own_base_destroyed": -65.0}],
+            "us_agent_id": "agent_0",
+        },
+    }
+    monkeypatch.setattr(M, "OUR_MULT", 0.93)
+    monkeypatch.setattr(M, "OPP_MULTS", [0.24, 0.7])
+    captured = {}
+    monkeypatch.setattr(M, "_compute_worker_payload",
+                        M._compute_worker_payload)  # ensure it exists
+    payload = M._compute_worker_payload(fake_summary, "semis_mixed", "heuristic", 42)
+    assert payload["raw_ae"] == 300.0
+    assert payload["mission_axis"] == 25.0
+    assert payload["base_defense_axis"] == -65.0
+    assert payload["opening_axis"] == 12.0
+    assert payload["weighted_placement"]["0.24"] == 1.0
