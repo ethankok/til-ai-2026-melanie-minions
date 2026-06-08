@@ -224,6 +224,28 @@ ENV AE_LEAD_TETHER_WEIGHT=0.5
 ENV AE_LEAD_BOMB_GATE_BASE=0
 ENV AE_LEAD_RECON_DISCOUNT=0
 
+# ─────────────────────────────────────────────────────────────────────────────
+# g00-fixed-03 CEM planner-weight retune (EXPERIMENT — finals A/B, 8 Jun 2026).
+# Overrides the 10 scalar planner weights above with the CEM-tuned values that
+# Pareto-dominated semis2b-u75 on the local melee gate (mean placement 3.43→1.89)
+# but were REVERTED after a −33% qualifier-style cloud drop (expected for a
+# relative-rank retune; see ae/NOTES.md "Planner-weight CEM tuning"). Docker uses
+# the LAST ENV for each key, so this block wins. Consultant checkpoint stays
+# semis2b-u75 (g00 swaps WEIGHTS, not the .pt) — stage bc.pt=confpol-semis2b-u75.pt.
+# Source: training/ae/data/planner-weight-cem-final/candidates.jsonl (candidate
+# "g00-fixed-03"). To revert to the incumbent deploy, delete this whole block.
+ENV AE_ITEM_MISSION_VALUE=51.157558
+ENV AE_ITEM_RESOURCE_VALUE=23.038170
+ENV AE_ENEMY_BASE_VALUE=89.398951
+ENV AE_DIST_PENALTY=1.060815
+ENV AE_PATH_THREAT_PENALTY=2.377860
+ENV AE_DIJKSTRA_BOMB_COST=9.076016
+ENV AE_LEAD_TETHER_HEALTH=54.267980
+ENV AE_LEAD_TETHER_WEIGHT=0.314212
+ENV AE_CONTENTION_SCALE=1.607649
+ENV AE_CONTENTION_PFLOOR=0.144418
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Installs your dependencies.
 RUN pip install -U pip
 COPY requirements.txt .
