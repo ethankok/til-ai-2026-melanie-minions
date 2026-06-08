@@ -410,38 +410,55 @@ def _evaluate_candidate(label: str, spec: dict, brackets: list[str],
     return _aggregate_candidate(label, spec, runs_by_bracket)
 
 
-def _promotion_verdict(cand: dict, inc: dict) -> dict:
-    """Finals-aligned promotion gate (2026-06-07). Placement is the PRIMARY selector;
-    absolute reward (margin, semis_mixed score) are non-crater FLOORS; the placement
-    gain must be real (effect size + Probability-of-Improvement), not noise; and with
-    held-out data the transfer GAP must not widen. See module docstring."""
-    # 1. PRIMARY — minimax worst-bracket placement (least exploitable in a melee).
-    c1 = cand["worst_bracket_placement"] <= inc["worst_bracket_placement"] + 1e-9
-    # 2. margin non-crater floor (no longer a >=0 hard gate that over-rejects retunes).
+_AXIS_KEY = {"mission": "mission_axis", "base_defense": "base_defense_axis",
+             "opening": "opening_axis"}
+
+
+def _promotion_verdict(cand: dict, inc: dict, target_axis: str | None = None) -> dict:
+    """Finals-aligned gate (2026-06-09). PRIMARY = placement under the opp_mult
+    sweep (worst_robust_placement) must not regress. raw_ae is the candidate
+    discriminator with a non-crater floor. If ``target_axis`` is set, that axis
+    must improve (higher = better for all three, incl. base_defense which improves
+    by becoming less negative). The --heldout composition gap must not widen."""
+    # PRIMARY — robust placement across (brackets x opp_mults).
+    placement_robust_ok = cand["worst_robust_placement"] <= inc["worst_robust_placement"] + 1e-9
+    # raw_ae non-crater floor (proportional to our final score; the discriminator).
+    rawae_floor = RAWAE_FLOOR_FRAC * inc["raw_ae"]
+    rawae_floor_ok = cand["raw_ae"] >= rawae_floor - 1e-9
+    # raw_ae real-gain stats (used as the placement-tie discriminator / reporting).
+    rawae_stats = _paired_value_stats(cand, inc, "raw_ae")
+    # margin/score non-crater floors (carried over from the prior gate).
     margin_floor = inc["min_margin"] - MARGIN_SLACK_FRAC * (abs(inc["min_margin"]) + 1.0)
-    c2 = cand["min_margin"] >= margin_floor - 1e-9
-    # 3. absolute-reward non-crater floor (a moderate drop on a placement-retune is OK).
+    margin_ok = cand["min_margin"] >= margin_floor - 1e-9
     score_floor = SCORE_FLOOR_FRAC * inc["semis_mixed_score"]
-    c3 = cand["semis_mixed_score"] >= score_floor - 1e-9
-    # 4. the gain is real, not noise — paired effect size + Prob-of-Improvement.
-    st = _paired_placement_stats(cand, inc)
-    effect_ok = st["n_pairs"] > 0 and st["mean_delta"] >= MIN_EFFECT_RANK - 1e-9
-    poi_ok = st["n_pairs"] > 0 and st["poi_lower"] > 0.5 + 1e-9
+    score_ok = cand["semis_mixed_score"] >= score_floor - 1e-9
+    # Per-axis floor for the targeted change.
+    axis_ok = True
+    axis_stats = None
+    if target_axis is not None:
+        key = _AXIS_KEY[target_axis]
+        axis_stats = _paired_value_stats(cand, inc, key)
+        axis_ok = (axis_stats["n_pairs"] > 0
+                   and axis_stats["mean_delta"] >= MIN_EFFECT_AXIS + 1e-9
+                   and axis_stats["poi_lower"] > 0.5 + 1e-9)
     verdict = {
-        "minimax_placement_ok": bool(c1),
-        "margin_noncrater_ok": bool(c2),
-        "score_noncrater_ok": bool(c3),
-        "effect_ok": bool(effect_ok),
-        "poi_ok": bool(poi_ok),
-        "paired": st,
+        "placement_robust_ok": bool(placement_robust_ok),
+        "rawae_floor_ok": bool(rawae_floor_ok),
+        "margin_noncrater_ok": bool(margin_ok),
+        "score_noncrater_ok": bool(score_ok),
+        "rawae_stats": rawae_stats,
+        "target_axis": target_axis,
+        "axis_ok": bool(axis_ok),
+        "axis_stats": axis_stats,
     }
-    # 5. held-out composition transfer gap (only when --heldout populated both sides).
     gap_ok = True
     if "composition_gap" in cand and "composition_gap" in inc:
         gap_ok = _gap_not_widening(cand["composition_gap"], inc["composition_gap"])
         verdict["gap_not_widening_ok"] = bool(gap_ok)
         verdict["composition_gap"] = cand["composition_gap"]
-    verdict["promotable"] = bool(c1 and c2 and c3 and effect_ok and poi_ok and gap_ok)
+    verdict["promotable"] = bool(
+        placement_robust_ok and rawae_floor_ok and margin_ok and score_ok
+        and axis_ok and gap_ok)
     return verdict
 
 
@@ -465,17 +482,18 @@ def _print_report(results: dict[str, dict], incumbent: str, brackets: list[str])
                   f"- tune {cand['tune_mean_placement']:.2f})")
         if label != incumbent:
             v = _promotion_verdict(cand, inc)
-            st = v["paired"]
+            st = v["rawae_stats"]
             flag = "PROMOTABLE ✓" if v["promotable"] else "not promotable"
-            cks = [f"minimax {'✓' if v['minimax_placement_ok'] else '✗'}",
+            cks = [f"placement-robust {'✓' if v['placement_robust_ok'] else '✗'}",
+                   f"rawae-floor {'✓' if v['rawae_floor_ok'] else '✗'}",
                    f"margin-floor {'✓' if v['margin_noncrater_ok'] else '✗'}",
-                   f"score-floor {'✓' if v['score_noncrater_ok'] else '✗'}",
-                   f"effect {'✓' if v['effect_ok'] else '✗'}",
-                   f"PoI {'✓' if v['poi_ok'] else '✗'}"]
+                   f"score-floor {'✓' if v['score_noncrater_ok'] else '✗'}"]
+            if v.get("target_axis") is not None:
+                cks.append(f"axis[{v['target_axis']}] {'✓' if v['axis_ok'] else '✗'}")
             if "gap_not_widening_ok" in v:
                 cks.append(f"gap {'✓' if v['gap_not_widening_ok'] else '✗'}")
             print(f"    -> vs {incumbent}: {flag}  ({', '.join(cks)})")
-            print(f"       paired: Δplace={st['mean_delta']:+.2f} "
+            print(f"       raw_ae: Δ={st['mean_delta']:+.1f} "
                   f"PoI={st['poi']:.2f} (Wilson95 lo={st['poi_lower']:.2f}) "
                   f"W/T/L={st['wins']}/{st['ties']}/{st['losses']} n={st['n_pairs']}")
     print("\n" + "=" * 78)
