@@ -462,7 +462,8 @@ def _promotion_verdict(cand: dict, inc: dict, target_axis: str | None = None) ->
     return verdict
 
 
-def _print_report(results: dict[str, dict], incumbent: str, brackets: list[str]) -> None:
+def _print_report(results: dict[str, dict], incumbent: str, brackets: list[str],
+                  target_axis: str | None = None) -> None:
     inc = results[incumbent]
     print("\n" + "=" * 78)
     print(f"  MELEE RE-RANK  (incumbent = {incumbent}; minimax over {len(brackets)} brackets)")
@@ -481,7 +482,7 @@ def _print_report(results: dict[str, dict], incumbent: str, brackets: list[str])
                   f"(heldout {cand.get('heldout_mean_placement', float('nan')):.2f} "
                   f"- tune {cand['tune_mean_placement']:.2f})")
         if label != incumbent:
-            v = _promotion_verdict(cand, inc)
+            v = _promotion_verdict(cand, inc, target_axis=target_axis)
             st = v["rawae_stats"]
             flag = "PROMOTABLE ✓" if v["promotable"] else "not promotable"
             cks = [f"placement-robust {'✓' if v['placement_robust_ok'] else '✗'}",
@@ -507,6 +508,7 @@ def _print_report(results: dict[str, dict], incumbent: str, brackets: list[str])
 # CLI
 # ---------------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
+    global OUR_MULT, OPP_MULTS
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--our", default=None, help="(worker) agent name for simulate._make_our_agent")
@@ -526,13 +528,28 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--brackets", nargs="+", default=None,
                    help=f"override brackets (default: {MELEE_BRACKETS})")
     p.add_argument("--hash-seeds", nargs="+", type=int, default=[0, 1, 2])
-    p.add_argument("--sim-seeds", nargs="+", type=int, default=[42])
+    p.add_argument("--sim-seeds", nargs="+", type=int,
+                   default=[42, 137, 7, 99, 256, 512, 1024, 2048])
+    p.add_argument("--opp-mults", nargs="+", type=float, default=OPP_MULTS,
+                   help="opponent mission-multiplier sweep for placement (default 0.24 0.7)")
+    p.add_argument("--our-mult", type=float, default=OUR_MULT,
+                   help="our mission-multiplier (perception accuracy; default 0.93)")
+    p.add_argument("--target-axis", choices=["mission", "base_defense", "opening"],
+                   default=None, help="axis floor to enforce for this change")
     p.add_argument("--heldout", action="store_true",
                    help="also evaluate each candidate on the frozen held-out real-competitor "
                         "compositions (opponents.HELDOUT_COMPOSITIONS) and gate on the "
                         "train-vs-heldout placement GAP (overfit alarm, Reform 4).")
     p.add_argument("--summary-out", type=Path, default=None)
     args = p.parse_args(argv)
+
+    if not args.worker:
+        if args.our_mult <= 0 or any(m <= 0 for m in args.opp_mults):
+            p.error("--our-mult and --opp-mults must all be > 0")
+        os.environ["AE_EVAL_OUR_MULT"] = str(args.our_mult)
+        os.environ["AE_EVAL_OPP_MULTS"] = ",".join(f"{m:g}" for m in args.opp_mults)
+        OUR_MULT = args.our_mult
+        OPP_MULTS = list(args.opp_mults)
 
     if args.worker:
         if not args.our or not args.suite:
@@ -581,7 +598,7 @@ def main(argv: list[str] | None = None) -> int:
         results[label] = res
     elapsed = time.monotonic() - t0
 
-    _print_report(results, incumbent, brackets)
+    _print_report(results, incumbent, brackets, target_axis=args.target_axis)
     print(f"\nelapsed_s={elapsed:.1f}")
 
     if args.summary_out is not None:
@@ -590,7 +607,8 @@ def main(argv: list[str] | None = None) -> int:
             "rounds": args.rounds, "hash_seeds": args.hash_seeds, "sim_seeds": args.sim_seeds,
             "elapsed_s": elapsed,
             "results": results,
-            "verdicts": {label: _promotion_verdict(results[label], results[incumbent])
+            "verdicts": {label: _promotion_verdict(results[label], results[incumbent],
+                                                    target_axis=args.target_axis)
                          for label in candidates if label != incumbent},
         }
         args.summary_out.parent.mkdir(parents=True, exist_ok=True)
