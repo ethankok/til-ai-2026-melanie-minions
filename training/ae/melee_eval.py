@@ -250,6 +250,65 @@ def _paired_placement_stats(cand: dict, inc: dict) -> dict:
     }
 
 
+def _weighted_placement(cumulative_all: dict, us_agent_id: str,
+                        our_mult: float, opp_mult: float) -> int:
+    """Finals-scoring placement: rank the 6 agents by ``raw_ae * mult`` and return
+    OUR rank (1 = best). Our agent gets ``our_mult``; every opponent ``opp_mult``.
+    Ties broken by the agent's original order (stable, deterministic)."""
+    order_index = {a: i for i, a in enumerate(cumulative_all)}
+    weighted = {a: v * (our_mult if a == us_agent_id else opp_mult)
+                for a, v in cumulative_all.items()}
+    ranked = sorted(cumulative_all, key=lambda a: (-weighted[a], order_index[a]))
+    return ranked.index(us_agent_id) + 1
+
+
+def _axis_totals(components: dict) -> dict:
+    """Collapse the per-step reward-component decomposition into the three gated
+    axes. mission/base_defense come from components; opening is handled separately
+    (opening_reward). Sign convention: higher is better for ALL axes, so base_defense
+    (a sum of negatives) improves when it becomes LESS negative."""
+    g = lambda k: float(components.get(k, 0.0))
+    return {
+        "mission_axis": g("collect_mission") + g("collect_recon"),
+        "base_defense_axis": g("own_base_destroyed") + g("self_damage") + g("base_damage"),
+    }
+
+
+def _paired_value_stats(cand: dict, inc: dict, key: str) -> dict:
+    """Paired (suite, hash, sim) stats for a per-run numeric ``key`` where HIGHER
+    is better (raw_ae, mission_axis, …). delta = cand - inc; PoI = fraction of
+    pairs the candidate wins (ties = 0.5). Mirrors _paired_placement_stats."""
+    inc_rows: dict[tuple, float] = {}
+    for suite, b in inc.get("per_bracket", {}).items():
+        for r in b.get("run_rows", []):
+            if key in r:
+                inc_rows[(suite, r["hash"], r["sim"])] = float(r[key])
+    deltas: list[float] = []
+    wins = ties = losses = 0
+    for suite, b in cand.get("per_bracket", {}).items():
+        for r in b.get("run_rows", []):
+            k = (suite, r["hash"], r["sim"])
+            if k not in inc_rows or key not in r:
+                continue
+            d = float(r[key]) - inc_rows[k]
+            deltas.append(d)
+            if d > 1e-9:
+                wins += 1
+            elif d < -1e-9:
+                losses += 1
+            else:
+                ties += 1
+    n = len(deltas)
+    succ = wins + 0.5 * ties
+    return {
+        "n_pairs": n,
+        "mean_delta": (sum(deltas) / n) if n else 0.0,
+        "poi": (succ / n) if n else 0.0,
+        "poi_lower": _wilson_lower(succ, n),
+        "wins": wins, "ties": ties, "losses": losses,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Reform 4 — held-out composition transfer gap (overfit alarm)
 # ---------------------------------------------------------------------------
