@@ -13,25 +13,35 @@ runs. One bracket per subprocess also isolates the per-process model cache
 (``policy_manager._MODEL_CACHE``) to a single candidate + that bracket's
 opponents.
 
-Promotion rule (2026-06-07 redesign — placement is PRIMARY, absolute reward is a
-non-crater FLOOR, and the gain must be real, not noise). A candidate is promotable
-over the incumbent only if ALL hold:
-  1. ``minimax_placement_ok`` — worst-bracket ``mean_placement`` (minimax) is
-     better-or-equal to the incumbent's. PRIMARY selector.
-  2. ``margin_noncrater_ok`` — worst-bracket margin has not CRATERED vs the
-     incumbent (``>= inc.min_margin - MARGIN_SLACK``); no longer a ``>=0`` hard gate.
-  3. ``score_noncrater_ok`` — ``semis_mixed`` absolute reward has not cratered
-     (``>= SCORE_FLOOR_FRAC * inc``); a moderate drop on a placement-retune is
-     EXPECTED, not a regression. (Cloud single-agent reward is likewise a
-     non-crater/0-error functionality check, never a revert trigger.)
-  4. ``effect_ok`` + ``poi_ok`` — the paired per-seed placement gain is real:
-     mean paired delta >= ``MIN_EFFECT_RANK`` AND the Wilson lower bound on
-     Probability-of-Improvement > 0.5. Stops within-noise flips from promoting.
-  5. ``gap_not_widening_ok`` (only with ``--heldout``) — the train-vs-heldout
+Promotion rule (2026-06-09 finals-aligned overlay — placement is PRIMARY, raw_ae
+is the finals-proportional DISCRIMINATOR, absolute reward is a non-crater FLOOR).
+The gate applies the finals ``raw_ae * mission_multiplier`` shape via an opponent
+mission-multiplier SWEEP (``--opp-mults``, our mult fixed at ``--our-mult``): a
+stronger field cannot improve our placement, so placement saturates into a floor
+and raw_ae (our agent's cumulative reward; proportional to final score since our
+mult is fixed) carries the discrimination. A candidate is promotable over the
+incumbent only if ALL hold:
+  1. ``placement_robust_ok`` — ``worst_robust_placement`` (worst over brackets ×
+     opp-mults) is better-or-equal to the incumbent's. PRIMARY selector.
+  2. ``rawae_floor_ok`` — raw_ae has not CRATERED vs the incumbent
+     (``>= RAWAE_FLOOR_FRAC * inc``). The DISCRIMINATOR: a real raw_ae gain (paired
+     effect + Probability-of-Improvement on raw_ae) breaks placement ties.
+  3. ``margin_noncrater_ok`` — worst-bracket margin has not cratered vs the
+     incumbent (``>= inc.min_margin - MARGIN_SLACK``); a non-crater FLOOR.
+  4. ``score_noncrater_ok`` — ``semis_mixed`` absolute reward has not cratered
+     (``>= SCORE_FLOOR_FRAC * inc``); a non-crater FLOOR, not a selector. (Cloud
+     single-agent reward is likewise a functionality check, never a revert trigger.)
+  5. ``axis_ok`` (only with ``--target-axis {mission,base_defense,opening}``) — the
+     per-change paired effect + PoI floor on that axis: the targeted axis must
+     actually move (paired delta >= ``MIN_EFFECT_AXIS`` with PoI Wilson lower bound
+     > 0.5). Gates each planned downstream change on its own axis.
+  6. ``gap_not_widening_ok`` (only with ``--heldout``) — the train-vs-heldout
      composition placement GAP does not widen vs the incumbent (overfit alarm).
 
-Thresholds are env-overridable: AE_GATE_SCORE_FLOOR_FRAC (0.85),
-AE_GATE_MARGIN_SLACK_FRAC (0.5), AE_GATE_MIN_EFFECT_RANK (0.3), AE_GATE_GAP_TOL (0.5).
+Thresholds are env-overridable: AE_EVAL_OUR_MULT (0.93), AE_EVAL_OPP_MULTS
+("0.24,0.7"), AE_GATE_RAWAE_FLOOR_FRAC (0.75), AE_GATE_MIN_EFFECT_AXIS (0.0),
+AE_GATE_SCORE_FLOOR_FRAC (0.85), AE_GATE_MARGIN_SLACK_FRAC (0.5),
+AE_GATE_MIN_EFFECT_RANK (0.3), AE_GATE_GAP_TOL (0.5).
 
 Usage
 -----
@@ -466,7 +476,8 @@ def _print_report(results: dict[str, dict], incumbent: str, brackets: list[str],
                   target_axis: str | None = None) -> None:
     inc = results[incumbent]
     print("\n" + "=" * 78)
-    print(f"  MELEE RE-RANK  (incumbent = {incumbent}; minimax over {len(brackets)} brackets)")
+    print(f"  MELEE RE-RANK  (incumbent = {incumbent}; robust placement over "
+          f"{len(brackets)} brackets × opp-mults)")
     print("=" * 78)
     for label, cand in results.items():
         print(f"\n  {label}   [worst-bracket placement = {cand['worst_bracket_placement']:.2f}, "
@@ -498,9 +509,9 @@ def _print_report(results: dict[str, dict], incumbent: str, brackets: list[str],
                   f"PoI={st['poi']:.2f} (Wilson95 lo={st['poi_lower']:.2f}) "
                   f"W/T/L={st['wins']}/{st['ties']}/{st['losses']} n={st['n_pairs']}")
     print("\n" + "=" * 78)
-    print("  PRIMARY = worst-bracket mean_placement (lower = less exploitable). Absolute")
-    print("  reward (margin/score/cloud) are non-crater FLOORS, not selectors; a moderate")
-    print("  reward drop on a placement-retune is EXPECTED (finals scores RELATIVE RANK).")
+    print("  PRIMARY = worst robust placement under the opp_mult sweep (lower = less")
+    print("  exploitable); raw_ae is the finals-proportional DISCRIMINATOR (floored). Reward")
+    print("  floors (margin/score/cloud) are non-crater, not selectors (finals = RELATIVE RANK).")
     print("=" * 78)
 
 

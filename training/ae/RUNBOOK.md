@@ -1327,6 +1327,41 @@ Keep `AE_TTD_DEFENSE=0` by default. The useful takeaway is diagnostic, not
 behavioral: future base-defense work should react to visible enemy bombs that
 already threaten the base, not just to enemies near base-hit cells.
 
+### Finals-aligned overlay (2026-06-09)
+
+The current PRIMARY gate is `training/ae/melee_eval.py`, now finals-aligned.
+Finals AE pays `raw_ae × mission_multiplier` as RELATIVE RANK, so the gate
+applies that shape via an opponent mission-multiplier SWEEP (`--opp-mults`,
+default `0.24 0.7`) with our own mult fixed (`--our-mult`, default `0.93`):
+
+- **PRIMARY** = `worst_robust_placement` — worst placement across
+  brackets × opp-mults. A stronger field cannot improve our placement, so
+  placement saturates into a non-exploitability FLOOR.
+- **DISCRIMINATOR** = `raw_ae` — our agent's cumulative reward (proportional to
+  final score since our mult is fixed). Carries a non-crater floor
+  (`AE_GATE_RAWAE_FLOOR_FRAC=0.75`) and a paired effect + Probability-of-Improvement
+  test, so a real raw_ae gain breaks placement ties.
+- **Per-change axis floor** = `--target-axis {mission,base_defense,opening}`
+  enforces a paired effect + PoI floor on the axis a given change is supposed to
+  move (farming→`mission`, danger-map→`base_defense`, opening→`opening`).
+- Default `--sim-seeds` bumped 2 → 8. `--heldout` adds the train-vs-heldout
+  composition-gap overfit alarm (`gap_not_widening_ok`).
+
+Canonical re-rank (heldout + axis floor):
+
+```bash
+.venv/bin/python training/ae/melee_eval.py --rounds 12 \
+  --hash-seeds 0 1 2 --sim-seeds 42 137 7 99 256 512 1024 2048 --heldout \
+  --opp-mults 0.24 0.7 --our-mult 0.93 --target-axis mission \
+  --confpol-ckpt cand=path/to/cand.pt \
+  --summary-out training/ae/data/melee-rerank.json
+```
+
+A 9-Jun calibration smoke (`semis_mixed`, 2 seeds, 4 rounds) confirmed the
+overlay reads real env reward: incumbent `confpol-u860` `raw_ae≈+226`, places
+1st at the weak `0.24` field and degrades monotonically to `0.7`
+(`wplace={ 0.24:1.00, 0.7:1.25 }`) — a stronger field never improves placement.
+
 ---
 
 ## 7. Cloud submission (Workbench)

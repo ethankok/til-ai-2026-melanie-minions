@@ -24,6 +24,27 @@
 
 ## Read this first
 
+### 🟢 Finals-aligned eval revamp SHIPPED (9 June 2026) — multiplier overlay + raw_ae discriminator + per-axis floors
+
+Revamped the melee gate (`training/ae/melee_eval.py`) to match real Finals scoring,
+which pays `raw_ae × mission_multiplier` as RELATIVE RANK.
+
+- **Multiplier overlay:** the gate now sweeps the opponent mission-multiplier
+  (`--opp-mults 0.24 0.7`) with our own mult fixed (`--our-mult 0.93`). A stronger
+  field can't improve our placement, so placement saturates into a non-exploitability
+  FLOOR (`worst_robust_placement` = worst over brackets × opp-mults, PRIMARY).
+- **`raw_ae` is the finals-proportional DISCRIMINATOR** (our cumulative reward;
+  proportional to final score since our mult is fixed) with a non-crater floor
+  (`AE_GATE_RAWAE_FLOOR_FRAC=0.75`) + paired effect/PoI — breaks placement ties.
+- **`--target-axis {mission,base_defense,opening}`** gates the 3 planned downstream
+  changes (farming→mission, danger-map→base_defense, opening→opening), each on its
+  own paired effect+PoI floor. Default `--sim-seeds` bumped 2→8.
+- **Pure eval infra — deploy UNCHANGED** (`semis2b-u75`/default/det5); the 3 changes
+  are gated SEPARATELY next. Calibration smoke (`semis_mixed`, 2 seeds): incumbent
+  `confpol-u860` raw_ae ≈ +226, places 1st at the weak 0.24 field, monotonic to 0.7
+  (`wplace={ 0.24:1.00, 0.7:1.25 }`). Spec:
+  `docs/superpowers/specs/2026-06-09-ae-finals-aligned-eval-revamp-design.md`.
+
 ### 🟢 Bomb-timer offensive split (8 June 2026) — correctness fix, melee-positive-but-sub-PoI, SHIPPED ON (default 5)
 
 Resolved the long-FLAGGED bomb-timer under-estimate (see "Resource-reward env fix +
