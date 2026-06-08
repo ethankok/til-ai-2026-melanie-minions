@@ -1,5 +1,39 @@
 # Noise — notes & history
 
+### ⚠ Disruption MEASURED (8 June 2026) — our noise barely dents a detector (~6–9% mAP)
+
+First-ever quantitative check that the shipped noise actually lowers a *detector's*
+accuracy (we'd only ever verified it passes the fairness gate). Harness
+`training/noise/measure_disruption.py` (+ `test/test_noise_disruption.py`, 4 green)
+runs real CV images through our champion YOLO11l twice — clean vs after
+`NoiseManager.noise()` — and reports the COCO mAP drop. Runs **fully local on CPU**
+(AdvGAN generator + COCO data are local; pulled yolo11l weights
+`cv_next_iter_yolo11l_896_plusval_v1.tgz` from the team bucket; **note: the `896-plusval`
+sibling, not the exact deployed `best.pt`/1408 — valid as an in-house victim, absolute
+mAP is inflated because the local `data/novice/cv` images look in-distribution**).
+
+Strength sweep, n=120, identity category map + deploy conf/iou (artifacts
+`training/noise/data/disruption-strength{1.0,2.0,3.0}.json`):
+
+| NOISE_STRESS_STRENGTH | mAP | mAP@50 | dets | mean conf |
+|---|---|---|---|---|
+| clean | 0.979 | 1.000 | 444 | 0.954 |
+| 1.0 (deployed) | 0.890 (−9.1%) | 0.937 (−6.3%) | 450 | 0.917 |
+| 2.0 | 0.891 (−8.9%) | 0.944 (−5.6%) | 437 | 0.909 |
+| 3.0 | 0.832 (−15.0%) | 0.891 (−10.9%) | 421 | 0.902 |
+
+**Takeaways:** (1) the disruption is **weak** — deployed noise costs the victim only
+~6% mAP@50 and doesn't even suppress detections (444→450). This **confirms the TIL25
+cross-pollination concern**: AdvGAN trained against ResNet18 *classification* on
+Imagenette transfers poorly to *detectors* (the wrong gradient). (2) **Bumping
+strength 1→2 is FLAT** (no benefit from spending more budget in that range) — so the
+"spend unused L2 budget" lever is low-leverage here; 1→3 ~doubles the drop but is
+likely past the fairness caps (NOT re-validated — any strength bump must re-pass the
+500/500 fairness gate). (3) The real lever is **retrain the generator against a
+detector objective** (high-effort, deferred — see the TIL25 scan). Two harness bugs
+fixed en route: COCOeval's `id==0` unmatched-sentinel collision, and the manager's
+category map (deploy uses identity `[0..17]`, not the generic-COCO default).
+
 Last updated: 24 May 2026 — **Level 10 detector-stress shipped.**
 `level10-detector-stress` submitted 24 May 16:53 SGT scored
 **1.000 / 0.947** with 0/500 errors. Workbench `til test noise

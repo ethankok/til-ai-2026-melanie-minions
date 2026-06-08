@@ -92,6 +92,9 @@ _GATE_KEYS = {
     "floor": "AE_CONFPOL_TOP_FLOOR",
     "ovr": "AE_CONFPOL_OVERRIDE_TARGET_NONE",
     "override": "AE_CONFPOL_OVERRIDE_TARGET_NONE",
+    "rollback": "AE_CONFPOL_ROLLBACK_PHANTOM_BOMB",
+    "phantom": "AE_CONFPOL_ROLLBACK_PHANTOM_BOMB",
+    "detonate": "AE_BOMB_DETONATE_STEPS",
 }
 
 

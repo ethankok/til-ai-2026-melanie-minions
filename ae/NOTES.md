@@ -24,6 +24,66 @@
 
 ## Read this first
 
+### 🟢 Bomb-timer offensive split (8 June 2026) — correctness fix, melee-positive-but-sub-PoI, SHIPPED ON (default 5)
+
+Resolved the long-FLAGGED bomb-timer under-estimate (see "Resource-reward env fix +
+bomb-timer finding"). `BOMB_TIMER=3` was a single constant used for BOTH the own-bomb
+ESCAPE window (correctly short — the placer takes zero self-damage on its own tile)
+AND offensive *landing* timing, where the probe (`probe_bomb_timer.py`) measured true
+detonation at **~5 decision-steps** (dataclass `timer=4` + `Bomb.__post_init__ +1`).
+
+- **Fix:** new `self.BOMB_DETONATE_STEPS` (env `AE_BOMB_DETONATE_STEPS`, **default 5**),
+  used ONLY for the two offensive respawn-camp `detonation_step = step + …` windows
+  (`_lookahead_detonation_score` ~2039, `_should_place_bomb` ~2380). Escape/survival
+  `BOMB_TIMER` stays 3 (conservative). Tests: `test/test_ae_bomb_detonate.py` (5,
+  RED-first — old code fired at the stale +3 window). Added a `detonate` knob to
+  `melee_eval._GATE_KEYS` for the A/B.
+- **Melee gate (det5=+5 vs det3=+3, deployed `semis2b-u75` + C+bomb7 + contention,
+  `--heldout`, n=30 paired): NOT promotable by the strict gate, but directionally
+  POSITIVE and never significantly worse.** `minimax ✓` (worst 5.00→**4.93**),
+  `effect ✓` (Δ**+0.39**≥0.3), `score/margin floors ✓` (semis_mixed score 0.138→0.204),
+  `gap ✓` (heldout +0.14) — fails only **`poi ✗`** (Wilson-95 LB 0.44<0.5; 14W/9T/7L).
+  Big realistic-bracket gain: `semis_mixed` placement **4.96→3.04**; tiny noise-level
+  regressions elsewhere (`adversarial` 2.94→3.00, `real_field` 1.00→1.03). Artifact
+  `training/ae/data/melee-bombtimer.json`.
+- **Decision (user, 8 Jun): SHIPPED ON (default 5)** as a near-zero-downside correctness
+  fix — same disposition logic as `contention` (a measured fix that helps the realistic
+  bracket with no significant downside, even though the n=30 PoI bar isn't cleared).
+  Revert = `AE_BOMB_DETONATE_STEPS=3` (one env var). NOTE: this is an absolute-reward-
+  *improving* change too (semis_mixed score up), unlike most placement retunes.
+
+### ⚪ Phantom-bomb rollback lever (8 June 2026) — built + melee-gated → FLAT, parked default-OFF, deploy unchanged
+
+Found a latent state-consistency leak in `confidence_policy_hybrid`: the heuristic's
+`ae()` runs fully every tick, so when `_should_place_bomb` commits it writes a
+synthetic `own=True` entry to `known_bombs` (+ dead escape state) and returns
+`PLACE_BOMB` — but `decision_path` stays `"target"` with the target-ranking margin.
+On a low-margin tick the wrapper overrides PLACE_BOMB with a policy *move*, the bomb
+is never placed, and the phantom `known_bombs` entry makes `_danger_cells()` route
+around a nonexistent bomb for ~`BOMB_TIMER` ticks. (Bounded: self-heals via
+`_age_bombs`, only ever makes the agent MORE cautious, and the strong bomb triggers
+are pre-empted by the never-overridden dominant path. `escape_target`/`escape_until_step`
+are DEAD state — `_active_escape_path` is never called.)
+
+- **Fix (R2 — "policy keeps the tick"):** new `AEManager.revert_bomb_commit()` undoes
+  exactly the commit's `known_bombs`/escape writes (restores prior values, not blanket
+  clear — observed enemy bombs must survive). Wrapper calls it on override behind
+  **`AE_CONFPOL_ROLLBACK_PHANTOM_BOMB` (default OFF)**. Flag-off = byte-identical
+  (full AE suite 58 green incl. 10 new in `test/test_ae_confpol_rollback.py`).
+  `_tick_bomb_commit` recorded in `_should_place_bomb`, reset at top of every `ae()`.
+- **Melee A/B verdict (deploy-faithful C+bomb7+contention, same `semis2b-u75` ckpt,
+  `@rollback=1` vs off, `--heldout`, hash 0/1/2 × sim 42/137): NOT promotable → FLAT.**
+  `effect_ok=False` (mean Δ = **−0.033 rank**, need ≥+0.3) and `poi_ok=False` (13W/5T/12L
+  over 30 pairs, PoI 0.52, Wilson-95 LB 0.35) — a coin flip, slightly negative on the
+  realistic brackets (`real_field` +0.21, curry-heldout +0.17). `minimax_placement_ok`
+  + `gap_not_widening_ok` pass (gap even improved −0.205) but the noise gate kills it.
+  Artifacts `training/ae/data/melee-phantom-rollback-ab.{json,log}`.
+- **Kept default-OFF in tree** (correct latent-bug fix, gated flat — same disposition as
+  stun_tax/fortress). Added a generic `rollback`/`phantom` knob to `melee_eval._GATE_KEYS`.
+  **Don't re-attempt** without a NEW reason — the leak is too rare/self-healing to move
+  placement. ⚠ Process lesson: this ran ~4.5h contended against the live `redecide_builds`
+  decision run — **check `ps` for in-flight melee/redecide jobs before launching one.**
+
 ### ✅ Finals-aligned eval gate SHIPPED (7 June 2026) — placement primary, absolute reward demoted to floors, paired-effect + composition-holdout gates added
 
 **Verified finals AE scoring (read before any gate work):** finals AE = teams sorted

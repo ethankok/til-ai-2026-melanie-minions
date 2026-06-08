@@ -213,6 +213,15 @@ class AEManager:
         self.tier1_shared_credit = _env_flag("AE_TIER1_SHARED_CREDIT", False)
         self.tier1_no_stay_penalty = _env_flag("AE_TIER1_NO_STAY_PENALTY", True)
         self.tier1_predictive_walk = _env_flag("AE_TIER1_PREDICTIVE_WALK", True)
+        # Offensive bomb-LANDING timing. The `BOMB_TIMER=3` constant is the
+        # conservative own-bomb ESCAPE window (kept short on purpose; the placer
+        # takes zero self-damage on its own tile anyway). But a freshly placed
+        # bomb actually detonates ~5 of OUR decision-steps later (dataclass
+        # timer=4 + Bomb.__post_init__ +1; probe `training/ae/probe_bomb_timer.py`).
+        # Use this separate, longer constant ONLY for reasoning about WHEN our
+        # bomb lands on a kill cell (respawn-camp `detonation_step` windows), so
+        # we don't mis-time offensive bombs by ~2 ticks. Never used for escape.
+        self.BOMB_DETONATE_STEPS = max(1, _env_int("AE_BOMB_DETONATE_STEPS", 5))
         # Tier-1 #1: load the offline playbook if present. The lookup is a
         # cheap dict access so we hit it on every tick before falling
         # through to the heuristic. Disabled in two cases: env var set, or
@@ -350,6 +359,10 @@ class AEManager:
         """Choose the next action for the controlled agent."""
 
         self.turn_counter += 1
+        # Per-tick record of a synthetic own-bomb commit (set by
+        # _should_place_bomb). Reset every tick so a stale commit from a prior
+        # tick can never be reverted by the confidence-policy wrapper.
+        self._tick_bomb_commit = None
         # Default sentinel: any early-return path (frozen, playbook, dominant,
         # tactical_lookahead, escape, etc.) is treated as high-confidence by
         # confidence-gated wrappers (margin=+inf). Only the main target-scoring
@@ -587,6 +600,7 @@ class AEManager:
         self.is_fixed_novice_map = False
         self.fixed_team_idx = None
         self.current_path = None
+        self._tick_bomb_commit: dict | None = None
         self.last_target_kind = "none"
         self.last_bomb_reason = "unknown"
         self.last_dominant_reason = "unknown"
@@ -2028,10 +2042,11 @@ class AEManager:
             for kpos, unfreeze in self.recent_kills:
                 if kpos not in blast:
                     continue
-                # Detonation arrives roughly BOMB_TIMER ticks after placement.
+                # Detonation arrives ~BOMB_DETONATE_STEPS ticks after placement
+                # (the true offensive landing time, not the short escape window).
                 # If the unfreeze step lands inside that window, the enemy is
                 # at the kill cell exactly when we explode there.
-                detonation_step = step + self.BOMB_TIMER
+                detonation_step = step + self.BOMB_DETONATE_STEPS
                 if abs(detonation_step - unfreeze) <= 1:
                     score += kill_value
                     tactical = True
@@ -2372,7 +2387,7 @@ class AEManager:
         # our blast and the enemy unfreeze step lines up with this bomb's
         # detonation step, fire even without other targets.
         if not tactical_target and self.tier1_repeat_kill and self.recent_kills:
-            detonation_step = step + self.BOMB_TIMER
+            detonation_step = step + self.BOMB_DETONATE_STEPS
             for kpos, unfreeze in self.recent_kills:
                 if kpos in bomb_blast and abs(detonation_step - unfreeze) <= 1:
                     tactical_target = True
@@ -2417,10 +2432,46 @@ class AEManager:
         if escape_target is None:
             return False
 
+        prior_bomb = self.known_bombs.get(location)
+        prior_escape_target = self.escape_target
+        prior_escape_until_step = self.escape_until_step
         self.known_bombs[location] = {"timer": self.BOMB_TIMER, "own": True, "last_step": self.last_step or 0}
         self.escape_target = escape_target
         self.escape_until_step = (self.last_step or 0) + self.BOMB_TIMER
         self.last_bomb_reason = bomb_reason or "unknown"
+        # Record the synthetic own-bomb side effects so the confidence-policy
+        # wrapper can revert them if it overrides this PLACE_BOMB with a policy
+        # move (the bomb is never actually placed -> the belief entry is phantom).
+        self._tick_bomb_commit = {
+            "cell": location,
+            "prior_bomb": prior_bomb,
+            "prior_escape_target": prior_escape_target,
+            "prior_escape_until_step": prior_escape_until_step,
+        }
+        return True
+
+    def revert_bomb_commit(self) -> bool:
+        """Undo the synthetic own-bomb side effects from this tick's bomb commit.
+
+        Called by ``ConfidencePolicyHybridAEManager`` when it overrides a
+        heuristic ``PLACE_BOMB`` with a policy action: the bomb was never placed,
+        so the ``known_bombs`` entry + escape state written by
+        ``_should_place_bomb`` are phantom. Reverting them keeps ``_danger_cells``
+        from routing around a bomb that does not exist. No-op (returns False) when
+        no commit was recorded this tick.
+        """
+        commit = self._tick_bomb_commit
+        if commit is None:
+            return False
+        cell = commit["cell"]
+        prior_bomb = commit["prior_bomb"]
+        if prior_bomb is None:
+            self.known_bombs.pop(cell, None)
+        else:
+            self.known_bombs[cell] = prior_bomb
+        self.escape_target = commit["prior_escape_target"]
+        self.escape_until_step = commit["prior_escape_until_step"]
+        self._tick_bomb_commit = None
         return True
 
     def _safe_escape_within(

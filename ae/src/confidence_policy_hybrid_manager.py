@@ -64,11 +64,18 @@ class ConfidencePolicyHybridAEManager:
         self.margin_epsilon = _env_float("AE_CONFPOL_MARGIN_EPSILON", 5.0)
         self.top_floor = _env_float("AE_CONFPOL_TOP_FLOOR", 10.0)
         self.override_target_none = _env_bool("AE_CONFPOL_OVERRIDE_TARGET_NONE", True)
+        # R2 phantom-bomb rollback (default OFF). When the gate overrides a
+        # heuristic PLACE_BOMB with a policy action, the heuristic's synthetic
+        # own-bomb belief entry is phantom (no bomb was placed). When ON, revert
+        # it so _danger_cells() doesn't route around a nonexistent bomb. Flag-off
+        # is byte-identical to the legacy wrapper.
+        self.rollback_phantom_bomb = _env_bool("AE_CONFPOL_ROLLBACK_PHANTOM_BOMB", False)
         self.tick_counts: Counter[str] = Counter()
         print(
             "AE: confidence_policy_hybrid ready "
             f"(eps={self.margin_epsilon}, floor={self.top_floor}, "
-            f"override_target_none={self.override_target_none})"
+            f"override_target_none={self.override_target_none}, "
+            f"rollback_phantom_bomb={self.rollback_phantom_bomb})"
         )
 
     def _is_low_confidence(self) -> tuple[bool, str]:
@@ -99,6 +106,11 @@ class ConfidencePolicyHybridAEManager:
         self.tick_counts[reason] += 1
         if not low_conf:
             return heuristic_action
+        # Overriding: if the heuristic committed a PLACE_BOMB this tick, the
+        # bomb is never actually placed, so revert the phantom belief entry
+        # before handing the action to the policy.
+        if self.rollback_phantom_bomb and self.heuristic.revert_bomb_commit():
+            self.tick_counts["phantom_bomb_reverted"] += 1
         # Low-confidence tick: let the raw PPO policy pick. PolicyAEManager.ae()
         # already respects observation["action_mask"], so the action is legal.
         try:
