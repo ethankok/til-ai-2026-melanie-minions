@@ -85,3 +85,23 @@ def test_worker_payload_has_finals_fields(monkeypatch):
     assert payload["base_defense_axis"] == -65.0
     assert payload["opening_axis"] == 12.0
     assert payload["weighted_placement"]["0.24"] == 1.0
+
+
+def test_aggregate_candidate_robust_placement_and_axes():
+    import melee_eval as M
+    # Two brackets, one run each; weighted_placement worst over (bracket x opp_mult).
+    runs_a = [{"hash": 0, "sim": 42, "mean_placement": 1.0, "win_rate": 1.0,
+               "mean_margin": 10.0, "mean_score": 0.5, "raw_ae": 500.0,
+               "mission_axis": 150.0, "base_defense_axis": -40.0, "opening_axis": 20.0,
+               "weighted_placement": {"0.24": 1.0, "0.7": 1.0}}]
+    runs_b = [{"hash": 0, "sim": 42, "mean_placement": 1.0, "win_rate": 1.0,
+               "mean_margin": 5.0, "mean_score": 0.4, "raw_ae": 400.0,
+               "mission_axis": 120.0, "base_defense_axis": -60.0, "opening_axis": 10.0,
+               "weighted_placement": {"0.24": 1.0, "0.7": 2.0}}]
+    cand = M._aggregate_candidate("cand", {"our": "heuristic"},
+                                  {"semis_mixed": runs_a, "real_field": runs_b})
+    assert cand["worst_robust_placement"] == 2.0          # bracket real_field @ 0.7
+    assert cand["raw_ae"] == 450.0                         # mean of 500, 400
+    assert cand["mission_axis"] == 135.0
+    # run_rows must retain per-run raw_ae for paired stats
+    assert cand["per_bracket"]["semis_mixed"]["run_rows"][0]["raw_ae"] == 500.0

@@ -343,42 +343,71 @@ def _gap_not_widening(cand_gap: float, inc_gap: float, tol: float = GAP_TOL) -> 
     return cand_gap <= inc_gap + tol + 1e-9
 
 
-def _evaluate_candidate(label: str, spec: dict, brackets: list[str],
-                        hash_seeds: list[int], sim_seeds: list[int],
-                        rounds: int, non_novice: bool) -> dict:
+def _aggregate_candidate(label: str, spec: dict, runs_by_bracket: dict[str, list[dict]]) -> dict:
+    """Pure aggregation of per-(hash,sim) worker rows into a candidate summary.
+    ``runs_by_bracket`` maps bracket name -> list of worker payload rows (each row
+    already carries hash/sim/raw_ae/axes/weighted_placement)."""
     per_bracket: dict[str, dict] = {}
-    for suite in brackets:
-        runs = []
-        for h in hash_seeds:
-            for s in sim_seeds:
-                row = _spawn_worker(spec["our"], suite, h, s, rounds,
-                                    spec.get("env", {}), non_novice)
-                row["hash"] = h          # retain paired (hash, sim) key for Reform 3
-                row["sim"] = s
-                runs.append(row)
+    robust_candidates: list[float] = []
+    for suite, runs in runs_by_bracket.items():
         per_bracket[suite] = {
             "runs": len(runs),
             "mean_placement": _agg([r["mean_placement"] for r in runs]),
             "win_rate": _agg([r["win_rate"] for r in runs]),
             "mean_margin": _agg([r["mean_margin"] for r in runs]),
             "mean_score": _agg([r["mean_score"] for r in runs]),
+            "raw_ae": _agg([r["raw_ae"] for r in runs]),
+            "mission_axis": _agg([r["mission_axis"] for r in runs]),
+            "base_defense_axis": _agg([r["base_defense_axis"] for r in runs]),
+            "opening_axis": _agg([r["opening_axis"] for r in runs]),
+            "weighted_placement": {
+                om: _agg([r["weighted_placement"][om] for r in runs])
+                for om in (runs[0]["weighted_placement"] if runs else {})
+            },
             "run_rows": [{"hash": r["hash"], "sim": r["sim"],
-                          "mean_placement": r["mean_placement"]} for r in runs],
+                          "mean_placement": r["mean_placement"],
+                          "raw_ae": r["raw_ae"], "mission_axis": r["mission_axis"],
+                          "base_defense_axis": r["base_defense_axis"],
+                          "opening_axis": r["opening_axis"]} for r in runs],
         }
-        b = per_bracket[suite]
-        print(f"    {suite:16s} place={b['mean_placement']:.2f} "
-              f"win={b['win_rate']:.2f} margin={b['mean_margin']:+.1f} "
-              f"score={b['mean_score']:.4f}  (n={b['runs']})", flush=True)
-    worst_placement = max(b["mean_placement"] for b in per_bracket.values())
+        robust_candidates.extend(per_bracket[suite]["weighted_placement"].values())
     return {
         "label": label,
         "our": spec["our"],
         "per_bracket": per_bracket,
-        "worst_bracket_placement": worst_placement,
+        "worst_bracket_placement": max(b["mean_placement"] for b in per_bracket.values()),
+        "worst_robust_placement": max(robust_candidates) if robust_candidates else 0.0,
         "tune_mean_placement": _agg([b["mean_placement"] for b in per_bracket.values()]),
         "min_margin": min(b["mean_margin"] for b in per_bracket.values()),
         "semis_mixed_score": per_bracket.get("semis_mixed", {}).get("mean_score", 0.0),
+        "raw_ae": _agg([b["raw_ae"] for b in per_bracket.values()]),
+        "mission_axis": _agg([b["mission_axis"] for b in per_bracket.values()]),
+        "base_defense_axis": _agg([b["base_defense_axis"] for b in per_bracket.values()]),
+        "opening_axis": _agg([b["opening_axis"] for b in per_bracket.values()]),
     }
+
+
+def _evaluate_candidate(label: str, spec: dict, brackets: list[str],
+                        hash_seeds: list[int], sim_seeds: list[int],
+                        rounds: int, non_novice: bool) -> dict:
+    runs_by_bracket: dict[str, list[dict]] = {}
+    for suite in brackets:
+        runs = []
+        for h in hash_seeds:
+            for s in sim_seeds:
+                row = _spawn_worker(spec["our"], suite, h, s, rounds,
+                                    spec.get("env", {}), non_novice)
+                row["hash"] = h
+                row["sim"] = s
+                runs.append(row)
+        runs_by_bracket[suite] = runs
+        wp = {om: _agg([r["weighted_placement"][om] for r in runs])
+              for om in (runs[0]["weighted_placement"] if runs else {})}
+        print(f"    {suite:16s} place={_agg([r['mean_placement'] for r in runs]):.2f} "
+              f"raw_ae={_agg([r['raw_ae'] for r in runs]):+.0f} "
+              f"wplace={{ {', '.join(f'{k}:{v:.2f}' for k, v in wp.items())} }} "
+              f"(n={len(runs)})", flush=True)
+    return _aggregate_candidate(label, spec, runs_by_bracket)
 
 
 def _promotion_verdict(cand: dict, inc: dict) -> dict:
