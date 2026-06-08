@@ -82,6 +82,7 @@ from til_environment.config import default_config  # noqa: E402
 GRID_SIZE = 16
 NUM_DIRS = 4
 MAX_STEPS = 200
+_OPENING_STEPS = int(os.environ.get("AE_EVAL_OPENING_STEPS", "40"))
 ACTION_NAMES = ["FORWARD", "BACKWARD", "LEFT", "RIGHT", "STAY", "PLACE_BOMB"]
 ENEMY_AGENT_CHANNEL = 10
 ENEMY_BOMB_CHANNEL = 18
@@ -346,6 +347,7 @@ def run_one_round(
     final_team_bombs = 0.0
     final_team_resources = 0.0
     final_step = 0
+    opening_reward = 0.0
     terminated_us = False
     traj = {
         "state_keys": [],
@@ -380,6 +382,8 @@ def run_one_round(
             final_team_bombs = _scalar(observation_native, "team_bombs")
             final_team_resources = _scalar(observation_native, "team_resources")
             final_step = int(_scalar(observation_native, "step"))
+            if final_step <= _OPENING_STEPS:
+                opening_reward = cumulative_us
             if int(_scalar(observation_native, "frozen_ticks")) > 0:
                 frozen_ticks_seen += 1
             if prev_obs is not None and abs(float(reward)) > 1e-6:
@@ -468,6 +472,8 @@ def run_one_round(
         "placement": placement,
         "margin": margin,
         "cumulative_all": {a: float(cumulative[a]) for a in all_agents},
+        "opening_reward": float(opening_reward),
+        "us_agent_id": agent_id_us,
         "traj": traj,
         "diagnostics": {
             "action_counts": {ACTION_NAMES[a]: c for a, c in sorted(action_counter.items()) if 0 <= a < len(ACTION_NAMES)},
@@ -543,6 +549,10 @@ def run_simulation(
     placements: list[int] = []
     margins: list[float] = []
     diagnostics: list[dict] = []
+    round_cumulative_all: list[dict] = []
+    round_opening: list[float] = []
+    round_components: list[dict] = []
+    us_agent_id: str | None = None
     all_traj = {
         "state_keys": [],
         "actions": [],
@@ -562,6 +572,10 @@ def run_simulation(
         placements.append(int(result["placement"]))
         margins.append(float(result["margin"]))
         diagnostics.append(result["diagnostics"])
+        round_cumulative_all.append(result["cumulative_all"])
+        round_opening.append(float(result["opening_reward"]))
+        round_components.append(dict(result["diagnostics"]["reward_components"]))
+        us_agent_id = result["us_agent_id"]  # round-invariant; scalar by design
 
         if log_traj:
             traj = result["traj"]
@@ -643,6 +657,12 @@ def run_simulation(
             "action_counts": dict(action_sum),
             "decision_counts": dict(decision_sum),
             "agent": agent_diagnostics,
+        },
+        "per_round": {
+            "cumulative_all": round_cumulative_all,
+            "opening_reward": round_opening,
+            "reward_components": round_components,
+            "us_agent_id": us_agent_id,
         },
     }
 
