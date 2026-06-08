@@ -145,6 +145,18 @@ ENV AE_CONTENTION_PFLOOR=0.15
 ENV AE_CONTENTION_TOPEN=40
 ENV AE_CONTENTION_TFRESH=3
 
+# Offensive bomb-detonation timing (8 Jun split — see ae/NOTES.md "Bomb-timer
+# offensive split"). BOMB_DETONATE_STEPS is the true ~5-decision-step landing
+# time for OUR offensive respawn-camp bombs; it is used in EXACTLY two places
+# (ae_manager.py _lookahead_detonation_score ~2049, _should_place_bomb ~2390),
+# BOTH gated behind recent_kills (only populated when we land a bomb on an
+# enemy agent). Escape/survival timing uses BOMB_TIMER=3 and is unaffected.
+# Default in code is 5; pinned here explicitly so the det5-vs-det3 cloud A/B is
+# a clean SINGLE-VARIABLE flip on identical source (the recorded 0.414/0.345
+# comparison was confounded by an unrelated path-engine change). Flip to 3 and
+# build a separate `det3` tag to run the other arm.
+ENV AE_BOMB_DETONATE_STEPS=5
+
 # Tier-1 / Tier-2 toggles. Bisect on 100-200 round local sims (17 May 2026)
 # showed individual changes are net-positive, but the 5-toggle bundle has
 # negative interaction (planner thrashes between defense / kill / item).
