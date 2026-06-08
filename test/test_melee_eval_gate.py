@@ -41,13 +41,24 @@ def test_wilson_lower_bounds_and_monotonicity():
 # ---------------------------------------------------------------------------
 # Reform 3 — paired per-seed placement stats (lower placement = better)
 # ---------------------------------------------------------------------------
-def _mk(worst, margin, score, places, suite="m"):
-    """Minimal candidate result dict carrying paired run rows under one suite."""
-    rows = [{"hash": 0, "sim": i, "mean_placement": p} for i, p in enumerate(places)]
+def _mk(worst, margin, score, places, suite="m", raw_ae=500.0, worst_robust=None):
+    """Minimal candidate result dict carrying paired run rows under one suite.
+
+    ``worst_robust`` defaults to ``worst`` (the robust-placement primary key);
+    ``raw_ae`` is the discriminator. Rows carry axis fields so the verdict's
+    per-axis paired stats can read them when a target_axis is set."""
+    rows = [{"hash": 0, "sim": i, "mean_placement": p, "raw_ae": raw_ae,
+             "mission_axis": 100.0, "base_defense_axis": -40.0, "opening_axis": 10.0}
+            for i, p in enumerate(places)]
     return {
         "worst_bracket_placement": worst,
+        "worst_robust_placement": worst if worst_robust is None else worst_robust,
         "min_margin": margin,
         "semis_mixed_score": score,
+        "raw_ae": raw_ae,
+        "mission_axis": 100.0,
+        "base_defense_axis": -40.0,
+        "opening_axis": 10.0,
         "per_bracket": {suite: {"run_rows": rows}},
     }
 
@@ -81,52 +92,75 @@ def test_paired_stats_within_noise_is_a_coin_flip():
 
 
 # ---------------------------------------------------------------------------
-# Reform 2 + 3 — promotion verdict: placement primary, off-construct = floors,
-# real-and-reliable effect required.
+# Finals-aligned verdict (2026-06-09): robust placement PRIMARY, raw_ae non-crater
+# floor as discriminator, margin/score floors, per-axis effect+PoI guard.
 # ---------------------------------------------------------------------------
 def test_placement_better_but_reward_shy_is_promotable():
-    # Lower reward + more-negative margin (both within the non-crater band) must NOT
-    # block a candidate that clearly places better. This is the g00-fixed-03 shape.
-    inc = _mk(3.0, -50.0, 0.40, [3, 3, 3, 3, 3, 3])
-    cand = _mk(2.0, -70.0, 0.36, [2, 2, 2, 2, 2, 2])  # margin -70 (floor ~-75.5), score 0.36 (floor 0.34)
+    # Lower raw_ae (but above the 0.75 floor) + more-negative margin (within band) must
+    # NOT block a candidate that places better under the robust sweep. g00-fixed-03 shape.
+    inc = _mk(3.0, -50.0, 0.40, [3, 3, 3, 3, 3, 3], raw_ae=500.0, worst_robust=3.0)
+    cand = _mk(2.0, -70.0, 0.36, [2, 2, 2, 2, 2, 2], raw_ae=400.0, worst_robust=2.0)
+    # raw_ae 400 >= 0.75*500=375; margin -70 >= floor ~-75.5; score 0.36 >= 0.85*0.40=0.34
     v = _promotion_verdict(cand, inc)
-    assert v["minimax_placement_ok"]
+    assert v["placement_robust_ok"]
+    assert v["rawae_floor_ok"]
     assert v["margin_noncrater_ok"]
     assert v["score_noncrater_ok"]
-    assert v["effect_ok"] and v["poi_ok"]
     assert v["promotable"] is True
 
 
 def test_reward_cratered_candidate_is_rejected_by_score_floor():
-    inc = _mk(3.0, -50.0, 0.40, [3, 3, 3, 3, 3, 3])
-    cand = _mk(2.0, -50.0, 0.20, [2, 2, 2, 2, 2, 2])  # 0.20 < 0.85*0.40 = 0.34
+    inc = _mk(3.0, -50.0, 0.40, [3, 3, 3, 3, 3, 3], raw_ae=500.0, worst_robust=3.0)
+    cand = _mk(2.0, -50.0, 0.20, [2, 2, 2, 2, 2, 2], raw_ae=500.0, worst_robust=2.0)  # 0.20 < 0.34
     v = _promotion_verdict(cand, inc)
     assert v["score_noncrater_ok"] is False
     assert v["promotable"] is False
 
 
+def test_rawae_cratered_candidate_is_rejected_by_rawae_floor():
+    inc = _mk(3.0, -50.0, 0.40, [3, 3, 3, 3, 3, 3], raw_ae=500.0, worst_robust=3.0)
+    cand = _mk(2.0, -50.0, 0.40, [2, 2, 2, 2, 2, 2], raw_ae=300.0, worst_robust=2.0)  # 300 < 0.75*500=375
+    v = _promotion_verdict(cand, inc)
+    assert v["rawae_floor_ok"] is False
+    assert v["promotable"] is False
+
+
 def test_margin_collapse_is_rejected_by_margin_floor():
-    inc = _mk(3.0, -50.0, 0.40, [3, 3, 3, 3, 3, 3])
-    cand = _mk(2.0, -500.0, 0.40, [2, 2, 2, 2, 2, 2])  # -500 << floor ~ -75.5
+    inc = _mk(3.0, -50.0, 0.40, [3, 3, 3, 3, 3, 3], raw_ae=500.0, worst_robust=3.0)
+    cand = _mk(2.0, -500.0, 0.40, [2, 2, 2, 2, 2, 2], raw_ae=500.0, worst_robust=2.0)  # -500 << floor ~-75.5
     v = _promotion_verdict(cand, inc)
     assert v["margin_noncrater_ok"] is False
     assert v["promotable"] is False
 
 
-def test_within_noise_placement_gain_is_not_promotable():
-    inc = _mk(3.0, -50.0, 0.40, [3.0, 3.0, 3.0, 3.0])
-    cand = _mk(2.95, -50.0, 0.40, [2.95, 3.05, 2.90, 3.10])  # |mean_delta| < 0.3
-    v = _promotion_verdict(cand, inc)
-    assert v["minimax_placement_ok"]              # nominal worst-bracket is "better"
-    assert v["effect_ok"] is False                # but the effect is within noise
+def test_within_noise_axis_change_is_not_promotable():
+    # Placement saturates (both ~1st) so the noise guard now lives on the TARGET AXIS:
+    # a within-noise mission-axis change has Wilson-95 PoI lower bound < 0.5 AND zero
+    # mean effect -> axis_ok False -> not promotable.
+    sims = [42, 137, 7, 99]
+
+    def _wrap(missions):
+        rows = [{"hash": 0, "sim": s, "mean_placement": 1.0, "raw_ae": 500.0,
+                 "mission_axis": m, "base_defense_axis": -40.0, "opening_axis": 10.0}
+                for s, m in zip(sims, missions)]
+        return {"worst_robust_placement": 1.0, "worst_bracket_placement": 1.0,
+                "min_margin": -50.0, "semis_mixed_score": 0.40, "raw_ae": 500.0,
+                "mission_axis": sum(missions) / len(missions),
+                "base_defense_axis": -40.0, "opening_axis": 10.0,
+                "per_bracket": {"m": {"run_rows": rows}}}
+
+    inc = _wrap([100.0, 100.0, 100.0, 100.0])
+    cand = _wrap([101.0, 99.0, 102.0, 98.0])  # 2 up / 2 down -> coin-flip, net 0
+    v = _promotion_verdict(cand, inc, target_axis="mission")
+    assert v["axis_ok"] is False
     assert v["promotable"] is False
 
 
-def test_placement_worse_fails_minimax():
-    inc = _mk(3.0, -50.0, 0.40, [3, 3, 3, 3])
-    cand = _mk(3.5, -50.0, 0.40, [3.5, 3.5, 3.5, 3.5])
+def test_placement_worse_fails_robust():
+    inc = _mk(3.0, -50.0, 0.40, [3, 3, 3, 3], raw_ae=500.0, worst_robust=3.0)
+    cand = _mk(3.5, -50.0, 0.40, [3.5, 3.5, 3.5, 3.5], raw_ae=500.0, worst_robust=3.5)
     v = _promotion_verdict(cand, inc)
-    assert v["minimax_placement_ok"] is False
+    assert v["placement_robust_ok"] is False
     assert v["promotable"] is False
 
 
