@@ -297,6 +297,12 @@ class AEManager:
         # guards are untouched. Spec: docs/superpowers/specs/
         # 2026-06-09-ae-no-self-damage-bomb-gate-design.md
         self.no_self_damage = _env_flag("AE_NO_SELF_DAMAGE", False)
+        # Surgical variant (AE_BASEKILL_NOESCAPE, default OFF): relax the own-base
+        # and self-escape vetoes ONLY for a bomb whose blast contains an enemy
+        # base (the +50 kill, good in every regime); speculative bombs still need
+        # an escape. Narrower than AE_NO_SELF_DAMAGE (which relaxes all bombs).
+        # Spec: docs/superpowers/specs/2026-06-09-ae-basekill-noescape-design.md
+        self.basekill_noescape = _env_flag("AE_BASEKILL_NOESCAPE", False)
         # Stun tax (AE_STUN_TAX, default OFF). A freeze opportunity-cost penalty
         # on farming-target paths: scales the existing path-threat penalty for
         # ITEM kinds only, so we can ask "does the farming race want more
@@ -2216,26 +2222,41 @@ class AEManager:
             return cell in layers[tick]
         return False
 
+    def _bomb_hits_enemy_base(self, blast: set[tuple[int, int]]) -> bool:
+        """True if any known enemy base lies in this bomb's blast."""
+        return any(b in blast for b in self.enemy_bases)
+
     def _own_base_vetoes_bomb(
         self,
         base: tuple[int, int] | None,
         blast: set[tuple[int, int]],
     ) -> bool:
-        """True if our OWN base sitting inside ``blast`` should block placing a
-        bomb here. Under AE_NO_SELF_DAMAGE always False: a bomb never damages its
-        placer's own-team base (env: same-team defenders excluded, dynamics.py:695).
+        """True if our OWN base in ``blast`` should block placing a bomb. A bomb
+        never damages its placer's own-team base (env: same-team defenders
+        excluded, dynamics.py:695). Relaxed fully under AE_NO_SELF_DAMAGE, and
+        under AE_BASEKILL_NOESCAPE only when the bomb also hits an enemy base.
         """
         if self.no_self_damage:
             return False
+        if self.basekill_noescape and self._bomb_hits_enemy_base(blast):
+            return False
         return base is not None and base in blast
 
-    def _escape_required_for_bomb(self) -> bool:
-        """Whether a verified own-bomb escape is required to place a bomb. Under
-        AE_NO_SELF_DAMAGE it is NOT — the placer takes zero self-damage
-        (env-confirmed) — so a bomb is placed even from a cell with no escape; any
-        escape that IS found is still used to sequence the follow-up move.
+    def _escape_required_for_bomb(
+        self,
+        blast: set[tuple[int, int]] | None = None,
+    ) -> bool:
+        """Whether a verified own-bomb escape is required to place. The placer
+        takes zero self-damage (env-confirmed). Not required under
+        AE_NO_SELF_DAMAGE (all bombs); under AE_BASEKILL_NOESCAPE only for a bomb
+        whose blast contains an enemy base (speculative bombs still need escape).
         """
-        return not self.no_self_damage
+        if self.no_self_damage:
+            return False
+        if (self.basekill_noescape and blast is not None
+                and self._bomb_hits_enemy_base(blast)):
+            return False
+        return True
 
     def _danger_cells(self) -> set[tuple[int, int]]:
         if self.time_danger_enabled:

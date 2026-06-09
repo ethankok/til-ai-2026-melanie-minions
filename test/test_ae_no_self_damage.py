@@ -279,3 +279,54 @@ def test_lookahead_step_base_veto_off_none_on_places(monkeypatch):
     on = _open_grid_manager()
     on.base_location = (9, 8)
     assert on._lookahead_step(_bomb_state(on, loc), on.PLACE_BOMB) is not None
+
+
+# --- basekill-noescape: flag + predicates ---
+
+def test_basekill_default_off():
+    assert AEManager().basekill_noescape is False
+
+
+def test_basekill_env_on(monkeypatch):
+    monkeypatch.setenv("AE_BASEKILL_NOESCAPE", "1")
+    assert AEManager().basekill_noescape is True
+
+
+def test_bomb_hits_enemy_base():
+    m = _open_grid_manager()
+    blast = m._blast_cells((8, 8))
+    m.enemy_bases = [(9, 8)]
+    assert m._bomb_hits_enemy_base(blast) is True
+    m.enemy_bases = [(0, 0)]
+    assert m._bomb_hits_enemy_base(blast) is False
+
+
+def test_basekill_escape_required_only_for_non_base(monkeypatch):
+    monkeypatch.setenv("AE_BASEKILL_NOESCAPE", "1")
+    m = _open_grid_manager()
+    blast = m._blast_cells((8, 8))
+    m.enemy_bases = [(9, 8)]                       # base in blast
+    assert m._escape_required_for_bomb(blast) is False   # base kill -> not required
+    m.enemy_bases = [(0, 0)]                       # no base in blast
+    assert m._escape_required_for_bomb(blast) is True    # speculative -> still required
+
+
+def test_basekill_own_base_veto_relaxed_only_for_base_kill(monkeypatch):
+    monkeypatch.setenv("AE_BASEKILL_NOESCAPE", "1")
+    m = _open_grid_manager()
+    blast = m._blast_cells((8, 8))
+    base = (8, 8)                                  # own base in blast
+    m.enemy_bases = [(9, 8)]                       # AND an enemy base in blast
+    assert m._own_base_vetoes_bomb(base, blast) is False  # relaxed for the kill
+    m.enemy_bases = [(0, 0)]                       # no enemy base in blast
+    assert m._own_base_vetoes_bomb(base, blast) is True   # speculative -> still vetoes
+
+
+def test_no_self_damage_takes_precedence_over_basekill(monkeypatch):
+    monkeypatch.setenv("AE_NO_SELF_DAMAGE", "1")
+    monkeypatch.setenv("AE_BASEKILL_NOESCAPE", "1")
+    m = _open_grid_manager()
+    blast = m._blast_cells((8, 8))
+    m.enemy_bases = [(0, 0)]                       # no base in blast
+    assert m._escape_required_for_bomb(blast) is False    # full relaxation wins
+    assert m._own_base_vetoes_bomb((8, 8), blast) is False
