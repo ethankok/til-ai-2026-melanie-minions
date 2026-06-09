@@ -1087,9 +1087,10 @@ class AEManager:
         ):
             bomb_from = path[-2]
             blast = self._blast_cells(bomb_from)
-            if target in blast and self._lookahead_escape(
-                bomb_from, blast, self.BOMB_TIMER
-            ) is not None:
+            if target in blast and (
+                self._lookahead_escape(bomb_from, blast, self.BOMB_TIMER) is not None
+                or not self._escape_required_for_bomb()
+            ):
                 base_value = (
                     self.SHARED_CREDIT_BASE_VALUE if self.tier1_shared_credit else 55.0
                 )
@@ -1916,9 +1917,12 @@ class AEManager:
                     continue
             if action == self.PLACE_BOMB:
                 blast = self._blast_cells(pos)
-                if self.base_location is not None and self.base_location in blast:
+                if self._own_base_vetoes_bomb(self.base_location, blast):
                     continue
-                if self._lookahead_escape(pos, blast, self.BOMB_TIMER) is None:
+                if (
+                    self._lookahead_escape(pos, blast, self.BOMB_TIMER) is None
+                    and self._escape_required_for_bomb()
+                ):
                     continue
             legal.append(action)
         return legal
@@ -1943,9 +1947,12 @@ class AEManager:
             if any((bx, by) == state.pos for bx, by, _timer in bombs):
                 return None
             blast = self._blast_cells(state.pos)
-            if self.base_location is not None and self.base_location in blast:
+            if self._own_base_vetoes_bomb(self.base_location, blast):
                 return None
-            if self._lookahead_escape(state.pos, blast, self.BOMB_TIMER) is None:
+            if (
+                self._lookahead_escape(state.pos, blast, self.BOMB_TIMER) is None
+                and self._escape_required_for_bomb()
+            ):
                 return None
             bombs.append((state.pos[0], state.pos[1], self.BOMB_TIMER))
             newly_placed = state.pos
