@@ -384,3 +384,17 @@ def test_plan_reward_basekill_credits_base_without_escape(monkeypatch):
     v_off = off._project_plan_reward((8, 10), target, "enemy_base", path)
     v_on = on._project_plan_reward((8, 10), target, "enemy_base", path)
     assert v_on > v_off
+
+
+def test_basekill_off_is_legacy():
+    """Both flags OFF: enemy base in blast does NOT relax the vetoes."""
+    m = _open_grid_manager()
+    loc = (8, 8)
+    m.enemy_bases = [(9, 8)]
+    m.seen = set(m._blast_cells(loc))               # trapped
+    assert m._should_place_bomb(_spb_obs(), loc, None, set()) is False
+    m2 = _open_grid_manager()
+    m2.enemy_bases = [(9, 8)]
+    m2.base_location = (8, 8)                        # own base in blast
+    # Legacy: own-base veto fires -> False (verified by running with both flags unset)
+    assert m2._should_place_bomb(_spb_obs(), loc, None, set()) is False
