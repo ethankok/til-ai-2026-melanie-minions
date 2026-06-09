@@ -2557,8 +2557,14 @@ class AEManager:
 
         The agent gets ``BOMB_TIMER`` movement actions between placing a bomb
         and the detonation phase, so anything beyond that is not actually safe.
+
+        Under AE_TIME_DANGER, a step's destination is additionally rejected if
+        it is on fire at the relative arrival tick (== BFS distance) per the
+        chain-resolved danger layers, so the agent never "escapes" into an
+        enemy bomb or chain that lights up exactly when it arrives.
         """
 
+        layers = self._danger_layers() if self.time_danger_enabled else None
         queue = deque([(location, 0)])
         seen = {location}
         while queue:
@@ -2571,6 +2577,8 @@ class AEManager:
                 if nxt in seen or nxt not in self.seen:
                     continue
                 if danger is not None and nxt in danger:
+                    continue
+                if layers is not None and self._on_fire_at(nxt, dist + 1, layers):
                     continue
                 seen.add(nxt)
                 queue.append((nxt, dist + 1))

@@ -144,3 +144,50 @@ def test_danger_cells_on_includes_chain_corrected_cell(monkeypatch):
     m_off.time_danger_enabled = False  # force OFF despite active monkeypatch
     m_off.known_bombs = dict(m.known_bombs)
     assert not (m._blast_cells((5, 6)) <= m_off._danger_cells())
+
+
+# --- Task 4: _safe_escape_within chain/arrival-aware ---
+
+def test_escape_off_ignores_enemy_bomb(monkeypatch):
+    # Flag OFF, danger=None (the live-caller signature): escape only avoids the
+    # OWN blast, never the enemy bomb -> it may return a cell in the enemy blast.
+    m = _open_grid_manager()
+    own_blast = m._blast_cells((5, 5))
+    # Enemy bomb far enough that its blast doesn't overlap the own blast, but
+    # sits on a plausible escape cell at (8,5) (own-blast edge is x<=7).
+    m.known_bombs = {(10, 5): {"timer": 1, "own": False, "last_step": 5}}
+    cell = m._safe_escape_within((5, 5), own_blast, m.BOMB_TIMER)
+    assert cell is not None
+    assert cell not in own_blast  # legacy guarantee only
+
+
+def test_escape_on_avoids_cell_on_fire_at_arrival(monkeypatch):
+    # Flag ON: a candidate escape cell that is on fire at the tick we'd arrive
+    # there (arrival tick == BFS dist) must be pruned.
+    monkeypatch.setenv("AE_TIME_DANGER", "1")
+    m = _open_grid_manager()
+    own_blast = m._blast_cells((5, 5))
+    # Enemy bomb whose blast covers (8,5) and fires at tick 3 (== arrival dist
+    # to (8,5) going right from (5,5)). With the flag ON, (8,5) is unsafe at
+    # arrival and must be rejected as the escape cell.
+    m.known_bombs = {(8, 5): {"timer": 3, "own": False, "last_step": 5}}
+    cell = m._safe_escape_within((5, 5), own_blast, m.BOMB_TIMER)
+    # (8,5) is the bomb cell itself (solid / on fire); a correct escape must
+    # not be (8,5) and must not be a cell on fire at its arrival tick.
+    if cell is not None:
+        # arrival tick == Manhattan distance on the open grid
+        arrival = abs(cell[0] - 5) + abs(cell[1] - 5)
+        assert not m._on_fire_at(cell, arrival)
+
+
+def test_escape_on_returns_none_when_fully_trapped(monkeypatch):
+    # Flag ON: if every reachable cell within max_moves is on fire at arrival,
+    # the verifier must return None (don't place an inescapable bomb).
+    monkeypatch.setenv("AE_TIME_DANGER", "1")
+    m = _open_grid_manager()
+    own_blast = m._blast_cells((5, 5))
+    # Saturate every layer 0..horizon with the whole grid -> nothing is safe.
+    full = {(x, y) for x in range(16) for y in range(16)}
+    m._danger_layers_cache = [set(full) for _ in range(m.danger_horizon + 1)]
+    cell = m._safe_escape_within((5, 5), own_blast, m.BOMB_TIMER)
+    assert cell is None
