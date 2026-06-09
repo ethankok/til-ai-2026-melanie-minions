@@ -287,6 +287,16 @@ class AEManager:
         # layer as safe, so a shorter horizon would silently blind the escape
         # check to a timer==BOMB_TIMER bomb at its arrival tick.
         self.danger_horizon = max(self.BOMB_TIMER, _env_int("AE_DANGER_HORIZON", 6))
+        # No-self-damage bomb gating (AE_NO_SELF_DAMAGE, default OFF). The env
+        # excludes same-team defenders from a bomb's blast (dynamics.py:695), so
+        # a bomb never damages its placer OR the placer's own base — verified
+        # end-to-end (training/ae/probe_bomb_timer.py: placer health stays 60
+        # standing on its own detonating bomb). OFF == byte-identical. When ON,
+        # we stop vetoing placement on two false premises (own base in blast; no
+        # self-escape); real enemy-danger / low-health / legality / team_bombs
+        # guards are untouched. Spec: docs/superpowers/specs/
+        # 2026-06-09-ae-no-self-damage-bomb-gate-design.md
+        self.no_self_damage = _env_flag("AE_NO_SELF_DAMAGE", False)
         # Stun tax (AE_STUN_TAX, default OFF). A freeze opportunity-cost penalty
         # on farming-target paths: scales the existing path-threat penalty for
         # ITEM kinds only, so we can ask "does the farming race want more
@@ -2198,6 +2208,27 @@ class AEManager:
         if 0 <= tick < len(layers):
             return cell in layers[tick]
         return False
+
+    def _own_base_vetoes_bomb(
+        self,
+        base: tuple[int, int] | None,
+        blast: set[tuple[int, int]],
+    ) -> bool:
+        """True if our OWN base sitting inside ``blast`` should block placing a
+        bomb here. Under AE_NO_SELF_DAMAGE always False: a bomb never damages its
+        placer's own-team base (env: same-team defenders excluded, dynamics.py:695).
+        """
+        if self.no_self_damage:
+            return False
+        return base is not None and base in blast
+
+    def _escape_required_for_bomb(self) -> bool:
+        """Whether a verified own-bomb escape is required to place a bomb. Under
+        AE_NO_SELF_DAMAGE it is NOT — the placer takes zero self-damage
+        (env-confirmed) — so a bomb is placed even from a cell with no escape; any
+        escape that IS found is still used to sequence the follow-up move.
+        """
+        return not self.no_self_damage
 
     def _danger_cells(self) -> set[tuple[int, int]]:
         if self.time_danger_enabled:
