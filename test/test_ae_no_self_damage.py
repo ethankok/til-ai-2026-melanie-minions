@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1] / "ae" / "src"))
 
-from ae_manager import AEManager  # noqa: E402
+from ae_manager import AEManager, _LookaheadState  # noqa: E402
 
 
 def _open_grid_manager(step: int = 5):
@@ -215,3 +215,64 @@ def test_off_is_legacy_even_with_base_in_blast_and_trapped():
     m2.enemy_bases = [(9, 8)]
     m2.seen = set(m2._blast_cells(loc))  # escape veto
     assert m2._should_place_bomb(_spb_obs(), loc, None, set()) is False
+
+
+# --- Task 4 (follow-up): MCTS _lookahead_legal_actions / _lookahead_step ---
+# Real tests for B4/E5 and B5/E6 (the spec-review gap: these dormant sites had
+# code edits but no focused tests). Each exercises the trapped (escape) veto and
+# the own-base-in-blast veto, asserting ON admits PLACE_BOMB and OFF rejects it.
+
+def _bomb_state(m, pos=(8, 8)):
+    return _LookaheadState(
+        pos=pos, direction=0, bombs=(), bombs_left=1, health=60,
+        collected=frozenset(), score=0.0, first_action=None,
+        tactical=False, path=(),
+    )
+
+
+def test_lookahead_legal_escape_veto_off_excludes_on_includes(monkeypatch):
+    loc = (8, 8)
+    off = _open_grid_manager()
+    off.base_location = None
+    off.seen = set(off._blast_cells(loc))          # trapped -> no escape
+    assert off.PLACE_BOMB not in off._lookahead_legal_actions(loc, 0, 1)
+    monkeypatch.setenv("AE_NO_SELF_DAMAGE", "1")
+    on = _open_grid_manager()
+    on.base_location = None
+    on.seen = set(on._blast_cells(loc))
+    assert on.PLACE_BOMB in on._lookahead_legal_actions(loc, 0, 1)
+
+
+def test_lookahead_legal_base_veto_off_excludes_on_includes(monkeypatch):
+    loc = (8, 8)
+    off = _open_grid_manager()                      # open grid -> escape exists
+    off.base_location = (9, 8)                       # OWN base in blast
+    assert off.PLACE_BOMB not in off._lookahead_legal_actions(loc, 0, 1)
+    monkeypatch.setenv("AE_NO_SELF_DAMAGE", "1")
+    on = _open_grid_manager()
+    on.base_location = (9, 8)
+    assert on.PLACE_BOMB in on._lookahead_legal_actions(loc, 0, 1)
+
+
+def test_lookahead_step_escape_veto_off_none_on_places(monkeypatch):
+    loc = (8, 8)
+    off = _open_grid_manager()
+    off.base_location = None
+    off.seen = set(off._blast_cells(loc))           # trapped
+    assert off._lookahead_step(_bomb_state(off, loc), off.PLACE_BOMB) is None
+    monkeypatch.setenv("AE_NO_SELF_DAMAGE", "1")
+    on = _open_grid_manager()
+    on.base_location = None
+    on.seen = set(on._blast_cells(loc))
+    assert on._lookahead_step(_bomb_state(on, loc), on.PLACE_BOMB) is not None
+
+
+def test_lookahead_step_base_veto_off_none_on_places(monkeypatch):
+    loc = (8, 8)
+    off = _open_grid_manager()                      # escape exists
+    off.base_location = (9, 8)                       # OWN base in blast
+    assert off._lookahead_step(_bomb_state(off, loc), off.PLACE_BOMB) is None
+    monkeypatch.setenv("AE_NO_SELF_DAMAGE", "1")
+    on = _open_grid_manager()
+    on.base_location = (9, 8)
+    assert on._lookahead_step(_bomb_state(on, loc), on.PLACE_BOMB) is not None
