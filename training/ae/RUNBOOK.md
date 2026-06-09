@@ -1346,6 +1346,15 @@ default `0.24 0.7`) with our own mult fixed (`--our-mult`, default `0.93`):
   move (farming→`mission`, danger-map→`base_defense`, opening→`opening`).
 - Default `--sim-seeds` bumped 2 → 8. `--heldout` adds the train-vs-heldout
   composition-gap overfit alarm (`gap_not_widening_ok`).
+- **`--us-slots N…`** (default `0`) seats us at the given fixed novice spawns,
+  averaged per bracket. The harness defaults to `us_slot=0` (base `13,9`); finals
+  seats teams at VARYING spawns, so use `--us-slots 0 1 2 3 4 5` to model uniform
+  seating. **Essential for spawn-specific levers:** the opening book only fires on
+  bases `9,13 / 2,6 / 6,2` (slots 1/3/4) — at the default slot 0 (a disabled spawn)
+  a candidate like `opening_hybrid` is byte-identical to baseline (a silent null).
+- **`--opening-ckpt LABEL=PATH[@knob=val,…]`** registers an `opening_hybrid`
+  candidate (novice opening book + confpol planner) over a checkpoint, accepting the
+  same `@knob` deploy-profile suffix as `--confpol-ckpt`.
 
 Canonical re-rank (heldout + axis floor):
 
@@ -1355,6 +1364,18 @@ Canonical re-rank (heldout + axis floor):
   --opp-mults 0.24 0.7 --our-mult 0.93 --target-axis mission \
   --confpol-ckpt cand=path/to/cand.pt \
   --summary-out training/ae/data/melee-rerank.json
+```
+
+Opening-book re-rank (must seat us where the book fires — slots 1/3/4):
+
+```bash
+.venv/bin/python training/ae/melee_eval.py --rounds 6 \
+  --hash-seeds 0 1 --sim-seeds 42 137 7 99 256 512 1024 2048 \
+  --us-slots 1 3 4 --opp-mults 0.24 0.7 --our-mult 0.93 --target-axis opening \
+  --confpol-ckpt "baseline=…/confpol-semis2b-u75.pt@mission=80,resource=40,base=100,detonate=5,contention=1" \
+  --opening-ckpt "opening=…/confpol-semis2b-u75.pt@mission=80,resource=40,base=100,detonate=5,contention=1" \
+  --candidates baseline opening --incumbent baseline \
+  --brackets real_field   # repeat per bracket; 10-Jun run = NO-GO (adversarial crater)
 ```
 
 A 9-Jun calibration smoke (`semis_mixed`, 2 seeds, 4 rounds) confirmed the

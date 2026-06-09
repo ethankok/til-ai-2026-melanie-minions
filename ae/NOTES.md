@@ -24,6 +24,41 @@
 
 ## Read this first
 
+### ⛔ opening_hybrid finals re-test (10 June 2026) — fixes the flat first-half but FAILS the worst-bracket selector → NO-GO, deploy unchanged
+
+Re-tested `AE_MODE=opening_hybrid` (the v2 confpol-correct opening book + confpol planner)
+under the finals melee gate to lift the **flat first-half** (`opening_axis`) — the one axis no
+prior lever moved. Result: **NO-GO.**
+
+- **Gate-harness fix (reusable):** the opening arms off `base_location`; the v2 sweep enabled
+  only 3 of 6 novice bases — `9,13 / 2,6 / 6,2` (env slots 1/3/4) — and disabled `13,9 /
+  3,12 / 12,3` (slots 0/2/5). `melee_eval.py` was **pinned at `us_slot=0` (base 13,9 =
+  disabled) → baseline ≡ opening, a silent byte-identical null.** Fixed by plumbing
+  `--us-slots` through `melee_eval._evaluate_candidate → _spawn_worker → simulate.run_simulation
+  → run_one_round`. Added an `--opening-ckpt LABEL=PATH@knob=val` gate candidate
+  (`our=opening_hybrid`) + an `opening_hybrid` branch in `simulate._make_our_agent`. Finals
+  seats teams at VARYING spawns, so the opening fires on ~3/6 of our games and is a safe no-op
+  (divergence gate) on the rest → **finals-expected impact ≈ HALF the enabled-spawn delta.**
+- **Result (slots 1/3/4, n=48/bracket, deploy-faithful profile on confpol-semis2b-u75):**
+  | bracket | open_ax (first-half) | raw_ae | robust place |
+  |---|---|---|---|
+  | real_field (active) | +36 → **+162** | +274 → **+354** | 1.54 → **1.04** (WIN) |
+  | adversarial (all-aggressive) | +54 → +90 | +390 → **+260** | 1.23 → **2.40** (CRATER) |
+  | semis_mixed (passive) | +34 → +88 | +270 → +253 | 2.05 → 2.01 (flat) |
+
+  **PRIMARY = worst-bracket robust placement: baseline 2.05 → opening 2.40 (WORSE).** Net mean
+  raw_ae across brackets +311 → +289.
+- **Mechanism (structural, not a tuning miss):** the book is beam-searched SINGLE-AGENT for
+  item-farming, so it models zero opponent punishment. A fixed, divergence-replayed opening is
+  NON-REACTIVE for ~20 ticks; `adversarial` punishes that blind window and we lose despite a
+  better first-half. **The old `u860→semis2b` re-sweep caveat is MOOT** — a re-sweep is also
+  single-agent and can't teach the book to dodge aggressive foes (didn't pursue it).
+- **Verdict:** keep OFF (`AE_MODE` unset), deploy UNCHANGED (`confpol-semis2b-u75`). Same
+  opponent-activity shape as the no-self-damage lever but a *worse* bet — it craters the
+  aggressive bracket, exactly where you'd want an edge. The first-half is flat for a reason:
+  a fixed book trades reactivity for early farming, and reactivity is what wins the melee. Full
+  write-up in memory `project_ae_opening_hybrid_finals`.
+
 ### 🟢 Finals-aligned eval revamp SHIPPED (9 June 2026) — multiplier overlay + raw_ae discriminator + per-axis floors
 
 Revamped the melee gate (`training/ae/melee_eval.py`) to match real Finals scoring,
@@ -512,7 +547,7 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan: `docs/superpowers/{specs,plans}/
   planner-mismatch in the gate. **The +0.067 lift was real but only over the
   *bare heuristic*** (`AE_MODE=opening_hybrid AE_OPENING_PLANNER=heuristic` still
   gives it; kept in tree, not default).
-- **🔬 Opening book v2 — confpol-correct gate, BUILT, TO FARM (1 Jun).** Re-swept
+- **🔬 Opening book v2 — confpol-correct gate, BUILT (1 Jun); finals melee re-test 10 Jun = NO-GO (see top entry).** Re-swept
   the gate OVER CONFPOL across all horizons (`sweep_openings.py --planner confpol`).
   The confpol-correct gate is **almost disjoint** from the heuristic one: enables
   **9,13 (H20, +0.174 z9.7) / 2,6 (H8, +0.119 z4.6) / 6,2 (H12, +0.117 z2.8)**,

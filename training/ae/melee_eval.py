@@ -109,6 +109,17 @@ _GATE_KEYS = {
     "rollback": "AE_CONFPOL_ROLLBACK_PHANTOM_BOMB",
     "phantom": "AE_CONFPOL_ROLLBACK_PHANTOM_BOMB",
     "detonate": "AE_BOMB_DETONATE_STEPS",
+    # planner item/base weights (deploy: mission=80, resource=40, base=100) — lets a
+    # sweep pin the full deploy profile per candidate and vary one weight (e.g. farming).
+    "mission": "AE_ITEM_MISSION_VALUE",
+    "resource": "AE_ITEM_RESOURCE_VALUE",
+    "recon": "AE_ITEM_RECON_VALUE",
+    "base": "AE_ENEMY_BASE_VALUE",
+    # deploy-faithful env + off-by-default behavioural flags under test.
+    "contention": "AE_CONTENTION",
+    "time_danger": "AE_TIME_DANGER",
+    "no_self_damage": "AE_NO_SELF_DAMAGE",
+    "basekill_noescape": "AE_BASEKILL_NOESCAPE",
 }
 
 
@@ -181,6 +192,7 @@ def _run_worker(args: argparse.Namespace) -> int:
         log_traj=False,
         seed_start=args.seed,
         novice=not args.non_novice,
+        us_slot=args.us_slot,
     )
     s = out["summary"]
     payload = _compute_worker_payload(s, args.suite, args.our, args.seed)
@@ -189,7 +201,8 @@ def _run_worker(args: argparse.Namespace) -> int:
 
 
 def _spawn_worker(our: str, suite: str, hash_seed: int, sim_seed: int,
-                  rounds: int, extra_env: dict[str, str], non_novice: bool) -> dict:
+                  rounds: int, extra_env: dict[str, str], non_novice: bool,
+                  us_slot: int = 0) -> dict:
     env = os.environ.copy()
     env["PYTHONHASHSEED"] = str(hash_seed)
     env.setdefault("PYTHONUNBUFFERED", "1")
@@ -199,6 +212,7 @@ def _spawn_worker(our: str, suite: str, hash_seed: int, sim_seed: int,
         sys.executable, "-u", str(Path(__file__).resolve()),
         "--worker", "--our", our, "--suite", suite,
         "--seed", str(sim_seed), "--rounds", str(rounds),
+        "--us-slot", str(us_slot),
     ]
     if non_novice:
         cmd.append("--non-novice")
@@ -399,17 +413,21 @@ def _aggregate_candidate(label: str, spec: dict, runs_by_bracket: dict[str, list
 
 def _evaluate_candidate(label: str, spec: dict, brackets: list[str],
                         hash_seeds: list[int], sim_seeds: list[int],
-                        rounds: int, non_novice: bool) -> dict:
+                        rounds: int, non_novice: bool,
+                        us_slots: list[int] | None = None) -> dict:
+    us_slots = us_slots or [0]
     runs_by_bracket: dict[str, list[dict]] = {}
     for suite in brackets:
         runs = []
-        for h in hash_seeds:
-            for s in sim_seeds:
-                row = _spawn_worker(spec["our"], suite, h, s, rounds,
-                                    spec.get("env", {}), non_novice)
-                row["hash"] = h
-                row["sim"] = s
-                runs.append(row)
+        for slot in us_slots:
+            for h in hash_seeds:
+                for s in sim_seeds:
+                    row = _spawn_worker(spec["our"], suite, h, s, rounds,
+                                        spec.get("env", {}), non_novice, us_slot=slot)
+                    row["hash"] = h
+                    row["sim"] = s
+                    row["us_slot"] = slot
+                    runs.append(row)
         runs_by_bracket[suite] = runs
         wp = {om: _agg([r["weighted_placement"][om] for r in runs])
               for om in (runs[0]["weighted_placement"] if runs else {})}
@@ -523,6 +541,12 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--our", default=None, help="(worker) agent name for simulate._make_our_agent")
+    p.add_argument("--us-slot", type=int, default=0,
+                   help="(worker) which of the 6 fixed novice spawns to seat us at (0-5)")
+    p.add_argument("--us-slots", nargs="+", type=int, default=[0],
+                   help="spawns to seat us at, averaged per bracket. Finals seats teams at "
+                        "VARYING spawns, so '0 1 2 3 4 5' models uniform seating; the novice "
+                        "opening book only fires on bases 9,13/2,6/6,2 (slots 1/3/4).")
     p.add_argument("--suite", default=None, help="(worker) single bracket name")
     p.add_argument("--seed", type=int, default=42, help="(worker) sim seed start")
     p.add_argument("--rounds", type=int, default=12)
@@ -536,6 +560,10 @@ def main(argv: list[str] | None = None) -> int:
                         "(repeatable; e.g. native-u200=training/ae/checkpoints/confpol-native-u200.pt)")
     p.add_argument("--policy-ckpt", action="append", default=[], metavar="LABEL=PATH",
                    help="register a raw-policy (full-control) candidate over a checkpoint (repeatable)")
+    p.add_argument("--opening-ckpt", action="append", default=[], metavar="LABEL=PATH",
+                   help="register an opening_hybrid candidate (novice opening book + confpol planner) "
+                        "over a checkpoint; accepts the same @knob=val deploy-profile suffix as "
+                        "--confpol-ckpt (repeatable)")
     p.add_argument("--brackets", nargs="+", default=None,
                    help=f"override brackets (default: {MELEE_BRACKETS})")
     p.add_argument("--hash-seeds", nargs="+", type=int, default=[0, 1, 2])
@@ -575,6 +603,9 @@ def main(argv: list[str] | None = None) -> int:
         label, _, path = spec_str.partition("=")
         registry[label] = {"our": "policy",
                            "env": {"AE_POLICY_CHECKPOINT": str(Path(path).resolve())}}
+    for spec_str in args.opening_ckpt:
+        label, env = _parse_confpol_spec(spec_str)
+        registry[label] = {"our": "opening_hybrid", "env": env}
 
     candidates = args.candidates or DEFAULT_CANDIDATES
     brackets = args.brackets or list(MELEE_BRACKETS)
@@ -595,12 +626,14 @@ def main(argv: list[str] | None = None) -> int:
         res = _evaluate_candidate(
             label, registry[label], brackets,
             args.hash_seeds, args.sim_seeds, args.rounds, args.non_novice,
+            us_slots=args.us_slots,
         )
         if args.heldout:
             print(f"  [heldout compositions] {label}", flush=True)
             ho = _evaluate_candidate(
                 label, registry[label], list(HELDOUT_COMPOSITIONS.values()),
                 args.hash_seeds, args.sim_seeds, args.rounds, args.non_novice,
+                us_slots=args.us_slots,
             )
             res["heldout_per_bracket"] = ho["per_bracket"]
             res["heldout_mean_placement"] = ho["tune_mean_placement"]

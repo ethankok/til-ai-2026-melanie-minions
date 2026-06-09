@@ -181,6 +181,15 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
         # AE_POLICY_CHECKPOINT (local: training/ae/checkpoints/...-u860.pt).
         from confidence_policy_hybrid_manager import ConfidencePolicyHybridAEManager
         return ConfidencePolicyHybridAEManager(**kwargs)
+    if name in ("opening_hybrid", "openinghybrid"):
+        # Divergence-gated novice opening prefix in front of the confpol planner
+        # (mirrors ae_server's AE_MODE=opening_hybrid + AE_OPENING_PLANNER=
+        # confidence_policy_hybrid build). Inner planner reads AE_POLICY_CHECKPOINT
+        # from env. Openings fire only on spawns locked in openings_gate.json; the
+        # divergence gate aborts to the planner on any trajectory mismatch.
+        from opening_hybrid_manager import OpeningHybridManager
+        from confidence_policy_hybrid_manager import ConfidencePolicyHybridAEManager
+        return OpeningHybridManager(planner=ConfidencePolicyHybridAEManager(**kwargs))
     if name == "policy":
         from policy_manager import PolicyAEManager
         return PolicyAEManager(**kwargs)
@@ -507,6 +516,7 @@ def run_simulation(
     seed_start: int,
     novice: bool = True,
     our_kwargs: dict | None = None,
+    us_slot: int = 0,
 ) -> dict:
     """Run ``rounds`` rounds and return the aggregated trajectory + stats.
 
@@ -565,7 +575,8 @@ def run_simulation(
     t0 = time.monotonic()
     for r in range(rounds):
         result = run_one_round(
-            env, our_agent, opponents, log_traj=log_traj, seed=seed_start + r
+            env, our_agent, opponents, log_traj=log_traj, seed=seed_start + r,
+            us_slot=us_slot,
         )
         scores.append(result["score"])
         totals.append(result["total_reward"])
