@@ -49,3 +49,57 @@ def test_danger_horizon_env_override(monkeypatch):
 
 def test_danger_layers_cache_slot_exists():
     assert AEManager()._danger_layers_cache is None
+
+
+# --- Task 2: _danger_layers builder + chain resolution ---
+
+def test_single_bomb_lands_in_its_timer_layer():
+    m = _open_grid_manager()
+    # A bomb at (5,5) with timer 2 detonates at relative tick 2.
+    m.known_bombs = {(5, 5): {"timer": 2, "own": False, "last_step": 5}}
+    layers = m._danger_layers()
+    blast = m._blast_cells((5, 5))
+    assert layers[2] == blast
+    # No other layer carries this bomb's fire.
+    for t, cells in enumerate(layers):
+        if t != 2:
+            assert cells.isdisjoint(blast)
+
+
+def test_chain_makes_later_bomb_fire_early():
+    m = _open_grid_manager()
+    # Bomb A at (5,5) timer 1; bomb B at (5,6) timer 4. B sits in A's blast
+    # (Chebyshev<=2), so B detonates at A's tick (1), not 4.
+    m.known_bombs = {
+        (5, 5): {"timer": 1, "own": False, "last_step": 5},
+        (5, 6): {"timer": 4, "own": False, "last_step": 5},
+    }
+    assert (5, 6) in m._blast_cells((5, 5))  # precondition: B is in A's blast
+    layers = m._danger_layers()
+    blast_b = m._blast_cells((5, 6))
+    assert blast_b <= layers[1]      # B's fire appears at tick 1
+    assert blast_b.isdisjoint(layers[4])  # not at its naive tick 4
+
+
+def test_transitive_three_bomb_chain_collapses_to_fixpoint():
+    m = _open_grid_manager()
+    # A(5,5) t=1 -> B(5,7) in A's blast (dist 2) -> C(5,9) in B's blast.
+    m.known_bombs = {
+        (5, 5): {"timer": 1, "own": False, "last_step": 5},
+        (5, 7): {"timer": 3, "own": False, "last_step": 5},
+        (5, 9): {"timer": 5, "own": False, "last_step": 5},
+    }
+    assert (5, 7) in m._blast_cells((5, 5))
+    assert (5, 9) in m._blast_cells((5, 7))
+    layers = m._danger_layers()
+    # All three collapse to tick 1.
+    assert m._blast_cells((5, 9)) <= layers[1]
+
+
+def test_on_fire_at_predicate():
+    m = _open_grid_manager()
+    m.known_bombs = {(5, 5): {"timer": 2, "own": False, "last_step": 5}}
+    assert m._on_fire_at((5, 5), 2) is True   # bomb cell on fire at tick 2
+    assert m._on_fire_at((5, 5), 1) is False  # not yet
+    assert m._on_fire_at((5, 5), 99) is False  # beyond horizon -> safe
+    assert m._on_fire_at((0, 0), 2) is False  # far cell never on fire

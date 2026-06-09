@@ -2144,6 +2144,57 @@ class AEManager:
                 if step <= unfreeze + self.BOMB_TIMER + 1
             ]
 
+    def _danger_layers(self) -> list[set[tuple[int, int]]]:
+        """Per-tick lethality: ``layers[t]`` = cells on fire at relative future
+        tick ``t`` (0..danger_horizon), resolving enemy-bomb chains.
+
+        A bomb with ``timer = d`` detonates ``d`` of our decision-steps out
+        (line-141 semantics). If bomb B's cell is inside bomb A's blast and A
+        fires earlier, B detonates at A's tick; propagate this to a fixpoint so
+        transitive chains collapse to the earliest trigger. Cached per turn.
+        """
+        if self._danger_layers_cache is not None:
+            return self._danger_layers_cache
+        horizon = self.danger_horizon
+        # Resolved detonation tick per bomb (start from its own timer).
+        fire_tick: dict[tuple[int, int], int] = {
+            pos: int(data.get("timer", self.BOMB_TIMER))
+            for pos, data in self.known_bombs.items()
+        }
+        # Min-propagate earlier triggers through blast adjacency to a fixpoint.
+        changed = True
+        while changed:
+            changed = False
+            for a_pos, a_tick in list(fire_tick.items()):
+                blast_a = self._blast_cells(a_pos)
+                for b_pos in fire_tick:
+                    if b_pos == a_pos:
+                        continue
+                    if b_pos in blast_a and a_tick < fire_tick[b_pos]:
+                        fire_tick[b_pos] = a_tick
+                        changed = True
+        layers: list[set[tuple[int, int]]] = [set() for _ in range(horizon + 1)]
+        for pos, tick in fire_tick.items():
+            if 0 <= tick <= horizon:
+                layers[tick].update(self._blast_cells(pos))
+        self._danger_layers_cache = layers
+        return layers
+
+    def _on_fire_at(
+        self,
+        cell: tuple[int, int],
+        tick: int,
+        layers: list[set[tuple[int, int]]] | None = None,
+    ) -> bool:
+        """True if ``cell`` is on fire at relative tick ``tick``. Ticks beyond
+        the horizon are treated as safe (the bomb resolves outside our window).
+        """
+        if layers is None:
+            layers = self._danger_layers()
+        if 0 <= tick < len(layers):
+            return cell in layers[tick]
+        return False
+
     def _danger_cells(self) -> set[tuple[int, int]]:
         danger: set[tuple[int, int]] = set()
         for bomb_pos, data in self.known_bombs.items():
