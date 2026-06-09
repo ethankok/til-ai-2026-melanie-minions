@@ -2,10 +2,11 @@
 
 The tuner preserves the shipped heuristic/confpol planner core and searches only
 small scalar env vars that AEManager already reads. Candidate quality is measured
-by the existing melee gate: MEAN bracket placement is the optimizer objective,
-guarded at promotion time only against regression on the low-variance field
-brackets (semis_mixed/real_field) — the noisy adversarial probe is logged, not
-gated — all relative to the same-seed incumbent, rather than cloud absolute reward.
+by the existing finals-aligned melee gate: raw_ae (our cumulative reward, the
+finals-proportional discriminator) is the optimizer objective, subject to a
+worst_robust_placement floor — all relative to the same-seed incumbent, rather than
+cloud absolute reward. The expensive held-out-composition gap + hardware A/B gate
+the single finalist, not every in-loop candidate.
 """
 
 from __future__ import annotations
@@ -122,70 +123,59 @@ def encode_env(values: dict[str, float]) -> dict[str, str]:
 
 RankKey = tuple[float, float]
 
-# The promotion guard is applied ONLY to the low-variance, Semis-representative
-# brackets. The synthetic high-variance `adversarial` probe (and the worst-bracket
-# max / min-margin it dominates) is NOT gated: gating on it would reject genuinely
-# better candidates that drew an unlucky adversarial run. FIELD_GUARD_TOL absorbs the
-# residual noise on these stable brackets while still catching a real collapse.
-FIELD_GUARD_BRACKETS: tuple[str, ...] = ("semis_mixed", "real_field")
-FIELD_GUARD_TOL = 0.25
+# Finals-aligned objective (2026-06-09 gate): raw_ae (our agent's cumulative reward,
+# proportional to final score since our mission_multiplier is fixed) is the
+# DISCRIMINATOR the CEM maximizes, subject to a worst_robust_placement FLOOR. Because
+# our mult is high+fixed, robust placement saturates at 1st against a weak field, so
+# it acts as a non-exploitability floor (a real regression beyond PLACEMENT_FLOOR_TOL
+# is penalized) while raw_ae separates good candidates. This deliberately does NOT
+# optimize mean placement (the reverted g00-fixed-03 trap: a placement-proxy that
+# overfit the synthetic pool); the held-out composition gap + a hardware A/B gate the
+# single finalist, not every in-loop candidate.
+PLACEMENT_FLOOR_TOL = 0.25
 _EPS = 1e-9
 
 
-def _mean_place(result: dict[str, Any]) -> float:
-    brackets = result.get("per_bracket", {})
-    if not brackets:
-        return float("inf")
-    return float(np.mean([float(b["mean_placement"]) for b in brackets.values()]))
+def _raw_ae(result: dict[str, Any]) -> float:
+    return float(result.get("raw_ae", float("-inf")))
 
 
-def _bracket_place(result: dict[str, Any], bracket: str) -> float | None:
-    b = result.get("per_bracket", {}).get(bracket)
-    return float(b["mean_placement"]) if b else None
+def _worst_robust(result: dict[str, Any]) -> float:
+    return float(result.get("worst_robust_placement", float("inf")))
 
 
-def _field_regression(candidate: dict[str, Any], incumbent: dict[str, Any]) -> float:
-    """Total placement regression on the guarded field brackets (0.0 if none)."""
+def _placement_violation(candidate: dict[str, Any], incumbent: dict[str, Any]) -> float:
+    """Robust-placement regression beyond the noise tolerance (0.0 if floor held)."""
 
-    total = 0.0
-    for bracket in FIELD_GUARD_BRACKETS:
-        cand = _bracket_place(candidate, bracket)
-        inc = _bracket_place(incumbent, bracket)
-        if cand is not None and inc is not None:
-            total += max(0.0, cand - inc)
-    return total
+    return max(0.0, _worst_robust(candidate) - _worst_robust(incumbent) - PLACEMENT_FLOOR_TOL)
 
 
 def rank_key(candidate: dict[str, Any], incumbent: dict[str, Any]) -> RankKey:
     """Lexicographic minimization key for CEM elite selection. Lower is better.
 
-    MEAN bracket placement is the PRIMARY objective: the low-variance, most direct
-    estimator of how the candidate places against the field. The synthetic
-    worst-bracket max is deliberately NOT used here (it is dominated by the noisy
-    `adversarial` probe and makes a poor optimizer signal). The secondary term is the
-    field-bracket regression vs the incumbent, so the search is gently biased away
-    from buying a better mean by sacrificing the Semis-representative brackets. The
-    promotion guard lives in `promotion_ok`.
+    PRIMARY (floor) = robust-placement violation vs the incumbent: any candidate that
+    regresses ``worst_robust_placement`` beyond ``PLACEMENT_FLOOR_TOL`` sorts strictly
+    worse, keeping the search inside the non-exploitable region. DISCRIMINATOR =
+    ``-raw_ae`` (maximize our finals-proportional cumulative reward) among candidates
+    that hold the floor. raw_ae is our documented WEAK axis and the thing that decides
+    rank against a real field, so it is what the optimizer chases.
     """
 
-    return (_mean_place(candidate), _field_regression(candidate, incumbent))
+    return (_placement_violation(candidate, incumbent), -_raw_ae(candidate))
 
 
 def promotion_ok(candidate: dict[str, Any], incumbent: dict[str, Any]) -> bool:
-    """Promote only if the candidate STRICTLY improves mean placement AND does not
-    regress (beyond FIELD_GUARD_TOL) on the low-variance field brackets
-    (semis_mixed / real_field), relative to the same-seed incumbent. Worst-bracket /
-    adversarial / margin are diagnostics only and are deliberately not gated."""
+    """Promote only if the candidate STRICTLY improves raw_ae (the finals-proportional
+    discriminator) AND holds the robust-placement floor (worst_robust_placement does
+    not regress beyond PLACEMENT_FLOOR_TOL) vs the same-seed incumbent. The rigorous
+    paired effect / Probability-of-Improvement / held-out-composition-gap checks are
+    applied to the single FINALIST via ``melee_eval --heldout`` (+ hardware A/B), not
+    to every in-loop candidate (too noisy at 4 rounds)."""
 
-    if not (_mean_place(candidate) < _mean_place(incumbent) - _EPS):
+    if not (_raw_ae(candidate) > _raw_ae(incumbent) + _EPS):
         return False
-    for bracket in FIELD_GUARD_BRACKETS:
-        cand = _bracket_place(candidate, bracket)
-        inc = _bracket_place(incumbent, bracket)
-        if cand is None or inc is None:
-            return False  # fail closed if a guarded bracket was not evaluated
-        if cand > inc + FIELD_GUARD_TOL + _EPS:
-            return False
+    if _worst_robust(candidate) > _worst_robust(incumbent) + PLACEMENT_FLOOR_TOL + _EPS:
+        return False
     return True
 
 

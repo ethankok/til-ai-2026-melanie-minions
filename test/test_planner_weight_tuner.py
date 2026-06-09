@@ -116,14 +116,18 @@ def test_encode_env_formats_stable_decimal_strings():
 from tune_planner_weights import cem_update, promotion_ok, rank_key  # noqa: E402
 
 
-def _result(placements: dict[str, float]) -> dict:
-    """Build a fake melee result from explicit per-bracket mean placements.
+def _result(placements: dict[str, float], *, raw_ae: float, worst_robust: float | None = None) -> dict:
+    """Build a fake melee result for the finals-aligned tuner objective.
 
-    Uses the real bracket names so the field-bracket guard (semis_mixed/real_field)
-    is exercised; min_margin / adversarial are diagnostics only and are not gated.
+    The 2026-06-09 gate optimizes ``raw_ae`` (the finals-proportional discriminator)
+    subject to a ``worst_robust_placement`` floor. ``per_bracket`` mean placements are
+    kept for diagnostics; ``worst_robust`` defaults to the worst per-bracket placement.
     """
+    wb = max(placements.values())
     return {
-        "worst_bracket_placement": max(placements.values()),
+        "worst_bracket_placement": wb,
+        "worst_robust_placement": wb if worst_robust is None else worst_robust,
+        "raw_ae": raw_ae,
         "min_margin": -100.0,
         "semis_mixed_score": 0.50,
         "per_bracket": {k: {"mean_placement": v} for k, v in placements.items()},
@@ -133,43 +137,35 @@ def _result(placements: dict[str, float]) -> dict:
 _FLAT = {"semis_mixed": 2, "all_aggressive": 2, "all_farmer": 2, "adversarial": 2, "real_field": 2}
 
 
-def test_rank_key_is_driven_by_mean_placement_not_worst_bracket():
-    incumbent = _result(_FLAT)
-    lower_mean_higher_worst = _result(
-        {"semis_mixed": 1, "all_aggressive": 1, "all_farmer": 1, "real_field": 1, "adversarial": 4})
-    higher_mean_lower_worst = _result(
-        {"semis_mixed": 3, "all_aggressive": 3, "all_farmer": 3, "adversarial": 3, "real_field": 3})
-    # mean 1.6 (worst 4) ranks BETTER than mean 3.0 (worst 3): mean is the primary objective.
-    assert rank_key(lower_mean_higher_worst, incumbent) < rank_key(higher_mean_lower_worst, incumbent)
-    assert rank_key(lower_mean_higher_worst, incumbent)[0] == 1.6
+def test_rank_key_maximizes_raw_ae_when_placement_floor_met():
+    incumbent = _result(_FLAT, raw_ae=200.0, worst_robust=2.0)
+    higher_rawae = _result(_FLAT, raw_ae=260.0, worst_robust=2.0)
+    lower_rawae = _result(_FLAT, raw_ae=210.0, worst_robust=2.0)
+    # Placement floor held by both -> higher raw_ae (the discriminator) ranks BETTER.
+    assert rank_key(higher_rawae, incumbent) < rank_key(lower_rawae, incumbent)
 
 
-def test_rank_key_field_regression_breaks_ties_when_means_match():
-    incumbent = _result(_FLAT)
-    clean = _result(_FLAT)  # mean 2.0, no field regression
-    spiky = _result(
-        {"semis_mixed": 1, "all_aggressive": 1, "all_farmer": 1, "adversarial": 3, "real_field": 4})
-    # both mean 2.0; `spiky` regresses real_field (2 -> 4) so it ranks WORSE on the secondary term.
-    assert rank_key(clean, incumbent) < rank_key(spiky, incumbent)
-    assert rank_key(clean, incumbent)[1] == 0.0
-    assert rank_key(spiky, incumbent)[1] == 2.0
+def test_rank_key_penalizes_placement_floor_violation_over_raw_ae():
+    incumbent = _result(_FLAT, raw_ae=200.0, worst_robust=2.0)
+    # Huge reward but robust placement regresses beyond tolerance: must rank WORSE
+    # than a modest-reward candidate that holds the placement floor.
+    reward_but_regresses = _result(_FLAT, raw_ae=400.0, worst_robust=3.5)
+    holds_floor = _result(_FLAT, raw_ae=210.0, worst_robust=2.0)
+    assert rank_key(holds_floor, incumbent) < rank_key(reward_but_regresses, incumbent)
 
 
-def test_promotion_ok_requires_mean_gain_and_no_field_bracket_regression():
-    incumbent = _result(_FLAT)  # mean 2.0
-    promotable = _result(
-        {"semis_mixed": 2, "all_aggressive": 1, "all_farmer": 1, "adversarial": 1, "real_field": 2})
-    no_mean_gain = _result(_FLAT)
-    field_regress = _result(
-        {"semis_mixed": 3.5, "all_aggressive": 1, "all_farmer": 1, "adversarial": 1, "real_field": 1})
-    within_tol = _result(
-        {"semis_mixed": 2.2, "all_aggressive": 1, "all_farmer": 1, "adversarial": 1, "real_field": 1})
+def test_promotion_ok_requires_rawae_gain_and_placement_floor():
+    incumbent = _result(_FLAT, raw_ae=200.0, worst_robust=2.0)
+    promotable = _result(_FLAT, raw_ae=240.0, worst_robust=2.0)
+    no_rawae_gain = _result(_FLAT, raw_ae=200.0, worst_robust=2.0)
+    placement_regress = _result(_FLAT, raw_ae=300.0, worst_robust=3.0)
+    within_tol = _result(_FLAT, raw_ae=240.0, worst_robust=2.2)
     assert promotion_ok(promotable, incumbent) is True
-    # mean ties incumbent -> not strictly better -> not promotable.
-    assert promotion_ok(no_mean_gain, incumbent) is False
-    # mean improves (1.5) but semis_mixed collapses 2 -> 3.5 (beyond tol): field guard rejects it.
-    assert promotion_ok(field_regress, incumbent) is False
-    # small field wobble (2 -> 2.2) is inside the noise tolerance: still promotable.
+    # raw_ae ties incumbent -> not strictly better -> not promotable.
+    assert promotion_ok(no_rawae_gain, incumbent) is False
+    # raw_ae improves but worst_robust_placement regresses beyond tol -> floor rejects.
+    assert promotion_ok(placement_regress, incumbent) is False
+    # small placement wobble (2 -> 2.2) is inside the noise tolerance: still promotable.
     assert promotion_ok(within_tol, incumbent) is True
 
 
