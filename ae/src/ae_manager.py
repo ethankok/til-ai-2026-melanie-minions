@@ -2449,7 +2449,7 @@ class AEManager:
                     break
 
         base_location = self.base_location or self._location(observation.get("base_location"))
-        if base_location is not None and base_location in bomb_blast:
+        if self._own_base_vetoes_bomb(base_location, bomb_blast):
             return False
 
         # Predictive bombing: bomb when *multiple* enemies are immediately
@@ -2536,7 +2536,7 @@ class AEManager:
         if not tactical_target and not wall_to_open:
             return False
         escape_target = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER, danger)
-        if escape_target is None:
+        if escape_target is None and self._escape_required_for_bomb():
             return False
 
         prior_bomb = self.known_bombs.get(location)
