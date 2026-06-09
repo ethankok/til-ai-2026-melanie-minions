@@ -2196,7 +2196,18 @@ class AEManager:
         return False
 
     def _danger_cells(self) -> set[tuple[int, int]]:
-        danger: set[tuple[int, int]] = set()
+        if self.time_danger_enabled:
+            # Chain-corrected near-window (t <= 2): same reaction horizon as
+            # the legacy set, but an enemy bomb chained to fire within it is
+            # now included even if its naive timer hid it. Horizon stays <=2
+            # deliberately -- a larger flat avoidance set is the over-caution
+            # that craters the brackets we already win.
+            layers = self._danger_layers()
+            danger: set[tuple[int, int]] = set()
+            for t in range(0, min(2, self.danger_horizon) + 1):
+                danger.update(layers[t])
+            return danger
+        danger = set()
         for bomb_pos, data in self.known_bombs.items():
             timer = int(data.get("timer", self.BOMB_TIMER))
             if timer > 2:

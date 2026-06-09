@@ -103,3 +103,44 @@ def test_on_fire_at_predicate():
     assert m._on_fire_at((5, 5), 1) is False  # not yet
     assert m._on_fire_at((5, 5), 99) is False  # beyond horizon -> safe
     assert m._on_fire_at((0, 0), 2) is False  # far cell never on fire
+
+
+# --- Task 3: _danger_cells flag-gated, chain-corrected ---
+
+def test_danger_cells_off_equals_legacy():
+    # Flag OFF: only bombs with naive timer <= 2 contribute, no chain logic.
+    m = _open_grid_manager()  # flag defaults OFF
+    m.known_bombs = {
+        (5, 5): {"timer": 2, "own": False, "last_step": 5},
+        (10, 10): {"timer": 4, "own": False, "last_step": 5},  # >2, ignored
+    }
+    assert m._danger_cells() == m._blast_cells((5, 5))
+
+
+def test_danger_cells_on_equals_off_when_no_chains(monkeypatch):
+    monkeypatch.setenv("AE_TIME_DANGER", "1")
+    m = _open_grid_manager()
+    m.known_bombs = {
+        (5, 5): {"timer": 2, "own": False, "last_step": 5},
+        (10, 10): {"timer": 4, "own": False, "last_step": 5},
+    }
+    # With no chains, d == timer, so the <=2 slice matches legacy exactly.
+    assert m._danger_cells() == m._blast_cells((5, 5))
+
+
+def test_danger_cells_on_includes_chain_corrected_cell(monkeypatch):
+    monkeypatch.setenv("AE_TIME_DANGER", "1")
+    m = _open_grid_manager()
+    # B's naive timer is 4 (legacy would IGNORE it), but A (timer 1) chains it
+    # to tick 1 -> it must now be in the danger set.
+    m.known_bombs = {
+        (5, 5): {"timer": 1, "own": False, "last_step": 5},
+        (5, 6): {"timer": 4, "own": False, "last_step": 5},
+    }
+    danger = m._danger_cells()
+    assert m._blast_cells((5, 6)) <= danger
+    # Sanity: legacy (flag OFF) would NOT include B's blast.
+    m_off = _open_grid_manager()
+    m_off.time_danger_enabled = False  # force OFF despite active monkeypatch
+    m_off.known_bombs = dict(m.known_bombs)
+    assert not (m._blast_cells((5, 6)) <= m_off._danger_cells())
