@@ -282,7 +282,11 @@ class AEManager:
         # verification is chain/arrival-aware. OFF == byte-identical. Spec:
         # docs/superpowers/specs/2026-06-08-ae-time-layered-danger-map-design.md
         self.time_danger_enabled = _env_flag("AE_TIME_DANGER", False)
-        self.danger_horizon = max(2, _env_int("AE_DANGER_HORIZON", 6))
+        # Floor the horizon at BOMB_TIMER: the escape verifier checks arrival
+        # ticks up to BOMB_TIMER, and _on_fire_at treats ticks beyond the last
+        # layer as safe, so a shorter horizon would silently blind the escape
+        # check to a timer==BOMB_TIMER bomb at its arrival tick.
+        self.danger_horizon = max(self.BOMB_TIMER, _env_int("AE_DANGER_HORIZON", 6))
         # Stun tax (AE_STUN_TAX, default OFF). A freeze opportunity-cost penalty
         # on farming-target paths: scales the existing path-threat penalty for
         # ITEM kinds only, so we can ask "does the farming race want more

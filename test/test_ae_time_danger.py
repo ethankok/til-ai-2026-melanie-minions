@@ -47,6 +47,14 @@ def test_danger_horizon_env_override(monkeypatch):
     assert AEManager().danger_horizon == 8
 
 
+def test_danger_horizon_floored_at_bomb_timer(monkeypatch):
+    # The horizon must never drop below the escape-verifier window (BOMB_TIMER),
+    # else _on_fire_at would treat an arrival-tick==BOMB_TIMER bomb as safe.
+    monkeypatch.setenv("AE_DANGER_HORIZON", "1")
+    m = AEManager()
+    assert m.danger_horizon == m.BOMB_TIMER == 3
+
+
 def test_danger_layers_cache_slot_exists():
     assert AEManager()._danger_layers_cache is None
 
@@ -172,12 +180,13 @@ def test_escape_on_avoids_cell_on_fire_at_arrival(monkeypatch):
     # arrival and must be rejected as the escape cell.
     m.known_bombs = {(8, 5): {"timer": 3, "own": False, "last_step": 5}}
     cell = m._safe_escape_within((5, 5), own_blast, m.BOMB_TIMER)
-    # (8,5) is the bomb cell itself (solid / on fire); a correct escape must
-    # not be (8,5) and must not be a cell on fire at its arrival tick.
-    if cell is not None:
-        # arrival tick == Manhattan distance on the open grid
-        arrival = abs(cell[0] - 5) + abs(cell[1] - 5)
-        assert not m._on_fire_at(cell, arrival)
+    # On an open grid with one enemy bomb, a safe escape always exists, so the
+    # verifier must return a cell (not None) -- and it must not be (8,5) nor any
+    # cell on fire at its arrival tick.
+    assert cell is not None
+    # arrival tick == Manhattan distance on the open grid
+    arrival = abs(cell[0] - 5) + abs(cell[1] - 5)
+    assert not m._on_fire_at(cell, arrival)
 
 
 def test_escape_on_returns_none_when_fully_trapped(monkeypatch):
