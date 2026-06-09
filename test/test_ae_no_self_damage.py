@@ -330,3 +330,57 @@ def test_no_self_damage_takes_precedence_over_basekill(monkeypatch):
     m.enemy_bases = [(0, 0)]                       # no base in blast
     assert m._escape_required_for_bomb(blast) is False    # full relaxation wins
     assert m._own_base_vetoes_bomb((8, 8), blast) is False
+
+
+# --- basekill-noescape: behaviour ---
+
+def test_spb_basekill_places_base_kill_when_trapped(monkeypatch):
+    monkeypatch.setenv("AE_BASEKILL_NOESCAPE", "1")
+    m = _open_grid_manager()
+    loc = (8, 8)
+    m.enemy_bases = [(9, 8)]                       # enemy BASE in blast
+    m.seen = set(m._blast_cells(loc))               # trapped
+    assert m._should_place_bomb(_spb_obs(), loc, None, set()) is True
+
+
+def test_spb_basekill_vetoes_speculative_when_trapped(monkeypatch):
+    monkeypatch.setenv("AE_BASEKILL_NOESCAPE", "1")
+    m = _open_grid_manager()
+    loc, step = (8, 8), 5
+    m.last_step = step
+    m.enemy_bases = []                              # NO enemy base
+    m.enemy_agents = {(9, 8): step}                 # only a speculative agent target
+    m.seen = set(m._blast_cells(loc))               # trapped
+    # speculative bomb still requires escape -> vetoed
+    assert m._should_place_bomb(_spb_obs(), loc, None, set()) is False
+
+
+def test_spb_basekill_places_with_own_base_in_blast_for_kill(monkeypatch):
+    monkeypatch.setenv("AE_BASEKILL_NOESCAPE", "1")
+    m = _open_grid_manager()
+    loc = (8, 8)
+    m.enemy_bases = [(9, 8)]                         # enemy base in blast
+    m.base_location = (8, 8)                         # own base in blast too
+    assert m._should_place_bomb(_spb_obs(), loc, None, set()) is True
+
+
+def test_spb_basekill_still_vetoes_in_enemy_danger(monkeypatch):
+    monkeypatch.setenv("AE_BASEKILL_NOESCAPE", "1")
+    m = _open_grid_manager()
+    loc = (8, 8)
+    m.enemy_bases = [(9, 8)]
+    assert m._should_place_bomb(_spb_obs(), loc, None, {loc}) is False  # real guard intact
+
+
+def test_plan_reward_basekill_credits_base_without_escape(monkeypatch):
+    target = (8, 8)
+    path = [(8, 10), (8, 9), (8, 8)]
+    monkeypatch.delenv("AE_BASEKILL_NOESCAPE", raising=False)
+    off = _open_grid_manager(); off.enemy_bases = [target]; off.team_bombs = 1
+    off.seen = set(off._blast_cells((8, 9)))
+    monkeypatch.setenv("AE_BASEKILL_NOESCAPE", "1")
+    on = _open_grid_manager(); on.enemy_bases = [target]; on.team_bombs = 1
+    on.seen = set(on._blast_cells((8, 9)))
+    v_off = off._project_plan_reward((8, 10), target, "enemy_base", path)
+    v_on = on._project_plan_reward((8, 10), target, "enemy_base", path)
+    assert v_on > v_off

@@ -489,7 +489,7 @@ class AEManager:
                             escape = self._safe_escape_within(
                                 location, bomb_blast, self.BOMB_TIMER
                             )
-                            if escape is not None or not self._escape_required_for_bomb():
+                            if escape is not None or not self._escape_required_for_bomb(bomb_blast):
                                 self.known_bombs[location] = {
                                     "timer": self.BOMB_TIMER,
                                     "own": True,
@@ -1095,7 +1095,7 @@ class AEManager:
             blast = self._blast_cells(bomb_from)
             if target in blast and (
                 self._lookahead_escape(bomb_from, blast, self.BOMB_TIMER) is not None
-                or not self._escape_required_for_bomb()
+                or not self._escape_required_for_bomb(blast)
             ):
                 base_value = (
                     self.SHARED_CREDIT_BASE_VALUE if self.tier1_shared_credit else 55.0
@@ -1559,7 +1559,7 @@ class AEManager:
 
             if base_safe and (enemy_base_hit or enemy_agent_hit):
                 escape = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER)
-                if escape is not None or not self._escape_required_for_bomb():
+                if escape is not None or not self._escape_required_for_bomb(bomb_blast):
                     # Mirror the side effects of _should_place_bomb so escape
                     # mode kicks in next turn.
                     self.known_bombs[location] = {
@@ -1927,7 +1927,7 @@ class AEManager:
                     continue
                 if (
                     self._lookahead_escape(pos, blast, self.BOMB_TIMER) is None
-                    and self._escape_required_for_bomb()
+                    and self._escape_required_for_bomb(blast)
                 ):
                     continue
             legal.append(action)
@@ -1957,7 +1957,7 @@ class AEManager:
                 return None
             if (
                 self._lookahead_escape(state.pos, blast, self.BOMB_TIMER) is None
-                and self._escape_required_for_bomb()
+                and self._escape_required_for_bomb(blast)
             ):
                 return None
             bombs.append((state.pos[0], state.pos[1], self.BOMB_TIMER))
@@ -2564,7 +2564,7 @@ class AEManager:
         if not tactical_target and not wall_to_open:
             return False
         escape_target = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER, danger)
-        if escape_target is None and self._escape_required_for_bomb():
+        if escape_target is None and self._escape_required_for_bomb(bomb_blast):
             return False
 
         prior_bomb = self.known_bombs.get(location)
