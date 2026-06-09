@@ -8,6 +8,8 @@ damages its placer or the placer's own base. OFF == byte-identical.
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.append(str(Path(__file__).resolve().parents[1] / "ae" / "src"))
 
 from ae_manager import AEManager, _LookaheadState  # noqa: E402
@@ -65,6 +67,7 @@ def test_env_placer_takes_no_self_damage():
     Drives the real til_environment through detonation and asserts health is
     unchanged. Pins the premise the whole lever rests on.
     """
+    pytest.importorskip("til_environment")  # skip where the submodule isn't installed
     import numpy as np
     from til_environment import bomberman_env
     from til_environment.config import default_config
