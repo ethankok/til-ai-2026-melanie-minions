@@ -191,3 +191,25 @@ def test_escape_on_returns_none_when_fully_trapped(monkeypatch):
     m._danger_layers_cache = [set(full) for _ in range(m.danger_horizon + 1)]
     cell = m._safe_escape_within((5, 5), own_blast, m.BOMB_TIMER)
     assert cell is None
+
+
+# --- Task 5: flag-OFF byte-identical guard ---
+
+def test_flag_off_danger_and_escape_match_legacy_with_chains():
+    # Even with a chain present, flag OFF must behave EXACTLY like legacy:
+    # _danger_cells ignores timer>2, escape ignores enemy bombs (danger=None).
+    m = _open_grid_manager()  # OFF
+    m.known_bombs = {
+        (5, 5): {"timer": 1, "own": False, "last_step": 5},
+        (5, 6): {"timer": 4, "own": False, "last_step": 5},  # chained when ON
+    }
+    # Legacy danger == only bombs with naive timer <= 2.
+    legacy = set()
+    for pos, d in m.known_bombs.items():
+        if int(d["timer"]) <= 2:
+            legacy.update(m._blast_cells(pos))
+    assert m._danger_cells() == legacy
+    # Escape with danger=None ignores the enemy bomb entirely (legacy path).
+    own_blast = m._blast_cells((5, 5))
+    cell = m._safe_escape_within((5, 5), own_blast, m.BOMB_TIMER)
+    assert cell is not None and cell not in own_blast
