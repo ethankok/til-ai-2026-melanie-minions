@@ -276,6 +276,13 @@ class AEManager:
         self.contention_pfloor = min(1.0, max(0.0, _env_float("AE_CONTENTION_PFLOOR", 0.15)))
         self.contention_topen = _env_int("AE_CONTENTION_TOPEN", 40)
         self.contention_tfresh = _env_int("AE_CONTENTION_TFRESH", 3)
+        # Time-layered danger map (AE_TIME_DANGER, default OFF). Builds
+        # per-tick lethality layers[t] from known_bombs with enemy-bomb chain
+        # resolution, so the danger set is chain-corrected and bomb-escape
+        # verification is chain/arrival-aware. OFF == byte-identical. Spec:
+        # docs/superpowers/specs/2026-06-08-ae-time-layered-danger-map-design.md
+        self.time_danger_enabled = _env_flag("AE_TIME_DANGER", False)
+        self.danger_horizon = max(2, _env_int("AE_DANGER_HORIZON", 6))
         # Stun tax (AE_STUN_TAX, default OFF). A freeze opportunity-cost penalty
         # on farming-target paths: scales the existing path-threat penalty for
         # ITEM kinds only, so we can ask "does the farming race want more
@@ -380,6 +387,7 @@ class AEManager:
         self._age_bombs(step)
         # Per-turn caches; walls/bombs can only change once per turn from new obs.
         self._blast_cache = {}
+        self._danger_layers_cache = None
         self.last_step = step
         self.team_bombs = self._as_int(observation.get("team_bombs"), default=0)
 
@@ -590,6 +598,8 @@ class AEManager:
         self.last_lookahead_path = ()
         # Per-turn blast cell cache; cleared at the start of every ae() call.
         self._blast_cache: dict[tuple[int, int], frozenset[tuple[int, int]]] = {}
+        # Per-turn cache for the time-layered danger map (rebuilt each ae()).
+        self._danger_layers_cache: list[set[tuple[int, int]]] | None = None
         # Tier-1 #3: track recent kills so we can plant a follow-up bomb
         # timed for the enemy's respawn. (pos, unfreeze_step).
         self.recent_kills: list[tuple[tuple[int, int], int]] = []
