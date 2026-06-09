@@ -169,7 +169,8 @@ def test_dominant_bomb_on_places_when_trapped(monkeypatch):
     m.seen = set(m._blast_cells(loc))         # trapped -> no escape
     obs = {"action_mask": [1] * 6, "team_bombs": 1}
     # direction arg: any legal facing; danger empty; low_health False.
-    action = m._dominant_action(obs, loc, m.FORWARD, set(), False)
+    # Note: method is _try_dominant_action (returns int | None; None = no dominant move)
+    action = m._try_dominant_action(obs, loc, m.FORWARD, set(), False)
     assert action == m.PLACE_BOMB
 
 
@@ -180,7 +181,7 @@ def test_dominant_bomb_off_skips_when_trapped():
     m.enemy_agents = {(9, 8): step}
     m.seen = set(m._blast_cells(loc))
     obs = {"action_mask": [1] * 6, "team_bombs": 1}
-    action = m._dominant_action(obs, loc, m.FORWARD, set(), False)
+    action = m._try_dominant_action(obs, loc, m.FORWARD, set(), False)
     assert action != m.PLACE_BOMB
 
 

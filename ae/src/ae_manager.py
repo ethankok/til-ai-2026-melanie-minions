@@ -477,13 +477,13 @@ class AEManager:
                     else:
                         bomb_blast = self._blast_cells(location)
                         base = self.base_location or self._location(observation.get("base_location"))
-                        if base is not None and base in bomb_blast:
+                        if self._own_base_vetoes_bomb(base, bomb_blast):
                             pass
                         else:
                             escape = self._safe_escape_within(
                                 location, bomb_blast, self.BOMB_TIMER
                             )
-                            if escape is not None:
+                            if escape is not None or not self._escape_required_for_bomb():
                                 self.known_bombs[location] = {
                                     "timer": self.BOMB_TIMER,
                                     "own": True,
@@ -1538,7 +1538,7 @@ class AEManager:
                 and location not in danger):
             bomb_blast = self._blast_cells(location)
             base_loc = self.base_location
-            base_safe = base_loc is None or base_loc not in bomb_blast
+            base_safe = not self._own_base_vetoes_bomb(base_loc, bomb_blast)
 
             enemy_base_hit = any(pos in bomb_blast for pos in self.enemy_bases)
             # Fresh enemy_agent in blast — only this-step sightings to avoid
@@ -1552,7 +1552,7 @@ class AEManager:
 
             if base_safe and (enemy_base_hit or enemy_agent_hit):
                 escape = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER)
-                if escape is not None:
+                if escape is not None or not self._escape_required_for_bomb():
                     # Mirror the side effects of _should_place_bomb so escape
                     # mode kicks in next turn.
                     self.known_bombs[location] = {
