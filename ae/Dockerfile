@@ -247,6 +247,31 @@ ENV AE_LEAD_RECON_DISCOUNT=0
 # on the live seed + residual overfit risk → deploy = semis2b-u75 at default
 # weights. See ae/NOTES.md "Planner-weight CEM tuning" + the match-log memory.
 
+# ── g02-sample-08 CEM finalist A/B (10 Jun 2026) ──────────────────────────────
+# raw_ae-retargeted CEM tuner → candidate `g02-sample-08`. PASSED all three
+# finals-aligned LOCAL gates vs incumbent semis2b-u75 on FRESH seeds
+# (training/ae/validate_g02_finalist.py): raw_ae 316 vs 239 (Δ+77), worst-robust
+# placement 1.46 vs 3.92, held-out curry/peroxide composition gap 0.86 vs 0.66
+# (within +0.5 tol; held-out absolute placement 2.35 vs 3.61). UNLIKE the reverted
+# g00-fixed-03 glass cannon (tether≈0, base pegged), this is a BALANCED profile
+# (tether_weight 1.31 > incumbent 0.5, base 80 < 100) that retains defense.
+# The 10 ENVs below OVERRIDE the C+bomb7 defaults above via Docker last-wins.
+# ⚠ STILL NEEDS A HARDWARE A/B before it's a real deploy: build a finals image,
+# run vs semis2b-u75-default on the fixed finals seed, compare raw_ae. Ship ONLY
+# if it wins/ties on hardware (the synthetic gate inverted on hardware once).
+# REVERT if it loses: `git revert <this commit>` → back to semis2b-u75 defaults.
+ENV AE_ITEM_MISSION_VALUE=62.583312
+ENV AE_ITEM_RESOURCE_VALUE=57.370403
+ENV AE_ENEMY_BASE_VALUE=80.370903
+ENV AE_DIST_PENALTY=1.331559
+ENV AE_PATH_THREAT_PENALTY=2.703109
+ENV AE_DIJKSTRA_BOMB_COST=8.146925
+ENV AE_LEAD_TETHER_HEALTH=52.902480
+ENV AE_LEAD_TETHER_WEIGHT=1.314557
+ENV AE_CONTENTION_SCALE=2.967429
+ENV AE_CONTENTION_PFLOOR=0.093669
+# ──────────────────────────────────────────────────────────────────────────────
+
 # Installs your dependencies.
 RUN pip install -U pip
 COPY requirements.txt .
