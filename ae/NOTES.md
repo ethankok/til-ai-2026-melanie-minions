@@ -24,6 +24,26 @@
 
 ## Read this first
 
+### ⛔ `AE_NO_SELF_DAMAGE` × g02 re-gate (10 June 2026) — flag INVERTS under the new weights; do NOT flip for Finals
+
+The 9-Jun noselfdmg gate numbers (+125 real_field / +212 adversarial / −275
+semis_mixed) were measured on the OLD deploy profile; the deploy is now g02
+(tether 1.31, base 80). Re-gated flag ON vs OFF with both candidates on the full
+g02 spec (`training/ae/gate_noselfdmg_g02.py`, paired per (bracket, seed),
+rounds=6, checkpoint `data/noselfdmg-g02-gate.jsonl`). Run was killed repeatedly
+(machine-side), but the salvaged paired prefix is decisive — **all 6 paired
+comparisons negative, and the inversion is exactly in the flag's former home
+brackets**: real_field (n=4 seeds) raw_ae ~331→~255 (**Δ−76**, place 1.38→1.67);
+adversarial (n=2) raw_ae ~300→~93 (**Δ−207**, place 1.92→**5.8, last**).
+Mechanism fits the weights: g02's higher tether + lower base value already
+rebalanced toward defend-while-farming; un-vetoed speculative bombing fights the
+tether and forfeits both. **Verdict: the "observe the field, flip
+AE_NO_SELF_DAMAGE=1 for Finals if opponents are active" playbook is DEAD under
+g02 — flag stays OFF in all regimes.** (Was always OFF in the deploy; this
+closes the conditional bet too.) Incomplete tails (semis_mixed ON half,
+all_aggressive/all_farmer, held-outs) abandoned at the 10-Jun submission
+deadline — only re-run if the deploy weights change again.
+
 ### 🟢 DEPLOY CHANGED → `g02-sample-08` CEM weights (10 June 2026) — first candidate to clear EVERY gate; adopted as current best
 
 **New deploy = `confpol-semis2b-u75` checkpoint + `g02-sample-08` planner weights**
