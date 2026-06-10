@@ -246,6 +246,12 @@ class CVManager:
         self.second_merge_iou = _env_float("CV_SECOND_MERGE_IOU", 0.95)
         self.second_min_detections = max(0, _env_int("CV_SECOND_MIN_DETECTIONS", 0))
 
+        # Input purification settings (off by default)
+        self.purify = _env_bool("CV_PURIFY", default=False)
+        self.purify_jpeg_quality = _env_int("CV_PURIFY_JPEG_QUALITY", 75)
+        self.purify_blur_sigma = _env_float("CV_PURIFY_BLUR_SIGMA", 0.5)
+        self.purify_min_scale = _env_float("CV_PURIFY_MIN_SCALE", 1.0)
+
         # OWLv2 zero-shot settings. CV_CONF is reused as the text-conditioned
         # detection threshold so sweeps can compare YOLO/OWLv2 with one knob.
         self.owlv2_model_id = os.environ.get("CV_OWLV2_MODEL_ID")
@@ -329,7 +335,9 @@ class CVManager:
                 f"second_min_detections={self.second_min_detections} "
                 f"owlv2_prompts={len(self.owlv2_prompts)} "
                 f"owlv2_nms_iou={self.owlv2_nms_iou} "
-                f"owlv2_local_files_only={self.owlv2_local_files_only}",
+                f"owlv2_local_files_only={self.owlv2_local_files_only} "
+                f"purify={self.purify} purify_jpeg_quality={self.purify_jpeg_quality} "
+                f"purify_blur_sigma={self.purify_blur_sigma} purify_min_scale={self.purify_min_scale}",
                 flush=True,
             )
         except Exception as exc:
@@ -762,6 +770,40 @@ class CVManager:
                 unique.append(rect)
         return unique
 
+    def _purify_image(self, img: Image.Image) -> tuple[Image.Image, float, float]:
+        """Apply input purification (resize, Gaussian blur, JPEG re-encoding) to defend against adversarial noise."""
+        orig_w, orig_h = img.size
+        scale_x, scale_y = 1.0, 1.0
+        
+        try:
+            # 1. Random Resizing
+            if self.purify_min_scale < 1.0:
+                import random
+                scale = random.uniform(self.purify_min_scale, 1.0)
+                new_w = max(1, int(round(orig_w * scale)))
+                new_h = max(1, int(round(orig_h * scale)))
+                img = img.resize((new_w, new_h), resample=Image.BILINEAR)
+                scale_x = new_w / orig_w
+                scale_y = new_h / orig_h
+                
+            # 2. Gaussian Blur
+            if self.purify_blur_sigma > 0.0:
+                from PIL import ImageFilter
+                img = img.filter(ImageFilter.GaussianBlur(radius=self.purify_blur_sigma))
+                
+            # 3. JPEG Re-encoding (compresses high-frequency noise)
+            if 0 < self.purify_jpeg_quality <= 100:
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=self.purify_jpeg_quality)
+                buf.seek(0)
+                img = Image.open(buf)
+                img.load()  # Force loading the image data so the stream can close
+        except Exception as exc:
+            print(f"[CVManager] purification failed: {exc}, returning original", flush=True)
+            return img, 1.0, 1.0
+            
+        return img, scale_x, scale_y
+
     def _gather_detections(
         self, img: Image.Image
     ) -> tuple[list[list[float]], list[int], list[float]]:
@@ -950,6 +992,11 @@ class CVManager:
         if self.model is None:
             return []
 
+        orig_w, orig_h = img.size
+        scale_x, scale_y = 1.0, 1.0
+        if self.purify:
+            img, scale_x, scale_y = self._purify_image(img)
+
         try:
             xyxy_list, cls_list, conf_list = self._gather_detections(img)
         except Exception as exc:
@@ -1002,6 +1049,7 @@ class CVManager:
                 f"[CVManager] first inference: family={self.loaded_model_family} "
                 f"tile_mode={self.tile_mode} "
                 f"second_pass_used={self._last_second_pass_used} "
+                f"purify_used={self.purify} "
                 f"raw={len(xyxy_list)} kept={len(xyxy)}",
                 flush=True,
             )
@@ -1015,10 +1063,19 @@ class CVManager:
                 continue
 
             x1, y1, x2, y2 = (float(v) for v in box)
-            x1 = max(0.0, min(x1, float(width)))
-            y1 = max(0.0, min(y1, float(height)))
-            x2 = max(0.0, min(x2, float(width)))
-            y2 = max(0.0, min(y2, float(height)))
+            
+            # Map back to original image scale
+            x1 = x1 / scale_x
+            y1 = y1 / scale_y
+            x2 = x2 / scale_x
+            y2 = y2 / scale_y
+            
+            # Clamp to original image size
+            x1 = max(0.0, min(x1, float(orig_w)))
+            y1 = max(0.0, min(y1, float(orig_h)))
+            x2 = max(0.0, min(x2, float(orig_w)))
+            y2 = max(0.0, min(y2, float(orig_h)))
+            
             w = x2 - x1
             h = y2 - y1
             if w <= 0.0 or h <= 0.0:
