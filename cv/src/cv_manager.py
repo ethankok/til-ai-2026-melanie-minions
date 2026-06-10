@@ -314,14 +314,21 @@ class CVManager:
             return
 
         try:
-            self.model = self._load_model(self.model_path)
+            model_paths = [p.strip() for p in self.model_path.split(",") if p.strip()]
+            self.models = []
+            for path in model_paths:
+                model = self._load_model(path)
+                if model is not None:
+                    self.models.append(model)
+            self.model = self.models[0] if self.models else None
+            
             model_ref = (
                 self.owlv2_loaded_model_ref
                 if self.loaded_model_family == "owlv2"
                 else self.model_path
             )
             print(
-                f"[CVManager] loaded {model_ref} family={self.loaded_model_family} "
+                f"[CVManager] loaded {model_ref} num_models={len(self.models)} family={self.loaded_model_family} "
                 f"conf={self.conf} iou={self.iou} imgsz={self.imgsz} "
                 f"max_det={self.max_det} augment={self.augment} half={self.half} "
                 f"cross_class_nms_iou={self.cross_class_nms_iou} "
@@ -571,6 +578,7 @@ class CVManager:
         augment: bool,
         conf_threshold: float | None = None,
         iou_threshold: float | None = None,
+        model: Any | None = None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Run a single Ultralytics forward pass and return (xyxy, cls, conf).
 
@@ -588,7 +596,8 @@ class CVManager:
         }
         if self.device:
             kwargs["device"] = self.device
-        result = self.model.predict(**kwargs)[0]
+        target_model = model if model is not None else self.model
+        result = target_model.predict(**kwargs)[0]
         boxes = getattr(result, "boxes", None)
         if boxes is None or len(boxes) == 0:
             empty = np.zeros((0, 4), dtype=np.float32)
@@ -836,73 +845,73 @@ class CVManager:
         for rect in self._tile_offsets(width, height):
             x1, y1, x2, y2 = rect
             tile = img.crop(rect)
-            try:
-                xyxy, cls, conf = self._yolo_predict(
-                    tile, imgsz=self.tile_imgsz, augment=self.tile_augment
-                )
-            except Exception as exc:
-                print(f"[CVManager] tile {rect} failed: {exc}", flush=True)
-                continue
-            if xyxy.size == 0:
-                continue
-
-            tile_w = x2 - x1
-            tile_h = y2 - y1
-            margin = self.tile_edge_margin
-            for box, cls_value, conf_value in zip(xyxy, cls, conf):
-                bx1, by1, bx2, by2 = (float(v) for v in box)
-                # Reject boxes touching an internal tile edge (likely truncated).
-                touches_left = x1 > 0 and bx1 <= margin
-                touches_right = x2 < width and bx2 >= tile_w - margin
-                touches_top = y1 > 0 and by1 <= margin
-                touches_bot = y2 < height and by2 >= tile_h - margin
-                if touches_left or touches_right or touches_top or touches_bot:
+            for m in self.models:
+                try:
+                    xyxy, cls, conf = self._yolo_predict(
+                        tile, imgsz=self.tile_imgsz, augment=self.tile_augment, model=m
+                    )
+                except Exception as exc:
+                    print(f"[CVManager] tile {rect} failed: {exc}", flush=True)
                     continue
-                gx1 = bx1 + x1
-                gy1 = by1 + y1
-                gx2 = bx2 + x1
-                gy2 = by2 + y1
-                all_xyxy.append([gx1, gy1, gx2, gy2])
-                all_cls.append(int(cls_value))
-                all_conf.append(float(conf_value))
+                if xyxy.size == 0:
+                    continue
+
+                tile_w = x2 - x1
+                tile_h = y2 - y1
+                margin = self.tile_edge_margin
+                for box, cls_value, conf_value in zip(xyxy, cls, conf):
+                    bx1, by1, bx2, by2 = (float(v) for v in box)
+                    # Reject boxes touching an internal tile edge (likely truncated).
+                    touches_left = x1 > 0 and bx1 <= margin
+                    touches_right = x2 < width and bx2 >= tile_w - margin
+                    touches_top = y1 > 0 and by1 <= margin
+                    touches_bot = y2 < height and by2 >= tile_h - margin
+                    if touches_left or touches_right or touches_top or touches_bot:
+                        continue
+                    gx1 = bx1 + x1
+                    gy1 = by1 + y1
+                    gx2 = bx2 + x1
+                    gy2 = by2 + y1
+                    all_xyxy.append([gx1, gy1, gx2, gy2])
+                    all_cls.append(int(cls_value))
+                    all_conf.append(float(conf_value))
 
         # Full-image pass: required when tiling is off; configurable when on.
         if self.tile_grid is None or self.tile_full_pass:
-            try:
-                xyxy, cls, conf = self._yolo_predict(
-                    img, imgsz=self.imgsz, augment=self.augment
-                )
-            except Exception as exc:
-                print(f"[CVManager] full-image inference failed: {exc}", flush=True)
-                xyxy = np.zeros((0, 4), dtype=np.float32)
-                cls = np.zeros((0,), dtype=np.int64)
-                conf = np.zeros((0,), dtype=np.float32)
-            for box, cls_value, conf_value in zip(xyxy, cls, conf):
-                bx1, by1, bx2, by2 = (float(v) for v in box)
-                all_xyxy.append([bx1, by1, bx2, by2])
-                all_cls.append(int(cls_value))
-                all_conf.append(float(conf_value))
+            for m in self.models:
+                try:
+                    xyxy, cls, conf = self._yolo_predict(
+                        img, imgsz=self.imgsz, augment=self.augment, model=m
+                    )
+                except Exception as exc:
+                    print(f"[CVManager] full-image inference failed: {exc}", flush=True)
+                    continue
+                for box, cls_value, conf_value in zip(xyxy, cls, conf):
+                    bx1, by1, bx2, by2 = (float(v) for v in box)
+                    all_xyxy.append([bx1, by1, bx2, by2])
+                    all_cls.append(int(cls_value))
+                    all_conf.append(float(conf_value))
 
         if self.second_pass and len(all_xyxy) >= self.second_min_detections:
             self._last_second_pass_used = True
-            try:
-                xyxy, cls, conf = self._yolo_predict(
-                    img,
-                    imgsz=self.second_imgsz,
-                    augment=self.second_augment,
-                    conf_threshold=self.second_conf,
-                    iou_threshold=self.second_iou,
-                )
-            except Exception as exc:
-                print(f"[CVManager] second-pass inference failed: {exc}", flush=True)
-                xyxy = np.zeros((0, 4), dtype=np.float32)
-                cls = np.zeros((0,), dtype=np.int64)
-                conf = np.zeros((0,), dtype=np.float32)
-            for box, cls_value, conf_value in zip(xyxy, cls, conf):
-                bx1, by1, bx2, by2 = (float(v) for v in box)
-                all_xyxy.append([bx1, by1, bx2, by2])
-                all_cls.append(int(cls_value))
-                all_conf.append(float(conf_value) * self.second_score_scale)
+            for m in self.models:
+                try:
+                    xyxy, cls, conf = self._yolo_predict(
+                        img,
+                        imgsz=self.second_imgsz,
+                        augment=self.second_augment,
+                        conf_threshold=self.second_conf,
+                        iou_threshold=self.second_iou,
+                        model=m,
+                    )
+                except Exception as exc:
+                    print(f"[CVManager] second-pass inference failed: {exc}", flush=True)
+                    continue
+                for box, cls_value, conf_value in zip(xyxy, cls, conf):
+                    bx1, by1, bx2, by2 = (float(v) for v in box)
+                    all_xyxy.append([bx1, by1, bx2, by2])
+                    all_cls.append(int(cls_value))
+                    all_conf.append(float(conf_value) * self.second_score_scale)
 
         return all_xyxy, all_cls, all_conf
 
