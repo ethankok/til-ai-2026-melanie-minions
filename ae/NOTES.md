@@ -24,6 +24,46 @@
 
 ## Read this first
 
+### 🟢 DEPLOY CHANGED → `g02-sample-08` CEM weights (10 June 2026) — first candidate to clear EVERY gate; adopted as current best
+
+**New deploy = `confpol-semis2b-u75` checkpoint + `g02-sample-08` planner weights**
+(commit `68164b3` on `ethanAE`/`main`; 10 `ENV` lines override the C+bomb7 defaults
+via Docker last-wins). Core is UNCHANGED — same `bc.pt`=semis2b-u75, confpol gate,
+det5, `AE_CONTENTION=1`; only the 10 scalar planner weights move.
+
+**How it was selected.** The planner-weight CEM tuner was retargeted from mean-placement
+(the old, overfit-prone objective behind the reverted g00-fixed-03) to the **finals
+discriminator `raw_ae`** with a `worst_robust_placement` floor (commit `9f8e7dd`,
+`tune_planner_weights.py`; 18 tests). A ~6h campaign's auto-best (`g00-sample-01`) was a
+DOMINATED glass cannon (tether≈0, base pegged → semis_mixed placement craters for a
+noise-level raw_ae edge). Scanning all 40 candidates surfaced **`g02-sample-08`**: a
+BALANCED profile (tether_weight 1.31 > incumbent 0.5, base 80 < 100, keeps farming).
+
+**Gates passed (4, the first candidate ever to clear them all):**
+- **Local placement + raw_ae** (`validate_g02_finalist.py`, FRESH seeds 7/99 + 42/137):
+  raw_ae **316 vs 239** (Δ+77), worst-robust placement **1.46 vs 3.92** — Pareto-dominates
+  the incumbent on raw_ae across ALL 5 tune brackets.
+- **Held-out composition gap** (curry/peroxide): **0.86 vs 0.66**, +0.20 within the +0.5
+  tol; held-out ABSOLUTE placement **2.35 vs 3.61** (better on real-competitor blends).
+  This is the gate that killed g00-fixed-03 (gap +1.47); g02 passes cleanly.
+- **Cloud non-crater** (the independent OOD signal): `g02-sample-08-cemtuned` = **0.382 /
+  speed 0.746, 0/30 err** vs incumbent-det5 **~0.345** → **+0.037, did NOT crater** (g00
+  cratered to 0.279). Cloud is placement-blind/wrong-shape so it's a FLOOR not a selector,
+  but g02 clearing it removes the "overfits and craters like g00" risk.
+
+**`g03-sample-08` REJECTED (cloud sanity, separate branch `g03-cemtuned`):** a different
+balanced candidate, but `mission(50)`/`base(60)` were PEGGED at the search lower bounds
+(an overfit smell g02 lacks). Cloud **0.352** < g02 0.382 (barely above incumbent). Not
+pursued; branch kept as a record only.
+
+**⚠ Still owed (ideal, not blocking):** the **hardware raw_ae A/B** vs semis2b-default on
+the fixed finals seed remains the textbook final arbiter (the synthetic gate inverted on
+hardware once, for semis2c). User adopted g02 as the current best on the strength of the 4
+passed gates incl. the independent cloud non-crater. If a hardware run is available before
+the Semis match, run it as the final confirm. **Revert = `git revert 68164b3`** → back to
+semis2b-u75 at default weights (the 516/1st on-hardware performer). See
+[[project_ae_next_levers]] + `training/ae/data/g02-finalist-validation.json`.
+
 ### ⛔ opening_hybrid finals re-test (10 June 2026) — fixes the flat first-half but FAILS the worst-bracket selector → NO-GO, deploy unchanged
 
 Re-tested `AE_MODE=opening_hybrid` (the v2 confpol-correct opening book + confpol planner)
