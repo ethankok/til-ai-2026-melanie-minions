@@ -782,7 +782,11 @@ class CVManager:
                 scale = random.uniform(self.purify_min_scale, 1.0)
                 new_w = max(1, int(round(orig_w * scale)))
                 new_h = max(1, int(round(orig_h * scale)))
-                img = img.resize((new_w, new_h), resample=Image.BILINEAR)
+                try:
+                    resample_filter = Image.Resampling.BILINEAR
+                except AttributeError:
+                    resample_filter = Image.BILINEAR
+                img = img.resize((new_w, new_h), resample=resample_filter)
                 scale_x = new_w / orig_w
                 scale_y = new_h / orig_h
                 
