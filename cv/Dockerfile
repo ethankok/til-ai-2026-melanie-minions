@@ -10,7 +10,7 @@ FROM nvcr.io/nvidia/pytorch:25.11-py3
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
-ENV CV_MODEL_PATH=/workspace/models/cv/best.pt,/workspace/models/cv/plusval-v1.pt
+ENV CV_MODEL_PATH=/workspace/models/cv/best.pt
 ENV CV_MODEL_FAMILY=auto
 ENV CV_CATEGORY_MAP='[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]'
 ENV CV_CONF=0.20
@@ -31,7 +31,11 @@ ENV CV_SECOND_MIN_DETECTIONS=7
 ENV CV_OWLV2_MODEL_ID=google/owlv2-base-patch16-ensemble
 ENV CV_OWLV2_NMS_IOU=0.50
 ENV CV_OWLV2_LOCAL_FILES_ONLY=1
-ENV CV_PURIFY=True
+# Purification + ensembling capability is merged but OFF by default — keeping
+# the served model byte-for-byte identical to the pre-merge champion. Gate on
+# the Workbench (cloud + on-hardware A/B) before flipping CV_PURIFY=True or
+# adding a second model to CV_MODEL_PATH. See cv/NOTES.md "Input purification".
+ENV CV_PURIFY=False
 ENV CV_PURIFY_JPEG_QUALITY=80
 ENV CV_PURIFY_BLUR_SIGMA=0.0
 ENV CV_PURIFY_MIN_SCALE=1.0

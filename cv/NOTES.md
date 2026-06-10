@@ -43,6 +43,33 @@
   ceiling is content shift, not backbone.** Champion stays shipped. See the
   resolved RF-DETR section below. **Next CV lever: noise-robustness only.**
 
+### Input purification + multi-model ensembling — MERGED, DEFAULTS OFF (11 Jun)
+
+The `sq` branch (input-purification defense + multi-model ensembling) was merged
+to `main` on 11 Jun. **Both capabilities ship OFF by default — the served model
+is byte-for-byte the pre-merge champion** (`CV_PURIFY=False`, single
+`CV_MODEL_PATH=.../best.pt`). The merge is code-only; no behavior change, nothing
+re-submitted. What landed:
+
+- **`_purify_image` (`CV_PURIFY`)** — optional resize → Gaussian blur → JPEG
+  re-encode with bbox coords rescaled back to original dims. A counter to the
+  Finals Noise-task adversarial perturbation. Knobs: `CV_PURIFY_JPEG_QUALITY`,
+  `CV_PURIFY_BLUR_SIGMA`, `CV_PURIFY_MIN_SCALE` (the committed "Strategy A" preset
+  was JPEG-q80 only; blur/scale disabled).
+- **Multi-model ensembling** — `CV_MODEL_PATH` accepts a comma-separated list;
+  each model runs over tiles / full-image / second pass and detections are pooled
+  before NMS (naive concat, **not** WBF).
+- 3 mocked unit tests (`test/test_cv_purify.py`, `test/test_cv_ensemble.py`) green.
+
+**Ungated for deploy.** Before flipping `CV_PURIFY=True` or adding a 2nd model:
+the only candidate weight (`plusval-v1`) scored **0.640 — below champion 0.671**,
+so the ensemble is unvalidated and ~2× latency (Finals is per-batch 5s
+speed / 10s hard timeout — see [../CLAUDE.md](../CLAUDE.md)). The bar set earlier
+in this file still stands: an ensemble needs **≥ +0.025 cloud acc** to justify the
+latency. Gate on the Workbench (cloud + on-hardware A/B) first. If a 2nd model is
+added to `CV_MODEL_PATH`, confirm its weight is staged in the image — a missing
+path silently degrades to single-model (the loader filters `None`).
+
 ### The one problem that dominates CV: the local→cloud distribution shift
 
 Every YOLO submission shows a large, stable gap between local hard-held-out mAP
