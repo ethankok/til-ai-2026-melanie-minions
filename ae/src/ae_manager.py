@@ -16,6 +16,8 @@ import os
 import time
 from typing import Iterable
 
+from bomb_safety import BombSafety
+
 
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
@@ -373,6 +375,12 @@ class AEManager:
         # close. 18 backtrack/dead-end rationales clustered on this pattern.
         self.lead_recon_discount = _env_int("AE_LEAD_RECON_DISCOUNT", 0) > 0
         self.lead_recon_dist_mult = _env_float("AE_LEAD_RECON_DIST_MULT", 1.0)
+        # Bomb safety module: blast geometry, chain-resolved danger, escape
+        # search and commit/rollback. Operates on this manager's belief
+        # blackboard; the *_bomb/_danger/_escape methods below are thin
+        # delegators kept under their historical names for internal call
+        # sites and tests.
+        self.bomb_safety = BombSafety(self)
         self._reset_memory()
 
     # ------------------------------------------------------------------
@@ -2171,41 +2179,11 @@ class AEManager:
                 if step <= unfreeze + self.BOMB_TIMER + 1
             ]
 
+    # Bomb-safety delegators: canonical implementations live in
+    # bomb_safety.BombSafety; these keep the historical names for the
+    # planner's internal call sites and the test suite.
     def _danger_layers(self) -> list[set[tuple[int, int]]]:
-        """Per-tick lethality: ``layers[t]`` = cells on fire at relative future
-        tick ``t`` (0..danger_horizon), resolving enemy-bomb chains.
-
-        A bomb with ``timer = d`` detonates ``d`` of our decision-steps out
-        (line-141 semantics). If bomb B's cell is inside bomb A's blast and A
-        fires earlier, B detonates at A's tick; propagate this to a fixpoint so
-        transitive chains collapse to the earliest trigger. Cached per turn.
-        """
-        if self._danger_layers_cache is not None:
-            return self._danger_layers_cache
-        horizon = self.danger_horizon
-        # Resolved detonation tick per bomb (start from its own timer).
-        fire_tick: dict[tuple[int, int], int] = {
-            pos: int(data.get("timer", self.BOMB_TIMER))
-            for pos, data in self.known_bombs.items()
-        }
-        # Min-propagate earlier triggers through blast adjacency to a fixpoint.
-        changed = True
-        while changed:
-            changed = False
-            for a_pos, a_tick in list(fire_tick.items()):
-                blast_a = self._blast_cells(a_pos)
-                for b_pos in fire_tick:
-                    if b_pos == a_pos:
-                        continue
-                    if b_pos in blast_a and a_tick < fire_tick[b_pos]:
-                        fire_tick[b_pos] = a_tick
-                        changed = True
-        layers: list[set[tuple[int, int]]] = [set() for _ in range(horizon + 1)]
-        for pos, tick in fire_tick.items():
-            if 0 <= tick <= horizon:
-                layers[tick].update(self._blast_cells(pos))
-        self._danger_layers_cache = layers
-        return layers
+        return self.bomb_safety.danger_layers()
 
     def _on_fire_at(
         self,
@@ -2213,70 +2191,26 @@ class AEManager:
         tick: int,
         layers: list[set[tuple[int, int]]] | None = None,
     ) -> bool:
-        """True if ``cell`` is on fire at relative tick ``tick``. Ticks beyond
-        the horizon are treated as safe (the bomb resolves outside our window).
-        """
-        if layers is None:
-            layers = self._danger_layers()
-        if 0 <= tick < len(layers):
-            return cell in layers[tick]
-        return False
+        return self.bomb_safety.on_fire_at(cell, tick, layers)
 
     def _bomb_hits_enemy_base(self, blast: set[tuple[int, int]]) -> bool:
-        """True if any known enemy base lies in this bomb's blast."""
-        return any(b in blast for b in self.enemy_bases)
+        return self.bomb_safety.hits_enemy_base(blast)
 
     def _own_base_vetoes_bomb(
         self,
         base: tuple[int, int] | None,
         blast: set[tuple[int, int]],
     ) -> bool:
-        """True if our OWN base in ``blast`` should block placing a bomb. A bomb
-        never damages its placer's own-team base (env: same-team defenders
-        excluded, dynamics.py:695). Relaxed fully under AE_NO_SELF_DAMAGE, and
-        under AE_BASEKILL_NOESCAPE only when the bomb also hits an enemy base.
-        """
-        if self.no_self_damage:
-            return False
-        if self.basekill_noescape and self._bomb_hits_enemy_base(blast):
-            return False
-        return base is not None and base in blast
+        return self.bomb_safety.own_base_vetoes(base, blast)
 
     def _escape_required_for_bomb(
         self,
         blast: set[tuple[int, int]] | None = None,
     ) -> bool:
-        """Whether a verified own-bomb escape is required to place. The placer
-        takes zero self-damage (env-confirmed). Not required under
-        AE_NO_SELF_DAMAGE (all bombs); under AE_BASEKILL_NOESCAPE only for a bomb
-        whose blast contains an enemy base (speculative bombs still need escape).
-        """
-        if self.no_self_damage:
-            return False
-        if (self.basekill_noescape and blast is not None
-                and self._bomb_hits_enemy_base(blast)):
-            return False
-        return True
+        return self.bomb_safety.escape_required(blast)
 
     def _danger_cells(self) -> set[tuple[int, int]]:
-        if self.time_danger_enabled:
-            # Chain-corrected near-window (t <= 2): same reaction horizon as
-            # the legacy set, but an enemy bomb chained to fire within it is
-            # now included even if its naive timer hid it. Horizon stays <=2
-            # deliberately -- a larger flat avoidance set is the over-caution
-            # that craters the brackets we already win.
-            layers = self._danger_layers()
-            danger: set[tuple[int, int]] = set()
-            for t in range(0, min(2, self.danger_horizon) + 1):
-                danger.update(layers[t])
-            return danger
-        danger = set()
-        for bomb_pos, data in self.known_bombs.items():
-            timer = int(data.get("timer", self.BOMB_TIMER))
-            if timer > 2:
-                continue
-            danger.update(self._blast_cells(bomb_pos))
-        return danger
+        return self.bomb_safety.danger_cells()
 
     def _enemy_bomb_only_escape(
         self,
@@ -2380,71 +2314,17 @@ class AEManager:
         return threats
 
     def _blast_cells(self, bomb_pos: tuple[int, int]) -> set[tuple[int, int]]:
-        cached = self._blast_cache.get(bomb_pos)
-        if cached is not None:
-            return set(cached)
-        bx, by = bomb_pos
-        cells = set()
-        for x in range(bx - self.BOMB_RADIUS, bx + self.BOMB_RADIUS + 1):
-            for y in range(by - self.BOMB_RADIUS, by + self.BOMB_RADIUS + 1):
-                pos = (x, y)
-                if not self._in_bounds(pos):
-                    continue
-                if max(abs(x - bx), abs(y - by)) > self.BOMB_RADIUS:
-                    continue
-                if self._line_of_sight_clear(bomb_pos, pos):
-                    cells.add(pos)
-        self._blast_cache[bomb_pos] = frozenset(cells)
-        return cells
+        return self.bomb_safety.blast_cells(bomb_pos)
 
     def _active_escape_path(self, location: tuple[int, int], step: int) -> list[tuple[int, int]] | None:
-        if self.escape_target is None or self.escape_until_step is None:
-            return None
-        if step > self.escape_until_step:
-            self.escape_target = None
-            self.escape_until_step = None
-            return None
-
-        forced_danger = set()
-        for pos, data in self.known_bombs.items():
-            # Never step on any bomb cell (own or enemy) because it is solid
-            forced_danger.add(pos)
-            if not data.get("own"):
-                timer = int(data.get("timer", self.BOMB_TIMER))
-                if timer <= 3:
-                    forced_danger.update(self._blast_cells(pos))
-        if location == self.escape_target and location not in forced_danger:
-            self.escape_target = None
-            self.escape_until_step = None
-            return None
-
-        path = self._bfs(location, self.escape_target, forced_danger)
-        if path is not None:
-            return path
-
-        replacement = self._nearest_escape_cell(location, forced_danger)
-        if replacement is None:
-            return None
-        self.escape_target = replacement
-        return self._bfs(location, replacement, forced_danger)
+        return self.bomb_safety.active_escape_path(location, step)
 
     def _nearest_escape_cell(
         self,
         location: tuple[int, int],
         blast: set[tuple[int, int]],
     ) -> tuple[int, int] | None:
-        queue = deque([location])
-        seen = {location}
-        while queue:
-            pos = queue.popleft()
-            if pos not in blast and pos in self.seen:
-                return pos
-            for nxt in self._neighbors(pos):
-                if nxt in seen or nxt not in self.seen:
-                    continue
-                seen.add(nxt)
-                queue.append(nxt)
-        return None
+        return self.bomb_safety.nearest_escape_cell(location, blast)
 
     def _should_place_bomb(
         self,
@@ -2567,47 +2447,20 @@ class AEManager:
         if escape_target is None and self._escape_required_for_bomb(bomb_blast):
             return False
 
-        prior_bomb = self.known_bombs.get(location)
-        prior_escape_target = self.escape_target
-        prior_escape_until_step = self.escape_until_step
-        self.known_bombs[location] = {"timer": self.BOMB_TIMER, "own": True, "last_step": self.last_step or 0}
-        self.escape_target = escape_target
-        self.escape_until_step = (self.last_step or 0) + self.BOMB_TIMER
         self.last_bomb_reason = bomb_reason or "unknown"
         # Record the synthetic own-bomb side effects so the confidence-policy
         # wrapper can revert them if it overrides this PLACE_BOMB with a policy
         # move (the bomb is never actually placed -> the belief entry is phantom).
-        self._tick_bomb_commit = {
-            "cell": location,
-            "prior_bomb": prior_bomb,
-            "prior_escape_target": prior_escape_target,
-            "prior_escape_until_step": prior_escape_until_step,
-        }
+        self.bomb_safety.commit_bomb(location, escape_target)
         return True
 
     def revert_bomb_commit(self) -> bool:
-        """Undo the synthetic own-bomb side effects from this tick's bomb commit.
+        """Undo this tick's synthetic own-bomb commit (see BombSafety.revert_commit).
 
         Called by ``ConfidencePolicyHybridAEManager`` when it overrides a
-        heuristic ``PLACE_BOMB`` with a policy action: the bomb was never placed,
-        so the ``known_bombs`` entry + escape state written by
-        ``_should_place_bomb`` are phantom. Reverting them keeps ``_danger_cells``
-        from routing around a bomb that does not exist. No-op (returns False) when
-        no commit was recorded this tick.
+        heuristic ``PLACE_BOMB`` with a policy action.
         """
-        commit = self._tick_bomb_commit
-        if commit is None:
-            return False
-        cell = commit["cell"]
-        prior_bomb = commit["prior_bomb"]
-        if prior_bomb is None:
-            self.known_bombs.pop(cell, None)
-        else:
-            self.known_bombs[cell] = prior_bomb
-        self.escape_target = commit["prior_escape_target"]
-        self.escape_until_step = commit["prior_escape_until_step"]
-        self._tick_bomb_commit = None
-        return True
+        return self.bomb_safety.revert_commit()
 
     def _safe_escape_within(
         self,
@@ -2616,36 +2469,7 @@ class AEManager:
         max_moves: int,
         danger: set[tuple[int, int]] | None = None,
     ) -> tuple[int, int] | None:
-        """Return the closest cell outside ``blast`` reachable in ≤ max_moves.
-
-        The agent gets ``BOMB_TIMER`` movement actions between placing a bomb
-        and the detonation phase, so anything beyond that is not actually safe.
-
-        Under AE_TIME_DANGER, a step's destination is additionally rejected if
-        it is on fire at the relative arrival tick (== BFS distance) per the
-        chain-resolved danger layers, so the agent never "escapes" into an
-        enemy bomb or chain that lights up exactly when it arrives.
-        """
-
-        layers = self._danger_layers() if self.time_danger_enabled else None
-        queue = deque([(location, 0)])
-        seen = {location}
-        while queue:
-            pos, dist = queue.popleft()
-            if dist > 0 and pos not in blast:
-                return pos
-            if dist >= max_moves:
-                continue
-            for nxt in self._neighbors(pos):
-                if nxt in seen or nxt not in self.seen:
-                    continue
-                if danger is not None and nxt in danger:
-                    continue
-                if layers is not None and self._on_fire_at(nxt, dist + 1, layers):
-                    continue
-                seen.add(nxt)
-                queue.append((nxt, dist + 1))
-        return None
+        return self.bomb_safety.safe_escape_within(location, blast, max_moves, danger)
 
     def _stuck_recently(self) -> bool:
         if len(self.recent_locations) < 6:
