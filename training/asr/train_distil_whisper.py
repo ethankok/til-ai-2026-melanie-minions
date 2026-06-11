@@ -80,7 +80,7 @@ def _load_audio_from_example(audio_info, target_sr: int = 16000) -> np.ndarray:
     fails outright if torchcodec can't find FFmpeg shared libs (libavutil.so).
     Casting the column to `Audio(decode=False)` hands us `{"path", "bytes"}`
     directly and we load it ourselves with soundfile, same as the inference
-    container in asr/src/asr_manager.py.
+    container in asr/src/asr_manager_fasterwhisper.py.
     """
     if isinstance(audio_info, dict):
         if audio_info.get("bytes") is not None:

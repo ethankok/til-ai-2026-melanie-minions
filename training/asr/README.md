@@ -148,7 +148,7 @@ section unless you're rolling back.
 - **Augmentation** (noisy-audio robustness): SpecAugment, optional online noise mixing at SNR 5–20 dB (requires `--noise-dir`), optional ×0.9/×1.1 speed perturbation.
 - **Inference**: faster-whisper plain `model.transcribe()` with CT2 float16 (CPU fallback int8), greedy beam, `vad_filter=False` (VAD was eating speech on long clips), `condition_on_previous_text=False`, `language="en"` forced, `without_timestamps=True`, hallucination guards (`no_speech_threshold=0.6`, `log_prob_threshold=-1.0`, `compression_ratio_threshold=2.4`, `temperature=0.0`). Audio-level RMS/peak silence guard with a sub-1.5s aggressive threshold handles the empty-clip hallucination case. Output post-processed by `_digits_to_words()` (ints, decimals, comma-thousands, military times, four-digit codes, niner callsigns, spoken ordinals, coordinate-safe decimals). Server passes the whole HTTP batch to `manager.asr_batch(list[bytes])`.
 
-See [../../asr/src/asr_manager.py](../../asr/src/asr_manager.py) for the inference flags and [../../asr/src/asr_server.py](../../asr/src/asr_server.py) for the batched server path.
+See [../../asr/src/asr_manager_fasterwhisper.py](../../asr/src/asr_manager_fasterwhisper.py) for the inference flags and [../../asr/src/asr_server.py](../../asr/src/asr_server.py) for the batched server path.
 
 ## Prereqs
 
@@ -380,7 +380,7 @@ Priority order, top is the next action:
    Expected official accuracy bump: 0.956 → 0.965-0.975.
 2. **Slang word-boost via NeMo `boosting_words`** — bump `nemo_toolkit[asr]`
    to 2.1+ (or higher) and re-test. Currently `_configure_biasing` in
-   `asr_manager_nemo.py` falls back to "no biasing" because NeMo 2.0.0 doesn't
+   `asr_manager.py` falls back to "no biasing" because NeMo 2.0.0 doesn't
    expose the boost API. Expected impact: +0.003-0.010 absolute on slang-heavy
    clips. Cost: low (one config bump + re-test).
 3. **Encoder unfreeze for one low-LR pass** — only after step 1 plateaus.
@@ -411,7 +411,7 @@ Speed knobs (mostly mined out for the current container shape):
 Same content as before, kept for the fallback path:
 
 1. **Re-export `--quantization int8_float16`** — same merged checkpoint, no retrain. Expected speed `0.849 → 0.90+`, accuracy delta `≤ 0.005`. Tag the resulting image `ft-lora32-int8f16`. This is the **next submission**.
-2. **`beam_size=2`** (not 5) at [../../asr/src/asr_manager.py](../../asr/src/asr_manager.py) — only worth trying if step 1's int8 image has speed margin ≥ 0.92 AND accuracy is borderline. Typically buys 0.002–0.005 WER.
+2. **`beam_size=2`** (not 5) at [../../asr/src/asr_manager_fasterwhisper.py](../../asr/src/asr_manager_fasterwhisper.py) — only worth trying if step 1's int8 image has speed margin ≥ 0.92 AND accuracy is borderline. Typically buys 0.002–0.005 WER.
 
 Deferred (don't pursue unless step 1 unexpectedly regresses below 0.95):
 

@@ -29,7 +29,7 @@ ENV ASR_NEMO_MODEL=parakeet-tdt-0.6b-v2.nemo
 # 0.000 we saw before the fallback existed). Net blended 0.9633 < nemo-ft-v3
 # 0.96425 -> not promotable; left OFF. See asr/NOTES.md "Result" for the full
 # postmortem. To re-enable for further work, uncomment (path is the .arpa, NOT
-# .nemo). The protective fallback in asr_manager_nemo.py makes ON safe to test.
+# .nemo). The protective fallback in asr_manager.py makes ON safe to test.
 #   ENV ASR_NGRAM_LM=/workspace/models/asr/ngram_lm.arpa
 #   ENV ASR_NGRAM_LM_ALPHA=0.3
 #   ENV ASR_BEAM_SIZE=4

@@ -6,8 +6,8 @@ digits to words. The novice transcripts always spell numbers out
 that emits digits must verbalize them post-hoc to avoid free word errors.
 
 This module is the single source of truth for that verbalization. Both the
-faster-whisper manager (`asr_manager.py`) and the NeMo Parakeet manager
-(`asr_manager_nemo.py`) import from here.
+NeMo Parakeet manager (`asr_manager.py`, shipped) and the faster-whisper
+manager (`asr_manager_fasterwhisper.py`) import from here.
 """
 
 from __future__ import annotations

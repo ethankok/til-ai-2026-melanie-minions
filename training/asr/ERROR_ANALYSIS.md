@@ -80,7 +80,7 @@ The 30-worst-WER dump showed ~25 of 30 clips were 25-38s long with the same patt
 
 Root cause: faster-whisper's `BatchedInferencePipeline` requires VAD, and the Silero VAD with `min_silence_duration_ms=500` was clipping speech across utterance boundaries on long clips.
 
-**Fix in vad-off-v1** ([asr/src/asr_manager.py](../../asr/src/asr_manager.py)):
+**Fix in vad-off-v1** ([asr/src/asr_manager_fasterwhisper.py](../../asr/src/asr_manager_fasterwhisper.py)):
 
 - Dropped `BatchedInferencePipeline` (it only batches encoder segments within a single audio anyway, no real throughput gain for our per-clip loop).
 - Switched to plain `model.transcribe(..., vad_filter=False)`.
@@ -163,7 +163,7 @@ self.model.transcribe(
 )
 ```
 
-Audio-level silence pre-check ([_is_probably_silence](../../asr/src/asr_manager.py)) runs before the model call; output post-processing runs `_digits_to_words()` on the joined segment text.
+Audio-level silence pre-check ([_is_probably_silence](../../asr/src/asr_manager_fasterwhisper.py)) runs before the model call; output post-processing runs `_digits_to_words()` on the joined segment text.
 
 ## Path to score > 0.95 and speed > 0.9
 

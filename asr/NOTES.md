@@ -165,8 +165,8 @@ fusion left OFF.** Full chain:
    `malsd_batch` is a newer CUDA-graph-heavy beam path and is more
    hardware-fragile than greedy. **We cannot see the cloud exception** (eval is
    air-gapped; no ASR failure pack in the bucket, only NLP has one).
-5. **Protective greedy fallback added (this session, shipped in
-   `asr_manager_nemo.py`).** `_configure_lm_fusion` now snapshots the greedy cfg
+5. **Protective greedy fallback added (this session, shipped in the NeMo
+   manager, `asr_manager.py`).** `_configure_lm_fusion` now snapshots the greedy cfg
    before switching; new `_fallback_to_greedy()` permanently reverts to greedy on
    the first fused-decode failure (one-shot); `_warmup()` triggers it at startup;
    `asr_batch()` reverts + **retries the batch** instead of returning blanks.
@@ -374,7 +374,7 @@ Diagnosis:
 - Reverting the default model in both `Dockerfile` and `Dockerfile.nemo` to `parakeet-tdt-0.6b-v2.nemo` will recover the baseline speed to `0.946`.
 
 Action:
-- Switched default model variables to `parakeet-tdt-0.6b-v2.nemo` in `asr/Dockerfile`, `asr/Dockerfile.nemo`, `asr_manager_nemo.py`, and `download_models_nemo.py`.
+- Switched default model variables to `parakeet-tdt-0.6b-v2.nemo` in `asr/Dockerfile`, `asr/Dockerfile.nemo`, the NeMo manager (`asr_manager.py`), and `download_models_nemo.py`.
 - Simplified the NeMo sanity check in Dockerfiles (removed `att_chunk_context_size` check).
 - Built and submitted the next iteration as `nemo-zs-v3`.
 
@@ -460,7 +460,7 @@ Code/build changes:
 asr/Dockerfile                      now uses NeMo + ASR_NEMO_MODEL=parakeet-unified-en-0.6b.nemo
 asr/Dockerfile.nemo                 mirror explicit NeMo build path
 asr/requirements-nemo.txt           NeMo pinned to GitHub main commit ccbbfbb for unified-model support
-asr/src/asr_manager_nemo.py         default local model file -> parakeet-unified-en-0.6b.nemo
+asr/src/asr_manager.py (NeMo manager)  default local model file -> parakeet-unified-en-0.6b.nemo
 training/asr/download_models_nemo.py default model -> nvidia/parakeet-unified-en-0.6b
 ```
 
@@ -562,8 +562,8 @@ Parallel build path (does not touch the shipped distil-whisper image):
 
 ```text
 asr/src/asr_postprocess.py          shared digits->words (extracted from manager)
-asr/src/asr_manager.py              UNCHANGED behavior; now imports postprocess
-asr/src/asr_manager_nemo.py         NemoASRManager (generic local NeMo `.nemo`)
+asr/src/asr_manager_fasterwhisper.py UNCHANGED behavior; now imports postprocess
+asr/src/asr_manager.py (NeMo manager) NemoASRManager (generic local NeMo `.nemo`)
 asr/src/asr_server.py               picks backend via ASR_BACKEND env (default whisper)
 asr/requirements-nemo.txt           NeMo runtime + audio libs
 asr/Dockerfile.nemo                 explicit NeMo image, ENV ASR_BACKEND=nemo
@@ -867,7 +867,7 @@ distinguish 0.99-tier teams from 0.97-tier teams:
 - **Fine-tune**: LoRA rank 32, alpha 64, dropout 0.05, applied to decoder attention projections (`q_proj`, `k_proj`, `v_proj`, `out_proj`). Encoder frozen.
 - **Runtime engine**: `faster-whisper` (CTranslate2 backend) at `float16` on GPU. CPU fallback at `int8` if CUDA missing.
 - **Container base**: `nvcr.io/nvidia/pytorch:25.11-py3`.
-- **Inference flags** (see [src/asr_manager.py](src/asr_manager.py)):
+- **Inference flags** (see [src/asr_manager_fasterwhisper.py](src/asr_manager_fasterwhisper.py)):
   ```python
   model.transcribe(
       audio, language="en", task="transcribe",
@@ -883,7 +883,7 @@ distinguish 0.99-tier teams from 0.97-tier teams:
   )
   ```
 - **Audio-level silence guard** runs *before* `transcribe()` to skip pure noise / breath bursts that would otherwise hallucinate "Thank you." / "I" on sub-1.5s clips.
-- **Post-processing** at [src/asr_manager.py `_digits_to_words`](src/asr_manager.py): integers, decimals, comma-thousands, 24h military times, four-digit codes, niner callsigns, spoken ordinals (`23rd → twenty third`), coordinate-safe decimals (`1.1.7` stays multi-token, not parsed as decimal).
+- **Post-processing** at [src/asr_postprocess.py `digits_to_words`](src/asr_postprocess.py): integers, decimals, comma-thousands, 24h military times, four-digit codes, niner callsigns, spoken ordinals (`23rd → twenty third`), coordinate-safe decimals (`1.1.7` stays multi-token, not parsed as decimal).
 - **Slang prompt**: 200 in-world proper nouns mined from the NLP corpus, highest-frequency first (`cyanite renhwa zonnon clairos floodwall phyrexis nanobot sharpsea kashikari wampa nyari sarento megacorporation ...`). Passed as `initial_prompt=` to bias decoding.
 
 ### Training (Workbench-only, in [../training/asr/](../training/asr/))

@@ -1,6 +1,7 @@
 """Mac-runnable unit tests for the pure decoding-config builder in
-asr_manager_nemo.py. This does NOT import NeMo: _build_lm_decoding_cfg is a
-plain dict transform, so it is importable and testable on the Mac.
+asr_manager.py (the shipped NeMo manager). This does NOT import NeMo:
+_build_lm_decoding_cfg is a plain dict transform, so it is importable and
+testable on the Mac.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "asr" / "src"))
 
-from asr_manager_nemo import _build_lm_decoding_cfg  # noqa: E402
+from asr_manager import _build_lm_decoding_cfg  # noqa: E402
 
 
 def test_sets_strategy_and_beam_fields():

@@ -30,7 +30,7 @@ from pathlib import Path
 
 # Reuse the exact decoding-config builder the server uses.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "asr" / "src"))
-from asr_manager_nemo import _build_lm_decoding_cfg  # noqa: E402
+from asr_manager import _build_lm_decoding_cfg  # noqa: E402
 
 
 def _load_val_slice(asr_jsonl: Path, frac: float) -> list[dict]:
