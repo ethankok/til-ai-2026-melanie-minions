@@ -4,7 +4,8 @@ This is the realistic Semis gate: it scores candidate agents in the 6-team melee
 brackets (``opponents.MELEE_BRACKETS``), against the FOREIGN (non-mirror) opponent
 pool, and ranks by **relative placement** — the shape finals actually scores. (Finals
 AE = teams sorted by ``ae_reward * mission_multiplier``; placement, not absolute
-reward, is what's paid. See docs/superpowers/specs/2026-06-07-ae-finals-aligned-eval-redesign.md.)
+reward, is what's paid. See design spec 2026-06-07-ae-finals-aligned-eval-redesign,
+private archive.)
 
 Determinism: AEManager has hash-order-dependent branches, so — exactly like
 ``multi_seed_eval.py`` — we spawn a fresh interpreter per (hash_seed, sim_seed)

@@ -1,6 +1,6 @@
 """Tests for no-self-damage bomb gating (AE_NO_SELF_DAMAGE).
 
-Spec: docs/superpowers/specs/2026-06-09-ae-no-self-damage-bomb-gate-design.md
+Design spec 2026-06-09-ae-no-self-damage-bomb-gate-design (private archive).
 The env excludes same-team defenders from a bomb's blast, so a bomb never
 damages its placer or the placer's own base. OFF == byte-identical.
 """

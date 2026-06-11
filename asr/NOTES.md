@@ -18,7 +18,7 @@ Decision: **closed.**
 
 ## NGPU-LM n-gram fusion prototype (02 Jun 2026 — Semis prep, default-OFF)
 
-Design of record: [docs/superpowers/specs/2026-06-02-asr-ngram-lm-fusion-design.md](../docs/superpowers/specs/2026-06-02-asr-ngram-lm-fusion-design.md).
+Design of record: design spec `2026-06-02-asr-ngram-lm-fusion-design` (private archive).
 
 Adds GPU-resident n-gram (NGPU-LM) shallow fusion to the Parakeet-TDT decode
 path to attack the residual in-world proper-noun WER. **Default-OFF**: with

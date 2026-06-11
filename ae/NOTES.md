@@ -4,10 +4,9 @@
 > what worked, what failed, and *why*, so we don't burn time re-running dead
 > ends. **Read the `## Read this first` digest below before doing any AE work** —
 > it is the current, distilled state. The reverse-chronological per-session log
-> (raw numbers, reproduction commands) lives in a separate file,
-> [`ae/NOTES-ARCHIVE.md`](NOTES-ARCHIVE.md). The archive is intentionally
-> redundant with the digest; you only need it when you want the exact
-> per-submission detail behind a claim here.
+> (raw numbers, reproduction commands) was split out to a private archive (not
+> in this repo). The archive is intentionally redundant with the digest; it's
+> only needed for the exact per-submission detail behind a claim here.
 >
 > _Digest last refreshed: 4 June 2026 — ⚠ CLOUD EVAL CHANGED (org opponent swap; all cloud
 > numbers re-based, byte-identical champion 0.671→0.414; see "Current state (4 June 2026)").
@@ -137,8 +136,8 @@ which pays `raw_ae × mission_multiplier` as RELATIVE RANK.
 - **Pure eval infra — deploy UNCHANGED** (`semis2b-u75`/default/det5); the 3 changes
   are gated SEPARATELY next. Calibration smoke (`semis_mixed`, 2 seeds): incumbent
   `confpol-u860` raw_ae ≈ +226, places 1st at the weak 0.24 field, monotonic to 0.7
-  (`wplace={ 0.24:1.00, 0.7:1.25 }`). Spec:
-  `docs/superpowers/specs/2026-06-09-ae-finals-aligned-eval-revamp-design.md`.
+  (`wplace={ 0.24:1.00, 0.7:1.25 }`). Design spec
+  `2026-06-09-ae-finals-aligned-eval-revamp-design` (private archive).
 
 ### 🟢 Bomb-timer offensive split (8 June 2026) — correctness fix, melee-positive-but-sub-PoI, SHIPPED ON (default 5)
 
@@ -222,7 +221,7 @@ Wilson-95 lower bound on Prob-of-Improvement > 0.5) · `gap_not_widening_ok`
 (train-vs-heldout composition gap doesn't widen — overfit alarm, supersedes the
 ad-hoc `data/_cem_transfer_test.py`). Thresholds env-overridable
 (`AE_GATE_{SCORE_FLOOR_FRAC=0.85,MARGIN_SLACK_FRAC=0.5,MIN_EFFECT_RANK=0.3,GAP_TOL=0.5}`).
-Spec: `docs/superpowers/specs/2026-06-07-ae-finals-aligned-eval-redesign.md`; tests
+Design spec `2026-06-07-ae-finals-aligned-eval-redesign` (private archive); tests
 `test/test_melee_eval_gate.py` (14 pass). Tuner gate (`tune_planner_weights.promotion_ok`)
 was ALREADY placement-primary — left untouched (18 tests still pass).
 
@@ -392,7 +391,7 @@ A/B on the melee before shipping.
 
 ### Current state (6 June 2026) — Dir-2 RL pipeline (BC-clone + self-play league) RAN → FLAT; deploy unchanged
 
-**The one RL recipe we'd never tried — BC-clone the heuristic → self-play league from that warm-start → deploy as the confpol consultant (curry's documented semis bet) — was built, run end-to-end, and gated. Verdict: FLAT. It improves AVERAGE melee placement but never the WORST bracket, so it does NOT beat `confpol-semis2b-u75` as a consultant. Deploy stays `confpol-semis2b-u75 @ default`.** Plan/spec: `docs/superpowers/{plans,specs}/2026-06-04-ae-dir2-rl-pipeline*`.
+**The one RL recipe we'd never tried — BC-clone the heuristic → self-play league from that warm-start → deploy as the confpol consultant (curry's documented semis bet) — was built, run end-to-end, and gated. Verdict: FLAT. It improves AVERAGE melee placement but never the WORST bracket, so it does NOT beat `confpol-semis2b-u75` as a consultant. Deploy stays `confpol-semis2b-u75 @ default`.** Plan/spec `2026-06-04-ae-dir2-rl-pipeline*` (private archive).
 
 - **Stage 0 (BC clone) — PASS.** Collected 8000 games (1.6M `(obs,action,mask)` demos) from the C+bomb7 heuristic; trained `dir2-bc.pt`; fidelity gate on an INDEPENDENT 150-game held-out = **agreement 1.0000, modal 0.405, lift +0.595** (≫ the +0.20 bar). A perfect, fast clone of the deterministic teacher. Tool: `training/ae/bc_action_agreement.py`.
 - **Stage 1 (league) — healthy run, climbing eval.** `run_dir2_v1.py`: BC-warm-started PPO, `--preset full-rl` shaping + new `dir2-league` opponent mix (`foreign_train:0.45, selfplay:0.25, scripted:0.15, cloudsuite:0.15` — the `selfplay` slice is what actually draws the SnapshotPool), dense `-u<N>` ladder, ran the full 586 updates. In-training `best` climbed 0.2965→0.3399→**0.3589**; entropy held ~0.10 (full-rl floor prevented collapse). Full-control policy ~0.30 (vs champion's ~0.51).
@@ -519,7 +518,7 @@ First lever aimed at the **proven +0.152 consultant** instead of the dead greedy
 `confidence_policy_hybrid` consult-gate (`AE_CONFPOL_MARGIN_EPSILON`/`_TOP_FLOOR`/
 `_OVERRIDE_TARGET_NONE`, shipped at the inherited 5/10/1, never tuned). One-line `melee_eval.py`
 extension `--confpol-ckpt LABEL=PATH@eps=,floor=,ovr=` (TDD, commit 9ae9b05); 6-config coordinate
-sweep on `semis2b-u75`, melee-gated. Spec/plan: `docs/superpowers/{specs,plans}/2026-06-04-ae-consultant-gate-sweep*`.
+sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sweep*` (private archive).
 
 - **VERDICT: FLAT — no gate beats the default 5/10/1 on the full conjunction; deploy unchanged
   (`semis2b-u75 @ default`).** Sole prune survivor `g-more-margin` (eps 5→10) FAILS the full
@@ -664,7 +663,7 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan: `docs/superpowers/{specs,plans}/
 
 ### Semifinals melee eval — BUILT (1 Jun, Stage A complete)
 
-Implemented the approved redesign (`docs/superpowers/specs/2026-06-01-ae-semis-eval-design.md`):
+Implemented the approved redesign (design spec `2026-06-01-ae-semis-eval-design`, private archive):
 a head-to-head **6-team melee** gate built on a **foreign (non-mirror) opponent
 pool**, replacing the absolute-reward-vs-our-own-mirrors suites that mis-predict
 Semis. **The old `validate_cloud_suite.py`/`multi_seed_eval.py` suites still
@@ -1086,9 +1085,9 @@ no opponent model; our heuristic `_choose_target` scorer is **opponent-blind**
 `novice_map_data.STARTING_LOCATIONS` hands us all 6 spawns for free, and
 `self.enemy_agents` already tracks live viewcone sightings. This lever uses that to
 discount items an opponent reaches first — aimed squarely at the **`all_farmer`
-hole** (the −388/−291 farming-race margins). Design/plan:
-`docs/superpowers/specs/2026-06-03-ae-contention-aware-valuation-design.md` +
-`docs/superpowers/plans/2026-06-03-ae-contention-aware-valuation.md`.
+hole** (the −388/−291 farming-race margins). Design spec
+`2026-06-03-ae-contention-aware-valuation-design` + plan
+`2026-06-03-ae-contention-aware-valuation` (private archive).
 
 - **Code** ([src/ae_manager.py](src/ae_manager.py), behind **`AE_CONTENTION`
   (default 0)**): `_believed_opponents` (fixed-map spawns in the opening +
@@ -1491,15 +1490,13 @@ historical ~1M steps), from-scratch init, and their hyperparams.
   (`HUNTER_OPENING_SEQUENCES`, dist/opponent LUTs), `experimental_heuristic/eval.py`
   (`score_plan` forward-sim), `experimental_heuristic/search.py` (A* over
   `(x,y,facing,t,bombs,placed)`).
-- Deployment contract & full submission ledger: see
-  [`ae/NOTES-ARCHIVE.md`](NOTES-ARCHIVE.md)
-  (*Full AE submission ledger*, *What our agent runs on*).
+- Deployment contract & full submission ledger: see the private archive
+  (*Full AE submission ledger*, *What our agent runs on*) — not in this repo.
 
 ---
 ## Detailed history (archive)
 
 The reverse-chronological per-session log (raw numbers, reproduction commands,
-negative results from 19 May–2 June) now lives in
-[`ae/NOTES-ARCHIVE.md`](NOTES-ARCHIVE.md). The digest above is the current
-distilled state; open the archive only when you need the exact detail behind a
-claim here.
+negative results from 19 May–2 June) was split out to a private archive (not
+in this repo). The digest above is the current distilled state; the archive
+is only needed for the exact detail behind a claim here.

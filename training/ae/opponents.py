@@ -759,7 +759,8 @@ OPPONENT_SUITES = {
     # ---------------------------------------------------------------------
     # Semifinals melee brackets (1 Jun 2026). Each is the 5 opponent slots of
     # one 6-team melee, filled with the FOREIGN (non-mirror) pool from
-    # foreign_opponents.py — see docs/superpowers/specs/2026-06-01-ae-semis-eval-design.md.
+    # foreign_opponents.py — see design spec 2026-06-01-ae-semis-eval-design
+    # (private archive).
     # These deliberately MIX train-ok and eval-only foreign opponents so the
     # melee gate always sees held-out opponents; the train/eval split only
     # constrains Stage-B training, not these eval brackets.

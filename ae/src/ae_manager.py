@@ -259,8 +259,8 @@ class AEManager:
         # Time-layered danger map (AE_TIME_DANGER, default OFF). Builds
         # per-tick lethality layers[t] from known_bombs with enemy-bomb chain
         # resolution, so the danger set is chain-corrected and bomb-escape
-        # verification is chain/arrival-aware. OFF == byte-identical. Spec:
-        # docs/superpowers/specs/2026-06-08-ae-time-layered-danger-map-design.md
+        # verification is chain/arrival-aware. OFF == byte-identical. Design
+        # spec 2026-06-08-ae-time-layered-danger-map-design (private archive).
         self.time_danger_enabled = w.time_danger_enabled
         # Floor the horizon at BOMB_TIMER: the escape verifier checks arrival
         # ticks up to BOMB_TIMER, and _on_fire_at treats ticks beyond the last
@@ -274,14 +274,14 @@ class AEManager:
         # standing on its own detonating bomb). OFF == byte-identical. When ON,
         # we stop vetoing placement on two false premises (own base in blast; no
         # self-escape); real enemy-danger / low-health / legality / team_bombs
-        # guards are untouched. Spec: docs/superpowers/specs/
-        # 2026-06-09-ae-no-self-damage-bomb-gate-design.md
+        # guards are untouched. Design spec
+        # 2026-06-09-ae-no-self-damage-bomb-gate-design (private archive).
         self.no_self_damage = w.no_self_damage
         # Surgical variant (AE_BASEKILL_NOESCAPE, default OFF): relax the own-base
         # and self-escape vetoes ONLY for a bomb whose blast contains an enemy
         # base (the +50 kill, good in every regime); speculative bombs still need
         # an escape. Narrower than AE_NO_SELF_DAMAGE (which relaxes all bombs).
-        # Spec: docs/superpowers/specs/2026-06-09-ae-basekill-noescape-design.md
+        # Design spec 2026-06-09-ae-basekill-noescape-design (private archive).
         self.basekill_noescape = w.basekill_noescape
         # Stun tax (AE_STUN_TAX, default OFF). A freeze opportunity-cost penalty
         # on farming-target paths: scales the existing path-threat penalty for

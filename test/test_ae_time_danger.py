@@ -1,6 +1,6 @@
 """Tests for the time-layered danger map (AE_TIME_DANGER).
 
-Spec: docs/superpowers/specs/2026-06-08-ae-time-layered-danger-map-design.md
+Design spec 2026-06-08-ae-time-layered-danger-map-design (private archive).
 Foundation lever #2: per-tick lethality layers with enemy-bomb chain
 resolution, wired into the danger set (chain-corrected) and the escape
 verifier (chain/arrival-aware). Flag OFF == byte-identical.

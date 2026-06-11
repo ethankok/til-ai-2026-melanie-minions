@@ -72,7 +72,7 @@ TIL/
 │       ├── <task>_manager.py   ← our inference / game logic (what we edit)
 │       └── <task>_server.py    ← thin FastAPI wrapper (fixed schema)
 │
-├── docs/      per-task NOTES.md, design specs & implementation plans, competitor learnings
+├── docs/      competitor learnings & docs orientation
 ├── training/  offline training & evaluation scripts (not shipped in containers)
 ├── test/      pytest-style per-task tests (test_<task>.py), hit the running container
 │
@@ -115,13 +115,13 @@ bash finals.sh test                                        # local end-to-end ma
 bash finals.sh submit finals --submit_all                  # push server + all task images (:finals tag)
 ```
 
-See `docs/` for the full toolchain, hardware notes (Blackwell RTX 5070 Ti vs T4), and per-batch timing details.
+See each task's `NOTES.md` for hardware notes (Blackwell RTX 5070 Ti vs T4) and per-batch timing details.
 
 ---
 
 ## Engineering notes & design docs
 
-The real story lives in **`docs/`**: per-task `NOTES.md` (decisions, gotchas, dead-ends), the design specs and implementation plans behind each shipped feature, and our extracted **competitor-learnings** writeups. The codebase was built with a gated *brainstorm → spec → plan → eval → ship* workflow, with experimental features kept behind default-OFF flags so the deploy was never at risk — notes on that are in `docs/` too.
+The real story lives in the per-task **`NOTES.md`** files (`ae/NOTES.md`, `asr/NOTES.md`, `cv/NOTES.md`, `nlp/NOTES.md`, `noise/NOTES.md`): decisions, gotchas, and dead-ends for each task, plus our extracted **[`docs/competitor-learnings/`](docs/competitor-learnings/)** writeups. The codebase was built with a gated *brainstorm → spec → plan → eval → ship* workflow, with experimental features kept behind default-OFF flags so the deploy was never at risk.
 
 ---
 

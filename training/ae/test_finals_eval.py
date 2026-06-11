@@ -1,6 +1,6 @@
 """Tests for the finals-aligned eval revamp (multiplier overlay + per-axis floors).
 
-Spec: docs/superpowers/specs/2026-06-09-ae-finals-aligned-eval-revamp-design.md
+Design spec 2026-06-09-ae-finals-aligned-eval-revamp-design (private archive).
 """
 import math
 import sys

@@ -201,5 +201,5 @@ src/gcloud/*.json
 
 data
 # Vendored competitor snapshot (curryfarmer/royal-recruits) for AE eval ONLY.
-# Do NOT commit competitor code. See docs/superpowers/specs/2026-06-01-ae-semis-eval-design.md
+# Do NOT commit competitor code. See design spec 2026-06-01-ae-semis-eval-design (private archive)
 training/ae/foreign/
