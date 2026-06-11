@@ -30,7 +30,7 @@ training/asr/runs/
 /nlp_failure_analysis.jsonl
 
 # Workbench backup pulled before potential GCP access revocation.
-# Mirrored to gs://melanie-minions-bucket-til-26/workbench-backup/ — too large for git.
+# Mirrored to gs://<TEAM_BUCKET>/workbench-backup/ — too large for git.
 /workbench-backup/
 
 # Byte-compiled / optimized / DLL files

@@ -1,113 +1,130 @@
-# DSTA BrainHack TIL-AI 2026
+# TIL-AI 2026 — Team *melanie-minions*
 
-**Contents**
-1. [DSTA BrainHack TIL-AI 2026](#dsta-brainhack-til-ai-2026)
-   1. [Get started](#get-started)
-   2. [Understanding this repo](#understanding-this-repo)
-   3. [Build, test, and submit](#build-test-and-submit)
-      1. [Build](#build)
-      2. [Test](#test)
-      3. [Submit](#submit)
-   4. [Links](#links)
+Our competition entry for **DSTA BrainHack TIL-AI 2026**. The challenge ships as five independent ML problems, each packaged as its own Dockerized FastAPI microservice. An official evaluator feeds inputs over the wire; our containers return scored JSON. We took this stack from the online **Qualifiers** through to the in-person **Semifinals and Finals at Marina Bay Sands**, where all six services (the five tasks plus a WebSocket orchestration server) run together in one Docker Compose stack on competition hardware.
 
-## Get started
+This repo is a public showcase of the engineering: what we shipped, what we tried, and — honestly — what didn't work. Most of the depth went into **AE** (40% of the score), an autonomous-agent bomb-and-resource game where hand-coded heuristics beat every learned policy we threw at it.
 
-Here's a quick overview of the initial setup instructions. You can find a more detailed tutorial, including advanced usage for power users, in the [Wiki](https://github.com/til-ai/til-26/wiki).
-
-Use this repository as a template to create your own, and clone it into your GCP Workbench instance. You'll want to keep your repository private, so you'll need to [create a GitHub Personal Access Token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
-
-You'll also need to initialize the Git submodules:
-
-```bash
-git submodule update --init
-```
-
-This repository targets Python 3.13 (3.10+ should also work). While it should theoretically all work fine with all packages installed directly into your base Python environment, it is likely a best practice to you create isolated virtual environments for each task. You can use any tool you'd like to do this; [`virtualenv`](https://virtualenv.pypa.io/en/latest/), [`venv`](https://docs.python.org/3/library/venv.html), [`poetry`](https://python-poetry.org/), etc. The competition instance on GCP comes with [`conda`](https://docs.conda.io/projects/conda/en/stable/user-guide/tasks/manage-environments.html) installed, allowing you to create and activate a new virtual environment with the following steps:
-
-```bash
-conda create --name til-asr python=3.13
-conda activate til-asr
-```
-
-Finally, install the development dependencies into your newly created virtual environment.
-
-```bash
-pip install -r requirements-dev.txt
-```
-
-You should also considering using [`uv`](https://docs.astral.sh/uv/) for python versioning and dependency management all in one.
-
-## Understanding this repo
-
-There's a subdirectory for each challenge: [`asr/`](/asr), [`cv/`](/cv) and its subcategory [`noise/`](/noise), [`nlp/`](/nlp), and [`ae/`](/ae). Each contains:
-
-* A `src/` directory, where your code lives.
-  * `*_manager.py`, which manages your model. This is where your inference and computation takes place.
-  * `*_server.py`, which runs a local web server that talks to the rest of the competition infrastructure.
-* `Dockerfile`, which is used to build your Docker image for each model.
-* `requirements.txt`, which lists the dependencies you need to have bundled into your Docker image.
-* `README.md`, which contains a local copy of that challenge's input/output spec. The authoritative copy is the Wiki [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications); if the two differ, the Wiki wins.
-
-You should also see another subdirectory, [`test/`](/test). This contains tools to test and score your model locally, and are automatically run when you use the `til test TASK` command on your GCP Workbench instance.
-
-There are also two Git submodules, `til-26-finals` and `til-26-ae`. `til-26-finals` contains code that will be pulled into your repo for Semifinals and Finals. `til-26-ae` contains the `til_environment` package, which will allow you to train and test your AE model, and is installed by `pip` during setup. Don't delete or modify the contents of `til-26-finals/`, `til-26-ae/`, or `.gitmodules`.
-
-## Build, test, and submit
-Submitting your model for evaluation is simple: just build your Docker image, test it, and submit. You can find a more detailed tutorial, including advanced usage for power users, in the [Wiki](https://github.com/til-ai/til-26/wiki).
-
-On the GCP Workbench instance, your environments come pre-set up with a command line utility `til` that will help you build, test, and submit your trained model containers. If you encounter any issues, look through [#hackoverflow](https://discord.com/channels/1488845200523661454/1488845611032903691) on Discord to see if anyone has encountered your problem; if not, post a new question.
-
-tl;dr:
-```bash
-til build asr
-til test asr
-til submit asr
-```
-Done!
-
-### Build
-You can build your containers using `til build CHALLENGE [tag]`. For example:
-```bash
-til build asr
-til build ae algo-update
-```
-
-The script first runs `cd` into the directory of the model you want to build (e.g. `/asr`). Then, it builds the image using Docker, automatically adhering to the required naming scheme `TEAM_ID-CHALLENGE:TAG` using any Docker tag you give it, defaulting to `latest` if not provided. You should then test your model using `til test` before using `til submit` to submit your image for evaluation.
-
-```bash
-# cd into the directory. For example, `cd ./asr/`
-cd CHALLENGE
-
-# Build your image. Remember the . at the end.
-docker build -t TEAM_ID-CHALLENGE:TAG .
-```
-### Test
-You can test your containers locally using `til test CHALLENGE [tag]`. For example:
-
-```bash
-til test cv
-til test noise extra-noisy
-```
-
-This will deploy your container on a local Docker network without internet access, and test querying it with all the training data in your track directory (either `/home/jupyter/novice` or `/home/jupyter/advanced`). For all the details, check out the [Wiki](https://github.com/til-ai/til-26/wiki).
-
-### Submit
-You can submit your containers for automated evaluation using `til submit CHALLENGE [tag]`. For example:
-```bash
-til submit nlp
-til submit cv epoch-100
-```
-
-For all the details of what the submission command does, check out the [Wiki](https://github.com/til-ai/til-26/wiki).
-
-## Links
-
-* The repo [Wiki](https://github.com/til-ai/til-26/wiki) contains tutorials, specifications, resources, and more. Start with the [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications) for authoritative task schemas, scoring, ports, and target labels.
-* Your [~~Vertex AI~~ Agent Platform Workbench Instance](https://console.cloud.google.com/agent-platform/workbench/instances?project=til-ai-2026) on Google Cloud Platform is where you'll do most of your development.
-* The [Strategist's Handbook](https://tribegroup.notion.site/BrainHack-2026-TIL-AI-Strategist-s-Handbook-33a5263ef45a80429a9dc47c569e40c3) houses the Leaderboard and info about the competition.
-* [TIL-AI Curriculum](https://drive.google.com/drive/folders/18zP4pHt5E6YqA3usey16ETEzKNeAn5X9) on Google Drive contains educational materials specially crafted for TIL-AI.
-* The [#hackoverflow](https://discord.com/channels/1488845200523661454/1488845611032903691) channel on the TIL-AI Discord server is a forum just for Strategists like you.
+> Each task service follows the same shape: `<task>/src/<task>_manager.py` holds *our* logic, wrapped by a thin `<task>_server.py` FastAPI layer. We edit the manager; the server and Dockerfile are mostly fixed.
 
 ---
 
-Code in this repo is licensed under the MIT License.
+## Results at a glance
+
+| Task | Weight | What we shipped | Score / placement |
+|------|--------|-----------------|-------------------|
+| **AE** (autonomous exploration / RL) | 40% | Dijkstra heuristic core + confidence-gated PPO consultant (`confpol-semis2b-u75`) + CEM-tuned planner weights (`g02-sample-08`) | Cloud 0.382 acc-axis / 0.746 speed; **1st place in live Semifinals matches** (≈1.5× margins on hardware) |
+| **NLP** (retrieval QA) | 20% | `v28-optimized-bm25` — pure tuned BM25 hybrid retrieval, no neural models | **0.984 acc / 0.985 speed** (blended 0.984), 0/700 errors |
+| **ASR** (speech recognition) | 20% | `nemo-ft-v3` — fine-tuned Parakeet-TDT-0.6B-v2 + post-processing rules | 0.970 acc / 0.947 speed (blended 0.964) |
+| **CV** (object detection, 18-class LTWH) | 20% | `yolo11l-1408` — YOLOv11l, upscale-at-inference | 0.684 acc / 0.937 speed (blended 0.747) |
+| **Noise** (adversarial perturbation) | Finals tool | `level10-detector-stress` — AdvGAN + detector-stress overlay | 1.000 / 0.947 speed; Finals-only CV sabotage |
+
+*Each task is scored 75% accuracy/reward + 25% speed. Estimated blended Qualifier total ≈ 0.72.*
+
+---
+
+## What's in each task
+
+### AE — Autonomous Exploration (40%, the deep end)
+
+A partially-observable grid wargame: farm resources → build bombs → destroy enemy bases, scored on **relative placement** against other teams in a melee, not absolute reward.
+
+**What shipped** is a hybrid. The core is a hand-coded **Dijkstra-based greedy scorer** (item / mission / base-destruction values, base-tether defense, calibrated bomb cost) — heuristics, because they *transfer*. On top sits a **confidence-gated PPO consultant** (`confpol-semis2b-u75`): a policy trained only on the heuristic's low-confidence ticks, consulted only when its margin clears a threshold. It was warm-started from a native checkpoint and fine-tuned on a **foreign-opponent curriculum** (an external A\* bot, self-play snapshots, aggressive/anti-aggressive proxies) to learn robustness rather than mirror-match quirks. Final tuning came from a **CEM black-box search over 10 scalar planner weights** (`g02-sample-08`, e.g. tether 1.31 / base 80) — the first candidate to clear *all* of: local placement, held-out opponent-composition gap, and a cloud non-crater check. On Blackwell competition hardware the deploy went **1st place in both live Semifinals matches at ~1.5× margin**.
+
+**Notable dead-ends (there were many):**
+- **Every learned-policy line died the same death — local-opponent overfit.** Behavior cloning (val_acc 0.90 local → 0.36 cloud), self-play RL, a 704k-param belief-map CNN (local +0.023 → cloud **crashed −0.27**), tactical macro-policies — all improved local eval while cloud stayed flat at ~0.41. More parameters meant more overfit surface, not less. The lesson, echoed by competitors and the prior year's postmortem: **hand-coded heuristics ship; RL overfits.**
+- **MCTS-light lookahead** timed out (2–4s/tick vs budget); even with an 80ms hard cap it regressed both speed and accuracy — the stationary-opponent assumption costs without paying.
+- A key meta-lesson: **synthetic gates misrank.** Our melee gate once promoted `semis2c` over `semis2b`; an on-hardware A/B on the deterministic Finals seed reversed it (516 vs 411). On-hardware runs became the only trusted arbiter.
+
+### NLP — Retrieval-Augmented QA (20%)
+
+The winning move was *removing* models, not adding them. After a 14-May eval change (answer-equivalence threshold raised 0.5 → 0.9, leaderboard wiped), every fancy reader and reranker we tried hit a wall. The shipped `v28-optimized-bm25` is **pure BM25** — document-level (k1=2.05) fused with passage-level (k1=1.5, 3-sentence windows, 0.6 weight) — no neural retrieval at all. Result: **0.984 accuracy and 0.985 speed**, a Pareto win, because skipping model load gave near-ceiling speed.
+
+**What we tried first:** a full hybrid BM25+BGE + fine-tuned RoBERTa reader (peaked ~0.68), then generative LLMs (Qwen2.5-7B hit 0.734 accuracy but **speed cost sank the blended score**), and a HotFlip **adversarial trigger** against the ModernBERT answer-equivalence judge (0.951 acc — proving the judge had exploitable features — but slower than pure retrieval). A QLoRA fine-tune of Qwen3-8B trained cleanly but was unshippable from the T4 (vLLM LoRA-kernel crashes).
+
+### ASR — Speech Recognition (20%)
+
+Shipped `nemo-ft-v3`: NVIDIA **Parakeet-TDT-0.6B-v2** fine-tuned (val WER 0.0856) with a layer of spelling / regex / phonetic post-corrections for the in-world proper nouns and currency formats. A from-scratch empty baseline and an early LoRA-on-Whisper line were left behind once the Parakeet backbone proved stronger.
+
+**Dead-end worth noting:** an **n-gram LM shallow-fusion** path gave a real *local* WER win but crashed on the cloud GPU (and later risked CUDA-graph timeouts on Blackwell) — local gain, no cloud transfer, so it was parked.
+
+### CV — Object Detection (20%)
+
+18-class LTWH bounding boxes. Shipped **YOLOv11l weights trained at 1024px but served upscaled to 1408px** (`CV_IMGSZ=1408`). Counterintuitively, *train-small-serve-big* beat bigger-trained / matched-resolution models repeatedly — the only reliable lever on this distribution.
+
+**Biggest dead-end (a clean negative result):** we bet that a stronger backbone — **RF-DETR** (DINOv2 ViT) — could break the ~0.67 cloud-accuracy ceiling. It tied YOLO on accuracy with a *narrower* local→cloud gap but hit the **exact same ceiling and lost on speed**, proving the wall is **content-shift, not backbone capacity**. Closing the architecture-family question was itself a result. TTA and augmented training also consistently failed to transfer.
+
+### Noise — Adversarial Perturbation (Finals tool)
+
+Shipped `level10-detector-stress`: a single-pass **AdvGAN generator** (~14 KB weights) producing base noise, overlaid with edge-aware detector-stress patterns, clamped to a fairness budget. No direct Qualifier reward — it's a Finals-only capability to degrade an opponent's CV inputs (~6% mAP drop measured). The honest finding: noise trained on a *classifier* transfers poorly to a *detector* victim; the real lever (retraining against a detector objective) was scoped but deferred.
+
+---
+
+## How the repo is organised
+
+```
+TIL/
+├── ae/        AE — autonomous-exploration agent (heuristic + PPO consultant)
+├── asr/       ASR — Parakeet-TDT fine-tune
+├── cv/        CV  — YOLOv11l detector
+├── nlp/       NLP — BM25 retrieval QA
+├── noise/     Noise — AdvGAN adversarial perturbation
+│   └── src/
+│       ├── <task>_manager.py   ← our inference / game logic (what we edit)
+│       └── <task>_server.py    ← thin FastAPI wrapper (fixed schema)
+│
+├── docs/      per-task NOTES.md, design specs & implementation plans, competitor learnings
+├── training/  offline training & evaluation scripts (not shipped in containers)
+├── test/      pytest-style per-task tests (test_<task>.py), hit the running container
+│
+├── til-26-ae/       submodule — official AE environment (til_environment package)
+└── til-26-finals/   submodule — Finals WebSocket orchestration + local test server
+```
+
+Each task container speaks the same JSON contract used in Qualifiers, so the Finals orchestration server fans out to all five over plain HTTP with zero manager changes.
+
+---
+
+## Running it
+
+```bash
+# 1. Pull submodules (the --recursive matters — there's a nested one)
+git submodule update --init --recursive
+
+# 2. Python 3.13 environment
+conda create --name til python=3.13 && conda activate til
+pip install -r requirements-dev.txt
+
+# 3. Sanity-check that all five managers import
+python - <<'PY'
+import sys; sys.path.extend(['asr/src','cv/src','nlp/src','noise/src','ae/src'])
+from asr_manager import ASRManager
+from cv_manager import CVManager
+from nlp_manager import NLPManager
+from noise_manager import NoiseManager
+from ae_manager import AEManager
+print('ok')
+PY
+```
+
+**Build / test / submit** uses the `til` CLI (per-task) and `finals.sh` (the six-container Finals stack), both run on a GPU host with Docker:
+
+```bash
+til build <task> && til test <task> && til submit <task>   # per-task, Qualifier-style
+bash finals.sh build finals --build_all                    # full Finals stack
+bash finals.sh test                                        # local end-to-end match
+bash finals.sh submit finals --submit_all                  # push server + all task images (:finals tag)
+```
+
+See `docs/` for the full toolchain, hardware notes (Blackwell RTX 5070 Ti vs T4), and per-batch timing details.
+
+---
+
+## Engineering notes & design docs
+
+The real story lives in **`docs/`**: per-task `NOTES.md` (decisions, gotchas, dead-ends), the design specs and implementation plans behind each shipped feature, and our extracted **competitor-learnings** writeups. The codebase was built with a gated *brainstorm → spec → plan → eval → ship* workflow, with experimental features kept behind default-OFF flags so the deploy was never at risk — notes on that are in `docs/` too.
+
+---
+
+## License
+
+MIT.

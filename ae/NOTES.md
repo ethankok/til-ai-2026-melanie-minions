@@ -561,7 +561,7 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan: `docs/superpowers/{specs,plans}/
      melee→cloud agreement). Deploy: stage
      `training/ae/checkpoints/confpol-semis2b-u75.pt` → `ae/models/bc.pt`,
      `AE_MODE=confidence_policy_hybrid` (image `melanie-minions-ae:confpol-semis2b-u75`
-     built+submitted; staged at `gs://melanie-minions-bucket-til-26/handoff/confpol-semis2b-u75.pt`).
+     built+submitted; staged at `gs://<TEAM_BUCKET>/handoff/confpol-semis2b-u75.pt`).
      Magnitude is modest (+0.010); the real result is that the foreign curriculum
      TRANSFERS. **Stage B is now CONCLUDED (2 Jun): semis2b-u75 is the PEAK** —
      continued training (semis2c, real u273/u348) DEGRADED it (worst-bracket melee

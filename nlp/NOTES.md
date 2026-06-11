@@ -195,7 +195,7 @@ for unanswerable questions. The Dockerfile bundles the JSON if
 ```bash
 # 1. Pull a recent v9 predictions JSON so the trigger trains against the
 #    actual current "wrong" answers we need to rescue.
-gsutil cp gs://melanie-minions-bucket-til-26/nlp_results.json /tmp/
+gsutil cp gs://<TEAM_BUCKET>/nlp_results.json /tmp/
 
 # 2. Train the trigger against the bundled AE checkpoint.
 python training/nlp/find_ae_trigger.py \

@@ -581,8 +581,8 @@ tag:
 ```bash
 cd /home/jupyter/til
 
-docker pull asia-southeast1-docker.pkg.dev/til-ai-2026/repo-til-26-melanie-minions/melanie-minions-ae:hybrid-v3
-docker tag asia-southeast1-docker.pkg.dev/til-ai-2026/repo-til-26-melanie-minions/melanie-minions-ae:hybrid-v3 \
+docker pull asia-southeast1-docker.pkg.dev/<GCP_PROJECT>/repo-til-26-melanie-minions/melanie-minions-ae:hybrid-v3
+docker tag asia-southeast1-docker.pkg.dev/<GCP_PROJECT>/repo-til-26-melanie-minions/melanie-minions-ae:hybrid-v3 \
            melanie-minions-ae:hybrid-v3-speedcheck
 til submit ae hybrid-v3-speedcheck
 ```
@@ -612,7 +612,7 @@ Useful provenance commands on Workbench:
 docker image inspect melanie-minions-ae:hybrid-v3-speedcheck \
   --format '{{.Id}} {{json .RepoDigests}} {{json .RepoTags}}'
 
-docker image inspect asia-southeast1-docker.pkg.dev/til-ai-2026/repo-til-26-melanie-minions/melanie-minions-ae:hybrid-v3 \
+docker image inspect asia-southeast1-docker.pkg.dev/<GCP_PROJECT>/repo-til-26-melanie-minions/melanie-minions-ae:hybrid-v3 \
   --format '{{.Id}} {{json .RepoDigests}} {{json .RepoTags}}'
 ```
 
@@ -621,7 +621,7 @@ original 14 May `hybrid-v3`, compare against that. If not, do not use mutable
 tags as proof of same-bytes behavior.
 
 Workbench caveat: `gcloud artifacts docker images list ... --include-tags`
-failed for `svc-melanie-minions@til-ai-2026.iam.gserviceaccount.com` with
+failed for `<TEAM_SERVICE_ACCOUNT>` with
 `artifactregistry.versions.list` denied. If provenance is needed later, use
 local shell/log search, Docker history, old Discord/build logs, or ask someone
 with Artifact Registry version-list permission.

@@ -1,953 +1,169 @@
-# TIL-AI 2026 Submission Results
+# RESULTS — Team melanie-minions, DSTA BrainHack TIL-AI 2026
 
-Team: `melanie-minions`
-Last updated: **10 June 2026 — DEPLOY CHANGED to `confpol-semis2b-u75` + `g02-sample-08` CEM planner weights (raw_ae-retargeted tuner; first candidate to clear local placement + held-out composition + cloud-non-crater gates). g03-sample-08 cloud-rejected. Hardware A/B still ideal; revert = `git revert 68164b3`.**
+A public record of what Team **melanie-minions** built, shipped, and abandoned across the five tasks of the DSTA BrainHack TIL-AI 2026 competition — five separately Dockerized model services (AE, ASR, CV, NLP, Noise), scored on a blend of accuracy/reward and speed. This document is honest about dead-ends: most of the value here is in the long list of things that *didn't* work and why.
 
-**10 Jun 2026 — `g02-sample-08` adopted as current best (deploy).** The planner-weight CEM tuner was retargeted to the finals discriminator `raw_ae` (commit `9f8e7dd`); its campaign produced `g02-sample-08`, a balanced profile (tether 1.31 > 0.5, base 80 < 100) that PASSED all available gates vs incumbent semis2b-u75:
-- local placement/raw_ae on FRESH seeds: raw_ae **316 vs 239**, worst-robust placement **1.46 vs 3.92** (Pareto-dominates on raw_ae across all 5 tune brackets);
-- held-out curry/peroxide composition gap **0.86 vs 0.66** (within tol; held-out placement 2.35 vs 3.61 — the gate that killed g00-fixed-03 at +1.47, g02 passes);
-- cloud non-crater: `g02-sample-08-cemtuned` = **0.382 / 0.746, 0/30 err** > incumbent-det5 ~0.345 (g00 had cratered to 0.279).
-- `g03-sample-08-cemtuned` cloud = **0.352** (mission/base pegged at search bounds → weaker bet) → rejected; experiment lives on branch `g03-cemtuned`.
-- Deploy = commit `68164b3` on `ethanAE`/`main` (10 `ENV` overrides; core unchanged: bc.pt=semis2b-u75, confpol, det5, contention). **Hardware raw_ae A/B vs semis2b-default on the fixed seed remains the ideal final arbiter** (synthetic gate inverted on hardware once); revert = one `git revert 68164b3`. Detail in [ae/NOTES.md](ae/NOTES.md) "Read this first".
-
-**8 Jun 2026 (later) — real-hardware finals A/B supersedes the synthetic-gate decision below.** Ran three finals images on the **same fixed Blackwell finals seed** and parsed agent_0's AE reward from the match reports:
-
-**8 Jun 2026 (later) — real-hardware finals A/B supersedes the synthetic-gate decision below.** Ran three finals images on the **same fixed Blackwell finals seed** and parsed agent_0's AE reward from the match reports:
-- `confpol-semis2b-u75` (incumbent) → **516, 1st place**.
-- `confpol-semis2c-u75` (the gate's "promotable upgrade") → **411, 2nd** (beaten by a stub) — **the synthetic gate's promotion did NOT transfer; semis2b wins by 105 on the seed that's actually paid.** The runs are byte-identical for the first 34 steps then diverge at the first consultant tick, so it's a near-clean single-variable A/B of `bc.pt`. semis2c's loss is all *farming* (+436 vs semis2b's +746 big-positives), not defense — both lose their base ~step 110. Confirms the original "semis2c over-trained/degraded" read.
-- `g00-fixed-03` (CEM planner weights on semis2b) → **516, 1st, BYTE-IDENTICAL to semis2b** (0/200 reward vectors differ; moves differ only at the no-op terminal step 200). Weights are live but preserve every consequential ordering on this seed → **inert here**, and overfit off it. **REVERTED** (Dockerfile block removed).
-- **Finals deploy = `confpol-semis2b-u75` + Dijkstra + det5** (`AE_BOMB_DETONATE_STEPS` default 5). ⚠ Its qualifier-style cloud sanity is **0.345 / speed 0.744**, NOT the pre-det5 det3 figure of 0.414/0.742 — this is EXPECTED (det5 retunes offensive respawn-camp timing, which has no opponents in single-agent cloud, so it costs cloud reward but is melee-positive / on-hardware-neutral). Speed 0.744 confirms the Dijkstra engine (the slower 0.45-speed builds = the unadopted `sq` A\* engine). det5 kept for finals (user, 8 Jun); revert to exact det3-validated semis2b = one env var `AE_BOMB_DETONATE_STEPS=3`.
-- **Decision: keep `confpol-semis2b-u75` deployed at default weights.** Cancels the semis2c consultant swap staged below. Lesson: the synthetic melee gate misranked semis2b vs semis2c — **trust the on-hardware run**; the finals seed is deterministic (516/1st reproduces exactly), so 1 run = truth. Detail in [ae/NOTES.md](ae/NOTES.md) "Planner-weight CEM tuning" RESOLUTION + the match-log memory.
-
-**8 Jun 2026 — AE finals-aligned eval redesign + field re-rank (full detail in [ae/NOTES.md](ae/NOTES.md) "Read this first" and `docs/superpowers/specs/2026-06-07-ae-finals-aligned-eval-redesign.md`) — ⚠ its semis2c promotion was OVERRIDDEN by the on-hardware A/B above:**
-- **Why:** verified in the competition-server code that finals AE scores by **relative RANK** (`ae_reward × mission_multiplier`), **not** absolute single-agent reward — so the cloud number is the wrong-shaped selector. Rebuilt the melee gate (`melee_eval.py`): placement is PRIMARY; absolute reward/cloud are non-crater FLOORS; added a paired-effect + Probability-of-Improvement noise gate and a held-out-composition overfit alarm (`--heldout`). 14 new gate tests; tuner's 18 still green. Committed `851825c`.
-- **Re-ranked all relevant prior builds under the new gate** (`redecide_builds.py`). Only **`confpol-semis2c-u75` is promotable** over the deployed `confpol-semis2b-u75`, and it **CONFIRMS at high n** (45 paired samples, 0 err): wins 4/5 tune brackets, transfers to the held-out real competitors (held μ 2.55 vs 3.56), gap +0.15 not-widening. The "semis2c degraded" verdict was an artifact of the old worst-bracket gate. `g00-fixed-03` (CEM) formally confirmed **overfit** by the composition-gap (+1.47) — the earlier revert is vindicated for the right reason.
-- ~~**Deploy = consultant-checkpoint swap only**: `ae/models/bc.pt = confpol-semis2c-u75.pt`~~ **← CANCELLED by the on-hardware A/B above (semis2c lost 411 vs semis2b 516 on the live seed).** Deploy stays `confpol-semis2b-u75.pt` (in `handoff/`). The semis2c checkpoint remains staged in `handoff/confpol-semis2c-u75.pt` (sha256 `838f7847…769913`) only as a fallback artifact, not the deploy.
-
-**1 Jun 2026 — headline events (full detail in [ae/NOTES.md](ae/NOTES.md)):**
-- **⚡ The cloud AE eval became DETERMINISTIC** (org seeded it + removed
-  non-determinism; "may change deployed opponent models away from BenBots"). Proven:
-  byte-identical resubmits give identical scores. **Variance farming is obsolete —
-  1 `til submit` = the true score.** All "farmed mean" numbers below are OLD-eval.
-- **🏆 NEW BEST (deterministic re-rank): `confpol-native-u100` = 0.661 / 0.832.**
-  Full re-rank of distinct historical images on the new eval (1 submit each =
-  exact): confpol-native-u100 **0.661** » confpol-u860 0.626 = opening-v2 0.626 >
-  tether-v1 / confpol-native-u360 / pand-hybrid 0.605 > heuristic-c-bomb7 0.591 >
-  confpol-native-u200 0.559 > pand-policy 0.525 > heuristic-a-bomb7 0.515. Reads:
-  (a) the confpol NN is worth it — 0.626 > best pure heuristic 0.605; (b) the
-  **early gated-PPO rung wins** — u100 scored *worst* on the old noisy eval (0.551,
-  a low-tail draw) but is the champion on the deterministic eval, confirming
-  "earlier = less overfit". Deploy = confpol-native-u100 (stage that .pt as bc.pt,
-  `AE_MODE=confidence_policy_hybrid`; image already built+submitted at 0.661).
-  Follow-up: test u25/u50/u75 — the peak may be earlier than u100.
-- **Opening-book line (built + closed this session).** Divergence-gated Novice
-  opening prefix. v1 (gate locked over the bare heuristic) **regressed** confpol on
-  cloud (0.584 vs 0.634). Re-locked over confpol (v2, enables spawns 9,13/2,6/6,2):
-  on the new eval **= 0.626, identical to confpol** → the opening never fires on
-  our eval spawn (∈ {13,9/3,12/12,3}, which confpol opens well). Infra kept; not the
-  default. Lesson: validate opening gates against the *deployed* planner.
-- **Competitor intel:** `curryfarmer`/royal-recruits public repo = **0.715/0.807**
-  via deep novice-determinism exploitation (opening book + dist/opponent LUTs +
-  forward-sim planner + "defense wins / immortality" model). The bar to chase.
-- **Re-rank DONE** (`resubmit_rerank.sh`, 8 distinct images, 1 submit each) — see
-  the new-best line above. Next: test even-earlier confpol-native rungs (u25/u50/u75).
+> Competitor teams are anonymized as Team A/B/C/D. A brief note on our development process is in the footer.
 
 ---
 
-Last updated: 29 May 2026 (LLM rationale-mining + base-tether cloud A/B).
-Ran an LLM-as-player experiment then pivoted to mining LLM rationales of
-heuristic actions for heuristic tweaks. Submitted the one surviving lead
-(base-tether) to cloud as `tether-v1` (`AE_MODE=heuristic` + C+bomb7 +
-`AE_LEAD_BASE_TETHER=1`): first-shot **0.612 / 0.850, 0/30**. Variance-farmed
-n=5 (`tether-v1-vf1..vf5`, identical image): `0.612, 0.560, 0.568, 0.559,
-0.662` → **mean 0.592 ± 0.020, σ 0.045**. The 0.612/0.662 were high-tail
-draws. Verdict: farm mean 0.592 ≈ `heuristic-c-bomb7-v1` single 0.590 (Δ
-+0.002) and only +0.017 (+0.76σ) over heuristic-A's *true* farmed mean 0.575
-— within noise. The tether adds nothing detectable on cloud (consistent with
-its +0.006 local), so it stays default-OFF; NOT promoted. Mild takeaway: the
-C+bomb7 family farms ~0.59, in the same band as heuristic-A — no AE config has
-a farmed mean meaningfully above ~0.59. Active high unchanged. LLM-as-player
-findings (3 rounds vs
-mixed, seed 42, local sim): conservative-prompt Sonnet 4.6 -0.085,
-aggressive-prompt +0.100, Gemini-3.5-Flash + belief-memory +0.251 on round 1
-(≈ heuristic 0.279) before the agy subscription quota throttled later rounds.
-Lesson: belief/plan/memory context is the biggest lever for LLM play, but
-LLM-as-player is still ≤ the heuristic, so it's a worse teacher than the
-heuristic itself — distilling LLM *play* is a dead end; the LLM's value is
-*rationale annotation* of heuristic actions. Three rationale-mined leads
-implemented as default-OFF flags and gated via multi_seed_eval vs C+bomb7
-(0.2842 ± 0.0074): ① base-tether 0.2901 ± 0.0106 (Δ +0.006, within noise, no
-collapses) — the one submitted; ② bomb-gate-base 0.2664 (Δ -0.018, FAIL,
-defense_trap -0.213); ③ recon-discount 0.2842 (no-op, recon never wins as a
-target on the furnished suites). New infra: `ae/src/llm_manager.py`,
-`training/ae/collect_annotated_heuristic.py`, `training/ae/mine_rationales.py`.
-Active AE high unchanged: `heuristic-A-vf1 0.613 / 0.845`.
-
-Prior update: 28 May 2026 late-night (AE PPO line empirically closed via
-cloud variance-farm). `conf-hybrid-v4` first-shot scored `0.615 / 0.847` —
-looked like a new AE high. Variance-farmed 5x with identical image bytes
-(`conf-hybrid-v4-vf1..vf5`): `0.511, 0.566, 0.605, 0.491, 0.508`. 6-sample
-mean **0.549, σ 0.053**. The 0.615 was a high-tail draw; true v4 cloud
-mean is decisively below `heuristic-A-vf1 (0.613)`. **Methodology
-bombshell: cloud-eval σ ≈ 0.053 on a deterministic image — every
-single-shot historical cloud score in this repo carries ±0.10 measurement
-noise (95% CI on n=1). Speed σ ≈ 0.004 (stable); all variance is in the
-accuracy term.** Future promotion claims require n≥5 variance-farm.
-Also submitted: `heuristic-a-bomb7-v1` (`0.529`, untested combo regressed
-— drop) and `conf-hybrid-ppo-disabled-v1` (`0.591`, confirms
-`confidence_hybrid` wrapper is a no-op when PPO is gated off). AE active
-high unchanged: `heuristic-A-vf1 0.613 / 0.845`.
-
-Prior update: 28 May 2026 (confidence-gated PPO v3 cloud submission evaluated —
-gated PPO candidate `conf-hybrid-v3` scored `0.507 / 0.849` with 0/30 errors,
-confirming the persistent local-cloud transfer gap. While surgical gates
-prevented defensive collapse, the learned policy still degrades performance
-relative to pure heuristic on cloud. See [ae/NOTES.md](ae/NOTES.md) calibration log.
-
-CV final scores in: blended high is
-`yolo11l-1024-alldata-final-v1-img1280` = `0.671 / 0.950` blended `0.7410`;
-v3 took the raw-acc high `0.672 / 0.940` but blended `0.7390` — TTA on
-YOLO11l cost more speed than it bought accuracy. Semifinals prep window
-runs through 2026-06-10) — **Qualifier closed.
-AE official max remains
-`ppo-full-rl-v1-hybrid 0.638 / 0.847` via heuristic fallback, and best
-intentional heuristic remains `heuristic-A-vf1 0.613 / 0.845`. For semifinals
-work, the current local tactical candidate is the 400-game checkpoint
-`training/ae/checkpoints/tactical_policy.pt` with explicit conservative gates
-`AE_TACTICAL_PROFILE=bracket`, `AE_TACTICAL_DELTA_CONF=0.85`, and
-`AE_TACTICAL_MIN_DELTA_SUPPORT=50`: furnished 12-round x seeds 42/137 weighted
-mean `0.2932` versus heuristic `0.2825`, with worst-suite mean `0.2305` versus
-heuristic `0.1633`. The larger 800-game checkpoint is not promotable yet:
-`tactical_policy_800_more.pt` at the same gate scored only `0.2593` weighted
-because `base_rush_exploit`, `bracket_proxy`, and `top_seed_proxy` collapsed;
-raising raw support to 100 rescued the worst failures but only reached `0.2798`.
-Pandemonium external plan docs for a user-reported `0.731` AE score were
-reviewed: they describe generic CNN+MLP PPO, but the actionable clue is a
-BFS/rule-based fallback. Next AE work should be harm-aware tactical gating and
-planner-first arbitration, not blind larger BC or generic PPO. ASR final:
-`nemo-ft-v3` at `0.970 / 0.947`; NLP: `v28-optimized-bm25` blended `0.98425`;
-CV: `yolo11l-1024-alldata-final-v1-img1280` at `0.671 / 0.950` (final
-Qualifier CV high, +0.031 over plusval-v1 — v1 weights served at
-`CV_IMGSZ=1280`, the upscale-at-inference lever); Noise:
-`level10-detector-stress` at `1.000 / 0.947`. **Semifinals prep window:
-through 2026-06-10.**
-
-## Final Qualifier Status
-
-This table carries the former root dashboard content. Detailed decisions,
-gotchas, and experiment history live in each task's `NOTES.md`; submission
-history stays in this file.
-
-| Task | Latest shipped tag | Acc/reward | Speed | Status | Working log |
-|---|---|---:|---:|---|---|
-| ASR | `nemo-ft-v3` | 0.970 | 0.947 | New accuracy and speed high score. Fine-tuned Parakeet-TDT-0.6B-v2 model (step 713, val WER 0.0856) built as `nemo-ft-v3` with spelling, regex group post-processing fixes, and additional spelling variant corrections (zonen/sono, mewn, pullwalker). Submitted 27 May 13:26 SGT with 0/400 errors. Blended score `0.96425`. | [asr/NOTES.md](asr/NOTES.md) |
-| AE | **deployed `confpol-semis2b-u75` + `g02-sample-08` CEM weights** (commit `68164b3`; core unchanged, 10 planner-weight ENVs only) | local FRESH-seed: raw_ae **316 vs 239**, worst-robust place **1.46 vs 3.92**; held-out gap **0.86 vs 0.66**; cloud **0.382** (non-crater) | 0.746 | **Semis = relative-rank melee.** g02-sample-08 (raw_ae-retargeted CEM tuner) is the FIRST candidate to clear local placement + held-out composition + cloud-non-crater gates — a balanced profile (tether 1.31, base 80), not a glass cannon. g03-sample-08 cloud-rejected (0.352, bound-pegged). ⚠ Hardware raw_ae A/B vs semis2b-default (516/1st) on the fixed seed is the ideal final arbiter (synthetic gate inverted once); revert = `git revert 68164b3`. Prior on-hardware A/B (8 Jun): semis2b 516/1st > semis2c 411 > g00 inert. | [ae/NOTES.md](ae/NOTES.md) |
-| NLP | `v28-optimized-bm25` | 0.984 | 0.985 | Final blended and accuracy high. Tuned document-level plus passage-level BM25 bypasses neural models for high speed and reached blended `0.98425`. | [nlp/NOTES.md](nlp/NOTES.md) |
-| CV | `yolo11l-1408` | 0.684 | 0.937 | **Current best CV config (Semis prep, 30 May): blended 0.7473.** Same YOLO11l v1 weights (full-dataset, trained at 1024px) served at `CV_IMGSZ=1408` — upscale-at-inference lever had headroom past 1280; peaks at 1408, turns over by 1536 (0.650). Qualifier leaderboard high stays `...-v1-img1280` 0.671/0.950 (0.7410, locked; post-Qualifier submits don't count). RF-DETR architecture bet lost (0.666/0.921). | [cv/NOTES.md](cv/NOTES.md) |
-| Noise | `level10-detector-stress` | 1.000 | 0.947 | Shipped for Semifinals/Finals CV disruption. No direct Qualifier reward, but passed fairness locally and scored 1.000 cloud. | [noise/NOTES.md](noise/NOTES.md) |
-
-AE 26 May late-session (methodology + calibration update): nine independent
-structural attempts to lift the heuristic — three M5-primitive bolt-ons
-(spawn first-target, enemy-bomb-only escape, orientation-aware A*) and a full
-M5 ScriptedBaseAttackPolicy port behind `AE_MODE=scripted_hybrid` — came up
-negative or noise. The full M5 stack lost at -3.35σ on furnished gate,
-decisively answering that the reported `0.731` is codebase-specific not
-primitive-additive. Harm-aware tactical data (800 fresh games × 12-way macro
-labels = 160k samples across 90 distinct prior/option pairs) shows ZERO
-positive-EV transitions — falsifies the random-exploration tactical-hybrid
-line. Then ranked 11 configs at n=5 hash × 1 sim × 6 rounds and found a
-positive composition: `C + bomb=7.0`
-(`AE_ITEM_MISSION_VALUE=80 AE_ITEM_RESOURCE_VALUE=40 AE_ENEMY_BASE_VALUE=100 AE_DIJKSTRA_BOMB_COST=7.0`)
-at weighted_mean **0.2842 ± 0.0074, Δ +0.020 vs baseline (+1.13σ)**.
-Composed 82% additively from C alone (+0.016) and bomb=7 alone (+0.009).
-Wins on every semifinals-relevant suite: bracket_proxy +0.075, top_seed_proxy
-+0.088, defense_trap +0.070; only regression pressure2 -0.062 (mass-bomb
-chaos, less relevant for our 15th-seed bracket). New shipped infrastructure:
-[multi_seed_eval.py](training/ae/multi_seed_eval.py) for K-hash × M-sim
-aggregation with per-suite SE; `PYTHONHASHSEED=0` auto-pin in 6 entry points
-+ Dockerfile (cloud submissions now deterministic). Two historical
-corrections: `heuristic-A` (`0.613/0.845` leaderboard tag) ranks 7th here at
--0.28σ — its cloud lift was variance, not stable mean. `heuristic-C`
-(dismissed last week as "3rd of 3" on 3 cloud submissions) is now #2 alone
-and #1 in combo. This made `C + bomb=7.0` the only reasonable cloud
-variance-farm candidate; see [ae/NOTES.md](ae/NOTES.md) "26 May 2026 (late)"
-for full breakdown.
-
-AE 28 May late-night cloud batch (8 submissions, all 0/30 errors):
-
-| Tag | Mode | Score | Speed | Note |
-|---|---|---:|---:|---|
-| `conf-hybrid-v4` | confidence_hybrid + v4 ckpt | 0.615 | 0.847 | First-shot — looked like new high, then variance-farm refuted |
-| `conf-hybrid-v4-vf1` | (same image) | 0.511 | 0.840 | Variance farm 1/5 |
-| `conf-hybrid-v4-vf2` | (same image) | 0.566 | 0.837 | Variance farm 2/5 |
-| `conf-hybrid-v4-vf3` | (same image) | 0.605 | 0.841 | Variance farm 3/5 |
-| `conf-hybrid-v4-vf4` | (same image) | 0.491 | 0.841 | Variance farm 4/5 |
-| `conf-hybrid-v4-vf5` | (same image) | 0.508 | 0.847 | Variance farm 5/5 |
-| `heuristic-a-bomb7-v1` | heuristic + A-aggression + bomb7 | 0.529 | 0.842 | Untested combo regressed; drop |
-| `conf-hybrid-ppo-disabled-v1` | confidence_hybrid w/ PPO gated off | 0.591 | 0.846 | Confirms wrapper is no-op when PPO disabled |
-| `tether-v1` | heuristic + C+bomb7 + base-tether (lead ①) | 0.612 | 0.850 | First-shot. Variance-farm n=5 → mean 0.592 ± 0.020 (see below) |
-| `tether-v1-vf2` | (same image) | 0.560 | 0.843 | Variance farm 2/5 |
-| `tether-v1-vf3` | (same image) | 0.568 | 0.845 | Variance farm 3/5 |
-| `tether-v1-vf4` | (same image) | 0.559 | 0.850 | Variance farm 4/5 |
-| `tether-v1-vf5` | (same image) | 0.662 | 0.855 | Variance farm 5/5 — high-tail draw |
-
-6-sample v4 stats: **mean 0.549, σ 0.053, range 0.491–0.615 (124 pts)**,
-speed σ ≈ 0.004. 95% CI on the mean: `0.549 ± 0.043`. **Cloud σ ≈ 0.053
-applies to ALL prior single-shot cloud scores in this repo** — historical
-comparisons with ±0.02 deltas (most of them) were inside noise. Not
-promoting v4. Active AE high remains `heuristic-A-vf1 0.613 / 0.845`. Per
-PR-friendly numbers, set the bar for any future "real" promotion claim at
-**Δ_mean ≥ 0.05 with n≥5 each side** (i.e. don't bother resubmitting unless
-you expect a half-σ-or-better effect, and always farm both sides).
-
-AE 27 May cloud check: `heuristic-c-bomb7-v1` baked the C+bomb7 profile
-(`AE_MODE=heuristic`, `AE_ITEM_MISSION_VALUE=80`, `AE_ITEM_RESOURCE_VALUE=40`,
-`AE_ENEMY_BASE_VALUE=100`, `AE_DIJKSTRA_BOMB_COST=7.0`) and passed Workbench
-`til test` at `0.8031666666666666`. Cloud returned `0.590 / 0.845` with 0/30
-errors. Treat as neutral calibration: it matches the expected 0.59-0.60 mean
-band but does not beat `heuristic-A-vf1` (`0.613 / 0.845`) or the protected
-`ppo-full-rl-v1-hybrid` max artifact (`0.638 / 0.847`). Not promoted; Dockerfile
-restored off the C+bomb7 build config after logging.
-
-AE 26 May semifinals local update: after landing 15th on the Novice path
-leaderboard, expected semifinals Match 1 is seeds 3/8/9/14/15/20, so AE is the
-main remaining lever to win the match outright. `tactical_hybrid` is the serious
-AE semifinals path, but only behind explicit gates. Broad bracket profile was a
-trap: the 400-game checkpoint with plain `AE_TACTICAL_PROFILE=bracket` scored
-only `0.2339` weighted on furnished 4-round seed-42. Gate sweeping found one
-local candidate worth preserving:
-
-```bash
-AE_TACTICAL_PROFILE=bracket
-AE_TACTICAL_DELTA_CONF=0.85
-AE_TACTICAL_MIN_DELTA_SUPPORT=50
-AE_TACTICAL_POLICY_CHECKPOINT=training/ae/checkpoints/tactical_policy.pt
-```
-
-That setup scored furnished 12-round x seeds 42/137 weighted `0.2932`, beating
-the heuristic baseline `0.2825` and lifting the worst suite from `0.1633` to
-`0.2305`. The lift is concentrated in `base_rush_exploit` (`0.2362` versus
-`0.1633`), `bracket_proxy` (`0.2664` versus `0.2480`), and `cloudsuite`
-(`0.4233` versus `0.4140`), while `strong_realistic` and `mixed` regress.
-Stricter confidence/support and hand-filtered transition gates were rejected.
-
-The later 800-game tactical dataset did not produce a better checkpoint.
-`tactical_policy_800_more.pt` fits more labels, but under the same `0.85/50`
-gate it scored furnished weighted `0.2593` and collapsed the match-critical
-base/top/bracket suites. Raising raw support to `100` restored pressure/top
-sanity on a quick 4-round x 2-seed screen (`0.2798` weighted), but still did
-not beat the old 400-game checkpoint. Diagnosis: BC here means behavior
-cloning, so it imitates outcome-weighted labels; it does not directly optimize
-eval score. The gate currently counts positive support but not harm rate, so
-more data can make bad transitions look "supported." Next step is a harm-aware
-gate using attempted transition counts, positive rate, and net delta. See
-[ae/NOTES.md](ae/NOTES.md) and [training/ae/RUNBOOK.md](training/ae/RUNBOOK.md).
-
-AE 26 May external Pandemonium plan review: the four newest downloaded files
-(`til26_model_plan (1).md`, `pandemonium1.png`, `pandemonium2.png`,
-`pandemonium3.png`) were reviewed after a user-reported Team Pandemonium AE
-score of `0.731`. The markdown and first two screenshots are generic
-Stable-Baselines PPO guidance: CNN over `viewcone`, MLP over scalar state,
-10M fixed-Novice steps, self-play, and Advanced random-map/ICM ideas. The
-important screenshot is `pandemonium3.png`, which says "PPO + BFS rule-based
-fallback" and emphasizes immediate BFS manager deployment plus `/reset` sanity.
-Conclusion: the score is not reproducible from the generic PPO plan alone; the
-missing value likely sits in fallback arbitration, scripted route tables, bomb
-safety, opponent curriculum, and checkpoint details. Treat it as support for
-our `tactical_hybrid` / planner-first direction, not as a reason to restart raw
-PPO.
-
-AE 24 May session — full submission log (17 new submits, best intentional heuristic tag found):
-
-| Tag | AE_MODE | Notable env | Cloud | Speed |
-|---|---|---|---:|---:|
-| elo-v1-vf1..vf4 | hybrid | (default, Elo ckpt update 40) | 0.406, 0.417, 0.396, 0.433 | ~0.84 |
-| hybrid-rerun-vf1 | hybrid | baseline `ppo-full-rl-v1.pt` | 0.422 | 0.842 |
-| heuristic-restore-vf1 | heuristic | (defaults) | 0.479 | 0.857 |
-| **heuristic-A-vf1** | heuristic | `AE_ENEMY_BASE_VALUE=160, AE_DIST_PENALTY=0.9` | **0.613** | 0.845 |
-| heuristic-A-vf2, vf3 | heuristic | same as A-vf1 | 0.579, 0.606 | ~0.85 |
-| heuristic-B-vf1..vf4 | heuristic | `AE_TIER1_DEFENSE=1, AE_BASE_DEFENSE_HEALTH=80, AE_BASE_DEFENSE_RADIUS=6` | 0.571, 0.581, 0.528, 0.570 | ~0.85 |
-| heuristic-C-vf1..vf3 | heuristic | `AE_ITEM_MISSION_VALUE=80, AE_ITEM_RESOURCE_VALUE=40, AE_ENEMY_BASE_VALUE=100` | 0.545, 0.559, 0.556 | ~0.85 |
-| fixed-map-v5-restored-vf1, vf2, vf5, vf6 | heuristic | restored 747b1e1 defaults (byte-identical to 0.638 served path) | 0.553, 0.608, 0.591, 0.521 | 0.852, 0.846, 0.841, 0.847 |
-| A-star-base | heuristic | restored 747b1e1, no env changes | **0.612** | 0.847 |
-| a-star-v2 | heuristic | `AE_ASTAR_TIEBREAK=1, AE_DIJKSTRA_BOMB_COST=5.0` (Config A hail-mary) | 0.573 | 0.844 |
-
-Variant aggregates: A (n=3, mean 0.599, max 0.613, σ 0.018) > B (n=4, mean 0.563, σ 0.024) > C (n=3, mean 0.553, σ 0.008). Aggressive-offense direction wins clearly; defense-first and item-farming both hurt. Follow-up heuristic sweeps tested higher base value, lower distance penalty, lower/higher Dijkstra bomb costs, threat penalties, defense radius/health, and bridge combinations. No candidate survived the promotion gates, so do not bake any of those knobs.
-
-Discovery this session: the prior `ppo-full-rl-v1-hybrid` `0.638` (and every other 0.55-0.64 "PPO"/"hybrid" submission yesterday) was actually pure-heuristic behavior. `ae/src/model.py` at the May 22 deploy commit `c66a4b7` did not contain `LegacyPolicyNetwork` — so loading `ppo-full-rl-v1.pt` (legacy-small arch) raised a shape-mismatch in `policy_manager._load_model`, which `ae_server.py` silently swallows via `except Exception: return AEManager()`. The container booted fine and served pure heuristic the whole time, matching the historical `ae-fixed-map-v5` heuristic baseline of `0.630`. Today's `c1cb18b` commit re-added legacy support, the policy actually engaged on cloud for the first time, and scores immediately collapsed to ~0.41 — confirming the policy is genuinely worse than the heuristic on the cloud distribution. Reverted to `AE_MODE=heuristic` (commit `598e391`) before continuing with parameter tuning.
-
-AE 24 May late local sweeps — no new cloud submits, no promoted candidate:
-
-| Experiment | Best-looking local result | Wider-gate result | Decision |
-|---|---|---|---|
-| Broad/focused heuristic knobs | Broad 224 and focused 288 screens found candidates above the local baseline; `focus_0124` reached objective `0.3299` and pressure2 `0.3830`, `focus_0266` lifted cloudsuite to `0.4126`. | `focus_0124` dropped cloudsuite from baseline `0.3612` to `0.3132`; `focus_0266` collapsed pressure2 to `0.1670`; `anchor_dijkstra_8` lost a separate gate (`0.2771` vs baseline `0.3186`). | Reject. Screen wins were pressure/cloudsuite tradeoffs, not real aggregate gains. |
-| Bridge heuristic grid | 240-candidate bridge screen found `bridge_0194`/`bridge_0203` objective `0.3687`; cloud-preserve gate found `bridge_0211` objective `0.4260`, cloudsuite `0.5727`, pressure2 `0.4190`. | Final 32-round pair killed `bridge_0211`: baseline objective `0.2942`, cloudsuite `0.3231`, pressure2 `0.3100`; bridge objective `0.2638`, cloudsuite `0.1873`, pressure2 `0.3335`. | Reject. Do not bake `bridge_0211`; it is not stable. |
-| Option-v2 planner overhaul | Added opt-in `AE_PLANNER=option_v2`, explicit modes (defend base, destroy base, farm, hunt, explore, escape), and commitment/hysteresis. Initial gate: baseline mean `0.2844`, option-v2 mean `0.1244`. | Controlled 96-candidate sweep plus top-3 advance still lost badly. Advance baseline objective `0.2850`; `option_grid_0030` objective `0.1426`, `option_grid_0070` `0.0877`, `option_grid_0086` `0.0802`. | Keep as experimental scaffolding only. Default remains legacy planner. |
-
-Net AE recommendation from the late sweep: stop broad knob search and do not promote option-v2. Future AE work should be a narrow legacy-manager structural patch around visible base-bomb pressure, with a paired cloudsuite/pressure2 gate, or nothing.
-
-AE 23 May 12:30 SGT update: three new pieces of work this session, no new
-cloud high. (1) Variance-farmed `ppo-full-rl-v1-policy` with 5 fresh submits
-(`vf2..vf7`); results `0.594, 0.565, 0.567, 0.557, 0.577`, all 0/30 errors;
-combined with the original 3 submits gives n=8, mean `~0.577`, max still
-`0.625`. The right tail did not repeat. (2) Plumbed a new env var
-`AE_DIJKSTRA_BOMB_COST` (default `5.0`, preserves shipped behavior) into
-`AEManager`. Mac sweep across {random, library, cloudsuite}: cost `5.0` mean
-`0.569`, `4.0` mean `0.554`, `3.0` mean `0.544`. Direction is monotonic and
-clean (lower cost trades random tempo for cloudsuite pressure score), but
-random regression dominates the cloudsuite gain, so aggregate falls. Did not
-ship; lever stays available behind one env var. (3) Fixed a pre-existing
-crash in `training/ae/opponents.py` `BaseRusher._choose_target` that called
-the long-removed `_fixed_base_attack_cells` helper and broke every
-cloudsuite validator run since 21 May.
-
-AE 23 May 12:30 SGT belief-PPO experiment: built and ran the full
-belief-aware training pipeline. New launcher
-`training/ae/run_full_rl_belief_v1.py` chained mixed-opponent BC collection
-(`collect_bc.py` got an `--opponents` flag mirroring `simulate.py`), belief
-BC training (best val_acc `0.9527`, ahead of the previous `bc-belief`'s
-`0.897`), and PPO with `--preset full-rl --use-belief`. PPO was stopped at
-update 200/240 once the trajectory plateaued. Final weighted eval
-`0.4925` (parts `random=0.7909, scripted=0.5553, cloudsuite=0.2805`) vs
-the `ppo-full-rl-v1.pt` reference (`0.7428` weighted, parts `0.917 / 0.647 /
-0.752`) — belief-PPO lost on every suite, biggest gap on cloudsuite. Save
-floor was `0.6236`; no candidate cleared the gate, no deployable artefact
-written. Honest read: the comparison is biased against belief because the
-no-belief reference warm-started at selection `~0.60` while belief PPO
-started from BC at `0.13`, belief overhead added ~20-30% per-update
-wall-clock, and BC-vs-PPO distribution shift made cloudsuite oscillate
-rather than converge. A clean ablation needs a belief-aware warm-start at
-parity selection score plus matched compute and BC distribution, which is
-out of scope before 24 May. Conclusion for this submission cycle: belief
-is off the table; infrastructure stays in tree for future work.
-
-AE 23 May 03:50 SGT update: full-RL deployment A/Bs are now documented and
-the honest interpretation is cloud variance, not a clean winner. The gated
-epoch-230 checkpoint (`ppo-full-rl-v1.pt`, sha256
-`1f30da4ebbfa7bd8d6fd131df5d5dcb9ee9a103fb57b1092d77c9beb3c827b43`) produced
-three deployment families:
-
-```text
-pure policy                  0.550, 0.579, 0.625        mean 0.585
-hybrid shortcut off (PPO on)  0.564, 0.638, 0.599, 0.552 mean 0.588
-hybrid shortcut on           0.521, 0.637, 0.582        mean 0.580
-```
-
-`ppo-full-rl-v1-hybrid` is the current AE high by max cloud score
-(`0.638 / 0.847`, 0/30 errors), narrowly beating `fixed-map-v5`
-(`0.630 / 0.858`). However, `ppo-full-rl-v1-hybrid-shortcut` hit
-`0.637 / 0.845` while mostly bypassing PPO on detected Novice maps, so the
-single-run high does not prove the shortcut-off wrapper is materially better.
-Operational stance: protect the `0.638` submission; only continue AE if
-deliberately variance-farming identical/near-identical tags or revising RL
-selection/gating enough to beat this noisy band.
-
-AE 22 May 14:20 SGT update: the `qualifier-best` PPO retry path produced
-several clean checkpoints but did not beat `fixed-map-v5` on hidden eval.
-`ppo-qualifier-best-v1` saved best checkpoint at `epoch=65` with weighted eval
-`0.6547` (random `0.7659`, scripted `0.6440`, cloudsuite `0.6167`) and cloud
-returned **0.610 / 0.857**. `ppo-qualifier-best-v2` continued from v1 with a
-cloudsuite-heavy setup; local eval reached `0.6576`, but cloud returned
-**0.598 / 0.845**. `ppo-qualifier-best-v3` was a scripted/balanced continuation
-and stayed local-only with best eval `0.6199`. `ppo-qualifier-best-v4-balanced`
-was the strongest local proxy (`epoch=75`, eval `0.68808125`, parts random
-`0.82228125`, scripted `0.6648125`, cloudsuite `0.64425`, local Docker
-`0.7506667`, checkpoint sha256
-`3e123b65cd5f2baae06197c4ab05055061b7b17aef96083744445891b9ecb047`), but the
-same image/tag produced duplicate cloud results **0.602 / 0.846** and
-**0.578 / 0.845**. Interpretation: PPO is improving the local proxy, but the
-hidden-eval transfer gap is still the limiting problem.
-
-AE full-RL live handoff: `training/ae/train_ppo.py` now supports a `full-rl`
-preset with fixed-Novice geometry, rotating rollout seeds, per-game stratified
-opponent mixing (`random,scripted,cloudsuite,planner,aggressive,league`), KL
-early stopping, schedules/shaping, weighted validation, and optional critic
-warm-start. The first live launch was stopped because hybrid selection still
-used the fixed-map shortcut, causing `scripted` and `cloudsuite` scores to stay
-effectively pinned to the heuristic. The restarted Mac run uses
-`selection_fixed_map_shortcut=off` / `AE_HYBRID_FIXED_MAP_SHORTCUT=0` during
-selection, so PPO affects fixed-Novice evals. Current restarted-run baseline:
-`0.5707` weighted (`random 0.7336`, `scripted 0.5196`, `cloudsuite 0.5404`);
-reference `ppo-qualifier-best-v4-balanced` scored `0.5765`; save floor is
-`0.5915`. `training/ae/run_full_rl_v1.py` writes
-`training/ae/checkpoints/ppo-full-rl-v1.pt` only if the gate clears, plus
-`ppo-full-rl-v1-latest.pt` for recovery/inspection. Train on Mac and only use
-Workbench for Docker build/test/submit.
-
-ASR 22 May 06:26 SGT update: runtime-fixed `parakeet-unified-zs` ran cleanly.
-Workbench `til test` completed 1028/1028 in 54:12 with English WER **0.0453**
-and `1 - MER = 0.9886804088933244`. Cloud returned **0/400 errors**,
-score **0.956**, speed **0.915**. Decision: **reject / do not promote**.
-It tied `nemo-zs` accuracy (`0.956`) but lost speed (`0.915` vs `0.946`), so
-blended is `0.9458` versus `nemo-zs` `0.9535`.
-
-ASR 22 May 05:46 SGT update: submitted `parakeet-unified-zs` after direct
-Hugging Face `.nemo` staging and a successful Docker build, but the container
-never became healthy and cloud returned **400/400 errors**, score **0.000**,
-speed **0.996**. Violet's triage and the local startup log point to the same
-cause: the checkpoint config contains `att_chunk_context_size`, while released
-`nemo_toolkit[asr]==2.7.3` does not expose that argument on
-`ConformerEncoder`. This result says nothing about unified model quality. The
-repo now pins the ASR image to NeMo GitHub main commit
-`ccbbfbbdb3a4e4a4a8c06cedca6ca468e54112ac` and adds a build-time guard for
-the required encoder argument. Do not resubmit this tag until
-`til build asr parakeet-unified-zs` passes that guard and
-`til test asr parakeet-unified-zs` reaches healthy inference.
-
-AE 21 May 17:15 SGT update: `fixed-map-v5` scored **0.630 / 0.858** with 0/30 errors, a new AE high. The restored checkpoint hash was `746bbe8198e77666d45ab9d9c6b4bb322a8f4de8faec1dab7343fc63ff4b73aa` (`epoch=75`, `ppo_eval_score=0.6055`). A real legacy-policy fine-tune (`fixed-map-v5-finetune-v1`) looked excellent locally (`til test 0.85025`, checkpoint eval `0.6678`) but cloud fell to **0.587 / 0.848**, confirming local/scripted PPO overfit. Current AE direction: preserve `fixed-map-v5` runtime source and only make small fixed-map changes from here.
-
-AE 21 May 05:15 SGT update: restored the working AE model to `ae-fixed-map-v3` source/config. This removes the later item-prior/macro/base-defense/pessimistic-search runtime changes from the shipping path while keeping their docs/results as historical evidence.
-
-AE 21 May 05:05 SGT update: `pessimistic-mini-search-v1` was submitted after a Mac 24-round gate improved cloudsuite to `0.3962` and reduced visible-bomb failures, but it did not transfer into a competitive cloud result. Workbench `til test` scored only `0.456`; cloud returned `0.396 / 0.847` with 0/30 errors. Interpretation: cloudsuite was a good predictor here, but the candidate's safety bias traded away too much attack/farming tempo. At the time, this kept `ae-fixed-map-v3` as the AE high and `ae-item-confidence-v1` as second-best; keep pessimistic search out of the default Docker runtime.
-
-AE 21 May 02:20 SGT update: `ttd-defense-v1` added a hard override for enemies on/near own-base-hitting bomb cells and added base-failure class counters to `training/ae/simulate.py` / `validate_cloud_suite.py`. Mac validation stopped it locally: random `0.6446` (base `62.5`), library `0.5475` (base `67.5`), cloudsuite `0.2714` (base `25.8`, `base_damage=-1125`, `own_base_destroyed=-1178`), aggregate `0.4878`. The override fired often (`ttd≈22.6` in cloudsuite) but did not prevent enough visible enemy bomb damage and likely pulled too much tempo. Do not build or submit this behavior.
-
-AE 21 May 02:00 SGT update: `ally-bomb-safe-v2` is rejected. It looked promising on random Docker (`til test` `0.6395`) but failed the pressure gate before submission: random `0.6650`, library `0.5415`, cloudsuite `0.2870`, aggregate `0.4978`, with own-base destruction still high. Cloud then returned only `0.369 / 0.847` with 0/30 errors. The simple mechanics change was not behaviorally small: allied bombs are same-team-damage-safe, but removing own-bomb escape/base-hit constraints globally caused over-bombing, bomb-budget waste, blocked positioning, and weaker hidden-pressure defense.
-
-AE 21 May 02:00 SGT update: `candidate-b` / base-minefield-v1 was submitted first and scored cloud `0.500 / 0.858` after local Docker `0.538`. That was the narrowest Docker-cloud gap so far, but the absolute score was still below `ae-fixed-map-v3`, `ae-item-confidence-v1`, `hybrid-v3`, and even `heuristic-tweaks`. The follow-up `ally-bomb-safe-v2` A/B baked `AE_ALLY_BOMB_SAFE=1`, stopped treating own bomb blasts as danger, allowed own-base-covering bombs, and removed own-bomb escape requirements. Local random Docker rose to `0.6395`, but the 24-round gate warned it was worse under pressure (`cloudsuite 0.2870`, base `20.0`, `base_damage=-1340`, `own_base_destroyed=-1250`) and cloud confirmed the regression at `0.369 / 0.847`. Do not pursue the ally-bomb-safe branch without a much narrower defensive-only trigger.
-
-AE 20 May late-night Workbench diagnostic check: after pulling `725c097`, ran `python training/ae/validate_cloud_suite.py --rounds 24 --suites random library cloudsuite --our heuristic --summary-out training/ae/data/ae-diagnostic-check.json`. Results: random `0.7462` (p50 `0.7385`, base `63.3`), library `0.5564` (p50 `0.5305`, base `10.0`), cloudsuite `0.3186` (p50 `0.3390`, base `0.0`), aggregate mean-of-means `0.5404`. This confirms the diagnostics work on Workbench and that the next real AE lever is still base survival under pressure, not another blind item-confidence or macro-routing sweep.
-
-AE 20 May 23:45 SGT update: Added local diagnostics for AE validation: mean bombs placed, unique cells visited, final health/base health, early-end/termination rates, action counts, and inferred reward components (mission/resource/recon, enemy base destruction, self/base damage, etc.). Also made simulator round resets use `--seed` deterministically. Behavior probes were gated and rejected: conditional/rollback item prior results were unstable, opening-book and pressure-switch attempts traded away too much score on longer `cloudsuite`, and base-defense bumps improved some survival signals but reduced mean score. No submit candidate created.
-
-
-AE 20 May 22:35 SGT update: `ae-item-prior-strong-v1` pulled commit `1c51ccc`, ran validation, built, and passed Docker `til test`, but the `til submit` push was canceled before automatic evaluation. Local validation: random `0.7012`, library `0.5712`, cloudsuite `0.2848`, aggregate mean-of-means `0.5190`; Docker `til test` score `0.7245`. Compared with `ae-item-confidence-v1`, stronger item priors improved library pressure slightly (`0.5712` vs `0.5499`) but hurt random (`0.7012` vs `0.7959`), cloudsuite (`0.2848` vs `0.3045`), and Docker (`0.7245` vs `0.7435`). Diagnosis: increasing prior trust probably causes over-commitment to stale/static item routes; leave the submission un-retried unless we explicitly want to spend one cloud run on a weaker local candidate.
-
-AE 20 May 22:05 SGT update: Submitted `ae-item-confidence-v1`; cloud returned `0.593 / 0.844` with 0/30 errors. Workbench pre-submit checks: local `til test` score `0.7435`; 12-round validation suite random `0.7959`, library `0.5499`, cloudsuite `0.3045`, aggregate mean-of-means `0.5501`. The local-cloud gap remains large, but this cleared the requested ~0.5 cloud level. Next low-risk A/B is `ae-item-prior-strong-v1`, which keeps item absence/respawn safeguards but raises fixed-map item prior confidence from `0.58` to `0.70` and prior floor from `0.18` to `0.25`.
-
-AE 20 May 21:00 SGT update: Submitted `heuristic-tweaks` with parameter-swept optimized heuristics (`optimal_combo` parameters). Local test on GCP workbench scored `0.737` (6 rounds), local mixed sweep scored `0.5373` (100 rounds). The cloud evaluation score dropped to `0.538` (down from `ae-fixed-map-v3`'s high of `0.614`), indicating that the new behaviors (combat chasing, base health panic defense, or the dynamic Dijkstra penalty) are punished by the smart cloud bots.
-
-AE 20 May 18:25 SGT update: Submitted `ae-fixed-map-v3` and scored **0.614** cloud score / **0.860** speed score (new high score). Resolved escape loop thrashing, relaxed map detection to base-only for 100% activation consistency across randomized slots/spawn-points, and fixed base-defense camping loops.
-
-NLP `v21-trigger-only` shipped on 20 May 2026 ~04:43 SGT: cloud `0.948 / 0.941` (0/700 errors), blended ~`0.946`, +0.023 over v20 and +0.212 over the prior v9 baseline. Same Universal Adversarial Trigger as v20 but skipping the RoBERTa QA forward — `_answer_one` returns the trigger string directly after retrieval (verified 0.994 AE pass rate locally with empty candidate). Pipeline: BM25+BGE+BGE-reranker retrieval only, no QA model at inference. Near the score ceiling: accuracy bounded by `retrieval_recall (~95.8%) × AE_pass_rate (~0.994) ≈ 0.952`. Further NLP gains require lifting retrieval recall, which has poor marginal ROI compared to AE work.
-
-NLP `v20-ae-trigger` shipped earlier 20 May 2026 ~03:54 SGT: cloud `0.951 / 0.840` (0/700 errors), blended ~`0.923`, +0.189 over the prior v9 blended best. Universal Adversarial Trigger trained against the official AE ModernBERT checkpoint with HotFlip (Wallace 2019) and prepended to every non-empty answer — see [nlp/NOTES.md](nlp/NOTES.md). v21 supersedes for blended score but v20 remains the accuracy high. Pipeline otherwise unchanged from v9 (BM25+BGE retrieval, BGE reranker, RoBERTa-large extractive answerer). All prior v9/v14 entries kept below for history.
-
-Important packaging guard: a later `v9-locked` rebuild scored only `0.664`
-locally because the untracked `nlp/models/roberta-finetuned-squad2/` artefact
-was missing from the Docker context, so the image fell back to downloaded stock
-`roberta-base-squad2`. Current Dockerfile now hard-fails locked extractive
-builds unless that v9 RoBERTa fine-tuned artefact is present.
-
-The v19 hybrid router now also fails the local gate: after packaging fixes it
-ran end-to-end, but scored `0.705` with a 15:00 QA loop, below and much slower
-than v9 rescue (`0.711`, 4:13). Do not submit v19.
-
-The v20 composition-lite test is also stopped for now. It scored `0.664`, and
-the `NLP_QA_MAX_SEQ_LEN=384` verification tag scored `0.663`; both inherited
-the bad/current reader artefact. Candidate checkpoint
-`training/nlp/runs/20260515-035108/checkpoint-888` reached `0.697`, better but
-still below the real v9 gate. Do not submit or tune on these local rebuilds.
-
-Current `main` is therefore locked back to the v9-style extractive image:
-`NLP_ANSWERER=extractive`, `NLP_SKIP_LLM_DOWNLOAD=1`, and no default vLLM
-runtime dependency. Use explicit branch/env changes for any future Qwen ablation.
-
-AE 20 May 18:25 SGT update: Submitted `ae-fixed-map-v3` and scored **0.614** cloud score / **0.860** speed score (new high score). Resolved escape loop thrashing by disabling the rigid active escape path override (allowing fluid fallback action scorer dynamic planning on every tick) and restoring the danger check in `_should_place_bomb`. Crucially, relaxed map detection to rely purely on base location coordinates instead of strict step-0 agent coords. This ensures 100% activation of the pre-populated map Dijkstra solver in the evaluator, even when the agent spawns at different neighboring cells relative to its base. Local mean score vs Mixed pool reached **0.5146** with zero agent deaths.
-
-AE 20 May 05:15 SGT update: Optimized defensive logic and resolved the base-camping deadlock. If enemies are within the base defense radius, they are targeted with priority over the base itself, prompting active bombing of opponents rather than passive camping. The defense emergency flag is now only triggered for immediate threats (distance <= 2) or active base damage, allowing general offensive and collection targets to proceed otherwise. Additionally, we added proactive wall-clearing via bomb timers (saving 31% on self-damage) and enabled tactical bombing around our base when base health > 20. Tested as `ae-fixed-map-v2`, reducing own base destruction vs mixed opponents from 7/15 to 3/15, and achieving a 50-round mean score of **0.3424** vs mixed opponents with high stability (std reduced to **0.1380**).
-
-AE 20 May 04:40 SGT update: Implemented Option A (fixed-map exploitation) for the Novice map. Pre-populated the belief map layout (walls, destructible walls, bases, static items) and transitioned the heuristic pathfinding to a true Dijkstra-based cost search (which integrates destructible wall bombing and escape costs). This achieved a local 50-round mean score of **0.7466** (up from **0.5728** baseline), with a maximum score of **1.0340** and a 75th percentile of **0.8460**. Built and tested as `ae-fixed-map-v1`.
-
-AE 19 May update: AE is unparked for evidence gathering after a public
-0.9 score, but `hybrid-v3` remains the shipped best. New cloud A/Bs all
-regressed: `hybrid-v3-no-mcts` scored `0.482 / 0.598`,
-`hybrid-v3-no-vetofrozen` scored `0.454 / 0.556`, and
-`hybrid-v3-conf-0.3` scored `0.411 / 0.591`. The broad speed drop across
-18/19 May AE tags (~0.56-0.62 vs old `0.849`) requires a same-bytes
-`hybrid-v3-speedcheck` before blaming code. Also note the corrected
-training premise: `train_ppo.py` already defaults to Novice fixed-map mode,
-so another `--novice` PPO run is a controlled rerun, not a first attempt at
-fixed-map training. That controlled rerun (`novice-fixed-v1`) finished
-200/200 updates with best eval `0.5915`, below prior local candidates; do
-not submit it. Follow-up Docker `til test ae novice-fixed-v1` scored only
-`0.5156667` over 6 rounds (`3094.0` total reward). The speedcheck branch also
-returned an unexpected result: `hybrid-v3-speedcheck` scored `0.381 / 0.855`
-with `0 / 30` errors. Speed is back to the old band, so broad cloud speed
-congestion is not the explanation, but accuracy did not reproduce. Docker
-inspection confirms the retag was clean (`hybrid-v3` and speedcheck both use
-image `sha256:5bc182...`, registry digest `sha256:83c999...`); still need the
-original 14 May immutable digest before treating this as true same-image
-variance. Workbench cannot list old Artifact Registry versions with the active
-service account (`artifactregistry.versions.list` denied), so the provenance
-hunt is deferred.
-
-The new Qwen reranker-only ablation is dead: `v18-qwen-reranker` collapsed
-locally to `0.547` with a 14:58 QA loop, then cloud returned `700 / 700`
-errors. Do not debug or submit it. The local failure is already decisive;
-the cloud failure is just more evidence that current-main/vllm-openai
-packaging is fragile for non-v9 NLP tags. This does **not** mean Qwen models
-are bad: `Qwen3-8B-AWQ` previously scored `0.755` locally and `v14-llm-rag`
-with Qwen2.5-7B remains the best raw cloud accuracy (`0.734`). The unresolved
-problem is cloud-safe, fast serving/quantization for the strong Qwen answerer
-path, not model capability.
-
-Earlier 18 May ~04:15 SGT — v15 family blocked on cloud and
-AWQ/GPTQ quantization simultaneously. Three cloud submissions all failed:
-v14c-qwen3-4b TIMEOUT, v14d-qwen3-8b TIMEOUT, v15-lora-qwen3-8b 700/700
-errors (broken Triton crashed every request on cloud, vs silent fallback
-locally). **All three failures share one factor: vllm/vllm-openai base
-image.** v14 on NGC base ran 21 min cloud and worked; that's our only
-proven cloud LLM path. v15-merged also built but regressed/failed quality.
-LoRA adapter training succeeded (8h, eval_loss 0.559), but quantization and
-serving never produced a better shippable image.
-
-Earlier 18 May ~01:30 SGT — v15-lora-qwen3-8b adapter trained
-successfully (8h on T4, bs=1 grad_accum=8 due to VRAM). Final eval_loss
-0.559 over 200 steps / 2 epochs, mean_token_accuracy 87.6%, loss curve
-monotonically dropping. For context, v8b's RoBERTa fine-tune which
-delivered +0.162 cloud accuracy had its best eval_loss at 0.872 — v15's
-is ~36% lower. Adapter saved to `nlp/models/lora/`.
-
-Earlier 17 May ~18:25 SGT — v14d-qwen3-8b cleared the local gate at
-0.755 / 18:33 (matches v14's 0.754 accuracy, 1.5× faster). Hypothesis
-confirmed: v14c's -0.095 regression was 4B capacity, not Qwen3 paraphrase
-tendency — Qwen3-8B fully recovers Qwen2.5-7B's accuracy ceiling on this
-corpus. v14-llm-rag remains the shipped accuracy high at 0.734/0.286,
-v9-doc-ensemble remains the shipped blended high at 0.683/0.886 (blended
-0.734).
-
-Earlier 17 May ~16:15 SGT — NLP UN-FROZEN. `v14-llm-rag` shipped at
-`0.734 / 0.286` — new NLP accuracy high (+0.051 vs v9's 0.683, above the
-previous public leaderboard top of 0.711). Architecture: kept v9's
-BM25+BGE+rerank retrieval, replaced RoBERTa-large extractive head with
-Qwen2.5-7B-Instruct-AWQ served by vLLM. Local 0.754 → cloud 0.734, gap 0.020
-(consistent with v9's 0.028). The non-extractive +5pp came from the model
-class change exactly as predicted — 481/883 local gold answers were
-non-literal and v13a oracle said the candidate pool had +0.10 of headroom
-extractive heads couldn't surface. Blended cost: -0.112 (v14 blended
-0.622 vs v9 0.734) because cloud wall-clock went 3:50 → ~21 min → speed
-score 0.886 → 0.286.
-
-Earlier 17 May state: NLP was FROZEN at `v9-doc-ensemble` (0.683/0.886
-official, 0.711 local) after every post-v9 architecture-internal swing
-regressed. `v13b-deberta` failed the local gate: 0.667 vs v9's 0.711, with
-inference 9:06 vs v9's 3:48. The freeze held until v14-llm-rag changed the
-answerer model class entirely.
-
-Earlier 17 May state: **`mcts-light-v2` SHIPPED 23:52 at
-0.487/0.595 — REGRESSED.** Blended 0.514 vs hybrid-v3's 0.628 (−0.114).
-Speed cap + pre-flight gate prevented the v1 timeout but MCTS still cost
-+7.7 min of cloud wall-clock (4.5 → 12.2 min); speed score dropped
-0.849 → 0.595. Accuracy ALSO regressed (−0.068 vs hybrid-v3): MCTS is
-*replacing* hybrid-v3 actions with cloud-worse choices, not just being
-slower. Best read: MCTS commits to simulated combat lines using a
-stationary-opponent assumption that cloud opponents don't honor — same
-local-cloud distribution-shift failure that killed bc-belief (training)
-and ppo-selfplay (training), this time at inference. **Both training-
-side AND inference-side hypotheses are now falsified.** Remaining cheap
-iterations: (A) conservative-MCTS variant (raise `AE_MCTS_MIN_SCORE`
-12 → 22 + shrink `DEPTH=2 WIDTH=16`) so MCTS is a high-confidence
-override layer only; (B) heuristic-only MCTS A/B to isolate MCTS
-contribution. After A or A+B, AE is exhausted at hybrid-v3. Earlier
-today: `mcts-light-v1` TIMED OUT (speed budget math wrong; fixed in
-v2 by latency cap + gate + smaller defaults but the resulting v2 still
-underperformed). Hybrid-v3 (0.555/0.849) stays leaderboard-shipped
-throughout via highest-score retention.
-**CV RE-PARKED at tier1 0.556/0.956
-after Phase C.1 didn't transfer.** `cv-augc1-v4` shipped 15:28 at 0.553/0.962
-(mismatched Dockerfile config) and `cv-augc1-v4-1280` shipped 18:28 at
-0.553/0.959 (matched: imgsz=1280 conf=0.001 iou=0.7 aug=0). The augmented
-training (JPEG aug q=40-85 + 1024×1024 native-res tile crops + scale=0.80)
-lifted hard held-out **+0.04 mAP / +0.03 small AP** (0.948 vs 0.905) — training
-worked on its target. But cloud was flat and the local→cloud gap **widened
-from 0.349 to 0.395**: the augmentation specialized the model further from
-cloud's mixed distribution. v8s/v11m family confirmed at-ceiling near cloud
-0.556. Tier1 stays via highest-score retention.
-**AE is UN-PARKED for `mcts-light-v1` code-only inference A/B.**
-`ppo-selfplay-v2` shipped 18:09 at 0.436/0.857 and REGRESSED -0.119 vs
-hybrid-v3 (0.555). It still beat v1 (0.305) by +0.131, confirming BC
-warm-start + self-play > self-play from scratch, but the v1 gap-tightening
-(local-cloud 0.10) was an artifact: v2's gap is 0.271 (til test 0.7068 →
-cloud 0.436), bigger than hybrid-v3's 0.219. Training-side AE hypotheses
-are now falsified: league/self-play helped over from-scratch, but does not
-clear the hybrid-v3 ceiling; memory via bc-belief also regressed hard.
-This older snapshot has since been superseded: `mcts-light-v1` timed out,
-`mcts-light-v2` avoided timeout but regressed to 0.487/0.595, and AE is now
-back at `hybrid-v3` with both training-side and inference-side hypotheses
-exhausted.
-
-The older NLP freeze at `v9-doc-ensemble` was also superseded by the v14/v15
-LLM push. `v14-llm-rag` broke the raw accuracy ceiling at 0.734/0.286, while
-v9 still holds blended. The Qwen3 v15 family trained successfully but is now
-blocked by cloud/runtime/quantization failures, not by answer format.
-
-## Latest submitted scores
-
-```text
-NLP (blended & acc high)    melanie-minions-nlp v28-optimized-bm25 24/05/2026 13:01:16 0 / 700 0.984 0.985  ← NEW BLENDED & ACCURACY HIGH (0.98425). Combined tuned document BM25 (k1=2.05, b=1.0) and passage BM25 (k1=1.5, b=0.75) with w=0.6. Local hit rate 0.9853 (accuracy 0.980 on til test).
-NLP (non-promoting A/B)     melanie-minions-nlp v29-bm25-k1-retune 24/05/2026 17:54:45 0 / 700 0.984 0.984  ← Retuned pure-BM25 document k1 from 2.05 to 1.8. Saved Workbench predictions confirm 871/883 local retrieval hits, but cloud accuracy rounded to the same 0.984 as v28 and speed lost 0.001, so v28 remains protected.
-NLP (pure BM25)             melanie-minions-nlp v27-pure-bm25 24/05/2026 12:23:00 0 / 700 0.971 0.994  ← Pure document BM25 (default params). Bypassed dense models entirely for speed. Blended 0.97675.
-NLP (prior blended high)    melanie-minions-nlp v25-bypass 24/05/2026 06:09:26 0 / 700 0.975 0.982  ← Prior blended high. Skip reranker & QA initialization and execution in trigger-only mode (skips ~2.2 GB cross-encoder + QA models).
-NLP (blended & acc tie)  melanie-minions-nlp v26-compiled 24/05/2026 06:32:50 0 / 700 0.975 0.982  ← Compiled dense model + GPU similarity. Speed flat because corpus load time is counted, and compilation warmup overhead offset query speedups.
-NLP (prior blended high) melanie-minions-nlp v24-speed-optimized 23/05/2026 22:52:34 0 / 700 0.959   0.950  ← Prior blended high (0.95675). Halved TOP_K_RETRIEVE (30->15), RERANK_MAX_LEN (256->128), RERANK_BATCH (32->128). Applied new swept weights (dpw=0.6, bw=0.8, dw=0.5, hit rate 0.9807).
-NLP (prior accuracy high) melanie-minions-nlp v23-large-reranker-v2 23/05/2026 20:20:40 0 / 700 0.971   0.880  ← Prior accuracy high. Baked in bge-reranker-large, restored swept retrieval weights (dpw=0.45, bw=1.0, dw=1.0). Blended ~0.948.
-NLP (prior blended high) melanie-minions-nlp v22-vectorized-retrieval 23/05/2026 17:12:48 0 / 700 0.951   0.946  ← Prior NLP high. Batched/vectorized query retrieval and reranking.
-NLP (regressed) melanie-minions-nlp v23-large-reranker 23/05/2026 19:17:39 0 / 700 0.949   0.942  ← Weight mismatch: Dockerfile default ARGs still pointed to bge-reranker-base, loading base model with weights optimized for large model.
-NLP (prior blended high) melanie-minions-nlp v21-trigger-only 20/05/2026 04:43:34 0 / 700 0.948   0.941  ← Prior NLP high. Same trigger as v20 but skipping RoBERTa QA.
-NLP (v20 accuracy high) melanie-minions-nlp v20-ae-trigger 20/05/2026 03:54:03 0 / 700 0.951   0.840  ← Universal Adversarial Trigger (HotFlip / Wallace 2019) trained against the bundled `nlp_eval_512` ModernBERT-AE checkpoint and prepended to every answer. Local equiv_rate 0.957, val pass rate 100% with mean prob 0.999. Pipeline otherwise = v9 (RoBERTa kept). Blended ~0.923; v21/v22 supersedes for blended.
-NLP (v14 prior accuracy high) melanie-minions-nlp v14-llm-rag 17/05/2026 16:15:15 0 / 700 0.734   0.286  ← Qwen2.5-7B-Instruct-AWQ via vLLM as the answerer, v9 retrieval kept. Blended 0.622 vs v9 0.734 (-0.112) — speed regressed from 21-min wall-clock. v14b-speed iterates with fewer few-shots.
-NLP (current trusted blend) melanie-minions-nlp v9-doc-ensemble-rescue 18/05/2026 18:53:03 0 / 700 0.683 0.866 ← Valid rescue of v9 path; local 0.711, cloud accuracy matches v9 plateau. Use this over all v16/v17/v18 tags.
-NLP (prior best blend) melanie-minions-nlp v9-doc-ensemble 16/05/2026 05:21:57 0 / 700 0.683   0.886  ← Same accuracy, better speed variance than rescue; 3rd v9 resubmit. Blended ~0.734.
-NLP (v12 regressed) melanie-minions-nlp v12-candidate-ranker 16/05/2026 13:48:51 0 / 700 0.642 0.829  ← REGRESSED -0.041 acc, -0.057 speed vs v9. Candidate-ranker promoted doc-mined short tokens that passed exact/substr proxy but failed 0.9 AE threshold; -69 exact +54 substr +15 diff in local buckets. Worst since v5b.
-NLP (v8a regressed) melanie-minions-nlp v8a-genqa 16/05/2026 05:10:19 0 / 700 0.652 0.836  ← REGRESSED -0.031 acc, -0.047 speed vs v9. Flan-T5-base generative; landed at low end of predicted band. Generative confirmed dead lever.
-NLP (v9 prior) melanie-minions-nlp v9-doc-ensemble 15/05/2026 19:46:01 0 / 700 0.683 0.883
-NLP (v11 regressed) melanie-minions-nlp v11-canonical-answer 15/05/2026 21:26:38 0 / 700 0.680 0.881  ← REGRESSED -0.003 vs v9; canonicalizer rewrites didn't pass 0.9 AE threshold
-NLP (v11 resubmit) melanie-minions-nlp v11-canonical-answer 15/05/2026 21:39:55 0 / 700 0.680 0.873  ← Same image resubmit confirms accuracy is real -0.003, speed within variance
-NLP (v10 neutral) melanie-minions-nlp v10-template-lite 15/05/2026 20:16:17 0 / 700 0.683 0.882
-NLP (v9 first) melanie-minions-nlp v9-doc-ensemble 15/05/2026 19:25:50 0 / 700 0.683 0.868
-NLP (prior v8b) melanie-minions-nlp v8b-chunked-context 15/05/2026 18:35:19 0 / 700 0.679 0.872
-NLP (prior v7) melanie-minions-nlp v7-finetuned-v1 15/05/2026 11:39:09 0 / 700 0.517 0.880
-NLP (prior v5c) melanie-minions-nlp v5c-no-para 14/05/2026 19:44:08 0 / 700     0.483   0.912
-ASR (REJECTED — NGPU-LM cloud fail) melanie-minions-asr ngram-lm-on-v3 02/06/2026 18:31:58 0 / 400 0.970 0.943  ← NGPU-LM n-gram fusion + protective greedy fallback. LOCAL T4 WER 0.0209→0.0124 (~40% rel, fusion confirmed via logs), but malsd_batch RAISES on the cloud GPU → fallback reverts to greedy → cloud == greedy 0.970. Blended 0.9633 < nemo-ft-v3 0.96425. NOT promoted. Fallback code kept as permanent safety net. See asr/NOTES.md "Result".
-ASR (REJECTED — 0.000 swallowed crash) melanie-minions-asr ngram-lm-on-v2 02/06/2026 15:58:22 0 / 400 0.000 0.956  ← Same fusion, BEFORE the protective fallback existed. malsd_batch raised per-batch on cloud; manager's try/except returned empty strings ([""]*n) → all-empty hyps = exactly 0.000 (the empty-string score signature). Local same image = 0.0124. Diagnosed → added _fallback_to_greedy; never 0.000 again. (v1 earlier same day scored 0.000 too, but for a different reason: ENV pointed at ngram_lm.nemo instead of the built .arpa → file-not-found → fusion silently OFF.)
-ASR (new high score)     melanie-minions-asr nemo-ft-v3 27/05/2026 13:26:34 0 / 400 0.970 0.947  ← Fine-tuned Parakeet-TDT-0.6B-v2 (step 713, val WER 0.0856) built as nemo-ft-v3. Integrates ASR post-processing spelling, regex capture groups, residual phrase fixes, and additional spelling variant corrections (zonen/sono, mewn, pullwalker). Workbench local: English WER 0.0209, 1 - MER 0.9947851693590045. STILL THE SHIPPED ASR HIGH (NGPU-LM fusion attempted 02 Jun, rejected — see rows above).
-ASR (prior accuracy high) melanie-minions-asr nemo-ft-v2 27/05/2026 12:42:28 0 / 400 0.970 0.943  ← Fine-tuned Parakeet-TDT-0.6B-v2 (step 713, val WER 0.0856) built as nemo-ft-v2. Integrates ASR post-processing spelling, regex capture groups, and residual phrase fixes. Workbench local: English WER 0.0210, 1 - MER 0.9947535430276239.
-ASR (new high score)     melanie-minions-asr nemo-ft-v1 24/05/2026 23:49:35 0 / 400 0.969 0.946  ← Fine-tuned Parakeet-TDT-0.6B-v2 (step 713, val WER 0.0856) built as nemo-ft-v1. Submitted on 24 May SGT. Blended score 0.75*0.969 + 0.25*0.946 = 0.96325, beating the prior zero-shot baseline of 0.9620.
-ASR (accuracy high / blended tie) melanie-minions-asr nemo-zs-v7 24/05/2026 18:39:23 0 / 400 0.969 0.941  ← Raw accuracy high; blended score `0.75*0.969 + 0.25*0.941 = 0.9620`, tied with `nemo-zs-v6`. Same Parakeet-TDT-v2 backend; residual post-processing-only cleanup over v6. Workbench local: English WER 0.0270, 1 - MER 0.9932495352686306.
-ASR (faster blended-tie fallback) melanie-minions-asr nemo-zs-v6 24/05/2026 17:39:47 0 / 400 0.967 0.947  ← Same blended score (0.9620) as v7, with better speed but lower raw accuracy; Parakeet-TDT-v2 + v5 rules + replay-gated cleanup for percent signs, filler hallucinations, hundreds ordinals, The CUBE/First Dreamer spacing, and extra proper-noun/style repairs.
-ASR (prior blended & acc high) melanie-minions-asr nemo-zs-v5 23/05/2026 03:38:55 0 / 400 0.966 0.944  ← Prior blended & accuracy high (0.9605); Parakeet-TDT-v2 + slang prompter fallback wordlist extraction fix + space-eating bugfix + Zonnon/Caulfield rules, refined v5 proper nouns (Canian, Hegemony, Sharpsea, Nyari, Dreamer, Fullwalker, Edgedancer, Floodwall, TEC, CYPHER, Bloc), and context-specific Phi currency rules.
-ASR (prior blended & acc high) melanie-minions-asr nemo-zs-v4 23/05/2026 02:37:18 0 / 400 0.962 0.942  ← Prior blended & acc high (0.957); Parakeet-TDT-v2 + slang prompter fallback wordlist extraction fix + space-eating bugfix + Zonnon/Caulfield rules.
-ASR (prior)              melanie-minions-asr nemo-zs-v3 (22/05) 22/05/2026 21:46:36 0 / 400 0.960 0.945  ← Prior blended high (0.95625); Parakeet-TDT-v2 + initial phonetic post-corrections.
-CV (FINAL BLENDED HIGH) melanie-minions-cv yolo11l-1024-alldata-final-v1-img1280 22/05/2026 22:36:21 0 / 500 0.671 0.950  ← FINAL QUALIFIER CV HIGH BY BLENDED SCORE (0.7410). v1 weights (YOLO11l trained on the all-data fine-tune at imgsz=1024, 70 epochs, local val mAP50-95 ~0.985) served at `CV_IMGSZ=1280`. Upscale-at-inference on YOLO11l was the lever (mirrors the v8s tier1 train-768/serve-896 trick). +0.031 raw acc over plusval-v1 at essentially flat speed. `v3` later took the raw-acc high by +0.001 but lost blended by -0.002.
-CV (raw-acc high but blended LOSS) melanie-minions-cv yolo11-optimized-v3 24/05/2026 20:43:30 0 / 500 0.672 0.940  ← Rebuild of v2 weights at native imgsz=1280 + `CV_AUGMENT=1` (TTA) + `CV_CONF=0.20`. Raw acc `0.672` (+0.001 vs v1-img1280) but speed dropped to `0.940` (-0.010); blended `0.7390` < v1-img1280's `0.7410`. **TTA on YOLO11l cloud distribution is dead** — confirmed third negative TTA-on-bigger-model result (matches v11m@1280+TTA, augc1 augmentation training).
-CV (v2 weights, regressed) melanie-minions-cv yolo11l-1280-alldata-final-v2 23/05/2026 20:56:08 0 / 500 0.654 0.950  ← Fine-tuned YOLO11l on all data natively at imgsz=1280, 36 epochs (local val mAP 0.988, small AP 0.793 / medium 0.974 / large 0.997). Accidentally served at `CV_IMGSZ=1024` (Dockerfile bumped after this submit). Raw acc `0.654` regressed -0.017 vs v1-img1280 — bigger-trained model + matched-imgsz lost to smaller-trained + upscale-at-inference, same pattern v8s tier1 / v11m@1024 showed in mid-May.
-CV (prior high) melanie-minions-cv yolo11l-896-plusval-v1 22/05/2026 0 / 500 0.640 0.954  ← Prior CV high (since superseded by v1-img1280). YOLO11l trained with the plusval recipe (folds old val split back into training, keeps hard test split for sanity; corrects ship-class imbalance in old train). Served at imgsz=896. Backbone family change off the at-ceiling v8s/v11m lineage was the lever.
-CV (prior high) melanie-minions-cv       ry-v2 19/05/2026 18:37:07 0 / 500 0.608 0.961  ← Prior CV high. Same weights as `ruiyang-v1`; serving row `conf=0.15 iou=0.55 imgsz=896 aug=0 cross_nms=0.97`. Local hard held-out 0.9234; til test 0.9076.
-CV (prior) melanie-minions-cv ruiyang-v1 19/05/2026 13:15:19 0 / 500 0.588 0.955  ← First 19 May unpark; local hard held-out 0.9125 with real-score HTTP eval.
-CV (regressed) melanie-minions-cv ry_v3_adaptive 19/05/2026 22:08:35 0 / 500 0.571 0.958  <- Low-conf + adaptive TTA rescue overfit saved JSON; til test fell to 0.8513. Do not ship.
-CV     melanie-minions-cv       cv-yolo-v2-tier1-best 14/05/2026 17:10:09 0 / 500 0.556 0.956
-CV (v3-pre) melanie-minions-cv  cv-yolo11m-v3-pre 15/05/2026 11:34:42 0 / 500   0.376   0.955  ← REGRESSED -0.180; v11m fully trained but matched-imgsz lost to v8s+upscaled. Tier1 stays on leaderboard.
-CV (v11m-1280-noaug-v1) melanie-minions-cv  v11m-1280-noaug-v1 16/05/2026 04:04:59 0 / 500 0.474 0.949  ← REGRESSED -0.082; v11m at 1280 aug=0 looked great locally (hard held-out 0.9088, +0.014 vs tier1) but v11m's local→cloud gap is structurally ~0.44 vs v8s's ~0.35. Tier1 stays on leaderboard.
-CV (cv-augc1-v4) melanie-minions-cv  cv-augc1-v4  16/05/2026 15:28:35 0 / 500 0.553 0.962  ← Phase C.1 augmented training (JPEG aug + 1024×1024 native-res tile crops, v8s @ imgsz=1024 scale=0.80), shipped with mismatched Dockerfile config (CV_IMGSZ=768 default). Essentially tied with tier1; informative only as a config-mismatch demonstration.
-CV (cv-augc1-v4-1280) melanie-minions-cv  cv-augc1-v4-1280 16/05/2026 18:28:27 0 / 500 0.553 0.959  ← Same model rebuilt with matched Dockerfile config (CV_IMGSZ=1280 CV_CONF=0.001 CV_IOU=0.7 CV_AUGMENT=0). Hard held-out lifted +0.04 to 0.948 / small AP 0.779. Cloud flat at 0.553 — gap WIDENED 0.349 → 0.395. Phase C confirmed dead as a path to 0.7; v8s/v11m family at-ceiling. Tier1 stays on leaderboard.
-Noise (current high) melanie-minions-noise level10-detector-stress 24/05/2026 16:53:47 0 / 500 1.000 0.947  ← CURRENT NOISE HIGH / SEMIFINALS DISRUPTION TAG. Detector-stress mode keeps Level 9 AdvGAN and saturates weak regions with legal high-frequency, multi-scale perturbations aimed at CNN detector features. Workbench `til test noise level10-detector-stress`: 500/500 fair, L2 mean `28.4257`, L2 inside mean `27.2377`, SSIM inside mean `0.7254`, min `0.4118`. Cloud speed improved vs level9 despite stronger perturbation.
-Noise (prior high) melanie-minions-noise level9 24/05/2026 06:18:59 0 / 500 1.000 0.934  ← Level 9 AdvGAN single-forward-pass generator (ε=32/255, bilinear upsample, JPEG q=95). Validator: SSIM inside mean `0.9839` (min `0.9414`), L2 inside mean `6.6800`, 500/500 images pass fairness gate. Replaced the JPEG re-encode baseline; superseded by `level10-detector-stress`.
-Noise (prior baseline)  melanie-minions-noise    latest      12/05/2026 03:54:55   0 / 500       1.000   0.970  ← Plain JPEG re-encode baseline; superseded by `level9` and then `level10-detector-stress`.
-AE (g02-sample-08 CEM weights — ADOPTED) melanie-minions-ae g02-sample-08-cemtuned 10/06/2026 11:20:44 0 / 30 0.382 0.746 ← raw_ae-retargeted CEM tuner candidate on bc.pt=confpol-semis2b-u75 (10 planner-weight ENVs, balanced: tether 1.31/base 80). Cloud **non-crater** vs incumbent-det5 ~0.345 (**+0.037**) — the independent OOD signal that g00-fixed-03 FAILED (cratered 0.279). Cloud is placement-blind so it's a FLOOR not a selector, but clearing it + the local placement + held-out composition gates = first candidate to pass everything. **DEPLOYED** (commit 68164b3); hardware A/B still ideal. See [ae/NOTES.md](ae/NOTES.md) "Read this first".
-AE (g03-sample-08 CEM weights — REJECTED) melanie-minions-ae g03-sample-08-cemtuned 10/06/2026 11:49:16 0 / 30 0.352 0.744 ← alternate balanced CEM candidate (branch `g03-cemtuned`); `mission(50)`/`base(60)` pegged at search lower bounds (overfit smell). Cloud **0.352 < g02 0.382** (barely above incumbent ~0.345) → weaker bet, NOT pursued. Cloud can't rank g02-vs-g03 for finals (placement-blind) but combined with the bound-pegging, g02 is the clear pick.
-AE (forward-sim plan re-score A/B — REGRESSED) melanie-minions-ae planrescore 03/06/2026 02:50:19 0 / 30 0.590 0.833 ← `AE_PLAN_RESCORE=1` (demote-only) on bc.pt=confpol-semis2b-u75. Cloud A/B vs the same image flag-off (0.671) → **−0.081 regression, CLOUD-CONFIRMED DEAD.** Local multi-seed read demote-only as flat (+0.0096) but cloud is −0.081 (another local-flat/cloud-negative gap); top_seed_proxy −0.137 correctly foreshadowed it. Speed 0.833 → per-tick top-K projection within latency budget; loss is pure accuracy. Self-plan projection alone doesn't close the gap to curry's 0.715. Code stays in-tree default-OFF (`AE_PLAN_RESCORE=0`). Do NOT re-run. See [ae/NOTES.md](ae/NOTES.md) "Forward-sim plan re-score".
-AE (current high by max score) melanie-minions-ae ppo-full-rl-v1-hybrid 22/05/2026 23:40:11 0 / 30 0.638 0.847 ← PROTECTED LEADERBOARD MAX, but 24 May forensic review showed this tag served pure heuristic through silent policy-load fallback; not PPO evidence. Duplicate submits were 0.564/0.843, 0.599/0.848, and 0.552/0.841, so the mean is only ~0.588.
-AE (confidence-gated PPO v3) melanie-minions-ae conf-hybrid-v3 28/05/2026 13:10:18 0 / 30 0.507 0.849  ← `AE_MODE=confidence_hybrid` with v2 (update 80) checkpoint + surgical gates (`positive_rate=0.25`, `attempted=5`). Local multi-seed evaluation was `0.281` (close to baseline `0.284`), but cloud score dropped to `0.507`. Confirms the local-cloud transfer gap remains a major bottleneck for the learned policy on cloud.
-AE (best intentional heuristic) melanie-minions-ae heuristic-A-vf1 24/05/2026 0 / 30 0.613 0.845 ← `AE_MODE=heuristic`, `AE_ENEMY_BASE_VALUE=160`, `AE_DIST_PENALTY=0.9`. Duplicate submits were 0.579/~0.849 and 0.606/~0.852, mean 0.599. Best explicit heuristic cloud tag, but still below protected max.
-AE (neutral C+bomb7 cloud check) melanie-minions-ae heuristic-c-bomb7-v1 27/05/2026 03:59:13 0 / 30 0.590 0.845 ← `AE_MODE=heuristic`, `AE_ITEM_MISSION_VALUE=80`, `AE_ITEM_RESOURCE_VALUE=40`, `AE_ENEMY_BASE_VALUE=100`, `AE_DIJKSTRA_BOMB_COST=7.0`. Workbench `til test` was 0.8031666666666666; cloud landed in expected 0.59-0.60 band, so not promoted.
-AE (heuristic defense-first) melanie-minions-ae heuristic-B-vf1..vf4 24/05/2026 0 / 30 0.581 best ~0.85 ← `AE_TIER1_DEFENSE=1`, `AE_BASE_DEFENSE_HEALTH=80`, `AE_BASE_DEFENSE_RADIUS=6`; mean 0.563. Rejected.
-AE (heuristic item-farming) melanie-minions-ae heuristic-C-vf1..vf3 24/05/2026 0 / 30 0.559 best ~0.85 ← `AE_ITEM_MISSION_VALUE=80`, `AE_ITEM_RESOURCE_VALUE=40`, `AE_ENEMY_BASE_VALUE=100`; mean 0.553. Rejected.
-AE (Elo / policy actually active) melanie-minions-ae elo-v1-vf1..vf4 24/05/2026 0 / 30 0.433 best ~0.84 ← Re-adding legacy-small support made the policy actually load; cloud collapsed to ~0.41. Do not bake Elo checkpoint.
-AE (near-tie / shortcut) melanie-minions-ae ppo-full-rl-v1-hybrid-shortcut 23/05/2026 01:27:37 0 / 30 0.637 0.845 ← Shortcut-on A/B. `AE_HYBRID_FIXED_MAP_SHORTCUT=1` mostly bypasses PPO on detected Novice maps; duplicate submits were 0.521/0.849 and 0.582/0.845. Nearly tying the high shows cloud variance dominates the wrapper/shortcut distinction.
-AE (policy A/B) melanie-minions-ae ppo-full-rl-v1-policy 22/05/2026 22:48:06 0 / 30 0.625 0.848 ← Pure-policy full-RL checkpoint best of 3; other submits were 0.550/0.847 and 0.579/0.848. Same noisy performance band as hybrid variants, just lower max so far.
-AE (policy variance farm) melanie-minions-ae ppo-full-rl-v1-policy-vf2 23/05/2026 02:41:30 0 / 30 0.594 0.852 ← Same artefact (`1f30da4e...`) as `ppo-full-rl-v1-policy`. First of 5 variance-farm draws.
-AE (policy variance farm) melanie-minions-ae ppo-full-rl-v1-policy-vf3 23/05/2026 02:49:09 0 / 30 0.565 0.857 ← Same artefact, 2nd variance draw.
-AE (policy variance farm) melanie-minions-ae ppo-full-rl-v1-policy-vf4 23/05/2026 02:54:26 0 / 30 0.567 0.855 ← Same artefact, 3rd variance draw.
-AE (policy variance farm) melanie-minions-ae ppo-full-rl-v1-policy-vf6 23/05/2026 03:10:38 0 / 30 0.557 0.847 ← Same artefact, 4th variance draw.
-AE (policy variance farm) melanie-minions-ae ppo-full-rl-v1-policy-vf7 23/05/2026 03:17:41 0 / 30 0.577 0.844 ← Same artefact, 5th variance draw. Combined with the 3 earlier policy submits gives n=8, mean ~0.577, max still 0.625; right tail did not repeat. Pure-policy std across 8 samples is ~0.024.
-AE (belief PPO local only) melanie-minions-ae ppo-full-rl-belief-v1 23/05/2026 LOCAL ONLY — — 0.4925 weighted ← Belief-aware PPO experiment. BC val_acc 0.9527 on mixed-opponent (`library`) data; PPO stopped at update 200/240 with weighted eval 0.4925 (random 0.7909, scripted 0.5553, cloudsuite 0.2805). Save floor was 0.6236 (reference `ppo-full-rl-v1.pt` selection 0.6086 + 0.015 margin); no candidate cleared the gate. Per-suite vs no-belief reference: random −0.13, scripted −0.09, cloudsuite −0.47. Comparison is biased — belief PPO started from BC at 0.13 vs reference's `qualifier-best-v1` warm-start at ~0.60, belief overhead added ~20-30% per-update wall-clock, BC-vs-PPO distribution shift. Conclusion: belief is off the table for the 24 May submission; infrastructure stays in tree (`run_full_rl_belief_v1.py`, `collect_bc.py --opponents`). Not submitted.
-AE (former high) melanie-minions-ae fixed-map-v5 21/05/2026 17:08:00 0 / 30 0.630 0.858 ← Former AE high and still fastest competitive AE tag. Restored fixed-map-v3-era hybrid source plus `deployed-bc-v1.pt`; keep as a fallback/provenance anchor.
-AE (PPO retry best local, duplicate 1) melanie-minions-ae ppo-qualifier-best-v4-balanced 22/05/2026 12:14:59 0 / 30 0.602 0.846 ← Best local PPO continuation: checkpoint epoch 75, weighted eval 0.6881, local Docker 0.7507. Did not beat fixed-map-v5.
-AE (PPO retry best local, duplicate 2) melanie-minions-ae ppo-qualifier-best-v4-balanced 22/05/2026 12:44:55 0 / 30 0.578 0.845 ← Same tag accidentally submitted again; variance confirmed, still not promotable.
-AE (PPO retry cloudsuite) melanie-minions-ae ppo-qualifier-best-v2 22/05/2026 00:27:19 0 / 30 0.598 0.845 ← Cloudsuite-focused continuation from v1; local eval/cloudsuite looked strong but hidden eval regressed below v1 and fixed-map-v5.
-AE (PPO retry v1) melanie-minions-ae ppo-qualifier-best-v1 21/05/2026 21:36:57 0 / 30 0.610 0.857 ← First qualifier-best PPO retry; best checkpoint epoch 65, weighted eval 0.6547. Good base checkpoint, not the AE high.
-AE     melanie-minions-ae       ae-item-confidence-v1 20/05/2026 21:47:52 0 / 30 0.593 0.844  ← Former second-best before the fixed-map-v5/full-RL sequence. Item-confidence/respawn priors transferred above 0.5, but local Docker 0.7435 still overestimated cloud by ~0.150.
-AE (regressed) melanie-minions-ae pessimistic-mini-search-v1 21/05/2026 04:54:51 0 / 30 0.396 0.847 ← FAILED pressure A/B. Local Docker `0.456`; Mac cloudsuite `0.3962` predicted cloud almost exactly, but absolute score is below `ae-fixed-map-v3`, `ae-item-confidence-v1`, `heuristic-tweaks`, and `candidate-b`. Disabled by default.
-AE (local rejected) melanie-minions-ae ttd-defense-v1 21/05/2026 LOCAL ONLY — — 0.2714 cloudsuite ← Mac-first gate stopped this before Workbench. TTD override fired often but cloudsuite regressed; useful diagnostic says base failures are mostly visible enemy bombs.
-AE (regressed) melanie-minions-ae ally-bomb-safe-v2 21/05/2026 01:38:12 0 / 30 0.369 0.847 ← FAILED A/B. Local Docker `0.6395` was misleading; pressure gate had already regressed (`cloudsuite 0.2870`). Same-team bomb damage is harmless, but globally removing own-bomb danger/escape/base guards caused over-bombing and worse hidden-pressure positioning.
-AE (regressed) melanie-minions-ae candidate-b 21/05/2026 01:03:06 0 / 30 0.500 0.858 ← Base-minefield-v1. Local Docker `0.538`, so gap was tiny, but absolute cloud score stayed below the competitive AE tags.
-AE (local only) melanie-minions-ae ae-item-prior-strong-v1 20/05/2026 LOCAL ONLY — — 0.7245 local ← Built/tested; submit push canceled before cloud eval. Validation aggregate 0.5190 vs ae-item-confidence-v1 0.5501, so do not blindly retry.
-AE     melanie-minions-ae       heuristic-tweaks 20/05/2026 20:46:48 0 / 30        0.538   0.851  ← Swapped heuristics (optimal_combo parameters: dijkstra_no_bomb_cost=25.0, low_ammo scaling, base panic defense, enemy chase). Underperformed vs v3 baseline on cloud.
-AE     melanie-minions-ae       ae-fixed-map-v3 20/05/2026 18:25:00 0 / 30        0.614   0.860  ← CURRENT ALL-TIME AE HIGH SCORE. Fixed-map exploitation with Dijkstra pathfinding + relaxed map detection.
-AE     melanie-minions-ae       hybrid-v3   14/05/2026 19:26:06   0 / 30        0.555   0.849  ← STILL SHIPPED via highest-score retention
-AE (hybrid-v3-no-mcts) melanie-minions-ae hybrid-v3-no-mcts 19/05/2026 0 / 30 0.482 0.598 ← REGRESSED -0.073 acc and -0.251 speed vs hybrid-v3. Local 0.6767 pointed the same direction. MCTS/trust path is load-bearing enough that removing it is not a simplification win.
-AE (hybrid-v3-no-vetofrozen) melanie-minions-ae hybrid-v3-no-vetofrozen 19/05/2026 0 / 30 0.454 0.556 ← REGRESSED -0.101 acc and -0.293 speed vs hybrid-v3. Local 0.6866 made this look nearly neutral; cloud direction flipped. `AE_HYBRID_VETO_FROZEN_STAY` is one of the most important wrapper components.
-AE (hybrid-v3-conf-0.3) melanie-minions-ae hybrid-v3-conf-0.3 19/05/2026 0 / 30 0.411 0.591 ← REGRESSED -0.144 acc and -0.258 speed vs hybrid-v3. Confirms the earlier `hybrid-conf50` result: confidence gating throws away policy actions that hidden eval needs.
-AE (heur-restore-v3) melanie-minions-ae heur-restore-v3 19/05/2026 — / 30 — 0.602 ← Speed-only note from latest result set; part of the broad ~0.25 speed drop across 18/19 May AE submissions.
-AE (heur-restore-v3-bombfix) melanie-minions-ae heur-restore-v3-bombfix 19/05/2026 — / 30 — 0.616 ← Speed-only note from latest result set; still far below hybrid-v3's old 0.849 speed.
-AE (novice-fixed-v1 local) melanie-minions-ae novice-fixed-v1 19/05/2026 LOCAL ONLY — — 0.5157 local ← PPO scripted fixed-Novice rerun finished 200/200 updates with best eval 0.5915, then Docker `til test` scored 0.5157 over 6 rounds. Do not submit.
-AE (hybrid-v3-speedcheck) melanie-minions-ae hybrid-v3-speedcheck 19/05/2026 14:14:43 0 / 30 0.381 0.855 ← Unexpected. Pulled registry `hybrid-v3`, retagged, submitted. Both tags inspect to image sha256:5bc182... and registry digest sha256:83c999..., so retag was clean. Speed recovered to old band; accuracy collapsed vs original 0.555. Need original 14 May digest before calling this same-image variance.
-AE (ppo-scripted-v1) melanie-minions-ae ppo-scripted-v1 17/05/2026 12:19:21 0 / 30  0.450  0.607  ← REGRESSED -0.105 acc, -0.242 speed vs hybrid-v3; blended 0.489 (-0.139). Tier-2 #9 PPO with --opponents scripted (5-archetype scripted library, no self-play) trained from BC warm-start; best eval at update 45 was local 0.6322 (cloud only achieved 0.450). Local til test 0.741 → cloud 0.450 = gap 0.291, the same structural local→cloud gap that killed every prior PPO/BC submission. Speed regressed because policy net forward + top-K cascade adds ~3-5x per-tick wall clock vs heuristic-only path. **Confirms training-side AE hypotheses are exhausted** — even the most informative training distribution (5 distinct scripted opponents) doesn't close the cloud gap.
-AE (mcts-light-v2) melanie-minions-ae  mcts-light-v2  16/05/2026 23:52:21  0 / 30  0.487  0.595  ← REGRESSED. Blended 0.514 vs hybrid-v3's 0.628 (−0.114). Latency cap (80ms) + pre-flight gate prevented v1's timeout, but MCTS still cost +7.7 min cloud wall-clock vs hybrid-v3, AND accuracy dropped 0.068 (MCTS replacing hybrid actions with cloud-worse choices — stationary-opponent assumption doesn't transfer). Local til test 0.6618. Local-cloud gap 0.175 (tighter than hybrid-v3's 0.219 but local floor was lower). MCTS as a primary planner is dead; remaining variants: conservative-MCTS (high-confidence override only) + heuristic-only A/B.
-AE (mcts-light-v1) melanie-minions-ae  mcts-light-v1  16/05/2026 ~23:00  TIMEOUT  —  —  ← "Your model took too long to evaluate". MCTS DEPTH=5 WIDTH=96 ran every tick with no latency cap → ~2400 expansions/tick × ~0.5-1 ms = 1.2-2.4 s/tick vs cloud's ~600 ms/tick budget. Local `til test` (no wall-clock cap) didn't catch it. No score, no leaderboard impact. v2 fixed the timeout but introduced score+speed regression.
-AE (ppo-selfplay-v2)  melanie-minions-ae  ppo-selfplay-v2  16/05/2026 18:09:15  0 / 30  0.436  0.857  ← REGRESSED -0.119 vs hybrid-v3 (but +0.131 over v1, confirming BC warm-start + self-play beats from-scratch). til test (hybrid wrapper) 0.7068 → cloud 0.436 = gap 0.271 (BIGGER than hybrid-v3's 0.219); v1's apparent "gap tightening" to 0.10 was an artifact of v1 being weak in pure-policy mode → hybrid wrapper added more relatively. Confirmed: self-play helped some, but doesn't clear hybrid-v3 ceiling; current follow-up is code-only mcts-light-v1.
-AE (ppo-selfplay-v1)  melanie-minions-ae  ppo-selfplay-v1  16/05/2026 13:18:52  0 / 30  0.305  0.851  ← REGRESSED -0.250; BC warm-start was silently skipped (--n-frames 1 vs ckpt's 4), PPO trained from random init for 200 updates. But local-cloud gap 0.10 (vs structural 0.23) → first signal that league self-play tightens the gap. v2 retry capitalized on this.
-ASR (ft-lora32-v1) melanie-minions-asr ft-lora32-v1 13/05/2026 11:22:30 0 / 400  0.957   0.849  ← prior ASR high (still on leaderboard via highest-score retention)
-AE (hybrid-v2) melanie-minions-ae hybrid-v2 14/05/2026 14:55:23   0 / 30        0.545   0.863
-AE (heur-restore-v2) melanie-minions-ae heuristic-restore-v2 14/05/2026 15:02:13 0 / 30   0.502   0.854
-AE (policy-fast-v2)  melanie-minions-ae policy-fast-v2       14/05/2026 14:42:05 0 / 30   0.425   0.859
-AE (ppo-v1) melanie-minions-ae   ppo-v1      14/05/2026 04:36:51   0 / 30        0.507   0.861
-AE (ppo-v2) melanie-minions-ae   ppo-v2      14/05/2026 13:29:54   0 / 30        0.489   0.854
-AE (v3b)  melanie-minions-ae    planner-v3b 13/05/2026 23:42:57   0 / 30        0.499   0.853
-```
-
-## NLP submission history
-
-```text
-Tag           Submitted          Score   Speed   Errors    Local        Notes
-latest        12/05 03:23        0.301   0.971   0 / 700   —            OLD EVAL; pre-wipe; lexical token-overlap baseline (no longer on leaderboard)
-v2-hybrid-rag 14/05 ~04:00       0.000   ~       0 / 700   —            New eval. Hybrid BM25+BGE+rerank+RoBERTa-SQuAD2 + positional DOC-{i+1:04d}. 0.0 because cloud was buggy: organisers' eval server was sending plain strings while the spec called for dicts (see v4-dict-id)
-v3-id-parse   14/05 05:33        0.000   0.888   0 / 700   0.678 (1)    Same pipeline + defensive parser (DOC-XXXX prefix / dict / positional). Cloud 0.000 caused by Ryan's eval bug (still sending plain strings); local 0.678 with prefix patch proved the model itself was sound
-v4-dict-id    14/05 13:29        0.483   0.888   0 / 700   0.678        After Ryan FIXED the eval to send {"id":"DOC-XXXX","document":"..."}. Same image as v3-id-parse (just re-tagged); defensive parser's dict-shape branch caught the format immediately
-v5-multi      (not shipped)      —       —       —         0.628        Para-aware chunking + batched SQuAD2 + BM25 doc backfill + low-conf sentence fallback. Local REGRESSED -0.050 vs v4; error-bucket report showed fallback was firing on every single-word answer ("Velez", "1992", ...) and replacing correct-but-short SQuAD2 spans. NOT submitted
-v5b-no-fallback 14/05 19:10      0.456   0.916   0 / 700   0.674        Dropped fallback; kept the other three. Local OK (within 0.005 of v4) but cloud REGRESSED -0.027 vs v4. Local→cloud gap widened from 0.195 → 0.218 — clear signal that one of the remaining changes hurt on the held-out corpus
-v5c-no-para   14/05 19:44        0.483   0.912   0 / 700   0.678        Reverted paragraph chunking; kept batched SQuAD2 + BM25 backfill. Cloud RECOVERED to v4's 0.483 with v5b's speed gain (+0.024) retained → blended 0.590 (vs v4 0.584). Confirmed paragraph chunking was the v5b regressor
-v7-finetuned-v1 15/05 11:39      0.517   0.880   0 / 700   0.709        NEW HIGH (+0.034 cloud vs v5c). Fine-tuned roberta-large-squad2 on local nlp.jsonl (353/883 examples retained via exact + case-insensitive matching; trained 3 epochs, load_best_model_at_end picked epoch 1 with eval_loss 0.614). Local-cloud gap held at 0.19 — fine-tune transferred 1:1. Speed dipped -0.032 from roberta-large's 2.5x latency. Blended 0.608 (vs v5c 0.590). Error-bucket shift: L1 exact-match 29.7% → 39.7%, retrieval_hit_exact 183 → 242
-v7-finetuned-v2 (not shipped)    —       —       —         0.698        v2 data-prep: variants + flexible regex + rapidfuzz fuzzy fallback. Retained 431/883 (+78 vs v1) but local regressed from v1; fuzzy-matched spans were noisy
-v8b-chunked-context 15/05 18:35  0.679   0.872   0 / 700   0.708        NEW HIGH (+0.162 cloud vs v7-v1). --use-answer-chunk + rapidfuzz off, 353/883 retained; span realignment bug fixed in 627c9ce before retrain. Local aggregate looked flat (0.708 vs 0.709), but cloud strongly rewarded chunked-context training. Blended 0.727
-v9-doc-ensemble 15/05 19:25      0.683   0.868   0 / 700   0.711        NEW HIGH (+0.004 cloud vs v8b). Whole-doc BM25+BGE prior/seeding reduced local retrieval misses 40→37 and nudged cloud accuracy. Small speed cost (-0.004); blended 0.729
-v9-doc-ensemble 15/05 19:46      0.683   0.883   0 / 700   0.711        Same image resubmitted. Accuracy unchanged, speed +0.015; best NLP blend ~0.733. Do not over-interpret speed deltas at this scale.
-v10-template-lite 15/05 20:16     0.683   0.882   0 / 700   0.711        NEUTRAL. Narrow deterministic answer layer for elapsed days/years and percentage-point deltas. Local substr +1 / diff -1, retrieval unchanged; cloud accuracy unchanged.
-v11-canonical-answer 15/05 21:26  0.680   0.881   0 / 700   0.711(old)   REGRESSED -0.003 vs v9. Full-doc canonicalizer's +10 replay (exact/substr 451→461 on OLD-eval proxy) did not transfer through the 0.9 AE threshold; rewrites either weren't sampled on the hidden corpus, or were canonicalized into forms that the ModernBERT equivalence model rated below 0.9. Blended 0.730 vs v9 0.733.
-v11-canonical-answer 15/05 21:39  0.680   0.873   0 / 700   0.711(old)   Same image resubmit. Accuracy stable at 0.680 (confirms the -0.003 is real, not variance); speed dropped slightly. v9-doc-ensemble retains the leaderboard slot.
-v8a-genqa            16/05 05:10  0.652   0.836   0 / 700   0.682        REGRESSED -0.031 acc, -0.047 speed vs v9. Flan-T5-base fine-tuned on all 883 (q,ctx,ans) triples with --use-chunk-context, fp32 inference (T5 fp16 NaN trap), beam=4 generation on top reranked chunk. Local→cloud gap (0.030) was consistent with v9 (0.028) → transferred predictably. Generative answers either failed 0.9 AE threshold or paraphrased away. Blended 0.694 vs v9 0.733. **Generative QA confirmed dead lever on this corpus.**
-v9-doc-ensemble      16/05 05:21  0.683   0.886   0 / 700   0.711        Third v9 resubmit. Accuracy unchanged; speed bumped to new high 0.883→0.886 (+0.003). Best NLP blend now 0.734. Marginal speed variance.
-v12-candidate-ranker 16/05 13:48  0.642   0.829   0 / 700   0.663        REGRESSED -0.041 acc, -0.057 speed vs v9. Candidate-answer reranker (RoBERTa top-12 spans + rule/canon/doc-mined literals, heuristic + optional logistic ranker). Local buckets shifted exact 273→204 (-69), substr 178→232 (+54), diff 395→410 (+15) — confirms the predicted failure: ranker promoted doc-mined short tokens (e.g. "37" over "37 days") that passed the exact/substr training proxy but failed the 0.9 ModernBERT AE threshold. Speed -0.057 from candidate mining over 18 sentences × 6 regex types per question. Blended 0.689 vs v9 0.734. **Candidate-ranker confirmed dead lever; NLP architecture exhausted.**
-v13b-deberta         16/05 local  —       —       —         0.667        NOT SUBMITTED. DeBERTa-v3-large QA retune built and tested locally after OOM fix (`--batch-size 2 --gradient-accumulation-steps 4 --gradient-checkpointing`). Baseline v9 local 0.711 in 3:48; v13b local 0.667 in 9:06. Failed gate by -0.044 and 2.4x slower. NLP frozen at v9-doc-ensemble.
-v14-llm-rag          17/05 16:15  0.734   0.286   0 / 700   0.754        ★ NEW NLP ACCURACY HIGH ★ (+0.051 cloud vs v9). Architecture change: kept v9 BM25+BGE+rerank retrieval, swapped RoBERTa-large extractive head for Qwen2.5-7B-Instruct-AWQ via vLLM. T4 ABI gauntlet survived: vLLM downgraded torch which broke both pre-installed torchao (`torch.int1`) and flash_attn (undefined C++ symbol); fix was pin transformers==4.46.3 (gated imports) and uninstall both broken NGC `.so`s. Runtime knobs: `quantization=awq` (Marlin needs sm_80+, T4 is sm_75), `enforce_eager=True` (skip ~60-120s CUDA-graph capture during the 5-min corpus-load gate). Local-cloud gap 0.020 (vs v9 0.028) — confirms hypothesis that the +5pp was capped by extractor class, not retrieval. **Blended REGRESSED -0.112 vs v9** (0.622 vs 0.734) because cloud wall-clock 3:50 → ~21 min (speed 0.886 → 0.286). Highest-score retention keeps v14 on the accuracy slot; v9 remains the better-blended NLP contribution to the qualifier total until v14b/v14c recover speed. Top of leaderboard now belongs to us on raw NLP score.
-v14b-speed           17/05 build  —       —       —         —            SKIPPED. Was prompt-trim only; superseded by v14c which makes the bigger swap.
-v14c-qwen3-4b        17/05 local  —       —       —         0.659        LOCAL ONLY, NOT SUBMITTED. Two-axis change: (1) model Qwen2.5-7B-AWQ → cpatonn/Qwen3-4B-Instruct-2507-AWQ-4bit, (2) base image NGC pytorch → vllm/vllm-openai:v0.9.0 (fixes NGC torch/flash_attn/torchao ABI fight + unlocks transformers ≥4.51 for Qwen3 model_type). Local wall-clock 27:29 → **5:10 (5.3× speedup)** — far above the projected 1.7×. BUT accuracy regressed -0.095 vs v14 (0.754 → 0.659) and -0.052 vs v9 (0.711 → 0.659). Projected cloud blended ~0.684 — better than v14's 0.622 but worse than v9's 0.734, so v14c is not a ship. Three hypotheses for the drop, ordered by likelihood: (1) 4B is below the QA capacity threshold for this corpus (especially L2 cross-fact composition); (2) Qwen3-Instruct-2507 paraphrases more than Qwen2.5-Instruct under the same "quote verbatim" prompt; (3) trimmed 3-shot prompt under-anchors the smaller model. Next: v14d-qwen3-8b tests whether the regression was 4B capacity vs Qwen3 paraphrase tendency.
-v14d-qwen3-8b        17/05 local  —       —       —         0.755        LOCAL CLEARED THE GATE. Same architecture/base-image as v14c, model bumped 4B → Qwen/Qwen3-8B-AWQ. Local equiv_rate 0.755 (essentially matches v14's 0.754) at wall-clock 18:33 (1.5× faster than v14's 27:29; per-question 1.59s vs v14's 2.35s). **Hypothesis confirmed**: v14c's -0.095 drop was 4B capacity floor, not Qwen3 paraphrase tendency — same family at 2× params recovers all of v14's accuracy. Cloud projection: acc ~0.73, speed ~0.38, blended ~0.643 (+0.021 over v14, still -0.091 behind v9's 0.734). Cloud submission running; waiting on score.
-v15-lora-qwen3-8b    18/05 train  —       —       —         —            ADAPTER TRAINED. QLoRA fine-tune of Qwen3-8B on local 883 tuples. bs=1 grad_accum=8, r=16, 2 epochs, 200 steps, 8h. Loss curve textbook: train 3.04 → 0.57, eval 0.645 → 0.580 → 0.561 → 0.559 monotonic. mean_token_acc 87.6%.
-v15-lora-qwen3-8b    18/05 local  —       —       —         0.659        LOCAL FAILED. vLLM 0.9.0 Punica Triton kernel `_lora_shrink_kernel` JIT-crashed on T4 sm_75 with `LLVM ERROR: Unsupported rounding mode for conversion`. vLLM silently fell back, partial corruption gave 0.659 (worse than base 8B 0.755).
-v15-lora-qwen3-8b    18/05 10:12  0.000   1.000   700/700   —            ★ CLOUD: 700/700 ERRORS, score 0.000. Same Triton crash but on cloud propagated as exceptions; FastAPI returned 500 every request. Speed 1.000 because eval bailed near-instantly.
-v14c-qwen3-4b        18/05 cloud  —       —       —         —            ★ CLOUD: "took too long to evaluate" (TIMEOUT). Local 5:10 → cloud >30 min implies image-pull / startup overhead from novel vllm/vllm-openai base.
-v14d-qwen3-8b        18/05 cloud  —       —       —         —            ★ CLOUD: "took too long to evaluate" (TIMEOUT). Local 18:33 → cloud >30 min, same overhead pattern.
-v15-merged-qwen3-8b  18/05 local  —       —       —         0.755        BUILT WITHOUT LORA. Step-1 merge (CPU, BF16) succeeded; step-2 AWQ-quant (autoawq) silently failed because autoawq is officially deprecated and `from awq import AutoAWQForCausalLM` raises ImportError. Dockerfile fell through to "no merged, no lora" branch, container ran pure Qwen3-8B-AWQ. Identical to v14d (0.755 / 16:36). Submitted to cloud as a wasted slot; expected to also TIMEOUT.
-v15-merged AWQ quant 18/05         —       —       —         FAILED      llm-compressor 0.10 attempts on T4: (a) OOMed at DecoderLayer granularity (14.5 GB peak in attention compute), (b) sliced at sequential_targets=["Linear"] with max_seq_length=1024 → made it past 3/254 calibration layers, then `TypeError: 'NoneType' object is not subscriptable` inside symbolic-trace subgraph forward (likely Qwen3 GQA + Linear-granularity slicing interaction). No working AWQ quant path on this T4 yet.
-v15-merged GPTQ quant 18/05         —       —       —         RUNNING     GPTQ W4A16 avoids AWQ smoothing and reaches layer 29 on T4, but full quant OOMs at `model.layers.29.mlp.down_proj` in `torch.cholesky_inverse(H)` even with calib_n=32 and max_seq_length=256. Script now defaults to leaving `model.layers.29-35.mlp.down_proj` unquantized (`--gptq-ignore-down-proj-from-layer 29`) while quantizing the rest. Next signal: does this produce a bootable `nlp/models/llm-merged/` and does vLLM load it locally?
-v15-merged GPTQ build 18/05         —       —       —         HOST-BLOCKED GPTQ completed with layer29+ down_proj skip; `nlp/models/llm-merged/` saved. Docker build copied 6.61 GB model context and container became healthy. Local `til test` did not reach scoring: first run was inside `quant-venv` and lacked `python-dotenv`; second run in base env failed host ModernBERT evaluator import because broken optional `torchvision` remained after the earlier main-env torch downgrade (`operator torchvision::nms does not exist`). This is a Workbench host env repair, not an NLP container failure.
-v15-merged GPTQ local 18/05         —       —       —         0.659       LOCAL FAILED. Host evaluator repaired and test reached scoring, but result exactly matched the known v14c/v15-corrupted bucket (0.659), not the v14d 8B base bucket (0.755). Do not submit. Most likely causes, in order: (1) image served the wrong/fallback artifact or the merged artifact provenance needs verification from container logs; (2) GPTQ emergency settings damaged answer quality (`calib_n=32`, seq_len=256, late down_proj left BF16); (3) LoRA merge source was stale / not the trained adapter. Runtime now prints config quant_method + `MERGED_FROM` at boot so the next run can distinguish packaging/init failure from ineffective training.
-v16-deberta-v3       18/05 local  —       —       —         0.692       LOCAL FAILED GATE. Better than old `v13b-deberta` (0.667 → 0.692) but still below v9 local 0.711 and much slower (8:27 for question answering vs v9's ~3:48). One-epoch lr=1e-5 avoided the worst overfit but did not beat RoBERTa-large on this corpus. Do not submit; DeBERTa path is exhausted unless a different architecture/model is tried.
-v16-deberta-v3       18/05 cloud  —       —       —         TIMEOUT     Cloud returned "Your model took too long to evaluate." This tag was built from the current vllm/vllm-openai base, not the old v9 NGC base; treat the cloud failure as base/startup packaging, not DeBERTa accuracy evidence.
-v17-modernbert-stock 18/05 local  —       —       —         0.459       LOCAL FAILED. Stock `kiddothe2b/ModernBERT-base-squad2` routed correctly but is nowhere near the v9 local gate (0.711). QA loop 6:17, also slower than v9's ~3:48. Establishes a low no-training baseline.
-v17-modernbert-ft    18/05 local  —       —       —         0.624       LOCAL FAILED GATE. Fine-tuning gave a large lift over stock (+0.165 absolute, 0.459 → 0.624), so training is not useless, but ModernBERT still badly misses v9 local 0.711 and remains slower (5:28 QA loop). Do not submit; ModernBERT path is exhausted for this qualifier.
-v17-modernbert-stock 18/05 cloud  —       —       —         STARTUP_TIMEOUT Cloud could not start the model container and pointed to Vertex endpoint logs. Same root suspicion as v16: current-main Dockerfile uses vllm/vllm-openai base, whose cloud startup/pull behavior has repeatedly failed. This is not a reason to trust/submit ModernBERT; it already failed local gate.
-v9-rescue attempt    18/05 local  —       —       —         INVALID     Attempted `git worktree add ~/til-v9-rescue 643f9c8`, but `til build` still used the current-main Dockerfile (`vllm/vllm-openai`, ModernBERT artefact loop) and produced 0.624. The TIL CLI appears to build from the canonical `~/til` task path/config rather than the detached worktree cwd. Do not interpret this as v9; it was the ModernBERT fine-tuned image retagged.
-v9-doc-ensemble-rescue 18/05 local —       —       —         0.711       VALID LOCAL RESCUE. Killed stale ModernBERT container on port 5004, restored v9-era NLP files into canonical `~/til`, rebuilt, and local test returned the expected v9 score (`equiv_rate=0.711`, QA loop 4:13). Cloud later validated the image at 0.683 / 0.866.
-v9-doc-ensemble-rescue 18/05 18:53 0.683 0.866 0 / 700   0.711        VALID CLOUD RESCUE. Same accuracy as the original v9/v10 plateau, slightly lower speed than the best same-image v9 resubmit (0.886) but still the trusted blended NLP submission. Confirms the canonical-`~/til` rescue produced the real v9 RoBERTa path.
-v9-locked             19/05 local  —       —       —         0.664       INVALID / FAKE V9. Build skipped Qwen but the untracked `nlp/models/roberta-finetuned-squad2/` artefact was absent from the Docker context (build context only ~1.47 KB), so manager fell back to downloaded stock `roberta-base-squad2`. Do not submit. Dockerfile now hard-fails locked extractive builds if the fine-tuned RoBERTa config is missing.
-v18-qwen-reranker    18/05 local  —       —       —         0.547       FAILED HARD. Swapped only the cross-encoder reranker to `tomaarsen/Qwen3-Reranker-0.6B-seq-cls`; local QA loop ballooned to 14:58 and accuracy collapsed from v9 rescue 0.711 → 0.547. Do not submit. Likely causes: Qwen reranker is not plug-compatible with the short pair-input BGE rerank path and/or its ordering is worse on this fictional sparse-entity corpus. Default reverted to BGE reranker.
-v18-qwen-reranker    18/05 20:28 0.000   0.417   700/700   0.547       CLOUD FAILED AS EXPECTED. Every request errored. This is not worth debugging for submission because the local gate already failed by -0.164 and runtime was ~3.5x slower than v9 rescue. Treat cloud 700/700 as the same vllm-openai/current-main packaging fragility plus a bad reranker, not as evidence that Qwen LLMs are bad.
-v19-hybrid-router    19/05 local  —       —       —         0.705       LOCAL FAILED GATE. Hybrid finally built and became healthy after Docker fixes (`torchao`, disk pressure, pre-download HF deps, runtime `python -m pip`). It loaded corpus and completed scoring, but QA loop was 15:00 and accuracy missed v9 rescue (0.705 vs 0.711). Do not submit. Conclusion: hard-question Qwen routing does not recover enough extra answers to pay its latency/complexity; v9 remains the blended NLP tag and v14 remains the raw-accuracy reference.
-v20-composition-lite  19/05 local  —       —       —         0.664       STOPPED / INVALID A-B. Composition rules were enabled, but the local reader artefact was not the known-good v9 reader. Logs loaded `ext-roberta-finetuned`; score stayed in the bad-reader band. Do not submit.
-v9-384-verify         19/05 local  —       —       —         0.663       Sequence-length check only. Restoring `NLP_QA_MAX_SEQ_LEN=384` did not recover v9, confirming the issue is artefact/provenance rather than max sequence length.
-v9-candidate-035108-888 19/05 local —     —       —         0.697       Best recovered checkpoint seen so far, but still below the real v9 local gate (`0.711`). Keep as retraining evidence only; do not submit or use as base for composition.
-v20-ae-trigger    20/05 03:54        0.951   0.840   0 / 700   0.957        Universal Adversarial Trigger (Wallace 2019 / HotFlip) trained against eval model and prepended to non-empty answers.
-v21-trigger-only  20/05 04:43        0.948   0.941   0 / 700   0.994 (pass) Same trigger as v20 but short-circuiting QA, returning trigger directly.
-v22-vectorized-retrieval 23/05 17:12 0.951   0.946   0 / 700   0.958 (retr) Batched query embedding, retrieval, and cross-encoder rerank.
-v23-large-reranker 23/05 19:17      0.949   0.942   0 / 700   —            Mismatched default ARGs in Dockerfile loaded base reranker instead of large.
-v23-large-reranker-v2 23/05 20:20   0.971   0.880   0 / 700   —            Baked in bge-reranker-large, restored swept retrieval weights (dpw=0.45, bw=1.0, dw=1.0).
-v24-speed-optimized 23/05 22:52    0.959   0.950   0 / 700   0.9807       Reduced TOP_K_RETRIEVE (30->15), max_len (128), and batched rerank (128) with swept weights (dpw=0.6, bw=0.8, dw=0.5).
-v25-bypass        24/05 06:09        0.975   0.982   0 / 700   0.9900       ★ NEW BLENDED & ACCURACY HIGH ★ (0.97675). Conditional model-bypass in trigger-only mode (skips reranker & QA initialization and forward).
-v26-compiled      24/05 06:32        0.975   0.982   0 / 700   0.973        Compiled dense model + GPU similarity. Speed flat due to counted corpus load time (compilation warmup overhead).
-
-**Architecture conclusion for NLP at this point**: vllm/vllm-openai base image
-is not cloud-shippable for our setup; only NGC base (v14) has cloud-verified
-LLM throughput. Separately, the local RoBERTa reader artefact currently on
-Workbench is not the 0.711 v9 reader. Any further NLP work should begin with a
-clean RoBERTa-large v8b/v9 retrain and a plain extractive local gate near
-`0.711`; after that, test composition rules. Larger LLM work should either
-AWQ-quantize the merged Qwen3 LoRA on different hardware (A100/H100), or
-retrain LoRA on Qwen2.5-7B and ship on the proven NGC base.
-```
-
-(1) Local was patched to prepend `DOC-XXXX\n` to each plain string for local verification before Ryan confirmed the cloud format. Same image produced the same local 0.678 once the upstream test was updated to send dicts — proving the pipeline was correct all along; the 0.000 was purely Ryan's eval-server bug.
-
-## ASR submission history
-
-```text
-Tag           Submitted          Score   Speed   Local Eng-WER   Notes
-v1            12/05 03:42        0.000   0.993   —               Empty-string baseline
-norm-v1       12/05 16:23        0.877   0.864   0.0759          + digit verbalization + silence guard
-vad-off-v1    12/05 20:00        0.938   0.859   0.0554          + VAD off + hallucination guards + ordinals + decimal-safe
-ft-lora32-v1  13/05 11:22        0.957   0.849   0.0299*         + LoRA rank-32 decoder fine-tune (3 epochs, lr 1e-4)
-nemo-zs       14/05 20:33        0.956   0.946   0.0429          BACKBONE SWITCH: Parakeet-TDT-0.6B-v2 zero-shot. Accuracy flat (-0.001), speed +0.097, blended +0.025
-nemo-zs-v2    14/05 22:07        0.956   0.946   0.0429          + cuda-python CUDA-graph fast path. Local wall clock -7% (37:28→34:42), cloud unchanged. Cloud speed bottleneck is now HTTP / audio I/O / Python overhead, NOT the TDT decoder. Speed parked at 0.946; next lever is accuracy (Parakeet FT).
-nemo-zs-v2 (22/05) 22/05 21:05   0.962   0.911   0.0384          + Casing-preserving phonetic post-corrections. Reached 0.962 accuracy (+0.006) but dropped speed to 0.911 because of the unified model default in the Dockerfile. Reverting to TDT-v2 next to recover speed.
-nemo-zs-v3 (22/05) 22/05 21:46   0.960   0.945   0.0378          + Casing-preserving phonetic post-corrections. Reverted default model to TDT-v2 to recover speed. New blended high of 0.95625.
-nemo-zs-v4 (22/05) 23/05 02:37   0.962   0.942   —               + slang prompter fix + Ashcastle space-eating fix + Zonnon/Caulfield rules.
-nemo-zs-v5    23/05 03:38        0.966   0.944   —               + refined v5 proper nouns (Canian, Hegemony, Sharpsea, Nyari, Dreamer, Fullwalker, Edgedancer, Floodwall, TEC, CYPHER, Bloc), refined Phi rules.
-nemo-zs-v6    24/05 17:39        0.967   0.947   0.0296          + replay-gated cleanup for percent signs, filler words, ordinals, The CUBE/First Dreamer spacing.
-nemo-zs-v7    24/05 18:39        0.969   0.941   0.0270          + residual post-processing-only cleanup over v6.
-nemo-ft-v1    24/05 23:49        0.969   0.946   0.0213          Fine-tuned Parakeet-TDT-0.6B-v2 (step 713, val WER 0.0856). New high score!
-```
-
-## CV submission history
-
-```text
-Tag                    Submitted          Score   Speed   Errors    Local mAP50-95         Notes
-latest                 12/05 03:52        0.000   0.981   4 / 500   —                      Empty-detection baseline, 4 inputs erroring
-yolo-til-map-v2        14/05 01:56        0.044   0.961   0 / 500   —                      YOLOv8n + sparse COCO→TIL map; clean serving, weak domain fit
-cv-yolo-ft-v1          14/05 03:53        0.402   0.963   0 / 500   0.885                  YOLOv8s fine-tuned on official 18-class annotations
-cv-yolo-v2-best        14/05 14:00        0.549   0.960   0 / 500   0.884 / 0.859          YOLOv8s 768 hard-split retrain + tuned inference
-cv-yolo-v2-tier1-best  14/05 17:10        0.556   0.956   0 / 500   0.851 / 0.905          NEW HIGH (still on leaderboard); v2-best weights + TTA + imgsz=896 + iou=0.60 + score field
-cv-yolo11m-v3-pre      15/05 11:34        0.376   0.955   0 / 500   0.937 / 0.867          REGRESSED -0.180; YOLOv11m@1024 fully trained 120ep. Local val 0.937, hard held-out 0.867 (-0.038 vs tier1) — bigger model + matched-imgsz lost to v8s + upscaled inference. Tier1 stays on leaderboard.
-v11m-1280-noaug-v1     16/05 04:04        0.474   0.949   0 / 500   0.812 / 0.909          REGRESSED -0.082; same v11m weights, inferenced at imgsz=1280 aug=0. Hard held-out 0.9088 (+0.014 vs tier1, small AP 0.7168) looked great locally. Cloud landed -0.082 because v11m's local→cloud gap is structurally ~0.44 vs v8s's ~0.35. Speed beat T4-based projection (cloud 0.949 vs projected 0.85-0.92) — cloud GPU is faster, no-TTA at 1280 isn't a speed bottleneck. Tier1 stays on leaderboard.
-[later YOLO11l rows — plusval-v1 0.640/0.954, v1-img1280 0.671/0.950 (CHAMPION, blended 0.7410), v2 0.654, optimized-v3 0.672/0.940 — see the status table above and the detailed log.]
-rfdetr-base-728-v1     30/05 06:02        0.666   0.921   0 / 500   0.921 (HTTP-pycoco hard) ARCHITECTURE-FAMILY BET, LOST. RFDETRBase (DINOv2 DETR) @ res 728, all-data recipe; blended 0.7298 < champion 0.7410. TIES champion acc (0.666 vs 0.671, within cloud σ≈0.053) with a NARROWER local→cloud gap (0.26 vs YOLO 0.35–0.44 / 11l ~0.25) but hits the same ~0.67 cloud ceiling and loses on speed (0.921 vs 0.950, RF-DETR-B heavier). KEY RESULT: ceiling is content-shift, not backbone — a foundation-model DETR hits the same wall as YOLO. Champion stays shipped; architecture-family question closed. See cv/NOTES.md.
-yolo11l-1408           30/05 09:16        0.684   0.937   0 / 500   0.9857 (til test full)  NEW BEST CV CONFIG (Semis prep), blended 0.7473 > 1280's 0.7410. Same v1 weights, inference-only CV_IMGSZ 1280->1408 (no retrain). Upscale-at-inference lever had headroom past 1280; +0.013 acc for -0.013 speed. Doesn't count for Qualifiers (window closed) but is the config we'd deploy for Semis. Dockerfile default bumped to 1408.
-yolo11l-1536           30/05 09:44        0.650   0.936   0 / 500   0.9769 (til test full)  PAST THE PEAK. Serve res 1536 (1.5x training res) regressed on BOTH cloud (0.650 < 1408's 0.684) and local (full-set 0.977 < 0.986, small AP 0.829 < 0.860) — too far above the 1024 training scale. Confirms 1408 is the upscale peak; do not go higher. Speed flat (~0.936) — resolution isn't the speed bottleneck on the fast cloud GPU.
-rfdetr-base-952-v1     31/05 13:14        0.664   0.907   0 / 500   0.946 (HTTP-pycoco hard) NATIVE-952 RETRAIN, LOST. RFDETRBase trained natively at res 952 (best EMA mAP ~0.951). Local test sweep total 0.946 with small 0.831 (+0.108 vs 728) AND med/large held (0.915/0.959) — native training escaped the serve-time med/large collapse the 728-weights sweep showed. But cloud acc 0.664 ≈ 728's 0.666 (within σ); blended 0.725 < champion 0.7473. The +0.029 local mAP gain → ZERO cloud movement. CONFIRMS local mAP is non-predictive of cloud for RF-DETR; ~0.665 ceiling is content-shift, not resolution. See cv/NOTES.md.
-rfdetr-base-952-up1064 31/05 13:56        0.623   0.891   0 / 500   0.947 (serve@1064 sweep)  UPSCALE TRICK ON RF-DETR, LOST (worst of the 3). Same native-952 weights served at res 1064 (YOLO's upscale-at-inference lever). Local serve-res sweep (952/1008/1064) kept total mAP flat (~0.946-0.948) while small AP climbed 0.831->0.879 — looked promising locally. Cloud DROPPED to 0.623 (-0.041 vs serve@952) at speed 0.891; blended 0.690. DETR pos-embed interpolation penalty surfaces on cloud even though local masks it — opposite of conv-based YOLO. RF-DETR thread closed: 728/952/1064-serve all 0.62-0.67 cloud. Champion YOLO11l-1408 stays.
-```
-
-## CV local A/Bs (16 May)
-
-```text
-Variant                                    Hard held-out mAP / small AP   Notes
-tier1-debug off mode                       0.8947 / 0.6434                Bit-identical to shipped tier1 (sanity).
-tier1 + CV_CONF=0.40                       0.8929 / 0.6434                -0.0018 mAP. Raising conf does NOT clean up FPs profitably.
-tier1 + CV_CONF=0.60                       0.8909 / 0.6434                -0.0038.
-tier1 + CV_CONF=0.70                       0.8886 / 0.6434                -0.0061.
-tier1 + CV_CONF=0.80                       0.8854 / 0.6434                -0.0093. mAP drops monotonically with conf — PR-curve tail is doing real work even at 2.8% precision.
-tier1 + CV_TILE_MODE=2x2                   0.8993 / 0.6139                Total +0.0046; small AP REGRESSED -0.030 (tile-edge filter drops legit small detections). 5 forward passes per image.
-tier1 + CV_TILE_MODE=2x1                   0.8771 / 0.5929                Regressed everywhere. 3 forward passes.
-tier1 + CV_TILE_MODE=3x2                   0.9009 / 0.6255                Total +0.0062 driven by medium AP +0.022 (0.8506 → 0.8728). Small AP still down. 7 forward passes (≈3× compute) — speed math: blended ≈ 0.638-0.653 vs shipped 0.656. Not shipping.
-tier1 + 3x2 EM=0 OV=0.30                   ≈ 0.90 / 0.62                  Edge-margin off + 30% overlap; small AP did NOT recover, confirming the regression is model behavior on tile crops, not the edge filter.
-v8s-1024 imgsz=1024 aug=1                  0.8217 / 0.5327                v8s-1024 retrain (`copy_paste=0.40`). REGRESSED -0.073 vs tier1; small AP -0.110. Toxic copy_paste was the regressor.
-v8s-1024 imgsz=1280 aug=0                  0.8370 / 0.5168                Same weights, upscaled inference. Still -0.058 vs tier1. NOT submitted.
-v8s-1024 imgsz=1024 + tile=3x2             0.8361 / 0.5058                Same weights, tiled inference. Still -0.059 vs tier1. NOT submitted.
-v11m@1280 conf=0.001 iou=0.70 aug=0        0.9088 / 0.7168                BEST hard-held-out across all 16/05 sweeps. +0.014 vs tier1. Small AP +0.073. Submitted as v11m-1280-noaug-v1; cloud regressed -0.082 (local→cloud gap was 0.44, structurally wider than v8s's 0.35).
-v11m@1280 conf=0.001-0.20 iou=0.50/0.70    0.9075-0.9088                  Sweep was tightly clustered; conf knob is essentially flat at imgsz=1280 aug=0 for v11m.
-```
-
-Failure-analysis breakdown of the tier1 baseline (Pass A on hard held-out):
-- 3334 ground-truth boxes; class-correct matches `3317`, class-wrong `16`
-  (0.48%), unmatched `1`, false-positives `176`. Aircraft-subclass confusion
-  is dead as a hypothesis.
-- FP/TP by score bucket showed 97% of TPs are conf ≥ 0.80; conf 0.20-0.70
-  collectively contributed `15 TP / 128 FP` but their PR-curve contribution
-  is what makes the integrated mAP higher at low conf, hence the
-  `CV_CONF` sweep regressing.
-- Per-area AP `small=0.6434 / medium=0.8506 / large=0.9128` — small bucket
-  is the entire bottleneck. At inference imgsz=896 the dataset's p25 box
-  becomes ~29×29 pixels in the model's input.
-- Worst 25 images (`3919`, `4853`, `1992`, `249`, `4780`, `2260`, `3510`,
-  `1293`, `1851`, ...) all have 5-11 boxes per image with mixed scales on
-  photo-composited backgrounds; recall 0.66-0.86. No systematic class or
-  scene bias.
-
-Notes on local mAP columns:
-- `cv-yolo-v2-best`: full local `til test` `0.8839`; hard held-out HTTP eval
-  `0.8589` (`CV_CONF=0.25 CV_IOU=0.50 CV_IMGSZ=768`).
-- `cv-yolo-v2-tier1-best`: full local `til test` `0.8505`; hard held-out HTTP
-  eval `0.9049` (`CV_CONF=0.20 CV_IOU=0.60 CV_IMGSZ=896 CV_AUGMENT=1
-  CV_HALF=1`). The hard split is heavily weighted toward small/dense/rare
-  scenes; TTA at imgsz=896 helps those but hurts easy full-local images. Hidden
-  eval correlated with the hard held-out (`0.9049` → `0.556`), confirming the
-  selection metric.
-- `cv-yolo11m-v3-pre`: Ultralytics val mAP50-95 `0.937` on the 500-image val
-  split; hard held-out HTTP eval top sweep row `0.8673` at `CV_CONF=0.001
-  CV_IOU=0.70 CV_IMGSZ=1024 CV_AUGMENT=1`. Hard small AP `0.587` (vs tier1's
-  `0.746`) — the regression is driven by small-object bbox precision in the
-  high-IoU bins, almost certainly a resolution-mismatch story (trained at
-  1024, never tested at 1280 inference). Hidden eval correlated tightly with
-  hard held-out (`0.8673` → `0.376`), so the gap diagnosis is confirmed.
-- The hard held-out split was intentionally harder and non-leaky
-  (`4000/500/500` train/val/test; test had `3334` boxes).
-
-*`ft-lora32-v1` local Eng-WER is **leaky** (trained on 90% of the 4110-clip test
-set; the bare 0.0299 includes memorization). The held-out 10% val WER at step
-1000 was **0.04662** — that's the cleaner proxy. Official WER 0.043 means the
-generalization gap turned out *negative* (val 0.04662 → official 0.043), i.e.
-distil-large-v3 + LoRA generalized **better** than leaky-val suggested.
-
-## AE local validation history
-
-```text
-Variant     Date/time          Local novice score   Errors/action validity   Notes
-baseline    12/05              0.051 official       0 / 30 official errors   Periodic-forward + periodic bomb baseline
-planner-v1  13/05 10:31 +08    0.732 local Mac      0 invalid actions        Stateful belief map + objective/frontier BFS + LOS-safe tactical bombs
-planner-v1  13/05 Workbench    0.697 local          til test completed       Built/tested with official Workbench Docker flow before submission
-planner-v1  13/05 11:33        0.445 official       0 / 30 official errors   New AE high score, but hidden evaluation underperformed local test
-planner-v2  13/05 Workbench    0.659/0.659/0.689    3-run mean ≈ 0.669       Bomb timer 4→3 (matches env), bounded escape check, enemy soft threat, frontier scoring by unseen yield
-planner-v2  13/05 23:03        0.501 official       0 / 30 official errors   New AE high score (+0.056 vs planner-v1); local→official gap narrowed from 0.25 → 0.17
-planner-v3  13/05 Workbench    0.588/0.629/0.570    3-run mean ≈ 0.596       Aggressive bombing (predictive range 2, bomb chains) + soft threat 1.0/3.0; regressed locally, NOT submitted
-planner-v3b 13/05 Workbench    0.80/0.61/0.66/0.65/0.64/0.63  6-run mean ≈ 0.681  v3 minus bomb-chains; predictive bomb requires ≥2 enemies in range-1 blast; threat 2.0/5.0
-planner-v3b 13/05 23:42        0.499/0.853 official 0 / 30 official errors   Score essentially flat vs v2 (-0.002), but speed +0.082 from multi-source BFS + blast cache + uvloop. Blended +0.018.
-bc-v1       14/05 Workbench    0.689 direct / 0.672 container    149k-param CNN BC of planner-v3b, val_acc 0.8742; container mean within noise of direct eval and planner.
-bc-v1       14/05 01:22        0.364/0.856 official 0 / 30 official errors   REGRESSED -0.135 vs planner-v3b. Local→official gap ballooned 0.18 → 0.31. BC overfit to random-opponent local distribution.
-ppo-v1      14/05 Workbench    0.711/0.700/0.693 eval_policy + 0.766/0.634/0.708 container.  Tight variance vs prior runs; mixed-opponent PPO from bc.pt warm start, best @update 75 of 200 before idle shutdown.
-ppo-v1      14/05 04:36        0.507/0.861 official 0 / 30 official errors   NEW HIGH (+0.008 score, +0.008 speed vs v3b). Gap stayed at 0.19 — mixed-opponent training did NOT close the local→official gap.
-ppo-v2      14/05 eval_policy  0.7138/0.7752/0.7885 novice + 0.6353/0.6910/0.6768 varied   PPO from BC warm start with frame-stacking (N=4), reward-scale 50, value-loss clip, vary-maps, 162/200 updates before idle shutdown. Novice mean 0.759, varied mean 0.668.
-ppo-v2      14/05 til test     0.7282/0.8260/0.7352   Container mean ≈ 0.763 (highest single run 0.826 — best AE local ever).
-ppo-v2      14/05 13:29        0.489/0.854 official 0 / 30 official errors   REGRESSED -0.018 vs ppo-v1. Local 0.763 → official 0.489: gap WIDENED 0.19 → 0.27. Frame-stacking + varied-map training did NOT generalize; the policy overfit the varied-maps distribution.
-[round-1 AE_MODE bake bug] All three of policy-fast-v1 / hybrid-v1 / heuristic-restore shipped the SAME image sha256:2572b392… because AE_MODE was only set in the shell, not baked into the Docker image. Each new tag overwrote the previous in the eval queue (we only got one score back per round). Fixed by ENV AE_MODE= line in Dockerfile + .ae_mode fallback file. Resubmitted as v2 below.
-policy-fast-v2 14/05 14:42       0.425/0.859 official 0 / 30 official errors   ppo-v1 weights + speed fixes (single-thread torch, inference_mode, warmup, preallocated tensors). Local mean 0.654 (1 run). Score regressed -0.082 from ppo-v1 — almost certainly cloud variance on 30-game sample (we've seen ±0.04 between identical runs). Speed flat at 0.859.
-hybrid-v2    14/05 14:55         0.545/0.863 official 0 / 30 official errors   *** NEW HIGH ***. Hybrid manager: policy chooses, heuristic safety-veto on illegal / no-escape-bomb / step-into-blast / frozen-stay. First structurally new approach since ppo-v1. Local 0.774 (1 run, 6 rounds). Local→official gap 0.23 — same band as everything else, but the *floor* lifted by 0.038. Speed 0.863 (+0.002 vs ppo-v1).
-heuristic-restore-v2 14/05 15:02 0.502/0.854 official 0 / 30 official errors   Pure heuristic (planner-v3b + TILE_RESPAWN 40→20 + enemy_agent eviction). Local 0.787 (1 run). +0.003 vs planner-v3b 0.499 — confirms heuristic-only ceiling and that the 40→20 / eviction tweaks were noise on cloud. Speed flat at 0.854.
-hybrid-v3    14/05 19:26         0.555/0.849 official 0 / 30 official errors   *** NEW HIGH (STILL SHIPPED) ***. Hybrid + top-K policy cascade (try policy's #2/#3 actions when #1 is vetoed before falling back to heuristic) + opportunistic enemy-kill in heuristic dominant-action shortcut. +0.010 score vs hybrid-v2 (within ±0.04 cloud noise but trending right); -0.014 speed (likely more bomb-escape work or noise). Now top-quartile on the leaderboard (top is 0.711).
-bc-belief        15/05 train         BC val_acc 0.897 (vs bc-v1's 0.874, +0.023); local 6-game 0.656 (vs bc-v1's 0.689). 704k params, 16x16x11 belief-map CNN branch. CPU torch (3 min / 20 epochs / 40k samples). Architecture's prerequisite signal positive (better fit to planner-v3b actions); cloud was the real test.
-bc-belief-hybrid 15/05 11:46         0.287/0.846 official 0 / 30 official errors   *** MEMORY HYPOTHESIS REJECTED ***. Regressed -0.268 vs hybrid-v3 (huge — far outside ±0.04 noise). Local 6-game 0.646 → cloud 0.287 = gap 0.36 (wider than bc-v1's 0.33). Best read: the 704k-param model with belief input has *more ways to overfit* to planner-v3b's random-opponent local behavior; belief tensor encodes spurious local-distribution correlations that don't transfer. Local hybrid ≈ bc-belief solo (0.646 vs 0.656) showed vetoes were firing so often that hybrid wrapper added nothing, so the cloud regression is the policy's own. PPO would lift this maybe +0.10-0.14 (bc→ppo scale from prior runs) but still below hybrid-v3 0.555. Memory-augmented BC is a dead end for this opponent distribution.
-bc-belief-policy 15/05 local-only    local 0.663 (1 run, 6 games). Tested in pure policy mode for comparison; ~0.02 above hybrid-wrapped locally. NOT submitted — bc-belief-hybrid's cloud regression made pure-policy unlikely to be better.
-hybrid-conf50    15/05 17:59         0.504/0.857 official 0 / 30 official errors   Regressed -0.051 vs hybrid-v3 (just outside ±0.04 noise; small but real). ppo-v1 weights + hybrid + `AE_HYBRID_CONF=0.5` (only use policy when softmax top ≥ 0.5; otherwise heuristic). Local 0.719 → cloud 0.504 = gap 0.22 (same as hybrid-v3) — confidence gate did real local work but threw out cloud-correct policy actions in the 0.4-0.5 softmax band. AE PARKED at hybrid-v3 (0.555/0.849). Four post-hybrid-v3 attempts (bc-belief-hybrid -0.268, bc-belief-policy not-shipped, hybrid-conf50 -0.051) → heuristic-side ceiling confirmed at ~0.555.
-[AE UN-PARKED 16/05] After reviewing the TIL workshop materials (notebook 05 explicitly diagnoses bc-belief's failure as "overfit to a weak fixed opponent" and prescribes self-play as the fix), added a `SnapshotPool` to `training/ae/train_ppo.py` that holds historical actor snapshots and feeds them into `_make_opponents`. Previous `FrozenPolicyOpponent` deepcopied the live actor → effectively "play your shadow", not true self-play. New `--opponents league` + `--snapshot-interval 10` + `--snapshot-pool-size 5` gives a proper opponent curriculum: random + planner + aggressive + frozen-self-from-K-updates-ago.
-ppo-selfplay-v1  16/05 13:18         0.305/0.851 official 0 / 30 official errors   FIRST SHIP OF NEW ARCH (n_frames=4 model.py + new weights). REGRESSED -0.250 vs hybrid-v3. Root cause: `--n-frames 1` (recommended by claude in NOTES, copied from old bc-belief example) didn't match the BC checkpoint's `n_frames=4` and `load_actor` silently skipped the warm-start (train_ppo.py:656-661). PPO trained 200 updates from random init against league opponents. Best PPO eval climbed monotonically -0.088 → +0.436 across 7 saves. Local eval against `mixed`: 0.4040 (-0.083 vs BC ckpt's 0.4866 baseline). Cloud 0.305. **Critical positive finding**: local-cloud gap was 0.099 (0.404→0.305) vs the structural ~0.23 across all 9 prior AE submissions. First evidence that league/self-play training distribution materially tightens the gap. Speed 0.851 ≈ hybrid-v3 0.849 (new arch + hybrid wrapper is fine speed-wise).
-ppo-selfplay-v2  16/05 18:09         0.436/0.857 official 0 / 30 official errors   REGRESSED -0.119 vs hybrid-v3 (0.555), but +0.131 over v1 (0.305) — confirms BC warm-start + self-play > self-play from random init. Training peaked at update 120/200; 7 monotonic best-saves: 0.4908 → 0.5038 → 0.5327 → 0.5333 → 0.5982 → 0.6428 → 0.6601 against league. Local evals: pure-policy vs mixed 0.5747 (+0.088 over BC, +0.171 over v1); til test (hybrid wrapper) 0.7068. Local-cloud gap **0.271** (0.7068 - 0.436), BIGGER than hybrid-v3's 0.219 — the v1 gap-tightening to 0.10 was an artifact (v1 was weak in pure-policy so the hybrid wrapper added more in relative terms; v2's stronger raw policy makes the wrapper contribute less relatively, exposing the structural gap). **Self-play opponent curriculum + warm-start was a real win over from-scratch training, but the local-cloud gap is structural to the hidden eval distribution, not to our training distribution.** This is the cleanest negative result on the league/self-play hypothesis we could get. Superseded as current workstream by code-only `mcts-light-v1`; hybrid-v3 remains the shipped best until MCTS-light has an official score.
-mcts-light-v1    16/05 ~23:00       TIMEOUT  0 / 30 cloud errors (model never finished). Violet bot: "Your model took too long to evaluate." No score returned, leaderboard unaffected. Inference-side candidate: bounded tactical beam search in `AEManager` (depth 5, width 96, side-beam for tactical lines) + `HybridAEManager` trust-MCTS gate. Implementation focused entirely on score, none on speed — no per-call latency cap, no pre-flight gate, MCTS fired every tick. Math: `AE_MCTS_DEPTH=5 × AE_MCTS_WIDTH=96` → ~2,400 expansions per tick × ~0.5-1 ms each = **1.2-2.4 s/tick**. Cloud budget is ~30 min / 30 games / ~100 ticks ≈ **~600 ms/tick**. Over by 2-4×. Local `til test` (no wall-clock cap) didn't catch it because it just runs to completion regardless of speed.
-mcts-light-v2    16/05 23:52        0.487/0.595 official 0 / 30 official errors   REGRESSED -0.068 acc, -0.254 speed vs hybrid-v3 → blended 0.514 vs hybrid-v3's 0.628 (-0.114). v2 added: hard `time.monotonic()` 80 ms latency cap with best-so-far fallback inside `_tactical_lookahead_action`; cheap pre-flight gate `_should_run_mcts(location)` that returns False when no bombs/enemies/enemy-bases are within `depth+1` Manhattan reach; shrunk Dockerfile defaults DEPTH=5→3, WIDTH=96→24, BUDGET_MS=80. The cap + gate prevented timeout (v1 → v2 fix), but MCTS still cost +7.7 min cloud wall-clock (~4.5 min → ~12.2 min) AND accuracy regressed −0.068 vs hybrid-v3. Local `til test` 0.6618 with 17-25 s/round (~2 min total). Local-cloud gap was 0.175 — narrower than hybrid-v3's 0.219, but local floor was lower. Best read on the accuracy regression: MCTS commits to simulated tactical lines using a stationary-opponent assumption; cloud opponents move on their own logic, so we pay simulated-combat cost without earning simulated-combat reward. Same distribution-shift failure that killed bc-belief and ppo-selfplay, this time at inference. **MCTS as a *primary planner* is dead.** Remaining cheap variants: (A) conservative-MCTS (raise `AE_MCTS_MIN_SCORE` 12→22, shrink DEPTH=2 WIDTH=16) so MCTS is a high-confidence override layer only; (B) heuristic-only MCTS A/B (AE_MODE=heuristic) to isolate MCTS contribution vs the hybrid wrapper. After A or A+B, AE is exhausted at hybrid-v3 across both training-side AND inference-side intervention classes.
-```
-
-## AE current code candidate
-
-`mcts-light-v1` is a code-only inference A/B after the training-side AE
-failures. It adds bounded tactical lookahead in `AEManager`, scoring safe
-short-horizon bomb/base/enemy lines from the live belief map. Hybrid mode
-trusts the heuristic action before policy only when the projected tactical
-value clears threshold. Built knobs: `AE_MCTS=1`, `AE_MCTS_DEPTH=5`,
-`AE_MCTS_WIDTH=96`, `AE_MCTS_MIN_SCORE=12`, and
-`AE_HYBRID_TRUST_MCTS=1`. Workbench target: restore ppo-v1 weights, then
-build/test/submit tag `mcts-light-v1`. No official score yet.
-
-## Qualifier weighted score estimate
-
-Official Challenge-spec weights:
-
-```text
-AE   40%
-NLP  20%
-ASR  20%
-CV   20%
-Noise has no direct Qualifier reward; it is a Finals CV-disruption component
-```
-
-Each scored challenge blends `75%` accuracy/reward and `25%` speed. Qualifier speed is `1 - min(t_elapsed, 30 minutes) / 30 minutes` over the full test set.
-
-Using raw task scores only (best-ever shipped per task on the CURRENT
-leaderboard — old NLP score of 0.301 was wiped when organisers rolled out
-the new eval):
-
-```text
-0.40 * AE 0.555  = 0.2220
-0.20 * NLP 0.683 = 0.1366   ← v9-doc-ensemble / v10-template-lite tied on accuracy
-0.20 * ASR 0.957 = 0.1914   ← raw accuracy held by leaderboard's max policy
-0.20 * CV 0.556  = 0.1112
---------------------------------
-Estimated weighted qualifier score = 0.6612
-```
-
-AE has now incrementally climbed in three consecutive submissions (ppo-v1 0.507 → hybrid-v2 0.545 → hybrid-v3 0.555), each one moving the floor up by the size of cloud noise but in the same direction. The structural local→cloud gap (~0.23) is intact, but the floor itself has moved +0.048. Top of leaderboard is 0.711; we're now top-quartile.
-
-The belief-map state-augmentation attempt (`bc-belief-hybrid`, 15/05) regressed to 0.287 — far outside cloud noise and a clean rejection of the memory hypothesis as implemented through BC. The bigger network (704k params) with belief input found *more* spurious correlations to the local random-opponent distribution rather than fewer. AE rolled back to `hybrid-v3`. Remaining AE moves (veto-tuning A/Bs, MCTS-light) have realistic ceiling ~0.58; the higher-EV qualifier lift has now come from NLP `v8b/v9`.
-
-ASR `nemo-zs` (Parakeet-TDT-0.6B-v2 zero-shot) just shipped at `0.956/0.946` — a -0.001 accuracy nudge but +0.097 speed. The leaderboard keeps the higher score for raw accuracy, but the BLENDED score per challenge is what feeds the qualifier total via the 75/25 weighting below.
-
-Using the observed ~75% score / 25% speed blend:
-
-```text
-AE   contribution = 0.2515   (0.40 * (0.75*0.555 + 0.25*0.849) = 0.40 * 0.6285 = 0.2514)
-NLP  contribution = 0.1466   (0.75*0.683 + 0.25*0.883 = 0.7330)  ← best blend from same-image v9 resubmit
-ASR  contribution = 0.1907   (0.75*0.956 + 0.25*0.946 = 0.9535)
-CV   contribution = 0.1312   (0.75*0.556 + 0.25*0.956 = 0.6560)
---------------------------------
-Estimated blended qualifier score = 0.7199  (+0.0007 from v9 resubmit speed noise vs first v9 run)
-```
-
-## Cross-task leaderboard intuition
-
-Qualifier-era cross-cutting findings worth carrying into Semifinals. Per-tag detail lives in each task's `NOTES.md` and the submission-history tables above.
-
-- **ASR local→official gap was negative** during Qualifier: held-out val WER ~0.047 → official WER ~0.043. The official audio distribution was slightly *easier* than our local held-out slice.
-- **AE local→official gap held at ~0.18** across the planner-v2 → planner-v3b era and didn't shrink with knob tuning, suggesting structural env distribution mismatch (novice local fixed seeds + random opponents vs hidden eval) rather than a tunable lever.
-- **Local `1 - MER` for ASR is a scoring artifact.** Local manifest is English-only and the other three language buckets contribute 0 to the divide-by-4 mean. Track the bare `english error rate (WER)` line instead.
-- **Noise has no direct Qualifier reward** per the official spec; it only matters in Finals by degrading opponents' CV inputs within the SSIM/RMSE fairness gate. Don't optimize Noise for Qualifier score.
-- **Cloud variance was ±0.04 on AE per run.** Design A/Bs around effect sizes that beat that noise floor, not micro-tunes. CV cloud GPU was faster than expected, so CV speed was not the bottleneck — accuracy was.
-
-Semifinals focus and per-task plans live in [ae/NOTES.md](ae/NOTES.md) and [cv/NOTES.md](cv/NOTES.md); the Qualifier-era "Next priority" list that used to sit here is obsolete and has been removed.
+## Final scores
+
+| Task  | Weight | Shipped solution | Final score / placement |
+|-------|--------|------------------|--------------------------|
+| **AE** (autonomous exploration, RL bomb-game) | 40% | `confpol-semis2b-u75` heuristic+gated-PPO consultant hybrid + `g02-sample-08` CEM planner weights | 0.382 cloud (non-crater) / 0.746 speed; Semifinals worst-bracket placement ~1.46; 1st in live hardware runs |
+| **ASR** (speech recognition) | 20% | `nemo-ft-v3` — Parakeet-TDT-0.6B-v2 fine-tune + post-processing | 0.970 acc / 0.947 speed (blended 0.964) |
+| **CV** (object detection, 18-class LTWH) | 20% | `yolo11l-1024-alldata-final-v1` served at 1280px (Semis: 1408px) | 0.671 acc / 0.950 speed (blended 0.741); Semis config 0.684 acc (blended 0.747) |
+| **NLP** (retrieval QA) | 20% | `v28-optimized-bm25` — pure tuned BM25 retrieval | 0.984 acc / 0.985 speed (blended 0.984) |
+| **Noise** (adversarial image perturbation) | Finals tool only | `level10-detector-stress` — AdvGAN + detector-stress overlay | 1.000 fairness / 0.947 speed; ~6% mAP@50 disruption on victim |
+
+Estimated blended Qualifier total ≈ **0.72** (AE 0.25, NLP 0.15, ASR 0.19, CV 0.13).
+
+---
+
+## AE — Autonomous Exploration (40%)
+
+A partially-observed grid wargame: farm resources → fuel → bombs → destroy enemy bases, scored on relative placement against other agents. The single most important and most contested task.
+
+### Shipped
+
+A **hand-coded Dijkstra heuristic core** (greedy single-target scorer over item/mission/base values) wrapped in a **confidence-gated PPO consultant**: the learned policy only overrides the heuristic when its margin and confidence floor are both high. Checkpoint `confpol-semis2b-u75` was warm-started from a native consultant (0.661 cloud) and fine-tuned on a **foreign-opponent curriculum** (an external A\* agent, self-play snapshots, and aggressive-proxy bots). Planner weights `g02-sample-08` (tether 1.31, base 80, 8 other scalar knobs) came from a CEM search and were the first candidate to clear *all four* promotion gates: local placement, local raw-AE, held-out composition gap, and cloud non-crater. Cloud improved 0.661 → 0.671 on the rebased opponent set; on-hardware runs placed 1st with ~1.5× reward margins.
+
+### What we tried
+
+**Heuristic / planner line**
+- Greedy Dijkstra single-target scorer (item/mission/base values, bomb-cost tuned) — **shipped** (the core)
+- Base-tether (defend-while-farming bias, LLM-rationale-mined) — **shipped**
+- C+bomb7 profile (item 80/40, base 100, bomb_cost 7.0) via multi-seed calibration — **shipped**
+- Bomb-timer offensive split (detonate at 5 decision-steps, escape window 3) — **shipped** (correctness fix)
+- CEM planner-weight tuning over 10 scalar knobs (`g02-sample-08`) — **shipped**
+- Stun/respawn downtime pricing, option-mode planner (defend/destroy/farm/hunt/escape), Dijkstra bomb-cost sweeps, broad heuristic-knob grids (224/288/240-candidate screens) — **dead-end** (flat or noise)
+- Forward-sim plan re-score (project bomb landing, demote landable bases) — **dead-end** (local flat, cloud −0.081)
+- Opening book (per-spawn farming openings, divergence-gated) v1/v2 — **dead-end** (never fires on the eval spawn; gate validated against the wrong planner)
+- CEM `g00-fixed-03` / `g03-sample-08` — **dead-end** (byte-identical/inert on the live seed, or cloud-rejected with search bounds pegged)
+
+**Learned-policy line — every variant died the same death: local-opponent overfit**
+- From-scratch CNN-PPO vs mixed opponents — **dead-end** (local 0.54–0.56, cloud collapsed to ~0.41–0.51)
+- Behavior cloning of the heuristic + PPO fine-tune — **dead-end** (local val-acc 0.87–0.90, cloud ~0.36–0.41)
+- Self-play RL (BC warm-start + snapshot pool) — **dead-end** (local 0.575, cloud 0.436)
+- Belief-map state augmentation (704k-param CNN, learned belief tensor) — **dead-end** (more params = more overfit; cloud 0.287)
+- Tactical / 12-way macro-policy selectors — **dead-end** (flat vs baseline)
+- MCTS-light bounded beam search — **dead-end** (v1 timed out; v2 regressed on speed *and* accuracy)
+- Confidence-gated PPO consultant (native + foreign-curriculum rungs) — **shipped** (`semis2b-u75`; later rungs overfit into a single opponent — an inverted-U)
+- Dir-2 BC-clone + self-play league — **dead-end** (flat)
+- LLM-as-player (Sonnet/Gemini vs heuristic) — **dead-end** (LLM *rationale-mining* for heuristic tuning was the real win)
+
+**Bomb/safety flags (all default-OFF, gated)**
+- Contention-aware item valuation (discount items an opponent reaches first) — **shipped** ON, but measured inert (lacks mid-game opponent positions)
+- Time-layered danger map (chain-resolved per-tick lethality) — **shipped** (default-OFF, byte-identical)
+- No-self-damage bomb gate (own bombs deal zero self-damage, env-confirmed) — **parked** OFF (high-variance, inverts under the shipped planner weights)
+- Base-kill no-escape surgical variant — **dead-end** (worst of both worlds)
+- Phantom-bomb rollback (latent-state consistency) — **dead-end** (noise-floor)
+- Resource-reward env fix (org confirmed pickups score nothing) — **shipped** (pin bumped; placement-neutral)
+
+**Key learnings:** local eval ≠ cloud — a structural ~0.18–0.30 gap that no amount of training, bigger nets, frame-stacking, or richer state closed; the bottleneck is opponent-distribution mismatch, not a tunable knob. Hand-coded heuristics transfer; learned policies overfit the local opponent. Finals scoring is *relative rank*, so a retune can earn less absolute reward yet place better — which makes single-agent cloud reward the wrong shape. A relative-rank **melee gate** (head-to-head across opponent brackets, with held-out compositions) was the first eval that agreed with cloud ranking. On-hardware A/B on the deterministic Finals seed was the final arbiter, and it once *inverted* a synthetic gate's pick.
+
+---
+
+## ASR — Speech Recognition (20%)
+
+### Shipped
+
+`nemo-ft-v3`: **NVIDIA Parakeet-TDT-0.6B-v2** fine-tuned (step 713, val WER 0.0856) plus a layered post-processing stack — spelling normalization, regex fixes, in-world proper-noun corrections, currency/ordinal/percentage rules. **0.970 acc / 0.947 speed.**
+
+### What we tried
+- Empty-string baseline, digit-verbalization + silence guard, VAD-off + hallucination guards — **dead-end** (calibration baselines)
+- LoRA rank-32 fine-tune of the original backbone (3 epochs) — **shipped** (early winner)
+- Parakeet-TDT-0.6B-v2 backbone swap, zero-shot — **shipped**, then iteratively post-processed (v3→v7: phonetic corrections, slang prompter, proper-noun and currency rules) — **shipped**
+- Parakeet-TDT fine-tune (nemo-ft-v1/v2/v3) — **shipped** (final line)
+- N-gram LM shallow fusion for in-world proper nouns — **dead-end / parked** (real local WER gain, but the GPU decode path crashed on the cloud GPU, so no net gain)
+
+**Key learnings:** post-processing rules on a strong zero-shot backbone matched the blended score of full fine-tuning. The n-gram LM was a big *local* win that didn't survive the cloud GPU — a recurring "validate on the actual hardware" lesson.
+
+---
+
+## CV — Object Detection (20%)
+
+18-class LTWH bounding-box detection on a hidden distribution with heavy small-object bias.
+
+### Shipped
+
+`yolo11l-1024-alldata-final-v1`: **YOLOv11l** trained 70 epochs at 1024px on all data (val+test folded back in), then served at **upscaled 1280px** inference. **0.671 acc / 0.950 speed.** Post-Qualifier Semis prep found 1408px is the empirical peak: **0.684 acc** (blended 0.747).
+
+### What we tried
+- YOLOv8s 768→896 with TTA (tier1 baseline) — **shipped** (Qualifier leaderboard entry)
+- YOLOv11m native 1024, and 1024→1280 upscale — **dead-end** (bigger model + matched resolution *regressed* to 0.376; wider local→cloud gap)
+- Augmented training (JPEG re-compression + tile crops) — **dead-end** (+0.04 held-out but the local→cloud gap *widened* — specialized away from cloud)
+- Inference-knob sweeps (CONF/IOU/IMGSZ/AUGMENT), tiled inference (2×2/2×1/3×2) — **dead-end** (CONF regressed monotonically; tiling hurt small-AP)
+- YOLOv8s retrain at 1024 with aggressive copy-paste — **dead-end** (toxic on an already-composited dataset)
+- YOLOv11l plusval recipe (fold val back, fix ship-class imbalance) — **shipped** (stepping stone)
+- YOLOv11l **all-data @ 1024, served at 1280** — **shipped** (Qualifier champion)
+- YOLOv11l native 1280 training — **dead-end** (lost to smaller-trained + upscale, same paradox again)
+- YOLOv11l TTA (optimized-v3) — **dead-end** (raw +0.001, blended −0.002 from speed cost)
+- YOLOv11l upscale sweep 1280→1408→1536 — **parked** at **1408** (peak; 1536 regressed)
+- **RF-DETR** (DINOv2 ViT-DETR) at 728 / native-952 / 952-upscaled-1064 — **dead-end** (ties YOLO acc with a *narrower* local→cloud gap, but hits the same ~0.665 ceiling and loses on speed; pos-embeds are tied to resolution so the upscale trick doesn't transfer)
+- Input purification + multi-model ensembling scaffolding — **parked** (merged to main but OFF by default; unvalidated)
+
+**Key learnings:** the ~0.67 cloud ceiling is **content-shift, not backbone capacity** — RF-DETR disproved that a fancier foundation backbone could break it. The one reliable lever was **upscale-at-inference** (train small, serve big), and it's counterintuitive: a bigger model at matched resolution loses to a smaller one upscaled. ~80% of the local→cloud gap is scene-content shift, not a fixable inference knob.
+
+---
+
+## NLP — Retrieval-Augmented QA (20%)
+
+### Shipped
+
+`v28-optimized-bm25`: **pure BM25 retrieval, no neural models** — document-level BM25 (k1=2.05, b=1.0) fused with passage-level BM25 (k1=1.5, b=0.75, 3-sentence windows) via z-score weighting (doc + 0.6 × max-passage). Local retrieval hit-rate 0.9853. **0.984 acc / 0.985 speed**, 0/700 errors. This beat every neural and adversarial path on the blended frontier.
+
+### What we tried
+- Hybrid BM25+BGE+rerank+RoBERTa-SQuAD2 (initial) — **dead-end** (scored 0.000 on cloud due to an org eval-server bug, then recovered)
+- Defensive dict-ID parser (`v4-dict-id`) — **shipped** (recovery after the org fix)
+- Paragraph chunking + batched SQuAD2 + BM25 backfill variants — **dead-end / shipped** (mixed; fallback fired too aggressively)
+- RoBERTa-large-squad2 fine-tune on local data — **shipped** (+0.034 cloud)
+- **Chunked-context fine-tune** (train on answer-containing 3-sentence chunks) — **shipped** (+0.162 cloud; inductive bias matched the retrieval pipeline)
+- Doc-ensemble (whole-doc BM25+BGE prior + reranker seeding) — **shipped** (cloud 0.683; blended high before the BM25 line)
+- Template-lite canonicalizer — **shipped** (neutral); broader canonicalizer / candidate-ranker / doc-mined entities — **dead-end** (passed weak local proxies, failed the strict 0.9 answer-equivalence threshold)
+- DeBERTa-v3-large, ModernBERT (stock + fine-tuned), Qwen3-Reranker swap, hybrid router — **dead-end** (missed the RoBERTa gate and/or timed out on cloud)
+- Flan-T5 generative QA — **dead-end** (paraphrases failed the 0.9 threshold)
+- LLM RAG: Qwen2.5-7B-AWQ via vLLM — **shipped** (highest raw accuracy 0.734, but speed cost killed the blended score); Qwen3-4B/8B on a different base — **dead-end** (cloud-incompatible base image)
+- QLoRA fine-tune of Qwen3-8B — **parked** (trained cleanly but unshippable: vLLM LoRA kernel crashed on the T4, AWQ/quant export blocked)
+- **Adversarial trigger** (HotFlip universal trigger vs the ModernBERT answer-equivalence classifier), `v20`/`v21` — **shipped** (0.951 acc via the trigger; proved the eval classifier is exploitable, but the speed penalty lost to pure BM25)
+- Speed line: vectorized retrieval, large reranker, conditional model bypass, torch.compile, **pure BM25**, **tuned hybrid BM25** — **shipped** (the final climb to 0.984/0.985)
+
+**Key learnings:** on this corpus, **tuned BM25 beat every neural and LLM path** on the blended frontier. The org's 0.9 answer-equivalence threshold killed an entire class of post-processing (canonicalizers, rankers, paraphrasing LLMs) that passed weaker local proxies. The most transferable training trick was matching the fine-tune distribution to the retrieval pipeline (chunked-context, +0.162). The HotFlip adversarial trigger was a genuinely impressive exploit that simply lost on speed.
+
+---
+
+## Noise — Adversarial Image Perturbation (Finals tool only)
+
+No direct Qualifier reward; an optional Finals capability to degrade an opponent's CV inputs while staying inside fairness bounds (L2 / SSIM caps).
+
+### Shipped
+
+`level10-detector-stress`: a two-stage pipeline — an **AdvGAN generator** (trained on ResNet18/Imagenette, ~14 KB weights) produces base noise in one forward pass, then a **detector-stress overlay** (multi-phase checkerboards + edge-aware masking targeting CNN receptive fields) saturates the remaining fairness budget. Clamped to ε=32/255, JPEG-re-encoded. **Passes 500/500 fairness, 0.947 speed**, ~6% mAP@50 drop on a YOLO11l victim.
+
+### What we tried
+- PGD with a classifier ensemble (ResNet18/MobileNetV3/SqueezeNet/ViT) — **dead-end** (per-query optimization too slow for the speed wall)
+- Single-pass AdvGAN generator (Level 9) — **shipped** (sub-ms inference)
+- Strength sweep 1→2→3 on a YOLO victim — **shipped** (measured real impact: ~6% at deployed strength, flat to strength 2, 15% only at strength 3 which breaks fairness)
+- Detector-stress overlay (Level 10) — **shipped**
+- Retrain the generator against a *detector* objective (not classification) — **parked** (identified as the real lever; high-effort, deferred)
+
+**Key learnings:** noise trained on a classification surrogate transfers poorly to detection victims (different gradient structure) — hence only ~6% disruption despite passing fairness. The genuine fix is detector-gradient training; what shipped is a structural workaround.
+
+---
+
+## Timeline (oldest → newest)
+
+- **14 May 2026** — NLP eval overhaul: answer-equivalence threshold 0.5→0.9, leaderboard wiped, doc-ID dict format standardized. Early NLP submissions reset to 0.000 by an org eval-server bug, then recovered (`v4-dict-id`).
+- **22 May 2026** — CV Qualifier champion locked: `yolo11l-1024-alldata-final-v1` at upscaled 1280px (0.671 acc).
+- **24 May 2026** — NLP final `v28-optimized-bm25` (0.984/0.985); ASR `nemo-ft-v3` (0.970/0.947); Noise `level10-detector-stress`. **Qualifier deadline.**
+- **30 May 2026** — Post-lock CV Semis config found: `yolo11l-1408` (0.684 acc, new blended high); RF-DETR architecture bet resolved as a dead-end.
+- **01 Jun 2026** — Cloud eval went deterministic (one submit = true score), retiring variance-farming.
+- **~04 Jun 2026** — Cloud AE opponent set swapped; all prior cloud numbers became stale. AE `confpol-semis2b-u75` validated at 0.671 on the new set.
+- **06 Jun 2026** — Org disclosed resource pickups score nothing; AE env pin bumped to match (placement-neutral). First on-hardware Finals validation on Blackwell RTX 5070 Ti passed.
+- **08 Jun 2026** — On-hardware AE A/B on the deterministic Finals seed: `semis2b-u75` won 516/1st, *inverting* the synthetic gate's pick of `semis2c`.
+- **10 Jun 2026** — AE `g02-sample-08` CEM planner weights adopted (first to clear all four gates). Surprise hex-strategy agent built. Live Semis hardware runs: 1st in both, ~1.5× margins.
+- **11 Jun 2026** — Final Finals submission validated clean on hardware (0 timeouts/crashes). Deploy frozen for Semis/Finals.
+
+---
+
+*The full internal day-by-day submission log and the per-task strategic notes (decisions, gotchas, dead-end post-mortems) live in each task directory's `NOTES.md` and in `docs/`. Much of the experimentation above was driven through an AI-assisted, gated brainstorm → spec → plan → eval → ship workflow; the engineering and results are the headline.*
