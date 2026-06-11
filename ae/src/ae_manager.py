@@ -17,33 +17,7 @@ import time
 from typing import Iterable
 
 from bomb_safety import BombSafety
-
-
-def _env_flag(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
+from planner_weights import PlannerWeights, _env_flag, _env_float, _env_int
 
 
 # Module-level cache for the opponent-model walk scale. PPO training
@@ -188,33 +162,37 @@ class AEManager:
     # detonation ordering.
     PREDICTIVE_WALK_HORIZON = 4
 
-    def __init__(self):
+    def __init__(self, weights: PlannerWeights | None = None):
+        """``weights`` is the planner's full tunable profile (see
+        planner_weights.py). Default: read from the historical ``AE_*`` env
+        vars — deploy ENV overrides behave exactly as before. Tests and
+        tuners can pass a profile directly instead of mutating os.environ.
+        """
+        w = weights if weights is not None else PlannerWeights.from_env()
+        self.weights = w
         self.grid_size = self.GRID_SIZE
         self.last_step: int | None = None
         self.turn_counter = 0
-        self.mcts_enabled = _env_flag("AE_MCTS", False)
-        self.mcts_depth = max(1, min(8, _env_int("AE_MCTS_DEPTH", 3)))
-        self.mcts_width = max(12, min(512, _env_int("AE_MCTS_WIDTH", 24)))
-        self.mcts_min_score = _env_float("AE_MCTS_MIN_SCORE", 12.0)
-        # v2: hard per-call latency budget. Cloud killed v1 because DEPTH=5
-        # WIDTH=96 with no cap ran 1.2-2.4s/tick; budget is ~600ms/tick on
-        # cloud. 80ms gives the rest of the pipeline (encoding, policy
-        # forward, hybrid logic) ~500ms headroom.
-        self.mcts_time_budget_s = max(0.005, _env_float("AE_MCTS_BUDGET_MS", 80.0) / 1000.0)
-        # v2: emit per-call timing to stdout so we can confirm budget
+        self.mcts_enabled = w.mcts_enabled
+        self.mcts_depth = w.mcts_depth
+        self.mcts_width = w.mcts_width
+        self.mcts_min_score = w.mcts_min_score
+        # Hard per-call latency budget (see planner_weights: cloud killed
+        # MCTS v1 because DEPTH=5 WIDTH=96 with no cap ran 1.2-2.4s/tick).
+        self.mcts_time_budget_s = w.mcts_time_budget_s
+        # Emit per-call timing to stdout so we can confirm budget
         # compliance in `til test` before submitting.
-        self.mcts_log_timing = _env_flag("AE_MCTS_LOG_TIMING", True)
+        self.mcts_log_timing = w.mcts_log_timing
         self.last_lookahead_score = -inf
         self.last_lookahead_path: tuple[int, ...] = ()
         # Tier-1 toggles. Bisect on 100-200 round local sims (17 May 2026)
         # picked the clean winning subset: #3, #6, #7 default ON; #2, #4
-        # default OFF. Cloud A/B should validate before flipping more on.
-        # Override any individually with `AE_TIER1_*=1` / `=0`.
-        self.tier1_defense_priority = _env_flag("AE_TIER1_DEFENSE", False)
-        self.tier1_repeat_kill = _env_flag("AE_TIER1_REPEAT_KILL", True)
-        self.tier1_shared_credit = _env_flag("AE_TIER1_SHARED_CREDIT", False)
-        self.tier1_no_stay_penalty = _env_flag("AE_TIER1_NO_STAY_PENALTY", True)
-        self.tier1_predictive_walk = _env_flag("AE_TIER1_PREDICTIVE_WALK", True)
+        # default OFF. Override any individually with `AE_TIER1_*=1` / `=0`.
+        self.tier1_defense_priority = w.tier1_defense_priority
+        self.tier1_repeat_kill = w.tier1_repeat_kill
+        self.tier1_shared_credit = w.tier1_shared_credit
+        self.tier1_no_stay_penalty = w.tier1_no_stay_penalty
+        self.tier1_predictive_walk = w.tier1_predictive_walk
         # Offensive bomb-LANDING timing. The `BOMB_TIMER=3` constant is the
         # conservative own-bomb ESCAPE window (kept short on purpose; the placer
         # takes zero self-damage on its own tile anyway). But a freshly placed
@@ -223,7 +201,7 @@ class AEManager:
         # Use this separate, longer constant ONLY for reasoning about WHEN our
         # bomb lands on a kill cell (respawn-camp `detonation_step` windows), so
         # we don't mis-time offensive bombs by ~2 ticks. Never used for escape.
-        self.BOMB_DETONATE_STEPS = max(1, _env_int("AE_BOMB_DETONATE_STEPS", 5))
+        self.BOMB_DETONATE_STEPS = w.bomb_detonate_steps
         # Tier-1 #1: load the offline playbook if present. The lookup is a
         # cheap dict access so we hit it on every tick before falling
         # through to the heuristic. Disabled in two cases: env var set, or
@@ -242,13 +220,13 @@ class AEManager:
         # by min(1, walk_distance / 0.5) so values <0.5 (less mobile
         # opponents) get downweighted and >0.5 (more mobile) get upweighted.
         self.opponent_walk_scale = self._load_opponent_walk_scale()
-        self.BASE_DEFENSE_HEALTH = _env_float("AE_BASE_DEFENSE_HEALTH", 60.0)
-        self.BASE_DEFENSE_RADIUS = _env_int("AE_BASE_DEFENSE_RADIUS", 4)
-        self.ENEMY_BASE_VALUE = _env_float("AE_ENEMY_BASE_VALUE", 80.0)
-        self.DIST_PENALTY = _env_float("AE_DIST_PENALTY", 1.15)
-        self.PATH_THREAT_PENALTY = _env_float("AE_PATH_THREAT_PENALTY", 2.0)
-        self.ENEMY_CHASE_VALUE = _env_float("AE_ENEMY_CHASE_VALUE", 0.0)
-        self.ENEMY_CHASE_RADIUS = _env_int("AE_ENEMY_CHASE_RADIUS", 4)
+        self.BASE_DEFENSE_HEALTH = w.base_defense_health
+        self.BASE_DEFENSE_RADIUS = w.base_defense_radius
+        self.ENEMY_BASE_VALUE = w.enemy_base_value
+        self.DIST_PENALTY = w.dist_penalty
+        self.PATH_THREAT_PENALTY = w.path_threat_penalty
+        self.ENEMY_CHASE_VALUE = w.enemy_chase_value
+        self.ENEMY_CHASE_RADIUS = w.enemy_chase_radius
         # Forward-sim plan re-score (default OFF). Re-ranks only the top-K
         # static target candidates by a short self-plan projection on the known
         # map (items collected en route + whether a bomb actually lands on a
@@ -256,39 +234,39 @@ class AEManager:
         # no opponent rollout, no safety veto. The confidence signal stays in
         # static units (see _choose_target), so the confidence_policy_hybrid
         # gate is unperturbed; only the *executed* target can change.
-        self.plan_rescore_enabled = _env_flag("AE_PLAN_RESCORE", False)
-        self.plan_rescore_k = max(1, _env_int("AE_PLAN_RESCORE_K", 4))
-        self.plan_rescore_margin = _env_float("AE_PLAN_RESCORE_MARGIN", 1.0)
-        self.plan_rescore_time_tax = _env_float("AE_PLAN_RESCORE_TIME_TAX", 0.35)
-        self.plan_rescore_base_w = _env_float("AE_PLAN_RESCORE_BASE_W", 1.0)
+        self.plan_rescore_enabled = w.plan_rescore_enabled
+        self.plan_rescore_k = w.plan_rescore_k
+        self.plan_rescore_margin = w.plan_rescore_margin
+        self.plan_rescore_time_tax = w.plan_rescore_time_tax
+        self.plan_rescore_base_w = w.plan_rescore_base_w
         # Asymmetric (default): projection may DEMOTE a static-winner phantom
         # base toward a realizable alternative, but may never PROMOTE a base
         # above a static non-base winner. The promotion half is the documented
         # over-aggression failure mode (chases landable bases at the expense of
         # steady item income); the demotion half is curry's real benefit
         # ("discount a base to ~0 when the bomb won't land").
-        self.plan_rescore_demote_only = _env_flag("AE_PLAN_RESCORE_DEMOTE_ONLY", True)
+        self.plan_rescore_demote_only = w.plan_rescore_demote_only
         # Contention-aware item valuation (AE_CONTENTION, default OFF). Discounts
         # item targets an opponent will reach first, using free fixed-map spawn
         # geometry + live viewcone sightings. Demote-only, item-vs-item; the
         # confidence signal stays in static units (see _choose_target /
         # _apply_contention) so the confidence_policy_hybrid gate is unperturbed.
-        self.contention_enabled = _env_flag("AE_CONTENTION", False)
-        self.contention_scale = max(0.1, _env_float("AE_CONTENTION_SCALE", 2.5))
-        self.contention_pfloor = min(1.0, max(0.0, _env_float("AE_CONTENTION_PFLOOR", 0.15)))
-        self.contention_topen = _env_int("AE_CONTENTION_TOPEN", 40)
-        self.contention_tfresh = _env_int("AE_CONTENTION_TFRESH", 3)
+        self.contention_enabled = w.contention_enabled
+        self.contention_scale = w.contention_scale
+        self.contention_pfloor = w.contention_pfloor
+        self.contention_topen = w.contention_topen
+        self.contention_tfresh = w.contention_tfresh
         # Time-layered danger map (AE_TIME_DANGER, default OFF). Builds
         # per-tick lethality layers[t] from known_bombs with enemy-bomb chain
         # resolution, so the danger set is chain-corrected and bomb-escape
         # verification is chain/arrival-aware. OFF == byte-identical. Spec:
         # docs/superpowers/specs/2026-06-08-ae-time-layered-danger-map-design.md
-        self.time_danger_enabled = _env_flag("AE_TIME_DANGER", False)
+        self.time_danger_enabled = w.time_danger_enabled
         # Floor the horizon at BOMB_TIMER: the escape verifier checks arrival
         # ticks up to BOMB_TIMER, and _on_fire_at treats ticks beyond the last
         # layer as safe, so a shorter horizon would silently blind the escape
         # check to a timer==BOMB_TIMER bomb at its arrival tick.
-        self.danger_horizon = max(self.BOMB_TIMER, _env_int("AE_DANGER_HORIZON", 6))
+        self.danger_horizon = max(self.BOMB_TIMER, w.danger_horizon)
         # No-self-damage bomb gating (AE_NO_SELF_DAMAGE, default OFF). The env
         # excludes same-team defenders from a bomb's blast (dynamics.py:695), so
         # a bomb never damages its placer OR the placer's own base — verified
@@ -298,33 +276,33 @@ class AEManager:
         # self-escape); real enemy-danger / low-health / legality / team_bombs
         # guards are untouched. Spec: docs/superpowers/specs/
         # 2026-06-09-ae-no-self-damage-bomb-gate-design.md
-        self.no_self_damage = _env_flag("AE_NO_SELF_DAMAGE", False)
+        self.no_self_damage = w.no_self_damage
         # Surgical variant (AE_BASEKILL_NOESCAPE, default OFF): relax the own-base
         # and self-escape vetoes ONLY for a bomb whose blast contains an enemy
         # base (the +50 kill, good in every regime); speculative bombs still need
         # an escape. Narrower than AE_NO_SELF_DAMAGE (which relaxes all bombs).
         # Spec: docs/superpowers/specs/2026-06-09-ae-basekill-noescape-design.md
-        self.basekill_noescape = _env_flag("AE_BASEKILL_NOESCAPE", False)
+        self.basekill_noescape = w.basekill_noescape
         # Stun tax (AE_STUN_TAX, default OFF). A freeze opportunity-cost penalty
         # on farming-target paths: scales the existing path-threat penalty for
         # ITEM kinds only, so we can ask "does the farming race want more
         # freeze-aversion than the calibrated PATH_THREAT_PENALTY?" MULT=1.0 is
         # a no-op. Phase A of the farming-race model.
-        self.stun_tax_enabled = _env_flag("AE_STUN_TAX", False)
-        self.stun_tax_mult = max(0.0, _env_float("AE_STUN_TAX_MULT", 2.0))
+        self.stun_tax_enabled = w.stun_tax_enabled
+        self.stun_tax_mult = w.stun_tax_mult
         # Fortress posture (AE_FORTRESS, default OFF). A lead-gated farm<->fortress
         # switch on observable signals only (game phase + base threat; NO
         # "are-we-ahead" estimate -- we have no opponent scoreboard). Phase B of
         # the farming-race model.
-        self.fortress_enabled = _env_flag("AE_FORTRESS", False)
-        self.fortress_phase = _env_float("AE_FORTRESS_PHASE", 0.6)
-        self.fortress_base_mult = _env_float("AE_FORTRESS_BASE_MULT", 0.5)
-        self.fortress_defense_mult = _env_float("AE_FORTRESS_DEFENSE_MULT", 1.5)
-        self.fortress_threat_mult = _env_float("AE_FORTRESS_THREAT_MULT", 1.5)
-        self.fortress_tether_w = _env_float("AE_FORTRESS_TETHER_W", 0.3)
-        self.item_mission_value = _env_float("AE_ITEM_MISSION_VALUE", 50.0)
-        self.item_resource_value = _env_float("AE_ITEM_RESOURCE_VALUE", 25.0)
-        self.item_recon_value = _env_float("AE_ITEM_RECON_VALUE", 10.0)
+        self.fortress_enabled = w.fortress_enabled
+        self.fortress_phase = w.fortress_phase
+        self.fortress_base_mult = w.fortress_base_mult
+        self.fortress_defense_mult = w.fortress_defense_mult
+        self.fortress_threat_mult = w.fortress_threat_mult
+        self.fortress_tether_w = w.fortress_tether_w
+        self.item_mission_value = w.item_mission_value
+        self.item_resource_value = w.item_resource_value
+        self.item_recon_value = w.item_recon_value
         self.ITEM_VALUES = {
             "mission": self.item_mission_value,
             "resource": self.item_resource_value,
@@ -336,45 +314,45 @@ class AEManager:
         # rank comes from spawn_first_targets.get_first_target_rank(). Three
         # of six Novice spawn slots have explicit priorities; the other three
         # see no change.
-        self.first_target_table_enabled = _env_int("AE_FIRST_TARGET_TABLE", 0) > 0
-        self.first_target_boost = _env_float("AE_FIRST_TARGET_BOOST", 60.0)
-        self.first_target_decay = _env_float("AE_FIRST_TARGET_DECAY", 0.55)
+        self.first_target_table_enabled = w.first_target_table_enabled
+        self.first_target_boost = w.first_target_boost
+        self.first_target_decay = w.first_target_decay
         # W2.1b: enemy-bomb-only escape override. When ON, before any normal
         # action selection we check whether a visible enemy bomb (own==False)
         # with timer <= 2 has us in its blast cells. If yes, force an escape
         # action chosen by the M5 scoring (leave danger first, max distance
         # from bomb, more open neighbors, fewer turns). Default OFF.
-        self.enemy_bomb_escape_enabled = _env_int("AE_ENEMY_BOMB_OVERRIDE", 0) > 0
-        self.enemy_bomb_escape_turn_penalty = _env_float("AE_ENEMY_BOMB_ESCAPE_TURN_PENALTY", 0.2)
-        self.enemy_bomb_escape_visit_penalty = _env_float("AE_ENEMY_BOMB_ESCAPE_VISIT_PENALTY", 0.3)
+        self.enemy_bomb_escape_enabled = w.enemy_bomb_escape_enabled
+        self.enemy_bomb_escape_turn_penalty = w.enemy_bomb_escape_turn_penalty
+        self.enemy_bomb_escape_visit_penalty = w.enemy_bomb_escape_visit_penalty
         # W2.1c: orientation-aware A* over (x, y, facing) states. Real per-tick
         # cost includes LEFT/RIGHT turns (1.0 each). Existing Dijkstra treats
         # turns as free, so paths with many turns get artificially short
         # distances. Default OFF — enable with AE_ORIENTATION_AWARE_PATH=1.
         # AE_ORIENTATION_AWARE_TURN_COST controls cost-per-turn (1.0 = real
         # ticks; lower values bias toward shorter cell paths even when turny).
-        self.orientation_aware_path_enabled = _env_int("AE_ORIENTATION_AWARE_PATH", 0) > 0
-        self.orientation_aware_turn_cost = _env_float("AE_ORIENTATION_AWARE_TURN_COST", 1.0)
+        self.orientation_aware_path_enabled = w.orientation_aware_path_enabled
+        self.orientation_aware_turn_cost = w.orientation_aware_turn_cost
         # ── Rationale-mining leads (29 May 2026). Each default OFF; gated by an
         # env flag and validated via multi_seed_eval before any promotion.
         # Lead ②: don't target an enemy base we can't destroy (team_bombs==0).
         # The LLM annotations flagged 8 cases where the planner walked onto/up
         # to an enemy base with no bomb in hand and had to turn away.
-        self.lead_bomb_gate_base = _env_int("AE_LEAD_BOMB_GATE_BASE", 0) > 0
+        self.lead_bomb_gate_base = w.lead_bomb_gate_base
         # Lead ①: base-health-conditioned distance tether. When our base is
         # below AE_LEAD_TETHER_HEALTH, penalize candidate targets by their
         # Manhattan distance *from our base*, pulling the agent home instead of
         # ranging far while the base is destroyed (the #1 reward leak). Penalty
         # scales with how damaged the base is.
-        self.lead_base_tether = _env_int("AE_LEAD_BASE_TETHER", 0) > 0
-        self.lead_tether_health = _env_float("AE_LEAD_TETHER_HEALTH", 60.0)
-        self.lead_tether_weight = _env_float("AE_LEAD_TETHER_WEIGHT", 0.5)
+        self.lead_base_tether = w.lead_base_tether
+        self.lead_tether_health = w.lead_tether_health
+        self.lead_tether_weight = w.lead_tether_weight
         # Lead ③: recon-item distance discount. Recon is only +1; the planner
         # chased scattered recon into far corners and got cut off. Apply an
         # extra distance penalty to recon targets so they're only grabbed when
         # close. 18 backtrack/dead-end rationales clustered on this pattern.
-        self.lead_recon_discount = _env_int("AE_LEAD_RECON_DISCOUNT", 0) > 0
-        self.lead_recon_dist_mult = _env_float("AE_LEAD_RECON_DIST_MULT", 1.0)
+        self.lead_recon_discount = w.lead_recon_discount
+        self.lead_recon_dist_mult = w.lead_recon_dist_mult
         # Bomb safety module: blast geometry, chain-resolved danger, escape
         # search and commit/rollback. Operates on this manager's belief
         # blackboard; the *_bomb/_danger/_escape methods below are thin

@@ -7,6 +7,11 @@ finals-proportional discriminator) is the optimizer objective, subject to a
 worst_robust_placement floor — all relative to the same-seed incumbent, rather than
 cloud absolute reward. The expensive held-out-composition gap + hardware A/B gate
 the single finalist, not every in-loop candidate.
+
+The authoritative declaration of every tunable (name, type, default, clamp)
+is ``ae/src/planner_weights.py::PlannerWeights`` — the manager consumes the
+same env vocabulary through ``PlannerWeights.from_env()``. Keep the PARAMS
+table below consistent with that module when adding search dimensions.
 """
 
 from __future__ import annotations
