@@ -71,7 +71,8 @@ class ScriptedBaseAttackPolicy:
 
         The host AEManager must already have processed this observation via
         `host.ae(obs)` so that its memory / state reflects this step. The
-        wrapping ScriptedHybridAEManager handles that ordering.
+        caller (today: the opponent proxies in training/ae/opponents.py)
+        handles that ordering.
         """
         host = self.host
         step = host.last_step if host.last_step is not None else 0

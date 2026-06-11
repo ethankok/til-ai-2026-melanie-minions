@@ -258,8 +258,9 @@ class PolicyAEManager:
     def ae_logits(self, observation: dict) -> tuple[int, "torch.Tensor"]:
         """Return (greedy action, masked logits) in one forward pass.
 
-        Used by :class:`HybridAEManager` for top-K cascade and confidence
-        gating without paying for a second forward pass.
+        Used by consultant wrappers (e.g. the deployed
+        ``ConfidencePolicyHybridAEManager``) and training-side adapters that
+        need the masked logits without paying for a second forward pass.
         """
 
         self._maybe_reset(observation)

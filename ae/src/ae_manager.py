@@ -635,7 +635,7 @@ class AEManager:
         self.last_bomb_reason = "unknown"
         self.last_dominant_reason = "unknown"
         self.last_decision = "reset"
-        # Read by confidence-gated wrappers (e.g. ConfidenceHybridAEManager).
+        # Read by confidence-gated wrappers (ConfidencePolicyHybridAEManager).
         # Default sentinel = high-confidence so wrappers don't override before
         # ae() has been called. Updated each tick at the top of ae() and again
         # inside _choose_target() with real top/runner-up scores.

@@ -79,13 +79,7 @@ def _load_manager(name: str, checkpoint: str | None):
             os.environ["AE_POLICY_CHECKPOINT"] = checkpoint
         from policy_manager import PolicyAEManager  # noqa: WPS433
         return PolicyAEManager(), "policy"
-    if name == "hybrid":
-        import os
-        if checkpoint:
-            os.environ["AE_POLICY_CHECKPOINT"] = checkpoint
-        from hybrid_manager import HybridAEManager  # noqa: WPS433
-        return HybridAEManager(), "hybrid"
-    raise ValueError(f"unknown manager '{name}'; pick heuristic|policy|hybrid")
+    raise ValueError(f"unknown manager '{name}'; pick heuristic|policy")
 
 
 def _classify_step(
@@ -290,7 +284,7 @@ def evaluate(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--manager", choices=["heuristic", "policy", "hybrid"], default="heuristic")
+    parser.add_argument("--manager", choices=["heuristic", "policy"], default="heuristic")
     parser.add_argument("--checkpoint", type=str, default=None,
                         help="Path to a torch checkpoint for policy/hybrid mode.")
     parser.add_argument("--games", type=int, default=6)

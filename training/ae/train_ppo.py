@@ -1265,11 +1265,10 @@ def evaluate(
     total_reward = 0.0
     use_belief = bool(getattr(actor, "use_belief", False))
     mode = opponent_mode or args.eval_opponents
-    use_hybrid = getattr(args, "selection_manager", "policy") == "hybrid"
     # Confidence-gated eval: score the live actor through the SAME heuristic-first
     # gate it deploys behind, so the save-gate reflects confpol behavior (not the
     # pure-policy score, which is meaningless for a consultant-trained policy).
-    use_confpol = bool(getattr(args, "confidence_gated", False)) and not use_hybrid
+    use_confpol = bool(getattr(args, "confidence_gated", False))
 
     for game in range(games):
         reset_seed = None
@@ -1286,23 +1285,6 @@ def evaluate(
         stacker = FrameStacker(args.n_frames)
         planner = AEManager()
         confpol_adapter = LivePolicyAdapter(actor, device, args.n_frames) if use_confpol else None
-        hybrid_manager = None
-        if use_hybrid:
-            from hybrid_manager import HybridAEManager  # noqa: WPS433
-
-            fixed_map_shortcut = getattr(args, "selection_fixed_map_shortcut", "on")
-            previous_shortcut = os.environ.get("AE_HYBRID_FIXED_MAP_SHORTCUT")
-            if fixed_map_shortcut == "off":
-                os.environ["AE_HYBRID_FIXED_MAP_SHORTCUT"] = "0"
-            try:
-                hybrid_manager = HybridAEManager(
-                    policy=LivePolicyAdapter(actor, device, args.n_frames)
-                )
-            finally:
-                if previous_shortcut is None:
-                    os.environ.pop("AE_HYBRID_FIXED_MAP_SHORTCUT", None)
-                else:
-                    os.environ["AE_HYBRID_FIXED_MAP_SHORTCUT"] = previous_shortcut
         opponents, _ = _make_opponents(
             actor, device, mode,
             [a for a in env.possible_agents if a != our_agent],
@@ -1331,8 +1313,6 @@ def evaluate(
                         action = int(confpol_adapter.ae_logits(obs_py)[0])
                     else:
                         action = heuristic_action
-                elif hybrid_manager is not None:
-                    action = int(hybrid_manager.ae(obs_py))
                 else:
                     belief = _belief_for(planner, obs_py, use_belief)
                     stacked = stacker.observe(obs_py, belief_map=belief)
@@ -1591,11 +1571,7 @@ def train(args: argparse.Namespace) -> None:
             "small validation suites differ across Python processes. "
             "Use training/ae/run_full_rl_v1.py or run with PYTHONHASHSEED=0."
         )
-    shortcut_tag = (
-        args.selection_fixed_map_shortcut
-        if args.selection_manager == "hybrid"
-        else "n/a"
-    )
+    shortcut_tag = "n/a"
     print(f"config: preset={args.preset} n_frames={args.n_frames} "
           f"reward_scale={args.reward_scale} return_clip={args.return_clip} "
           f"vary_maps={args.vary_maps} opponents={args.opponents} "
@@ -1915,8 +1891,10 @@ def main() -> None:
     parser.add_argument("--selection-suites", default="",
                         help="Comma-separated opponent pools used for checkpoint selection. "
                         "If empty, eval-opponents is used.")
-    parser.add_argument("--selection-manager", choices=["policy", "hybrid"], default="policy",
-                        help="Score checkpoints as pure policy or through the deployed hybrid wrapper.")
+    parser.add_argument("--selection-manager", choices=["policy"], default="policy",
+                        help="Score checkpoints as pure policy. (The 'hybrid' wrapper option was "
+                             "retired with hybrid_manager.py; use --confidence-gated for "
+                             "deploy-faithful confpol scoring.)")
     parser.add_argument("--selection-device", choices=["train", "cpu"], default="train",
                         help="Run checkpoint selection on the training device or CPU. CPU better matches Docker.")
     parser.add_argument("--selection-fixed-map-shortcut", choices=["on", "off"], default="on",

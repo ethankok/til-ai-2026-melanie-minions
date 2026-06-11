@@ -2,26 +2,26 @@
 
 Mode selection is controlled by the ``AE_MODE`` env var:
 
-- ``hybrid`` (default): policy with heuristic safety-veto. Falls back to
-  policy-only if heuristic load fails, and to heuristic-only if no
-  checkpoint is present.
+- ``confidence_policy_hybrid`` (default, deployed): heuristic-first planner;
+  the raw PPO policy is consulted only on low-confidence heuristic ticks.
+  Falls back to heuristic if no policy checkpoint is present.
 - ``policy``: pure neural policy. Falls back to heuristic if no
   checkpoint is present.
 - ``option_hybrid``: neural 8-way option selector plus heuristic planner
   execution. Falls back to heuristic if no option checkpoint is present.
 - ``tactical_hybrid``: neural 12-way tactical option selector plus planner
   execution. Falls back to heuristic if no tactical checkpoint is present.
-- ``macro_hybrid``: planner-first 12-way tactical macro policy. Defaults the
-  heuristic baseline to the calibrated C+bomb7 profile and only accepts learned
-  macro deviations through confidence/support/harm gates.
-- ``scripted_hybrid``: M5-style ScriptedBaseAttackPolicy (attack-plan
-  commitment, bomb-from-attack-square) plus AEManager fallback. No
-  checkpoint required.
+- ``opening_hybrid``: divergence-gated opening prefix in front of an inner
+  planner selected by ``AE_OPENING_PLANNER``.
 - ``heuristic``: pure rule-based planner. No torch import, no model
   load, cheapest possible per-call latency.
 
 Set ``AE_MODE=heuristic`` to ship the planner-v3b-equivalent build for a
 clean speed-focused A/B, without rebuilding the image.
+
+(Retired modes ``hybrid``, ``macro_hybrid``, ``confidence_hybrid`` and
+``scripted_hybrid`` were removed with their manager modules — see git
+history and ae/NOTES.md for the negative results.)
 """
 
 
@@ -39,7 +39,8 @@ def _read_mode() -> str:
     2. ``.ae_mode`` file next to this source (handy when ``til build``
        won't let you pass env vars / build args — just write the mode
        into the file and rebuild).
-    3. Default ``hybrid``.
+    3. Default ``confidence_policy_hybrid`` (the deployed mode; degrades to
+       the heuristic when no policy checkpoint is present).
     """
 
     mode = os.environ.get("AE_MODE")
@@ -53,7 +54,7 @@ def _read_mode() -> str:
                 return content
         except OSError:
             pass
-    return "hybrid"
+    return "confidence_policy_hybrid"
 
 
 def _make_manager():
@@ -101,28 +102,6 @@ def _make_manager():
             print(f"AE: mode=tactical_hybrid init failed — using heuristic ({exc!r})")
         return AEManager()
 
-    if mode == "macro_hybrid":
-        try:
-            from macro_hybrid_manager import MacroHybridAEManager  # noqa: WPS433
-            print("AE: mode=macro_hybrid — gated tactical macro policy + C/bomb7 planner fallback")
-            return MacroHybridAEManager()
-        except FileNotFoundError as exc:
-            print(f"AE: mode=macro_hybrid but no tactical checkpoint — using heuristic ({exc})")
-        except Exception as exc:  # noqa: BLE001
-            print(f"AE: mode=macro_hybrid init failed — using heuristic ({exc!r})")
-        return AEManager()
-
-    if mode == "confidence_hybrid":
-        try:
-            from confidence_hybrid_manager import ConfidenceHybridAEManager  # noqa: WPS433
-            print("AE: mode=confidence_hybrid — PPO consulted only on low-confidence heuristic ticks")
-            return ConfidenceHybridAEManager()
-        except FileNotFoundError as exc:
-            print(f"AE: mode=confidence_hybrid but no tactical checkpoint — using heuristic ({exc})")
-        except Exception as exc:  # noqa: BLE001
-            print(f"AE: mode=confidence_hybrid init failed — using heuristic ({exc!r})")
-        return AEManager()
-
     if mode == "confidence_policy_hybrid":
         try:
             from confidence_policy_hybrid_manager import ConfidencePolicyHybridAEManager  # noqa: WPS433
@@ -159,24 +138,9 @@ def _make_manager():
             print(f"AE: opening_hybrid init failed — using heuristic ({exc!r})")
         return AEManager()
 
-    if mode == "scripted_hybrid":
-        try:
-            from scripted_hybrid_manager import ScriptedHybridAEManager  # noqa: WPS433
-            print("AE: mode=scripted_hybrid — M5 scripted attack policy + AEManager fallback")
-            return ScriptedHybridAEManager()
-        except Exception as exc:  # noqa: BLE001
-            print(f"AE: mode=scripted_hybrid init failed — using heuristic ({exc!r})")
-        return AEManager()
-
-    # Default: hybrid.
-    try:
-        from hybrid_manager import HybridAEManager  # noqa: WPS433
-        print("AE: mode=hybrid — policy + heuristic safety veto")
-        return HybridAEManager()
-    except FileNotFoundError as exc:
-        print(f"AE: hybrid wanted but no policy checkpoint — using heuristic ({exc})")
-    except Exception as exc:  # noqa: BLE001
-        print(f"AE: hybrid init failed — using heuristic ({exc!r})")
+    # Unknown mode: fall back to the heuristic so the service can't refuse
+    # to start (retired modes from old builds land here too).
+    print(f"AE: unknown mode {mode!r} — using rule-based planner only")
     return AEManager()
 
 

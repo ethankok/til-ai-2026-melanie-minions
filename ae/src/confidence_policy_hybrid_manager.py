@@ -1,9 +1,4 @@
-"""Confidence-gated RAW-policy hybrid (for the Pandemonium CNN-PPO checkpoint).
-
-The existing ``confidence_hybrid`` (ConfidenceHybridAEManager) gates the 12-way
-*tactical macro* selector. The Pandemonium line trains the raw 6-action
-``PolicyNetwork`` instead, so it cannot use that wrapper. This is the
-equivalent gate for the raw policy:
+"""Confidence-gated RAW-policy hybrid — the deployed AE composition.
 
   heuristic runs first (it owns movement, bomb safety, escape). Only on ticks
   where the heuristic signals LOW CONFIDENCE in its target choice do we hand the
@@ -11,16 +6,17 @@ equivalent gate for the raw policy:
   heuristic's action is returned unchanged, so the downside is bounded to the
   heuristic baseline while the policy gets to try the genuinely ambiguous ticks.
 
-This is the most conservative of the three Pandemonium deployment modes:
-  AE_MODE=policy                  -> policy in full control
-  AE_MODE=hybrid                  -> policy-first, heuristic vetoes unsafe acts
-  AE_MODE=confidence_policy_hybrid -> heuristic-first, policy only when unsure
+The consultant seam: this wrapper composes ``AEManager`` (planner) with
+``PolicyAEManager`` (consultant adapter). The two retired siblings —
+``hybrid`` (policy-first with heuristic veto) and ``confidence_hybrid``
+(same gate over the 12-way tactical macro selector) — were removed with
+their modules; see git history.
 
 Confidence comes from ``AEManager.last_decision_confidence`` (written every
 ae() call; see _choose_target). Non-target paths (playbook, dominant action,
 escape, frozen, init) carry margin=+inf and always pass through untouched.
 
-Env knobs (all default to the same values as the macro confidence_hybrid):
+Env knobs (defaults match the original macro confidence_hybrid experiment):
 - AE_CONFPOL_MARGIN_EPSILON (5.0)  top - runner_up must be >= this to stay heuristic
 - AE_CONFPOL_TOP_FLOOR      (10.0) top_score must be >= this to stay heuristic
 - AE_CONFPOL_OVERRIDE_TARGET_NONE (1) also consult policy when no scorable target

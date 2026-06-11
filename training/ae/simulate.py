@@ -140,10 +140,12 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
       option_v2 — `AEManager` with the option-style decision core enabled
       option_hybrid — learned option selector with planner execution
       tactical_hybrid — learned 12-way tactical selector with planner execution
-      macro_hybrid — gated 12-way tactical macro selector with strong planner fallback
-      confidence_hybrid — heuristic-first; PPO consulted only on low-confidence ticks
+      confidence_policy_hybrid / confpol — the deployed composition
+      opening_hybrid, policy, llm, opponent:<name>
 
     Easy to extend: drop a new branch here and pass the matching --our flag.
+    (Retired: hybrid, macro_hybrid, confidence_hybrid, scripted_hybrid —
+    manager modules deleted, see git history.)
     """
 
     name = name.lower().strip()
@@ -160,21 +162,12 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
                 os.environ.pop("AE_PLANNER", None)
             else:
                 os.environ["AE_PLANNER"] = old
-    if name == "hybrid":
-        from hybrid_manager import HybridAEManager
-        return HybridAEManager(**kwargs)
     if name == "option_hybrid":
         from option_hybrid_manager import OptionHybridAEManager
         return OptionHybridAEManager(**kwargs)
     if name == "tactical_hybrid":
         from tactical_hybrid_manager import TacticalHybridAEManager
         return TacticalHybridAEManager(**kwargs)
-    if name == "macro_hybrid":
-        from macro_hybrid_manager import MacroHybridAEManager
-        return MacroHybridAEManager(**kwargs)
-    if name == "confidence_hybrid":
-        from confidence_hybrid_manager import ConfidenceHybridAEManager
-        return ConfidenceHybridAEManager(**kwargs)
     if name in ("confidence_policy_hybrid", "confpol"):
         # The deployed Pandemonium incumbent: heuristic-first, raw PPO policy
         # consulted only on low-confidence ticks. Checkpoint via
@@ -193,9 +186,6 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
     if name == "policy":
         from policy_manager import PolicyAEManager
         return PolicyAEManager(**kwargs)
-    if name == "scripted_hybrid":
-        from scripted_hybrid_manager import ScriptedHybridAEManager
-        return ScriptedHybridAEManager(**kwargs)
     if name == "llm":
         from llm_manager import LLMAEManager
         return LLMAEManager(**kwargs)
