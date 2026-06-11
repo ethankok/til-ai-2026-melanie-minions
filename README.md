@@ -68,7 +68,9 @@ TIL/
 ├── cv/        CV  — YOLOv11l detector
 ├── nlp/       NLP — BM25 retrieval QA
 ├── noise/     Noise — AdvGAN adversarial perturbation
-│   └── src/
+│
+│   (every task dir above has the same shape:)
+│   <task>/src/
 │       ├── <task>_manager.py   ← our inference / game logic (what we edit)
 │       └── <task>_server.py    ← thin FastAPI wrapper (fixed schema)
 │
