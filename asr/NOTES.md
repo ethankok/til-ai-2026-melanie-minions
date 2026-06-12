@@ -2,7 +2,7 @@
 
 Last updated: 25 May 2026 — **Qualifier closed. `nemo-ft-v1` is the final high score at `0.969 / 0.946` (blended `0.96325`).**
 
-Per-task working log for ASR. For the authoritative input/output/scoring spec see
+Per-task working log for the ASR (automatic speech recognition) task. For the authoritative input/output/scoring spec see
 [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#asr).
 For training-pipeline mechanics see [../training/asr/README.md](../training/asr/README.md).
 For data-driven error analysis see [../training/asr/ERROR_ANALYSIS.md](../training/asr/ERROR_ANALYSIS.md).
@@ -12,7 +12,7 @@ For submission history across all tasks see [../RESULTS.md](../RESULTS.md).
 
 **`nemo-ft-v3` — official 0.970 / 0.947 (27 May 13:26 SGT, 0/400 errors).**
 Blended score `0.75*0.970 + 0.25*0.947 = 0.96425`.
-This model builds on `nemo-ft-v2` by adding post-processing rules for additional spelling and phonetic variants (e.g. zonen/sono -> Zonnon, mewn -> Mewan, pullwalker -> Fullwalker).
+This model builds on `nemo-ft-v2` by adding post-processing rules for additional spelling and phonetic variants (e.g. `zonen`/`sono` → `Zonnon`, `mewn` → `Mewan`, `pullwalker` → `Fullwalker`).
 
 Decision: **closed.**
 
@@ -21,7 +21,7 @@ Decision: **closed.**
 Design of record: design spec `2026-06-02-asr-ngram-lm-fusion-design` (private archive).
 
 Adds GPU-resident n-gram (NGPU-LM) shallow fusion to the Parakeet-TDT decode
-path to attack the residual in-world proper-noun WER. **Default-OFF**: with
+path to attack the residual in-world proper-noun WER (word error rate). **Default-OFF**: with
 `ASR_NGRAM_LM` unset the decoder stays greedy and the image is behaviourally
 identical to `nemo-ft-v3`. Code shipped locally (unit-tested on Mac); the build,
 sweep, and `til test` run on Workbench.
@@ -34,22 +34,22 @@ decoding-config logic).
 
 - **Container** (pinned commit `ccbbfbb…`): **has** NGPU-LM `malsd_batch`
   (confirmed: the commit ships `tdt_malsd_batched_computer.py`). This is where
-  serving runs, so fusion works in prod.
+  serving runs, so fusion works in production.
 - **Workbench host `(base)`**: NeMo **2.0.0** — has only the *classic*
   n-gram/`maes` beam decoders, **no `malsd_batch`**. Too old to run the NGPU-LM
   sweep, but new enough to **build the n-gram LM** (it can load the TDT tokenizer
-  + run KenLM). The base env is **conda**, so KenLM binaries are one
+  and run KenLM). The base environment is **conda**, so KenLM binaries are one
   `conda install` away.
 
 Key fact that makes the cheap path work: the n-gram ARPA is keyed to the **BPE
 tokenizer** (baked into the `.nemo`, identical across NeMo versions), so an ARPA
 built on host NeMo 2.0.0 is valid for the container's `malsd_batch`, which
-accepts a `.ARPA` directly. **Do NOT** `pip install -r requirements-nemo.txt`
-into base (documented torch-downgrade cascade).
+accepts a `.ARPA` directly. **Do NOT** run `pip install -r requirements-nemo.txt`
+into base (this triggers a documented torch-downgrade cascade).
 
 ### Workbench runbook — cheap & blind path (build ARPA on host, tune via til test)
 
-No local sweep (host can't run `malsd_batch`); ship defaults `alpha=0.3 beam=4`
+No local sweep is possible (the host can't run `malsd_batch`), so ship defaults `alpha=0.3 beam=4`
 and tune alpha across 1–2 `til test` runs.
 
 **Two hard requirements `train_kenlm.py` has (both bit us once):**
@@ -119,131 +119,136 @@ til submit asr ngram-lm-on
 
 Residual blind risk: the ARPA is built with v2.0.0's `DEFAULT_TOKEN_OFFSET`; if
 the container's pinned NeMo changed that constant the LM would be silently wrong
-(tell: `til test` ON shows garbage or zero WER change). Unlikely (it's a
-long-stable constant). Fallback if so: build the LM inside the OFF container
-(exact pinned NeMo) with `--save-nemo` and point `ASR_NGRAM_LM` at the `.nemo`.
+(the tell would be: `til test` ON shows garbage or zero WER change). This is
+unlikely — it's a long-stable constant. Fallback if so: build the LM inside the
+OFF container (exact pinned NeMo) with `--save-nemo` and point `ASR_NGRAM_LM`
+at the `.nemo`.
 
 **Promotion gate:** `til test` speed ≥ 0.92 AND blended > `nemo-ft-v3` 0.964
-(0/400 errors, schema unchanged). Otherwise keep `nemo-ft-v3`; leaderboard keeps
-the higher score so a regression cannot demote us.
+(0/400 errors, schema unchanged). Otherwise keep `nemo-ft-v3`; the leaderboard
+keeps the higher score so a regression cannot demote us.
 
 **Container support is confirmed** — the pinned commit ships
 `tdt_malsd_batched_computer.py`, so `malsd_batch` NGPU-LM fusion works at serve
-time without any pin bump. If `malsd_batch` ever misbehaves at runtime the
+time without any pin bump. If `malsd_batch` ever misbehaves at runtime, the
 manager falls back to greedy (no crash), and `preserve_arpa` keeps a `.ARPA`
 usable by the classic `maes` strategy (`ASR_LM_STRATEGY=maes`) as a manual
 fallback. (Verified 02 Jun 2026 against commit `ccbbfbb…` on GitHub.)
 
 ### Result (02 Jun 2026) — works locally, broken on the cloud GPU; **PARKED**
 
-The cheap & blind path ran end-to-end. **Conclusion: real local accuracy gain
+The cheap-and-blind path ran end-to-end. **Conclusion: real local accuracy gain
 that does NOT survive the cloud eval hardware. Shipped tag stays `nemo-ft-v3`;
 fusion left OFF.** Full chain:
 
 1. **LM build (Workbench) — success.** The runbook above worked verbatim once
    run under the `jupyterlab` env (omegaconf lives there) with KenLM built from
    source (cmake<4 + libboost 1.85). Produced `ngram_lm.arpa` (123 MB, the
-   NGPU-LM/`malsd_batch` input) + `ngram_lm` (34 MB KenLM binary, the `maes`
-   input). 86 141 unique training lines (ASR gold transcripts + NLP corpus).
+   NGPU-LM/`malsd_batch` input) and `ngram_lm` (34 MB KenLM binary, the `maes`
+   input). 86,141 unique training lines (ASR gold transcripts + NLP corpus).
 2. **Local `til test` — big win.** `ngram-lm-off`: WER `0.0209` (== `nemo-ft-v3`).
    `ngram-lm-on`: **WER `0.0124`** (1−MER `0.99691`), a ~40% relative error cut.
    `docker logs … | grep NemoASRManager` confirmed `NGPU-LM fusion ON:
    …ngram_lm.arpa strategy=malsd_batch beam=4 alpha=0.3`. **The LM genuinely
    works.** Container NeMo reports `2.8.0rc0` (the pinned `ccbbfbb` commit).
-3. **Cloud submit `ngram-lm-on` (v1) — 0.000, a misconfig not a result.** The
-   uncommented Dockerfile ENV still pointed at `ngram_lm.nemo` (old plan) but we
-   built `.arpa`; the file wasn't found → log `ASR_NGRAM_LM=…ngram_lm.nemo not
-   found; fusion OFF` → ran greedy, byte-identical to OFF. **Lesson: the ENV path
+3. **Cloud submit `ngram-lm-on` (v1) — 0.000, a misconfiguration not a real result.** The
+   uncommented Dockerfile ENV still pointed at `ngram_lm.nemo` (the old plan), but we
+   had built `.arpa`; the file wasn't found → log `ASR_NGRAM_LM=…ngram_lm.nemo not
+   found; fusion OFF` → ran greedy, byte-identical to the OFF image. **Lesson: the ENV path
    must be the `.arpa`.** (Dockerfile comment fixed.)
 4. **Cloud submit `ngram-lm-on-v2` (correct `.arpa`) — Score `0.000`, Speed
-   `0.956`, 0/400 errors.** Local same image = `0.0124`. Root cause: on the cloud
+   `0.956`, 0/400 errors.** Local score on the same image was `0.0124`. Root cause: on the cloud
    GPU `malsd_batch` **raises for every batch**; the manager's batch-level
    try/except (`asr_batch`) pre-fills `[""] * n` and *returned the empties*
-   (HTTP 200, no "error"). All-empty hyps = 100% error = **exactly 0.000** (a
+   (HTTP 200, no "error"). All-empty hypotheses = 100% error = **exactly 0.000** (a
    garbage-but-nonempty output would score *slightly above* 0; exactly 0.000 is
-   the empty-string signature). Works on Workbench T4, not on the cloud GPU —
+   the empty-string signature). The image works on Workbench T4, but not on the cloud GPU —
    `malsd_batch` is a newer CUDA-graph-heavy beam path and is more
-   hardware-fragile than greedy. **We cannot see the cloud exception** (eval is
-   air-gapped; no ASR failure pack in the bucket, only NLP has one).
+   hardware-fragile than greedy. **We cannot see the cloud exception** (the eval environment is
+   air-gapped; there is no ASR failure pack in the bucket — only NLP has one).
 5. **Protective greedy fallback added (this session, shipped in the NeMo
-   manager, `asr_manager.py`).** `_configure_lm_fusion` now snapshots the greedy cfg
-   before switching; new `_fallback_to_greedy()` permanently reverts to greedy on
-   the first fused-decode failure (one-shot); `_warmup()` triggers it at startup;
-   `asr_batch()` reverts + **retries the batch** instead of returning blanks.
-   **This permanently kills the silent-0.000 failure mode** — worst case is
+   manager, `asr_manager.py`).** `_configure_lm_fusion` now snapshots the greedy config
+   before switching; the new `_fallback_to_greedy()` method permanently reverts to greedy on
+   the first fused-decode failure (one-shot); `_warmup()` triggers the check at startup; and
+   `asr_batch()` reverts and **retries the batch** instead of returning blanks.
+   **This permanently kills the silent-0.000 failure mode** — the worst case is now
    greedy accuracy, never empty output.
 6. **Cloud submit `ngram-lm-on-v3` (fallback + `.arpa`) — Score `0.970`, Speed
-   `0.943`, 0/400 errors.** Local still `0.0124`. Cloud `0.970` is *exactly*
+   `0.943`, 0/400 errors.** Local score still `0.0124`. The cloud `0.970` is *exactly*
    `nemo-ft-v3`'s greedy score → **the fallback fired; `malsd_batch` never ran on
-   cloud**, every clip decoded greedily. (Not "missing a few edge cases" — that
-   would land off-greedy; matching greedy to the thousandth is the fallback
+   cloud**, and every clip decoded greedily. (This is not "missing a few edge cases" — that
+   would land off-greedy; matching greedy score to the thousandth is the fallback
    signature.) Speed `0.943` < greedy `0.947` = the one-time cost of attempting
-   malsd then reverting.
+   `malsd_batch` and then reverting.
 
 **Decision — PARK at `nemo-ft-v3`.** `ngram-lm-on-v3` blended
-`0.75*0.970 + 0.25*0.943 = 0.9633` < `nemo-ft-v3` `0.96425`, so not promotable.
-Why not pursue the cloud failure further:
+`0.75*0.970 + 0.25*0.943 = 0.9633` < `nemo-ft-v3` `0.96425`, so it is not promotable.
+Reasons for not pursuing the cloud failure further:
 - **Can't debug it** — the cloud exception is invisible (air-gapped, no failure
   pack), so any fix is blind guess-and-check across expensive submits.
 - **`maes` (CPU-KenLM) is the obvious hardware-robust swap** (env-only:
-  `ASR_NGRAM_LM=…/ngram_lm` binary + `ASR_LM_STRATEGY=maes`) but its CPU beam
+  `ASR_NGRAM_LM=…/ngram_lm` binary + `ASR_LM_STRATEGY=maes`), but its CPU beam
   rescoring is typically slow enough (~2–4× greedy) to **fail the speed gate**
   even if accuracy hits ~0.98.
-- **Even best-case malsd-on-cloud is uncertain**: beam-4 speed unknown on cloud
-  (it never ran); if it hits its "near-greedy speed" design goal blended ~0.97
-  (a win), if it runs at typical beam-4 speed the +0.0075 accuracy is eaten by
-  the speed loss → wash. Unmeasurable without landing it.
+- **Even best-case `malsd_batch` on cloud is uncertain**: beam-4 speed is unknown
+  on cloud (it never ran). If it hits its "near-greedy speed" design goal the
+  blended score reaches ~0.97 (a win); if it runs at typical beam-4 speed, the
+  +0.0075 accuracy gain is eaten by the speed loss — a wash. Unmeasurable without
+  landing it on cloud.
 - **AE is the Semis priority** (see MEMORY); ASR was already at its ceiling.
 
 **What's kept:** the protective fallback code stays merged (permanent safety
 net; dormant unless `ASR_NGRAM_LM` is set). The LM artifacts (`ngram_lm.arpa`,
-`ngram_lm`) and the build runbook stay for any future attempt. The Dockerfile
-ships fusion **OFF** (== `nemo-ft-v3`).
+`ngram_lm`) and the build runbook are kept for any future attempt. The Dockerfile
+ships with fusion **OFF** (equivalent to `nemo-ft-v3`).
 
 **If ever resumed:** the one zero-cloud-cost probe is a *local* `maes` `til test`
-to measure its T4 wall-clock vs greedy as a speed proxy before spending a cloud
-submit. If maes is >1.5× slower locally it's dead on the speed gate → stop.
+to measure its T4 wall-clock versus greedy as a speed proxy before spending a cloud
+submit. If `maes` is >1.5× slower locally, it will fail the speed gate — stop there.
 
 ## Finals per-batch speed probe — measured, NOT worth pursuing + ⚠ cuda-python/CUDA-13 timeout risk (03 Jun 2026)
 
 Investigated "speed up ASR while keeping accuracy" for Finals. Outcome: **drop the
-speed work; ASR accuracy is at ceiling and the speed prize is marginal.** But the
-probe surfaced a real Finals landmine (cuda-python ↔ CUDA-13) worth validating on
-the MBS hardware. No code shipped — the timing instrumentation added this session
-(commit `1b78845`) was reverted back to a clean slate.
+speed work; ASR accuracy is at ceiling and the speed prize is marginal.** The
+probe did, however, surface a real Finals landmine (cuda-python vs. CUDA-13) worth
+validating on the MBS (on-site hardware) before competition day. No code was
+shipped — the timing instrumentation added this session (commit `1b78845`) was
+reverted back to a clean slate.
 
 ### The metric that actually matters in Finals (not the Qualifier 0.947)
-- Qualifier "speed" `0.947` is **whole-set** (`1 - min(t_elapsed, 30min)/30min`) and
-  is dead — Qualifiers are closed. Optimising it is the wrong target.
-- **Finals speed is per-batch:** `time_score = 1 - min(batch_elapsed, 5s)/5s`, a
+- Qualifier "speed" `0.947` is a **whole-set** metric (`1 - min(t_elapsed, 30min)/30min`) and
+  is now moot — Qualifiers are closed. Optimising it is the wrong target.
+- **Finals speed is per-batch:** `time_score = 1 - min(batch_elapsed, 5s)/5s` over a
   batch of 4, with a hard **10s `MISSION_BATCH_TIMEOUT_SEC`** (miss it → all 4 score
-  **0**). Read it directly from `bash finals.sh test`: each line is
+  **0**). This is readable directly from `bash finals.sh test`: each line shows
   `task=ASR acc=… time=<time_score> … <batch_elapsed>s`.
-- The two metrics weight fixed per-request overhead differently: whole-set dilutes
+- The two metrics weight fixed per-request overhead differently: the whole-set metric dilutes
   it across 400 clips (parked ~0.946, insensitive to decoder speedups — cf. the
-  cuda-python CUDA-graph null result, NOTES line ~626); per-batch hits it on every
+  cuda-python CUDA-graph null result, NOTES line ~626); the per-batch metric hits it on every
   batch of 4, so it's far more sensitive.
 
 ### Measured (Workbench T4 finals harness, shipped 20:30 `finals` image)
-- **Accuracy ~0.978 per batch — at ceiling.** Speed is the only ASR lever left.
+- **Accuracy ~0.978 per batch — at ceiling.** Speed is the only remaining ASR lever.
 - **~1.8s per batch → `time_score` ~0.64.** ASR is the speed laggard: NLP ~0.1s
   (time ~0.98), CV ~1.1s (time ~0.77), **ASR ~1.8s (time ~0.64)**.
-- Closing that gap is worth ~**+0.065 ASR blended ≈ +0.013 overall** (ASR is 20%).
-  Marginal — and the decode-vs-infer split was never captured (see below), so we
-  don't even know if it's the `transcribe()` wrapper or audio decode.
+- Closing that gap is worth ~**+0.065 ASR blended ≈ +0.013 overall** (ASR is 20% of
+  the total). Marginal — and the decode-vs-infer split was never captured (see below),
+  so we don't even know whether the bottleneck is the `transcribe()` wrapper or audio
+  decoding.
 
-**Decision: not worth more cycles.** Accuracy maxed; gain marginal; can't validate
-on the real 5070 Ti from here; AE is the Semis priority.
+**Decision: not worth more cycles.** Accuracy is maxed; the gain is marginal; we can't
+validate on the real RTX 5070 Ti from here; AE is the Semis priority.
 
 **The lever if ever revisited:** replace NeMo's high-level `model.transcribe()`
-(rebuilds a temp dataloader every call — pure fixed overhead) with a direct
-`preprocessor → encoder → decoder` forward + persistent setup. Same greedy output,
-zero accuracy risk; attacks exactly the fixed per-call overhead that per-batch
-timing punishes. Confirm the split first with a flag-gated timer (the reverted
-`ASR_TIMING` instrumentation) before investing.
+(it rebuilds a temporary dataloader on every call — pure fixed overhead) with a direct
+`preprocessor → encoder → decoder` forward pass and persistent setup. This produces
+the same greedy output with zero accuracy risk, and directly attacks the fixed
+per-call overhead that per-batch timing penalises. Confirm where the time is
+actually going first, by enabling the flag-gated timer (the reverted
+`ASR_TIMING` instrumentation), before investing further.
 
 ### ⚠ cuda-python / CUDA-13 → CUDA-graph-disabled → ASR timeout (UNRESOLVED, validate on MBS)
-A **locally-rebuilt** asr image (Workbench T4, host **Driver 580 / CUDA 13.0**)
+A **locally-rebuilt** ASR image (Workbench T4, host **Driver 580 / CUDA 13.0**)
 **timed out >10s on EVERY ASR batch** in the orchestrated `finals.sh test` match →
 score **0**, while the shipped 20:30 image ran ~1.8s. Root cause **unconfirmed**
 (standalone repro was inconclusive — empty logs). Two candidates:
@@ -253,14 +258,14 @@ score **0**, while the shipped 20:30 image ran ~1.8s. Root cause **unconfirmed**
    are disabled… No `cuda-python` module."*
 2. GPU contention with the concurrent AE/CV/NLP load on the shared T4.
 
-**Why it matters:** the real Finals box is a newer **Blackwell (CUDA 13+)**. If CUDA
+**Why it matters:** the real Finals box is a newer **Blackwell GPU (CUDA 13+)**. If CUDA
 graphs are disabled there, ASR eager-decodes, blows the 10s batch timeout, and scores
-**0 on a 20%-weight task** — catastrophic, and unrelated to the speed micro-opt.
+**0 on a 20%-weight task** — catastrophic, and unrelated to the speed micro-optimisation.
 **Action before 10 Jun (on the MBS on-hardware test):** confirm ASR per-batch latency
-is well under 10s *and* the asr startup log shows `use_cuda_graph_decoder: true` with
+is well under 10s *and* the ASR startup log shows `use_cuda_graph_decoder: true` with
 no "graphs disabled" warning. If disabled, bump `cuda-python` in
-`asr/requirements-nemo.txt` to a CUDA-13-compatible build. Cheap check, big downside
-if skipped.
+`asr/requirements-nemo.txt` to a CUDA-13-compatible build. This is a cheap check with
+a large downside if skipped.
 
 ## nemo-ft-v3 (27/05) — additional spelling post-processing fixes (new blended high)
 
@@ -268,8 +273,8 @@ Status: current shipped tag and blended high score.
 
 Why this candidate:
 - Identified residual spelling and phonetic errors in predictions via the `scan_errors.py` script.
-- Added corrections for `zonen`/`sono` -> `Zonnon`, `mewn` -> `Mewan`, and space-less `pullwalker(s)` -> `Fullwalker(s)`.
-- Corrected unit test assertions for casing behavior of `copy is sil`.
+- Added corrections for `zonen`/`sono` → `Zonnon`, `mewn` → `Mewan`, and the space-less form `pullwalker(s)` → `Fullwalker(s)`.
+- Corrected unit test assertions for casing behaviour of `copy is sil`.
 - Passed local unit tests and Workbench `til test` with English WER `0.0209` (improved from `0.0210`) and `1 - MER` `0.994785` (improved from `0.994753`).
 
 Submit gate:
@@ -281,9 +286,9 @@ Submit gate:
 Status: prior accuracy high score.
 
 Why this candidate:
-- Integrated spelling and regex group post-processing fixes to `asr/src/asr_postprocess.py` based on error analysis of `asr_results.json`.
-- Corrected regex capture groups for Sim Jiahong, Blackshore, and Clairos (e.g. `Clayro's` -> `Clairos'`).
-- Added corrections for `Takeshi Oelaren` -> `Takeshi Oyelaran`, `Devika Runyan` -> `Devika Oranyan`, `Parks and Hyun` -> `Park Soo-Hyun`, `sadentu` -> `in Sarento`, `SEC37`/`CEC87` -> `TEC`, etc.
+- Integrated spelling and regex-capture-group post-processing fixes into `asr/src/asr_postprocess.py` based on error analysis of `asr_results.json`.
+- Corrected regex capture groups for Sim Jiahong, Blackshore, and Clairos (e.g. `Clayro's` → `Clairos'`).
+- Added corrections for `Takeshi Oelaren` → `Takeshi Oyelaran`, `Devika Runyan` → `Devika Oranyan`, `Parks and Hyun` → `Park Soo-Hyun`, `sadentu` → `in Sarento`, `SEC37`/`CEC87` → `TEC`, etc.
 - Passed local unit tests and Workbench `til test` with English WER `0.0210` and `1 - MER` `0.9947535430276239`.
 
 Submit gate:
@@ -295,8 +300,8 @@ Submit gate:
 Status: final submission.
 
 Why this candidate:
-- Fine-tuned Parakeet-TDT-0.6B-v2 on the novice dataset for ~1.5 epochs, reaching a val WER of 0.0856 at step 713.
-- Extracted weights to a standalone `.nemo` format using a CPU fallback conversion script and baked it into the Docker context.
+- Fine-tuned Parakeet-TDT-0.6B-v2 on the novice dataset for ~1.5 epochs, reaching a validation WER of 0.0856 at step 713.
+- Extracted weights to a standalone `.nemo` format using a CPU fallback conversion script and baked them into the Docker context.
 - Passed local `til test` with an English error rate (WER) of 0.0213.
 
 Submit gate:
@@ -308,9 +313,9 @@ Submit gate:
 Status: shipped and parked as the final ASR candidate.
 
 Why this candidate:
-- Keep the same Parakeet-TDT-v2 model/runtime as `nemo-zs-v6`; no decoder, prompt, or Docker risk.
-- Replay the actual saved `nemo-zs-v6` local outputs from Workbench against `/home/jupyter/novice/asr/asr.jsonl`.
-- Only keep residual rules that make sense after a second review and do not create replay regressions under the local alignment check.
+- Keeps the same Parakeet-TDT-v2 model/runtime as `nemo-zs-v6`; no decoder, prompt, or Docker risk.
+- Replays the actual saved `nemo-zs-v6` local outputs from Workbench against `/home/jupyter/novice/asr/asr.jsonl`.
+- Only keeps residual rules that make sense after a second review and do not create replay regressions under the local alignment check.
 
 Replay gate:
 - `nemo-zs-v6` saved-output replay: 8532 edit errors, approximate WER `0.02912`.
@@ -319,9 +324,9 @@ Replay gate:
 
 Changes staged in `asr/src/asr_postprocess.py`:
 - Join high-confidence compounds: `launchpad`, `launchpads`, `waystation`, `supersoldiers`, `megacorp(s)`, `blackrock`, `stellarcore`.
-- Repair Opted/Opting/Optin hyphenation and a few residual ASR forms (`petrol` -> `patrol`, `Marcos` -> `Marcus`, `Fair Ex` -> `Phyrexis`, `Neari` -> `Nyari`, `Tai Dak`/`Dida` -> `Tidak`).
+- Repair `Opted`/`Opting`/`Optin` hyphenation and a few residual ASR forms (`petrol` → `patrol`, `Marcos` → `Marcus`, `Fair Ex` → `Phyrexis`, `Neari` → `Nyari`, `Tai Dak`/`Dida` → `Tidak`).
 - Add context-limited possessives for `Caulfield's`, `Cyanite's`, `Sim's`, and `Dreamer's` while preserving known plural exceptions.
-- Normalize maritime bearing phrases such as `bearing ninety five degrees` -> `bearing zero nine five degrees` and `heading one hundred eighty degrees` -> `heading one eight zero degrees`.
+- Normalise maritime bearing phrases such as `bearing ninety five degrees` → `bearing zero nine five degrees` and `heading one hundred eighty degrees` → `heading one eight zero degrees`.
 
 Submit gate:
 - Workbench `til build asr nemo-zs-v7`: passed.
@@ -350,8 +355,8 @@ Why this candidate:
 - Kept `nemo-zs-v5`'s fast Parakeet-TDT-v2 backend and only added post-processing repairs discovered from saved-output replay.
 - Fixed `%` outputs to preserve `percent` after scorer punctuation removal.
 - Removed standalone filler hallucinations (`uh`, `um`, `mm`).
-- Fixed hundreds/thousands ordinals such as `123rd` -> `one hundred twenty third`.
-- Added cleanup for The CUBE spacing, First Dreamer spacing, and a small set of residual proper-noun/style variants.
+- Fixed hundreds/thousands ordinals such as `123rd` → `one hundred twenty third`.
+- Added cleanup for "The CUBE" spacing, "First Dreamer" spacing, and a small set of residual proper-noun/style variants.
 - Replay against saved local outputs reduced approximate WER from `0.03187` to `0.02960` before the full Workbench run.
 
 ## nemo-zs-v2 (22/05) — phonetic post-corrections accuracy peak
@@ -359,7 +364,7 @@ Why this candidate:
 Submitted 22 May 2026 21:05 SGT.
 
 Why this candidate:
-- Added casing-preserving phonetic post-corrections for proper nouns (e.g., Sorrento -> Sarento, Phyrexis, Mewan, etc.) in `asr/src/asr_postprocess.py`.
+- Added casing-preserving phonetic post-corrections for proper nouns (e.g., `Sorrento` → `Sarento`, `Phyrexis`, `Mewan`, etc.) in `asr/src/asr_postprocess.py`.
 - Intended to run on top of the fast `parakeet-tdt-0.6b-v2.nemo` model.
 
 Results:
@@ -370,8 +375,8 @@ Results:
 - Local 1 - MER: 0.9904 (vs baseline 0.9893)
 
 Diagnosis:
-- The default model in `asr/Dockerfile` was set to `parakeet-unified-en-0.6b.nemo` instead of `parakeet-tdt-0.6b-v2.nemo`. The unified model has higher inherent latency (speed 0.911-0.915) due to its non-TDT architecture.
-- Reverting the default model in both `Dockerfile` and `Dockerfile.nemo` to `parakeet-tdt-0.6b-v2.nemo` will recover the baseline speed to `0.946`.
+- The default model in `asr/Dockerfile` had been set to `parakeet-unified-en-0.6b.nemo` instead of `parakeet-tdt-0.6b-v2.nemo`. The unified model has higher inherent latency (speed 0.911–0.915) due to its non-TDT architecture.
+- Reverting the default model in both `Dockerfile` and `Dockerfile.nemo` to `parakeet-tdt-0.6b-v2.nemo` recovers the baseline speed to `0.946`.
 
 Action:
 - Switched default model variables to `parakeet-tdt-0.6b-v2.nemo` in `asr/Dockerfile`, `asr/Dockerfile.nemo`, the NeMo manager (`asr_manager.py`), and `download_models_nemo.py`.
@@ -403,10 +408,10 @@ Results:
 - Blended score (75/25): 0.957 (new overall blended high score!)
 
 Why this candidate:
-- Fixed slang prompter extraction pollution in `training/asr/extract_slang.py` by embedding a `FALLBACK_WORDS` list (1500 common English words) to prevent silent fallback failures from filling the bias prompt with common words when download dependencies fail.
-- Refined the proper noun rules in `asr/src/asr_postprocess.py` (specifically `Ashcastle` rules) by splitting them into a prefix-required rule and a standalone rule. This successfully resolves the space-eating bug where preceding spaces were collapsed when the prefix was absent (e.g., converting `is Ashcastle` to `isAshcastle`).
-- Added case-preserving phonetic/spelling post-corrections for `Zonnon` (e.g., Zonan, zonon, Zonanun, Zonal, zondun's -> Zonnon) and `Caulfield` (e.g., Coalfields, callfields, Coffield's -> Caulfield) to capture common mistakes.
-- Local validation on `asr_results.json` shows 335/4110 lines modified, successfully fixing boundary collapsing, word merging, and phonetically close proper nouns without affecting correct substitutions.
+- Fixed slang-prompter extraction pollution in `training/asr/extract_slang.py` by embedding a `FALLBACK_WORDS` list (1500 common English words) to prevent silent fallback failures from filling the bias prompt with common words when download dependencies fail.
+- Refined the proper-noun rules in `asr/src/asr_postprocess.py` (specifically the `Ashcastle` rules) by splitting them into a prefix-required rule and a standalone rule. This resolves the space-eating bug where preceding spaces were collapsed when the prefix was absent (e.g., `is Ashcastle` was being collapsed to `isAshcastle`).
+- Added case-preserving phonetic/spelling post-corrections for `Zonnon` (e.g., `Zonan`, `zonon`, `Zonanun`, `Zonal`, `zondun's` → `Zonnon`) and `Caulfield` (e.g., `Coalfields`, `callfields`, `Coffield's` → `Caulfield`) to capture common mispronunciations.
+- Local validation on `asr_results.json` shows 335/4110 lines modified, fixing boundary collapsing, word merging, and phonetically close proper nouns without affecting correct substitutions.
 
 ## nemo-zs-v5 (23/05) — v5 post-processing & refined Phi rules
 
@@ -417,41 +422,41 @@ Results:
 - Blended score (75/25): 0.9605 (new overall blended high score!)
 
 Why this candidate:
-- Added refined proper noun rules in `asr/src/asr_postprocess.py` to capture remaining phonetic and spacing mismatches against gold transcript patterns:
-  - Canian (e.g. kanyan, canaanian, Canadian -> Canian)
-  - Hegemony (e.g. hegemoni, Hegmoni -> Hegemony)
-  - Sharpsea Bloc / routes (e.g. sharp sea, SHARP C BLOCK -> Sharpsea Bloc)
-  - Nyari (e.g. niari, niyari -> Nyari)
-  - Dreamer (e.g. streamer -> Dreamer)
-  - Fullwalker (e.g. full walker, pull walkers -> Fullwalker)
-  - Edgedancer (updated to match both `c` and `s` spelling variations `d[ae]n[cs]ers?`)
-  - Floodwall (e.g. flood wall -> Floodwall)
-  - TEC (e.g. tech command -> TEC command, for tech -> for TEC)
-  - CYPHER (e.g. cipher requires -> Cypher requires, give cipher -> give Cypher)
-  - Bloc (e.g. block tensions -> bloc tensions, Accommodationist block -> Accommodationist bloc)
-- Refined Phi currency / metric context-specific replacements:
-  - Standalone pi/fi/fai -> Phi
-  - Preceded by scale words (million/thousand/hundred/billion five/fai) checked against currency contexts (bribes, credits, somatic clinic, somatic enhancement, biodealers, cost/price/prices, funds transfer, etc.) and explicitly excluded in telemetry contexts (bearing/vector/heading degrees, wind knots, coordinates, latitude/longitude).
-  - Followed by currency suffixes (five ledger, file credits, fi movements).
-  - Matches context phrases (got five to drop, sold file for, bleeding/funneling/saving up five, throwing five around, five in bribes/at blackjack/for/minimum).
-- Validated locally on `asr_results.json` showing 195 repaired mismatches and 0 regressions against gold data.
-- Corrected unit test assertions in `test/test_asr_postprocess.py` to enforce strict casing preservation behavior (e.g., lowercased input to lowercased output like "tech command" -> "tec command", and capitalized input to capitalized/uppercase output like "Tech command" -> "TEC command").
+- Added refined proper-noun rules in `asr/src/asr_postprocess.py` to capture remaining phonetic and spacing mismatches against gold transcript patterns:
+  - `Canian` (e.g. `kanyan`, `canaanian`, `Canadian` → `Canian`)
+  - `Hegemony` (e.g. `hegemoni`, `Hegmoni` → `Hegemony`)
+  - `Sharpsea Bloc` / routes (e.g. `sharp sea`, `SHARP C BLOCK` → `Sharpsea Bloc`)
+  - `Nyari` (e.g. `niari`, `niyari` → `Nyari`)
+  - `Dreamer` (e.g. `streamer` → `Dreamer`)
+  - `Fullwalker` (e.g. `full walker`, `pull walkers` → `Fullwalker`)
+  - `Edgedancer` (updated to match both `c` and `s` spelling variations `d[ae]n[cs]ers?`)
+  - `Floodwall` (e.g. `flood wall` → `Floodwall`)
+  - `TEC` (e.g. `tech command` → `TEC command`, `for tech` → `for TEC`)
+  - `CYPHER` (e.g. `cipher requires` → `Cypher requires`, `give cipher` → `give Cypher`)
+  - `Bloc` (e.g. `block tensions` → `bloc tensions`, `Accommodationist block` → `Accommodationist bloc`)
+- Refined context-specific replacements for the in-world currency "Phi":
+  - Standalone `pi`/`fi`/`fai` → `Phi`
+  - Preceded by scale words (`million`/`thousand`/`hundred`/`billion five`/`fai`) and checked against currency contexts (bribes, credits, somatic clinic, somatic enhancement, biodealers, cost/price/prices, funds transfer, etc.); explicitly excluded in telemetry contexts (bearing/vector/heading degrees, wind knots, coordinates, latitude/longitude).
+  - Followed by currency suffixes (`five ledger`, `file credits`, `fi movements`).
+  - Matches context phrases (`got five to drop`, `sold file for`, `bleeding`/`funneling`/`saving up five`, `throwing five around`, `five in bribes`/`at blackjack`/`for`/`minimum`).
+- Validated locally on `asr_results.json`: 195 repaired mismatches and 0 regressions against gold data.
+- Corrected unit test assertions in `test/test_asr_postprocess.py` to enforce strict casing-preservation behaviour (e.g., lowercased input → lowercased output: `"tech command"` → `"tec command"`; capitalised input → capitalised/uppercase output: `"Tech command"` → `"TEC command"`).
 
 
 
 ## Completed A/B: Parakeet unified zero-shot
 
 **`parakeet-unified-zs` — rejected 22 May 2026.** This was a zero-shot
-replacement for the current Parakeet-TDT-v2 checkpoint, not a fine-tune.
+replacement for the Parakeet-TDT-v2 checkpoint, not a fine-tune.
 
 Why this candidate:
 
 - Same practical size class as the current high: 600M parameters.
-- Same NeMo-style offline `.nemo` packaging, so it is much lower risk than
-switching to Cohere/Granite/Qwen runtimes.
+- Same NeMo-style offline `.nemo` packaging, so it carries much lower risk than
+  switching to Cohere/Granite/Qwen runtimes.
 - Model-card OpenASR offline WER is slightly better than TDT-v2
   (`5.91` vs `6.04/6.05`), while keeping a transducer-style architecture.
-- It supports punctuation/capitalization, but the official scorer strips
+- It supports punctuation/capitalisation, but the official scorer strips
   punctuation, so this should not hurt.
 
 Code/build changes:
@@ -468,16 +473,16 @@ training/asr/download_models_nemo.py default model -> nvidia/parakeet-unified-en
 
 - The direct Hugging Face `.nemo` download works; `ASRModel.from_pretrained`
   was removed from the host download path so Workbench no longer needs to
-  instantiate the model just to stage weights.
-- The first built image still installed released `nemo_toolkit[asr]==2.7.3`.
+  instantiate the model just to stage the weights.
+- The first built image still installed the released `nemo_toolkit[asr]==2.7.3`.
   That release's `ConformerEncoder` does not accept `att_chunk_context_size`,
   but `nvidia/parakeet-unified-en-0.6b` includes that key in its config.
-- Result: the container never reached healthy state, cloud saw 400/400 error
-  exits, and the score was `0.000 / 0.996`. This is a startup/runtime mismatch,
+- Result: the container never reached a healthy state; cloud saw 400/400 error
+  exits and the score was `0.000 / 0.996`. This is a startup/runtime mismatch,
   not an ASR quality measurement.
 - The Docker build now checks for `att_chunk_context_size` immediately after
   installing NeMo, before copying the multi-GB model directory. If this check
-  fails, do not submit; the build is intentionally stopping a bad image early.
+  fails, do not submit — the build is intentionally aborting a bad image early.
 
 Final result after runtime fix:
 
@@ -494,8 +499,8 @@ Cloud:
   speed:  0.915
 ```
 
-Decision: **reject**. Unified tied the current high's accuracy but lost speed
-(`0.915` vs `0.946`) and local English WER was worse than the `nemo-zs` gate
+Decision: **reject**. The unified model tied the current high's accuracy but lost speed
+(`0.915` vs `0.946`), and local English WER was worse than the `nemo-zs` gate
 (`0.0453` vs `0.0429`). Blended score is `0.75*0.956 + 0.25*0.915 = 0.9458`,
 below `nemo-zs` at `0.9535`.
 
@@ -537,26 +542,26 @@ Fallback:  `nemo-zs` remains the shipped high. To rebuild the old TDT-v2 path,
 
 ## Historical experiment: NeMo Parakeet-TDT backend
 
-Leaderboard inspection on 14 May shows multiple Novice teams above
+Leaderboard inspection on 14 May showed multiple Novice teams above
 `0.97 / 0.92` simultaneously (Overflow `0.991/0.925`, OpenLarp `0.986/0.940`,
-suite108 `0.982/0.920`). distil-large-v3 cannot reach that frontier
+suite108 `0.982/0.920`). `distil-large-v3` cannot reach that frontier
 structurally — its autoregressive cross-attention decoder is the speed
-bottleneck. Our hypothesis: top teams are on a NeMo transducer, most likely
+bottleneck. Our hypothesis: top teams are running a NeMo transducer, most likely
 **Parakeet-TDT-0.6B-v2** (top of the HF Open ASR English leaderboard, RTFx in
-the thousands on T4, non-autoregressive over cross-attention).
+the thousands on T4, non-autoregressive).
 
 Two pieces of evidence support switching the backbone:
 
-1. **Air-gap is fine for NeMo.** README + CLAUDE.md confirm `til test` runs
-   on a no-internet docker network. NeMo loads from a local `.nemo` file via
-   `ASRModel.restore_from(restore_path=...)`, no network calls. Same
+1. **Air-gap is fine for NeMo.** The README and CLAUDE.md confirm `til test` runs
+   on a no-internet Docker network. NeMo loads from a local `.nemo` file via
+   `ASRModel.restore_from(restore_path=...)` — no network calls. This is the same
    bake-into-image pattern the NLP container already uses.
-2. **Transcript style favors Parakeet.** All numbers in the manifest are
+2. **Transcript style favours Parakeet.** All numbers in the manifest are
    spelled out (`"zero six hundred"`, `"twenty third"`, `"two-seven-zero"`,
    `"three hundred and sixty-five"`). Whisper-family models emit digits and
-   need `_digits_to_words` to recover; Parakeet emits spelled-out numbers
-   natively, removing the riskiest part of post-processing. The post-processor
-   now lives in `asr/src/asr_postprocess.py` and stays as a safety net.
+   require `_digits_to_words` to recover them; Parakeet emits spelled-out numbers
+   natively, eliminating the riskiest part of post-processing. The post-processor
+   still lives in `asr/src/asr_postprocess.py` as a safety net.
 
 Parallel build path (does not touch the shipped distil-whisper image):
 
@@ -583,21 +588,21 @@ Phase plan with kill switches at each step:
    docker build -f asr/Dockerfile.nemo -t melanie-minions-asr:nemo-zs .
    til test asr nemo-zs
    ```
-   Decision gate: official-style Eng-WER ≤ 0.05 on the held-out val.
+   Decision gate: official-style English WER ≤ 0.05 on the held-out val.
    - If **yes**, submit as `nemo-zs-v1` and continue to phase 2.
    - If **no**, abort. The shipped `ft-lora32-v1` stays unaffected because
-     none of the whisper files changed.
+     none of the Whisper files were changed.
 
 2. **Add slang context biasing.** `NemoASRManager._configure_biasing` already
-   tries newer-NeMo APIs (`set_context_biasing`, `set_boosting_words`,
+   tries newer NeMo APIs (`set_context_biasing`, `set_boosting_words`,
    `configure_biasing`); if the installed NeMo version exposes one, slang
    biasing engages automatically. If not, the manager logs and skips — no
-   crash. Worth +0.005-0.015 on slang-heavy clips.
+   crash. Expected gain: +0.005–0.015 on slang-heavy clips.
 
-3. **Fine-tune Parakeet on the 4110 novice clips** (only if phases 1-2 fall
-   short of 0.99). NeMo supports adapter-based PEFT and full FT; 0.6B fits T4
-   for full FT at small batch. Same Option B held-out 10% as the current LoRA
-   run.
+3. **Fine-tune Parakeet on the 4110 novice clips** (only if phases 1–2 fall
+   short of 0.99). NeMo supports adapter-based PEFT and full fine-tuning; 0.6B
+   parameters fit on T4 at small batch. Same held-out 10% split as the current
+   LoRA run.
 
 Submission gate: zero `errors`, schema unchanged, official blended score
 strictly above `ft-lora32-v1`'s `0.957/0.849` (i.e. blended ≥ `0.930`).
@@ -620,10 +625,10 @@ Compared against `ft-lora32-v1` (leaky local WER `0.0299`, held-out val
   at WER `0.0429` on the full local set. Whisper LoRA's *held-out* val WER
   was `0.04662`, so Parakeet starts roughly on par with our trained model
   before any in-domain adaptation. The accuracy gate (≤ 0.05) is cleared.
-- Local set is ~10× larger than the cloud set (4110 vs 400). Cloud wall
-  clock projection: 4110 / 400 × 37:28 / 30 min ≈ 30% of t_max → cloud
-  speed score `~0.70`. **This is below `ft-lora32-v1`'s `0.849` and is
-  exactly why `cuda-python` is the very next change.**
+- The local set is ~10× larger than the cloud set (4110 vs 400). Cloud wall-clock
+  projection: 4110 / 400 × 37:28 / 30 min ≈ 30% of t_max → cloud
+  speed score `~0.70`. **This is below `ft-lora32-v1`'s `0.849`, which is
+  exactly why adding `cuda-python` is the very next step.**
 
 NeMo logged at startup:
 
@@ -633,12 +638,12 @@ disabled, decoding speed will be slower
 Reason: No `cuda-python` module. Please do `pip install cuda-python>=12.3`
 ```
 
-The TDT decoder's while-loop is its main per-clip cost. With the CUDA-graph
-fast path disabled, the decode loop runs as eager Python kernels; with it
-enabled, the whole loop fuses into a CUDA graph and Parakeet gets the
-multi-thousand-RTFx numbers it advertises. `cuda-python>=12.3` is now in
-`requirements-nemo.txt`; rebuild as `nemo-zs-v2` and re-test before the
-next submission.
+The TDT (Token-and-Duration Transducer) decoder's while-loop is its main
+per-clip cost. With the CUDA-graph fast path disabled, the decode loop runs as
+eager Python kernels; with it enabled, the whole loop fuses into a single CUDA
+graph and Parakeet achieves the multi-thousand-RTFx numbers advertised on its
+model card. `cuda-python>=12.3` is now in `requirements-nemo.txt`; rebuild as
+`nemo-zs-v2` and re-test before the next submission.
 
 Submit `nemo-zs` first to bank the accuracy result; the leaderboard keeps
 the highest blended score so a worse `nemo-zs` cannot demote
@@ -678,28 +683,27 @@ local:  WER 0.0429, wall clock 34:42 (vs nemo-zs 37:28, -7%)
 local per-batch: 2.03s (vs nemo-zs 2.62s, -22%)
 ```
 
-cuda-python `12.3+` is being picked up correctly inside the container —
+`cuda-python 12.3+` is being picked up correctly inside the container —
 the "No conditional node support for Cuda" startup warning is gone, and
-the local TDT decoder is measurably faster. **But cloud speed didn't move
+the local TDT decoder is measurably faster. **But cloud speed did not move
 at all.** Why:
 
-- nemo-zs cloud speed 0.946 corresponds to ~97s wall on 400 clips =
-  ~0.24s/clip. Local nemo-zs-v2 is ~0.51s/clip. The cloud rig is already
-  ~2× faster per clip than our T4 — almost certainly L4 or A10.
+- The `nemo-zs` cloud speed of 0.946 corresponds to ~97s wall-clock for 400 clips
+  (~0.24s/clip). Local `nemo-zs-v2` runs at ~0.51s/clip. The cloud rig is already
+  ~2× faster per clip than our T4 — almost certainly an L4 or A10.
 - On a faster GPU the TDT decoder loop is an even smaller fraction of
-  per-clip cost than locally. Audio decode (soundfile + librosa
-  resample), HTTP / base64 round-trip, batch assembly, and Python
-  overhead dominate.
-- A 22% speedup on something that's already maybe 10-15% of cloud
+  per-clip cost than locally. Audio decoding (soundfile + librosa
+  resample), HTTP/base64 round-trips, batch assembly, and Python
+  overhead dominate instead.
+- A 22% speedup on a component that is already only ~10–15% of cloud
   per-clip cost rounds to nothing visible at three-decimal score
   precision.
 
-**Conclusion: cloud speed is no longer the TDT decoder. Speed is parked
-at 0.946 unless we change the serving shape (which is risky for
-diminishing returns).** The next ASR lever is accuracy, and that's what
-`train_parakeet.py` is for.
+**Conclusion: cloud speed is no longer bottlenecked by the TDT decoder. Speed is parked
+at 0.946 unless we change the serving shape (risky for diminishing returns).** The next
+ASR lever is accuracy, and that is what `train_parakeet.py` is for.
 
-### Next: Parakeet fine-tune (planned)
+### Next: Parakeet fine-tune (planned at the time)
 
 Path is now wired end-to-end:
 
@@ -712,144 +716,146 @@ training/asr/README.md               updated with Parakeet quick-start
 
 Default recipe (from `train_parakeet.py`):
 
-- Encoder frozen (Parakeet's conformer is already strong on English; budget
-  goes to decoder + joint network, where slang/in-world adaptation lives).
+- Encoder frozen (Parakeet's Conformer is already strong on English; training
+  budget goes to the decoder and joint network, where slang/in-world adaptation
+  lives).
 - 5 epochs, lr 5e-5, batch 8, grad-accum 2 → effective batch 16.
-- ModelCheckpoint(monitor=val_wer, save_top_k=2) + EarlyStopping(patience=3).
-- Wall clock estimate: 3-4 hr on T4.
+- `ModelCheckpoint(monitor=val_wer, save_top_k=2)` + `EarlyStopping(patience=3)`.
+- Wall-clock estimate: 3–4 hr on T4.
 
-Decision gate before submitting `parakeet-ft-v1`: local Eng-WER ≤ 0.035
-(from current zero-shot 0.0429). If hit, expected official accuracy
-0.965-0.975. If not hit, rerun with `--epochs 8 --lr 3e-5` or unfreeze
-the encoder. Leaderboard keeps the higher score so a regression cannot
+Decision gate before submitting `parakeet-ft-v1`: local English WER ≤ 0.035
+(down from current zero-shot 0.0429). If met, expected official accuracy
+0.965–0.975. If not met, rerun with `--epochs 8 --lr 3e-5` or unfreeze
+the encoder. The leaderboard keeps the higher score so a regression cannot
 demote `nemo-zs`.
 
 ## Creative options for pushing past 0.99
 
-Decoder-only FT + NeMo word-boosting probably caps at ~0.97-0.98. To
-break 0.99 (official WER ≤ 0.009) the levers below attack what's left,
+Decoder-only fine-tuning plus NeMo word-boosting probably caps at ~0.97–0.98. To
+break 0.99 (official WER ≤ 0.009), the levers below attack what's left,
 which per [../training/asr/ERROR_ANALYSIS.md](../training/asr/ERROR_ANALYSIS.md)
-is almost entirely in-world proper-noun substitutions (Sarento→Sorrento,
-Cyanite→cyanide, Phyrexis→Pyrex's, Mewan→Mee-one, Kestrelian→Castilian,
-Belford Straits→Belford Streets). Leaderboard reference: Overflow
+is almost entirely in-world proper-noun substitutions (e.g. `Sarento`→`Sorrento`,
+`Cyanite`→`cyanide`, `Phyrexis`→`Pyrex's`, `Mewan`→`Mee-one`, `Kestrelian`→`Castilian`,
+`Belford Straits`→`Belford Streets`). Leaderboard reference: Overflow
 0.991/0.925, OpenLarp 0.986/0.940, suite108 0.982/0.920 — so 0.99 is
 empirically reachable.
 
-Roughly ordered by expected impact × creativity. Not yet tried.
+Listed roughly in order of expected impact × implementation effort. Not yet tried.
 
 ### A. Phonetic + world-frequency post-correction (cheap, no retrain)
 
 Pure inference-side. For every token in the hypothesis:
 
-- If OOV for an English word list AND within Double-Metaphone edit
+- If out-of-vocabulary for a standard English word list AND within Double-Metaphone edit
   distance ≤ 1 of an NLP-corpus term → substitute.
 - If the token IS an English word but a phonetically-equivalent
-  NLP-corpus term has ≫ in-world frequency (`cyanide` vs `cyanite`) →
+  NLP-corpus term has much higher in-world frequency (`cyanide` vs `cyanite`) →
   substitute, gated by Parakeet token confidence (NeMo exposes
   `hypothesis.score`).
 
 Add as a new stage in [src/asr_postprocess.py](src/asr_postprocess.py).
 Runs in milliseconds, no GPU. Directly targets the
 [ERROR_ANALYSIS.md "Proper-noun substitutions"](../training/asr/ERROR_ANALYSIS.md)
-failure bucket. Expected +0.005-0.015 absolute.
+failure bucket. Expected gain: +0.005–0.015 absolute.
 
 ### B. CTC + TDT dual-head ensemble (free inside Parakeet)
 
-Parakeet-TDT exposes both a TDT decoder and a CTC head trained jointly.
-They make different proper-noun errors. ROVER-vote at word level inside
-one model invocation — no extra encoder forward pass. NeMo has a
-`hybrid_rnnt_ctc_bpe` path that does this natively. Expected +0.002-0.005
-official for ~0 speed cost.
+Parakeet-TDT exposes both a TDT decoder and a CTC (Connectionist Temporal
+Classification) head trained jointly. The two heads make different proper-noun
+errors. ROVER-voting at word level inside a single model invocation requires no
+extra encoder forward pass. NeMo has a `hybrid_rnnt_ctc_bpe` path that does
+this natively. Expected gain: +0.002–0.005 official for ~0 speed cost.
 
 ### C. Retrieval-aware ASR (most creative, untried, blue-sky upside)
 
-Slang prompt was mined from the NLP corpus, so audio transcripts likely
-share phrasing with corpus sentences. Pipeline:
+The slang prompt was mined from the NLP corpus, so audio transcripts likely
+share phrasing with corpus sentences. Proposed pipeline:
 
-1. Parakeet emits hypothesis.
-2. Embed hypothesis with BGE-small (already in the NLP container).
-3. Retrieve top-1 corpus sentence by cosine.
-4. If cosine > 0.92 AND word-level WER (hyp vs retrieved) ≤ 0.2, replace
-   hypothesis with the retrieved sentence.
+1. Parakeet emits a hypothesis.
+2. Embed the hypothesis with BGE-small (already in the NLP container).
+3. Retrieve the top-1 corpus sentence by cosine similarity.
+4. If cosine > 0.92 AND word-level WER (hypothesis vs. retrieved sentence) ≤ 0.2, replace
+   the hypothesis with the retrieved sentence.
 
 If transcripts are paraphrased from corpus content, one corpus hit fixes
-every slang error in that sentence at once. 30-minute A/B on local data
-to check whether retrieval similarities cluster high before investing
-further. Risk: paraphrase too loose → false replacements; gate hard.
+every slang error in that sentence at once. A 30-minute A/B on local data
+to check whether retrieval similarities cluster high is the right first step
+before investing further. Risk: if the paraphrase is too loose, false replacements
+occur — gate hard.
 
 ### D. KenLM in-domain shallow fusion (canonical, not yet wired)
 
-Train a 4-gram KenLM on the NLP corpus, plug into NeMo's beam decoder.
+Train a 4-gram KenLM on the NLP corpus and plug it into NeMo's beam decoder.
 TDT supports beam + LM rescoring. Every published ASR benchmark gets
-+0.5-2 WER points absolute from this; on a vocabulary-driven failure
-profile like ours it could be +1-2. Tradeoff: beam decoding is slower
-than greedy. Cloud speed is currently 0.946 — there's some headroom but
++0.5–2 WER points absolute from this approach; on a vocabulary-driven failure
+profile like ours it could be +1–2. Trade-off: beam decoding is slower
+than greedy. Cloud speed is currently 0.946 — there is some headroom but
 not infinite. Pair with option H (conditional beam) to preserve speed.
 
 ### E. TTS-augmented training for slang coverage
 
-The 4110 clips have median 1-3 hits per rare in-world noun. Synthesize
-50-100 additional clips per top-200 slang term using a fast TTS (Piper,
+The 4110 clips have a median of 1–3 occurrences per rare in-world noun. Synthesise
+50–100 additional clips per top-200 slang term using a fast TTS engine (Piper,
 Coqui, XTTS) reading templates like
-`"Approach the Sarento checkpoint at zero six hundred."` Mix into FT at
-~10% of batches. Targets the failure distribution directly. Risk:
-TTS-bias leakage — small because Parakeet wasn't pretrained on this
-synth data.
+`"Approach the Sarento checkpoint at zero six hundred."` Mix into fine-tuning at
+~10% of batches. Directly targets the failure distribution. Risk:
+TTS-bias leakage — small because Parakeet was not pretrained on this
+synthetic data.
 
-### F. Active-learning targeted FT
+### F. Active-learning targeted fine-tuning
 
 Run zero-shot Parakeet over all 4110 clips, identify the ~200 worst-WER
-ones, oversample 8× alongside slang oversampling. Direct attack on the
-long-tail failure distribution. Adds nothing to wall clock; just a
-manifest change in
+ones, and oversample them 8× alongside the slang oversampling. A direct
+attack on the long-tail failure distribution. Adds nothing to wall clock;
+just a manifest change in
 [../training/asr/prepare_data_nemo.py](../training/asr/prepare_data_nemo.py).
 
 ### G. Conditional Whisper fallback (uses both backbones)
 
 Run Parakeet first. For each clip, check TDT confidence
 (`hypothesis.score`). For the bottom ~5% by confidence, fall back to
-`ft-lora32-v1` Whisper and ROVER-vote at word level. ~5% extra wall
-clock (Whisper only fires sometimes). The two models miss different
-things — Whisper's vocab attention captures some slang Parakeet munges,
-and vice versa. Fallback image already exists; just need to load both
-managers.
+`ft-lora32-v1` Whisper and ROVER-vote at word level. ~5% extra wall-clock
+overhead (Whisper only fires on the low-confidence tail). The two models
+miss different things — Whisper's vocabulary attention captures some slang
+Parakeet mangles, and vice versa. The fallback image already exists; this
+just requires loading both managers.
 
 ### H. Conditional N-best beam rescoring (speed-preserving)
 
-Greedy TDT for high-confidence clips (~90% of test), beam-4 + KenLM
-rescoring only for low-confidence ones. Cherry-picks the accuracy gain
+Greedy TDT for high-confidence clips (~90% of test set), beam-4 + KenLM
+rescoring only for the low-confidence tail. Cherry-picks the accuracy gain
 of option D while keeping the speed score intact.
 
 ### I. Vocab extension on the SentencePiece tokenizer
 
-Parakeet splits `Sarento` into pieces it never saw co-occur. Add ~200
-in-world proper nouns as new SentencePiece tokens, randomly initialize
-their embeddings, fine-tune the embedding matrix + joint head for 1
-epoch. Now `Sarento` is one emission, not three risky pieces. NeMo
+Parakeet splits `Sarento` into sub-word pieces it never saw co-occur. Adding ~200
+in-world proper nouns as new SentencePiece tokens, randomly initialising
+their embeddings, and fine-tuning the embedding matrix and joint head for 1
+epoch would make `Sarento` a single emission rather than three risky pieces. NeMo
 supports tokenizer extension via `change_vocabulary`. Higher
 implementation cost; addresses the root cause.
 
 ### J. External pretraining-data fine-tune (orthogonal)
 
-LibriSpeech / CommonVoice / GigaSpeech mixed in at ~10% weight during
-FT for one epoch reduces generic residual ~1% WER (not slang, but
-real-world variety). Won't break 0.99 alone but stacks.
+Mixing LibriSpeech / CommonVoice / GigaSpeech at ~10% weight during
+fine-tuning for one epoch reduces generic residual WER by ~1% (not slang, but
+real-world variety). Won't break 0.99 alone, but stacks with other options.
 
 ### Recommended stack if we commit to chasing 0.99
 
-These compose. Rough 9-day budget to deadline:
+These options compose. Rough 9-day budget to deadline:
 
 1. **Day 1**: A (phonetic post-correction) + B (CTC+TDT hybrid head) —
-   both pure inference-time, A/B against `nemo-zs` without retraining.
+   both pure inference-time; A/B against `nemo-zs` without retraining.
    If either lands +0.01, ship immediately.
-2. **Day 2-3**: C (retrieval-aware ASR) — fastest creative experiment
+2. **Days 2–3**: C (retrieval-aware ASR) — fastest creative experiment
    with the biggest blue-sky upside. Validate retrieval similarity
-   distribution on local first.
-3. **Day 3-5**: queued Parakeet FT + F (active-learning oversampling) +
-   E (TTS-augmented data). Single training run, three levers stacked.
-4. **Day 6-7**: D (KenLM shallow fusion) for the final accuracy push.
+   distribution on local data first.
+3. **Days 3–5**: queued Parakeet fine-tune + F (active-learning oversampling) +
+   E (TTS-augmented data). Single training run with three levers stacked.
+4. **Days 6–7**: D (KenLM shallow fusion) for the final accuracy push.
    Validate speed stays ≥ 0.92 — pair with H if it doesn't.
-5. **Day 8-9**: only if still below 0.99 — G (conditional Whisper
+5. **Days 8–9**: only if still below 0.99 — G (conditional Whisper
    fallback) or I (vocab extension).
 
 The two ideas that exploit competition-specific assets and most likely
@@ -863,9 +869,9 @@ distinguish 0.99-tier teams from 0.97-tier teams:
 
 ### Inference (the shipped Docker container)
 
-- **Base model**: `distil-whisper/distil-large-v3` — English-only distillation of Whisper large-v3. Same encoder quality, ~6× faster decoder. Right call for the Novice (English-only) track.
+- **Base model**: `distil-whisper/distil-large-v3` — English-only distillation of Whisper large-v3. Same encoder quality, ~6× faster decoder. Right choice for the Novice (English-only) track.
 - **Fine-tune**: LoRA rank 32, alpha 64, dropout 0.05, applied to decoder attention projections (`q_proj`, `k_proj`, `v_proj`, `out_proj`). Encoder frozen.
-- **Runtime engine**: `faster-whisper` (CTranslate2 backend) at `float16` on GPU. CPU fallback at `int8` if CUDA missing.
+- **Runtime engine**: `faster-whisper` (CTranslate2 backend) at `float16` on GPU. CPU fallback at `int8` if CUDA is unavailable.
 - **Container base**: `nvcr.io/nvidia/pytorch:25.11-py3`.
 - **Inference flags** (see [src/asr_manager_fasterwhisper.py](src/asr_manager_fasterwhisper.py)):
   ```python
@@ -882,28 +888,28 @@ distinguish 0.99-tier teams from 0.97-tier teams:
       no_speech_threshold=0.6,              # silence hallucination guard
   )
   ```
-- **Audio-level silence guard** runs *before* `transcribe()` to skip pure noise / breath bursts that would otherwise hallucinate "Thank you." / "I" on sub-1.5s clips.
-- **Post-processing** at [src/asr_postprocess.py `digits_to_words`](src/asr_postprocess.py): integers, decimals, comma-thousands, 24h military times, four-digit codes, niner callsigns, spoken ordinals (`23rd → twenty third`), coordinate-safe decimals (`1.1.7` stays multi-token, not parsed as decimal).
+- **Audio-level silence guard** runs *before* `transcribe()` to skip pure noise and breath bursts that would otherwise hallucinate `"Thank you."` / `"I"` on sub-1.5s clips.
+- **Post-processing** at [src/asr_postprocess.py `digits_to_words`](src/asr_postprocess.py): integers, decimals, comma-thousands, 24h military times, four-digit codes, niner callsigns, spoken ordinals (`23rd` → `twenty third`), coordinate-safe decimals (`1.1.7` stays multi-token, not parsed as a decimal).
 - **Slang prompt**: 200 in-world proper nouns mined from the NLP corpus, highest-frequency first (`cyanite renhwa zonnon clairos floodwall phyrexis nanobot sharpsea kashikari wampa nyari sarento megacorporation ...`). Passed as `initial_prompt=` to bias decoding.
 
 ### Training (Workbench-only, in [../training/asr/](../training/asr/))
 
-- **GPU**: Tesla T4 (16 GB VRAM). fp16 not bf16 (Turing-gen).
+- **GPU**: Tesla T4 (16 GB VRAM). fp16, not bf16 (Turing architecture does not support bf16).
 - **Python env**: `transformers >=4.46,<5.0` (pinned to 4.57.6 via `pip install --user`), `peft 0.19.1`, `accelerate 1.13.0`, `datasets[audio]`, `faster-whisper 1.2.1`, `ctranslate2 4.7.1`.
 - **Trainer**: HuggingFace `Seq2SeqTrainer` + PEFT LoRA, gradient checkpointing on, `use_cache=False`, fp16 autocast.
-- **Augmentation**: SpecAugment (`mask_time_prob=0.05`, `mask_feature_prob=0.05` baked into the feature extractor) + optional speed perturb at ±10%. Noise mixing path exists but no noise corpus on Workbench, so it stays off.
-- **Data**: `/home/jupyter/novice/asr/asr.jsonl` (4110 clips, all `language: english`). 90/10 stratified split with slang oversampling, but the 10% val is leaky (same manifest as `test_asr.py`) — see "leaky val" warning below.
+- **Augmentation**: SpecAugment (`mask_time_prob=0.05`, `mask_feature_prob=0.05` baked into the feature extractor) + optional speed perturbation at ±10%. Noise-mixing path exists but there is no noise corpus on Workbench, so it stays off.
+- **Data**: `/home/jupyter/novice/asr/asr.jsonl` (4110 clips, all `language: english`). 90/10 stratified split with slang oversampling, but the 10% validation set is leaky (same manifest as `test_asr.py`) — see "leaky val" warning below.
 
 ## Submission history
 
 ```text
 Tag               Submitted          Score   Speed   Local WER       Outcome
 v1                12/05 03:42        0.000   0.993   —               Empty-string baseline (sanity check submission)
-norm-v1           12/05 16:23        0.877   0.864   0.0759          Added digit verbalization + audio-silence guard
+norm-v1           12/05 16:23        0.877   0.864   0.0759          Added digit verbalisation + audio-silence guard
 vad-off-v1        12/05 20:00        0.938   0.859   0.0554          VAD off + hallucination guards + ordinals + coord-safe decimals
 vad-off-v2        not submitted      —       —       0.0604          Reversed slang prompt order — REGRESSED, reverted
 ft-lora32-v1      13/05 11:22        0.957   0.849   0.0299 (leaky)  LoRA rank-32 decoder fine-tune — CROSSED 0.95 target
-ft-lora32-int8f16 13/05 12:45        0.923   0.856   0.0551          int8_float16 quantization — REGRESSED accuracy too much
+ft-lora32-int8f16 13/05 12:45        0.923   0.856   0.0551          int8_float16 quantisation — REGRESSED accuracy too much
 ```
 
 Leaderboard mechanic: **highest score wins**, so the `ft-lora32-int8f16`
@@ -915,33 +921,33 @@ regression did NOT demote us. Live entry is still `ft-lora32-v1` at
 ### v1 (12 May 03:42) — submission plumbing only
 
 Empty-string baseline. Just verified the submission pipeline works end-to-end:
-schema, port, Docker layer, GCP push, evaluator response.
+schema, port, Docker layer, GCP push, and evaluator response.
 
 ### norm-v1 (12 May 16:23) — first real WER
 
-- Wired faster-whisper distil-large-v3, CT2 float16, loaded once at startup.
-- Added `_digits_to_words` because the scorer doesn't normalize digits and
-  Whisper outputs digits while references spell them out ("seventy two" vs
-  "72", "zero six hundred" vs "0600", "seven niner" vs "7-9-er").
+- Wired up faster-whisper distil-large-v3, CTranslate2 float16, loaded once at startup.
+- Added `_digits_to_words` because the scorer doesn't normalise digits and
+  Whisper outputs digits while references spell them out (`"seventy two"` vs
+  `"72"`, `"zero six hundred"` vs `"0600"`, `"seven niner"` vs `"7-9-er"`).
 - Audio-level silence guard to avoid hallucinations on empty clips.
-- Result: official 0.877, local Eng-WER 0.0759. Local→official gap +0.047
-  absolute — large because some inference flags weren't yet tuned.
+- Result: official 0.877, local English WER 0.0759. Local→official gap +0.047
+  absolute — large because some inference flags were not yet tuned.
 
 ### vad-off-v1 (12 May 20:00) — the inference-side breakthrough
 
-Dropped the `BatchedInferencePipeline` path (it forces Silero VAD which was
+Dropped the `BatchedInferencePipeline` path (it forces Silero VAD, which was
 truncating long clips — see [ERROR_ANALYSIS.md "VAD truncation"](../training/asr/ERROR_ANALYSIS.md))
 and switched to plain `model.transcribe(..., vad_filter=False)`. Added
 Whisper-side hallucination guards (`no_speech_threshold=0.6`,
 `log_prob_threshold=-1.0`, `compression_ratio_threshold=2.4`, `temperature=0.0`)
 and tightened the audio-level silence guard for sub-1.5s clips.
 
-`_digits_to_words` extended: spoken ordinals (`23rd → "twenty third"` not
-`"twenty threerd"`), coordinate-safe decimal regex (`"1.1.7"` doesn't get
+`_digits_to_words` extended: spoken ordinals (`23rd` → `"twenty third"`, not
+`"twenty threerd"`) and a coordinate-safe decimal regex (`"1.1.7"` doesn't get
 half-rewritten as `"one point one.seven"`).
 
 Result: **official 0.938** (+0.061 absolute), local WER 0.0554. Local→official
-gap shrank to **+0.007 absolute** — the inference fixes generalize cleanly.
+gap shrank to **+0.007 absolute** — the inference fixes generalise cleanly.
 
 ### vad-off-v2 (12 May, NOT submitted) — slang prompt reversal experiment
 
@@ -952,43 +958,43 @@ truncation.
 
 Result: **wrong direction.** Local WER regressed 0.0554 → 0.0604.
 
-Likely cause: putting `cyanite`, `sarento`, `phyrexis`, `mewan` immediately
+Likely cause: placing `cyanite`, `sarento`, `phyrexis`, `mewan` immediately
 before decode-start over-primes the decoder, causing false-positive
 hallucinations of those tokens on unrelated audio. The original ordering
-(highest-frequency first) left them in the truncated head and rarer terms
+(highest-frequency first) left them in the truncated head with rarer terms
 near the end — a weaker, less biased prior that worked better.
 
-Action: reverted `extract_slang.py` to write highest-frequency first.
+Action: reverted `extract_slang.py` to write highest-frequency terms first.
 
 ### ft-lora32-v1 (13 May 11:22) — LoRA fine-tune ships, crosses 0.95
 
 3-epoch LoRA rank-32 fine-tune of `distil-whisper/distil-large-v3` decoder
 attention only. Training took ~7 hours on Workbench T4 at 19.6 s/step (the
-README's 1.5–2 hr estimate was off because transformers 4.57.6 is heavier per
+README's 1.5–2 hr estimate was off because `transformers 4.57.6` is heavier per
 step than the 4.46-era baseline).
 
 Training health: loss 1.18 → 0.65 → 0.38 → ... → 0.25, smooth descent, stable
-`grad_norm` ~0.4–0.6 throughout. Val WER at the two eval points:
+`grad_norm` ~0.4–0.6 throughout. Validation WER at the two eval points:
 
 | Step | Epoch | Val WER (held-out 409 clips) |
 |---:|---:|---:|
 | 500 | 1.29 | 0.04982 |
 | 1000 | 2.58 | **0.04662** ← best, used as final |
 
-Local Eng-WER on the full 4110-clip test set was 0.0299 — looks great but is
-**leaky** (the LoRA trained on 90% of those clips). The cleaner generalization
-proxy is the val WER 0.04662.
+Local English WER on the full 4110-clip test set was 0.0299 — looks great but is
+**leaky** (the LoRA trained on 90% of those clips). The cleaner generalisation
+proxy is the validation WER of 0.04662.
 
 Result: **official 0.957 / 0.849**. Held-out val WER 0.04662 → official ~0.043
-means the generalization gap turned out **negative** (val over-estimated
-official by ~0.0036). The official 400-clip distribution is slightly easier
-than the local held-out slice. Useful piece of leaderboard intuition.
+means the generalisation gap turned out **negative** (val over-estimated the
+official score by ~0.0036). The official 400-clip distribution is slightly easier
+than the local held-out slice — a useful data point for leaderboard intuition.
 
-Inference path unchanged from `vad-off-v1`; only the weights are different.
+Inference path unchanged from `vad-off-v1`; only the weights differ.
 
-### ft-lora32-int8f16 (13 May 12:45, NOT improving leaderboard) — int8 quantization fails
+### ft-lora32-int8f16 (13 May 12:45, NOT improving leaderboard) — int8 quantisation fails
 
-Re-exported the same LoRA-merged checkpoint at `int8_float16` quantization,
+Re-exported the same LoRA-merged checkpoint at `int8_float16` quantisation,
 expecting `speed 0.849 → 0.90+` with `accuracy delta ≤ 0.005` per the README.
 
 Reality: **accuracy −0.034**, speed only +0.007. Worst-of-both trade.
@@ -999,24 +1005,24 @@ Reality: **accuracy −0.034**, speed only +0.007. Worst-of-both trade.
 | `ft-lora32-int8f16` | 0.0551 | 0.923 | 0.856 |
 | Δ | +0.025 | −0.034 | +0.007 |
 
-Root cause: Whisper's decoder is more quantization-sensitive than the README
-assumed, likely because of the ~51866-token output vocab and the
-LoRA-merged weight distribution amplifying int8 quantization noise.
+Root cause: Whisper's decoder is more quantisation-sensitive than the README
+assumed, likely because of the ~51,866-token output vocab and the
+LoRA-merged weight distribution amplifying int8 quantisation noise.
 
-Leaderboard kept the higher `ft-lora32-v1` score, so no rollback was needed.
+The leaderboard kept the higher `ft-lora32-v1` score, so no rollback was needed.
 The `int8_float16` lever for the speed score is **off the table** for this
 checkpoint.
 
 ## CODEX recommendation
 
-ASR is no longer the section that should receive major engineering time. The
+ASR is no longer the area that should receive major engineering time. The
 current `ft-lora32-v1` image already gives a strong ASR blended score:
 
 ```text
 0.75 * accuracy 0.957 + 0.25 * speed 0.849 = 0.930 blended
 ```
 
-Because ASR is only 20% of the qualifier, the live contribution is about
+Because ASR is only 20% of the qualifier total, the live contribution is about
 `0.186`. The remaining theoretical gain from perfecting ASR is real but small:
 
 ```text
@@ -1025,7 +1031,7 @@ Perfect ASR contribution:   0.20 * 1.000 = 0.200
 Remaining headroom:         ~0.014 overall qualifier score
 ```
 
-That means the way forward is **protect the shipped peak, then only run short
+That means the way forward is to **protect the shipped peak, then only run short
 A/B tests when AE/NLP/CV are blocked**. Do not spend another long training cycle
 here unless the team explicitly decides ASR is the bottleneck.
 
@@ -1034,10 +1040,10 @@ Recommended ASR path:
 1. **Keep `ft-lora32-v1` as the shipped baseline.** It has `0 / 400` errors,
    official `0.957 / 0.849`, and the best known blended score. Do not replace it
    unless a new tag beats it on official submission.
-2. **Ignore CT2 int8 speed quantization for this checkpoint.**
+2. **Ignore CT2 int8 speed quantisation for this checkpoint.**
    `ft-lora32-int8f16` already proved the trade is bad: accuracy fell
-   `0.957 -> 0.923` while speed barely moved `0.849 -> 0.856`. That is a
-   blended-score loss, not an optimization.
+   `0.957 → 0.923` while speed barely moved `0.849 → 0.856`. That is a
+   blended-score loss, not an optimisation.
 3. **Run one low-cost inference A/B if idle: `beam_size=2`.** Submit only if the
    local English WER improves enough that the speed hit is likely worth it. Rule
    of thumb: for blended score, `0.75 * accuracy_gain` must beat
@@ -1048,11 +1054,11 @@ Recommended ASR path:
    a little decode overhead and reduce proper-noun over-priming. Reject it
    quickly if local English WER worsens or in-world noun errors increase.
 5. **Only consider rank-64 / 5-epoch LoRA if the team needs the last ASR point.**
-   Val WER was still falling, so there may be `0.005-0.010` accuracy left, but it
+   Val WER was still falling, so there may be `0.005–0.010` accuracy left, but it
    costs another long Workbench run and does not fix the speed side. It is a
    late-stage polish move, not the next best competition move.
-6. **Do not ensemble, TTA, or re-enable VAD.** Ensembles and speed-perturb voting
-   likely lower blended score by doubling inference time; VAD already caused the
+6. **Do not ensemble, use TTA (test-time augmentation), or re-enable VAD.** Ensembles and speed-perturb voting
+   likely lower the blended score by doubling inference time; VAD already caused the
    dominant long-clip truncation failure.
 
 Submission gate for any ASR experiment:
@@ -1063,24 +1069,24 @@ Local signal: track english error rate (WER), not local 1 - MER
 Fallback: leaderboard keeps ft-lora32-v1 if an experiment regresses
 ```
 
-Practically: ASR can maybe contribute another `0.002-0.006` overall with a
+In practice: ASR can maybe contribute another `0.002–0.006` overall with a
 lucky beam/prompt tweak, but AE/NLP/CV have larger reachable headroom. Treat ASR
 as a stable high-scoring module and use it as a reliability anchor.
 
 ## Gotchas hit (8 so far, all patched)
 
-All eight transformers / PEFT / Workbench gotchas the project has hit are
+All eight `transformers` / PEFT / Workbench gotchas the project has hit are
 documented inline in [../training/asr/README.md "Known gotchas"](../training/asr/README.md).
 Summary list:
 
-1. PEFT + gradient checkpointing → `element 0 of tensors does not require grad`. Fix: `enable_input_require_grads()` BEFORE `get_peft_model`.
-2. `evaluation_strategy=` → `eval_strategy=` rename in transformers 4.46+.
-3. `tokenizer=` → `processing_class=` rename in transformers 4.46+.
-4. HF `datasets` Audio decoding wants `torchcodec` which needs FFmpeg system libs. Fix: `Audio(decode=False)` + soundfile in collator.
+1. PEFT + gradient checkpointing → `element 0 of tensors does not require grad`. Fix: call `enable_input_require_grads()` BEFORE `get_peft_model`.
+2. `evaluation_strategy=` → `eval_strategy=` rename in `transformers 4.46+`.
+3. `tokenizer=` → `processing_class=` rename in `transformers 4.46+`.
+4. HF `datasets` Audio decoding wants `torchcodec`, which needs FFmpeg system libs. Fix: `Audio(decode=False)` + soundfile in the collator.
 5. Workbench env got bumped to `transformers 5.8.0` overnight on 13 May → Whisper forward signature changed. Fix: `pip install --user 'transformers>=4.46,<5.0'`.
-6. `LoraConfig(task_type=TaskType.SEQ_2_SEQ_LM)` makes `PeftModelForSeq2SeqLM.forward` inject `input_ids=None` which transformers 4.57+ rejects on Whisper. Fix: drop `task_type` from the config.
-7. `ct2-transformers-converter` errors if `--output_dir` exists at all (even empty). Fix: pass `--force`.
-8. `export_ct2.py` wipe-loop deleted the slang prompt before the copy-back step when `--slang-file` lived inside `--output-dir`. Silent — only a `WARN` was emitted. Fix: buffer slang bytes in memory BEFORE the wipe.
+6. `LoraConfig(task_type=TaskType.SEQ_2_SEQ_LM)` makes `PeftModelForSeq2SeqLM.forward` inject `input_ids=None`, which `transformers 4.57+` rejects on Whisper. Fix: drop `task_type` from the config.
+7. `ct2-transformers-converter` errors if `--output_dir` already exists (even if empty). Fix: pass `--force`.
+8. `export_ct2.py` wipe-loop deleted the slang prompt before the copy-back step when `--slang-file` lived inside `--output-dir`. This was silent — only a `WARN` was emitted. Fix: buffer slang bytes in memory BEFORE the wipe.
 
 The last one (gotcha 8) shipped the broken `ft-lora32-int8f16` *image* before
 we caught it, but `extract_slang.py` regenerates the prompt deterministically
@@ -1089,35 +1095,35 @@ so recovery was fast.
 ## Levers we explicitly did NOT pull (and why)
 
 - **Rank-64 / 5-epoch LoRA escalation** — `ft-lora32-v1` already crossed
-  0.95; the marginal +0.005–0.010 isn't worth another 7-hour training run
+  0.95; the marginal +0.005–0.010 gain isn't worth another 7-hour training run
   given the deadline and the bigger headroom on AE/NLP/CV.
 - **Encoder unfreeze for one low-LR pass** — same reasoning. Modest gain,
   long training time.
-- **`beam_size=2`** — would buy +0.002–0.005 WER for a small speed hit. Zero
-  downside since leaderboard keeps high score, but unclear it pushes us
+- **`beam_size=2`** — would buy +0.002–0.005 WER improvement for a small speed hit. Zero
+  downside since the leaderboard keeps the high score, but unclear it pushes us
   meaningfully past 0.957.
-- **Ensemble (distil-large-v3 + whisper-large-v3 with ROVER vote)** — ~2×
+- **Ensemble (`distil-large-v3` + `whisper-large-v3` with ROVER vote)** — ~2×
   inference cost would tank the speed score; only justified if accuracy was
-  bottlenecking us, which it isn't.
-- **TTA (test-time augmentation: speed-perturb + vote)** — same problem,
+  the bottleneck, which it isn't.
+- **TTA (test-time augmentation: speed-perturb + vote)** — same problem:
   doubles inference cost.
-- **Pure `int8` (no float16 fallback)** — int8_float16 already regressed
+- **Pure `int8` (no float16 fallback)** — `int8_float16` already regressed
   accuracy; pure int8 would almost certainly be worse.
 - **Trim slang prompt to top-50** — small speed lever, unclear accuracy
-  impact, not worth experimenting on with the deadline approaching.
+  impact, not worth experimenting with the deadline approaching.
 
 ## State of remaining ASR work
 
 ASR is **parked at `nemo-ft-v3` (`0.970 / 0.947`, blended `0.96425`)** — the
-shipped high since 27 May. Prior tie (`nemo-zs-v7` / `nemo-zs-v6` at blended
+shipped high since 27 May. The prior tie (`nemo-zs-v7` / `nemo-zs-v6` at blended
 `0.9620`) is superseded.
 
 Last experiment (02 Jun 2026, Semis prep): **NGPU-LM n-gram shallow fusion** —
-big local gain (T4 WER `0.0209 -> 0.0124`) but `malsd_batch` raises on the cloud
+big local gain (T4 WER `0.0209` → `0.0124`) but `malsd_batch` raises on the cloud
 GPU, so cloud falls back to greedy (`0.970 / 0.943`, blended `0.9633` < gate).
-**Rejected / parked**; protective greedy fallback kept in the manager as a
+**Rejected / parked**; the protective greedy fallback is kept in the manager as a
 permanent safety net. See "NGPU-LM n-gram fusion prototype → Result" above for
-the full postmortem and the one resume-probe (local `maes` timing) if revisited.
+the full postmortem and the one resume probe (local `maes` timing) if revisited.
 
 Marginal ASR time is no longer justified. Do not run beam, prompt, model, LM, or
 runtime experiments unless organisers change scoring or a hard failure appears.

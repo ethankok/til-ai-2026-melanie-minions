@@ -46,13 +46,13 @@ This repo is a public showcase of the engineering: what we shipped, what we trie
 
 | Task | Weight | What we shipped | Score / placement |
 |------|--------|-----------------|-------------------|
-| **AE** (autonomous exploration / RL) | 40% | Dijkstra heuristic core + confidence-gated PPO consultant (`confpol-semis2b-u75`) + CEM-tuned planner weights (`g02-sample-08`) | Cloud 0.382 acc-axis / 0.746 speed; **1st in both live hardware test matches** (≈1.5× margins) |
-| **NLP** (retrieval QA) | 20% | `v28-optimized-bm25` — pure tuned BM25 hybrid retrieval, no neural models | **0.984 acc / 0.985 speed** (blended 0.984), 0/700 errors |
-| **ASR** (speech recognition) | 20% | `nemo-ft-v3` — fine-tuned Parakeet-TDT-0.6B-v2 + post-processing rules | 0.970 acc / 0.947 speed (blended 0.964) |
-| **CV** (object detection, 18-class LTWH) | 20% | `yolo11l-1408` — YOLOv11l, upscale-at-inference | 0.684 acc / 0.937 speed (blended 0.747) |
-| **Noise** (adversarial perturbation) | Finals tool | `level10-detector-stress` — AdvGAN + detector-stress overlay | 1.000 / 0.947 speed; Finals-only CV sabotage |
+| **AE** (autonomous exploration / RL) | 40% | Dijkstra heuristic core + confidence-gated PPO consultant (`confpol-semis2b-u75`) + CEM-tuned planner weights (`g02-sample-08`) | Qualifiers 0.638 acc-axis / 0.847 speed; **1st in both live hardware test matches** (≈1.5× margins) |
+| **NLP** (retrieval QA) | 20% | `v28-optimized-bm25` — tuned BM25 retrieval + universal adversarial trigger as the answer; zero neural models at inference | **0.984 acc / 0.985 speed** (blended 0.984), 0/700 errors |
+| **ASR** (speech recognition) | 20% | `nemo-ft-v3` — fine-tuned Parakeet-TDT-0.6B-v2 + post-processing rules | **0.970 acc / 0.947 speed** (blended 0.964) |
+| **CV** (object detection, 18-class LTWH) | 20% | `yolo11l-1408` — YOLOv11l trained at 1024px, served at 1408px | **0.684 acc / 0.937 speed** (blended 0.747) |
+| **Noise** (adversarial perturbation) | Finals tool | `level10-detector-stress` — AdvGAN + detector-stress overlay | **1.000 fairness / 0.947 speed**; Finals-only CV sabotage |
 
-*Each task is scored 75% accuracy/reward + 25% speed. Estimated blended Qualifier total ≈ 0.72.*
+*Each task is scored 75% accuracy/reward + 25% speed. Blended Qualifier total = 0.814.*
 
 ---
 
@@ -62,8 +62,8 @@ DSTA BrainHack **TIL-AI 2026** poses five independent ML tasks, each delivered a
 
 | Task   | What it is | Weight |
 |--------|-----------|--------|
-| **AE** | Autonomous-agent bomb-and-resource wargame (RL/heuristics) | 40% |
-| **ASR** | Speech-to-text transcription | 20% |
+| **AE** | Autonomous-agent bomb-and-resource game, Bomberman-style (RL/heuristics) | 40% |
+| **ASR** | English speech-to-text transcription | 20% |
 | **CV** | 18-class object detection (LTWH boxes) | 20% |
 | **NLP** | Retrieval-augmented question answering | 20% |
 | **Noise** | Adversarial image perturbation | Finals disruption tool, no direct Qualifier reward |
@@ -89,7 +89,7 @@ TIL/
 │       ├── <task>_manager.py   ← our inference / game logic (what we edit)
 │       └── <task>_server.py    ← thin FastAPI wrapper (fixed schema)
 │
-├── docs/      competitor learnings & docs orientation
+├── docs/      orientation + RESULTS.md (cross-task scoreboard & submission history)
 ├── training/  offline training & evaluation scripts (not shipped in containers)
 ├── test/      pytest-style per-task tests (test_<task>.py), hit the running container
 │
@@ -103,7 +103,7 @@ Each task container speaks the same JSON contract used in Qualifiers, so the Fin
 
 ## AE — Autonomous Exploration (40%, the deep end)
 
-**The task.** A partially-observable grid wargame: farm resources → build bombs → destroy enemy bases, scored on **relative placement** against other teams in a melee, not absolute reward.
+**The task.** A partially-observable grid wargame: farm resources → build bombs → destroy enemy bases, scored on **relative placement** against other teams in a melee, not absolute reward. Basically Bomberman with bases!
 
 **Key technologies**
 - Python
@@ -111,10 +111,10 @@ Each task container speaks the same JSON contract used in Qualifiers, so the Fin
 - PyTorch CNN-PPO confidence-gated consultant policy
 - CEM (cross-entropy method) black-box search over planner weights
 
-**What shipped.** The core is a hand-coded **Dijkstra-based greedy scorer** (item / mission / base-destruction values, base-tether defense, calibrated bomb cost) — heuristics, because they *transfer*. On top sits a **confidence-gated PPO consultant** (`confpol-semis2b-u75`): a policy trained only on the heuristic's low-confidence ticks, consulted only when its margin clears a threshold. It was warm-started from a native checkpoint and fine-tuned on a **foreign-opponent curriculum** (an external A\* bot, self-play snapshots, aggressive/anti-aggressive proxies) to learn robustness rather than mirror-match quirks. Final tuning came from a **CEM black-box search over 10 scalar planner weights** (`g02-sample-08`, e.g. tether 1.31 / base 80) — the first candidate to clear *all* of: local placement, held-out opponent-composition gap, and a cloud non-crater check. On Blackwell competition hardware the deploy went **1st place in both live hardware test matches at ~1.5× margin**.
+**What shipped.** The core is a hand-coded **Dijkstra-based greedy scorer** (item / mission / base-destruction values, base-tether defense, calibrated bomb cost) — heuristics. On top sits a **confidence-gated PPO consultant** (`confpol-semis2b-u75`): a policy trained only on the heuristic's low-confidence ticks, consulted only when its margin clears a threshold. It was warm-started from a native checkpoint and fine-tuned on a **foreign-opponent curriculum** (an external A\* bot, self-play snapshots, aggressive/anti-aggressive proxies) to learn robustness rather than mirror-match quirks. Final tuning came from a **CEM black-box search over 10 scalar planner weights** (`g02-sample-08`, e.g. tether 1.31 / base 80) — the first candidate to clear *all* of: local placement, held-out opponent-composition gap, and a cloud non-crater check. On Blackwell competition hardware the deploy went **1st place in both live hardware test matches at ~1.5× margin against 2nd**.
 
-**Dead-ends (there were many).**
-- **Every learned-policy line died the same death — local-opponent overfit.** Behavior cloning (val_acc 0.90 local → 0.36 cloud), self-play RL, a 704k-param belief-map CNN (local +0.023 → cloud **crashed −0.27**), tactical macro-policies — all improved local eval while cloud stayed flat at ~0.41. More parameters meant more overfit surface, not less. The lesson, echoed by competitors and the prior year's postmortem: **hand-coded heuristics ship; RL overfits.**
+**Dead-ends (there were so very many, literally 500+ commits and attempts).**
+- **Every learned-policy line died the same death — local-opponent overfit.** Behavior cloning (val_acc 0.90 local → 0.36 cloud), self-play RL, a 704k-param belief-map CNN (local +0.023 → cloud **crashed −0.27**), tactical macro-policies — all improved local eval while cloud stayed flat at ~0.41. More parameters meant more overfit surface, not less. I was so stuck that I went to scour til-25 public repos to see if they had takeways from their RL task, all that echoed was: **hand-coded heuristics ship; RL overfits.**
 - **MCTS-light lookahead** timed out (2–4s/tick vs budget); even with an 80ms hard cap it regressed both speed and accuracy — the stationary-opponent assumption costs without paying.
 - A key meta-lesson: **synthetic gates misrank.** Our melee gate once promoted `semis2c` over `semis2b`; an on-hardware A/B on the deterministic Finals seed reversed it (516 vs 411). On-hardware runs became the only trusted arbiter.
 
@@ -122,16 +122,21 @@ Each task container speaks the same JSON contract used in Qualifiers, so the Fin
 
 ## NLP — Retrieval-Augmented QA (20%)
 
-**The task.** Retrieval-augmented question answering over a document corpus, scored on answer-equivalence accuracy plus speed.
+**The task.** Retrieval-augmented question answering over a ~300-document corpus: return the top-3 source document IDs plus an answer string. Retrieval gates everything (a miss scores 0), and answers are judged by a **ModernBERT answer-equivalence classifier** at a 0.9 acceptance threshold.
 
 **Key technologies**
 - Python
-- `rank_bm25` — pure lexical BM25 retrieval (no neural retriever or reader)
-- `transformers` / `sentencepiece` (tokenization only in the shipped image)
+- `rank_bm25` — tuned document- + passage-level BM25 (the only retrieval in the shipped image)
+- HotFlip universal adversarial trigger (Wallace 2019), optimized white-box against the bundled ModernBERT judge
 
-**What shipped.** The winning move was *removing* models, not adding them. After a 14-May eval change (answer-equivalence threshold raised 0.5 → 0.9, leaderboard wiped), every fancy reader and reranker we tried hit a wall. The shipped `v28-optimized-bm25` is **pure BM25** — document-level (k1=2.05) fused with passage-level (k1=1.5, 3-sentence windows, 0.6 weight) — no neural retrieval at all. Result: **0.984 accuracy and 0.985 speed**, a Pareto win, because skipping model load gave near-ceiling speed.
+**What we tried first.** Two weeks climbing the conventional RAG ladder, against an eval that got harsher mid-competition (14 May: equivalence threshold raised 0.5 → 0.9, leaderboard wiped):
+- **Extractive stack** — hybrid BM25+BGE retrieval → bge-reranker → fine-tuned RoBERTa-large reader. Fine-tuning on inference-matched chunks was the one real lever (+0.16 cloud); plateaued at **0.683**.
+- **Post-processing layers** — answer canonicalizers and candidate rankers all *regressed*: they optimized exact-match proxies that didn't match the 0.9 neural judge.
+- **Generative readers** — Qwen2.5-7B-AWQ reached **0.734** accuracy but its 0.286 speed score sank the blend; Qwen3-4B/8B timed out on the cloud base image; a QLoRA fine-tune of Qwen3-8B trained cleanly but was unshippable from the T4 (vLLM LoRA-kernel crashes, quantized-merge dead-ends).
 
-**Dead-ends.** A full hybrid BM25+BGE + fine-tuned RoBERTa reader (peaked ~0.68), then generative LLMs (Qwen2.5-7B hit 0.734 accuracy but **speed cost sank the blended score**), and a HotFlip **adversarial trigger** against the ModernBERT answer-equivalence judge (0.951 acc — proving the judge had exploitable features — but slower than pure retrieval). A QLoRA fine-tune of Qwen3-8B trained cleanly but was unshippable from the T4 (vLLM LoRA-kernel crashes).
+**Then we found the cheese.** The answer-equivalence judge shipped *with the eval harness* — white-box weights — and the organisers confirmed any solution that runs and scores is allowed. HotFlip token replacement found a fixed **16-token universal adversarial trigger** that pegs the judge's equivalence probability at ~0.999 regardless of question, reference, or candidate content. It transferred to the cloud checkpoint first try — **0.683 → 0.951** overnight — and later survived an evaluator tokenization patch unchanged.
+
+**…and just used it.** With the trigger answering every question, the score reduced to retrieval hit-rate × trigger pass-rate plus speed, so every neural model became dead weight. We deleted them one by one: the RoBERTa reader, then the reranker and dense retriever. The shipped `v28-optimized-bm25` is just **tuned BM25** — document-level (k1=2.05) fused with 3-sentence passage windows (0.6 weight) — returning top-3 doc IDs and the trigger string: **0.984 acc / 0.985 speed**, 0/700 errors, with near-ceiling speed because nothing neural ever loads.
 
 ---
 
@@ -180,13 +185,13 @@ Each task container speaks the same JSON contract used in Qualifiers, so the Fin
 
 ## Engineering notes & docs
 
-The real story lives in the per-task **`NOTES.md`** files (`ae/NOTES.md`, `asr/NOTES.md`, `cv/NOTES.md`, `nlp/NOTES.md`, `noise/NOTES.md`): decisions, gotchas, and dead-ends for each task, plus our extracted **[`docs/competitor-learnings/`](docs/competitor-learnings/)** writeups. The codebase was built with a gated *brainstorm → spec → plan → eval → ship* workflow, with experimental features kept behind default-OFF flags so the deploy was never at risk.
+The real story lives in the per-task **`NOTES.md`** files ([ae/NOTES.md](ae/NOTES.md), [asr/NOTES.md](asr/NOTES.md), [cv/NOTES.md](cv/NOTES.md), [nlp/NOTES.md](nlp/NOTES.md), [noise/NOTES.md](noise/NOTES.md)): per-task working logs of decisions, gotchas, and dead-ends. [docs/RESULTS.md](docs/RESULTS.md) is the cross-task scoreboard with the full cloud submission history. The codebase was built with a gated *brainstorm → spec → plan → eval → ship* workflow, with experimental features kept behind default-OFF flags so the deploy was never at risk.
 
 ---
 
 ## Final words
 
-A few things this competition reinforced. **Hand-coded heuristics transfer; learned policies overfit the local opponent** — every RL line we tried for AE improved local eval while cloud performance flattened or collapsed. **Local eval ≠ cloud ≠ competition hardware**: the AE melee gate once misranked two candidates, and only an on-hardware A/B on the real Finals seed caught it; the ASR n-gram LM was a real local win that didn't survive the cloud GPU. **Relative-rank scoring changes what "better" means** — for AE, a configuration that scores less absolute reward can still place higher, which makes single-agent reward the wrong optimization target. And sometimes the best move is *removing* a model rather than adding one, as NLP's pure-BM25 line showed against every neural retriever and reranker we tried.
+A few things this competition reinforced. **Hand-coded heuristics transfer; learned policies overfit the local opponent** — every RL line we tried for AE improved local eval while cloud performance flattened or collapsed. **Local eval ≠ cloud ≠ competition hardware**: the AE melee gate once misranked two candidates, and only an on-hardware A/B on the real Finals seed caught it; the ASR n-gram LM was a real local win that didn't survive the cloud GPU. **Relative-rank scoring changes what "better" means** — for AE, a configuration that scores less absolute reward can still place higher, which makes single-agent reward the wrong optimization target. And **the evaluator is part of the problem statement**: NLP's biggest single jump came not from a better reader but from attacking the white-box answer-equivalence judge directly — after which the winning move was *removing* models, not adding them.
 
 Thanks to DSTA and the TIL-AI organisers for running the competition.
 

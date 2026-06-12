@@ -3,14 +3,15 @@
 ### ⚠ Disruption MEASURED (8 June 2026) — our noise barely dents a detector (~6–9% mAP)
 
 First-ever quantitative check that the shipped noise actually lowers a *detector's*
-accuracy (we'd only ever verified it passes the fairness gate). Harness
+accuracy (we had only ever verified it passes the fairness gate). The harness
 `training/noise/measure_disruption.py` (+ `test/test_noise_disruption.py`, 4 green)
-runs real CV images through our champion YOLO11l twice — clean vs after
-`NoiseManager.noise()` — and reports the COCO mAP drop. Runs **fully local on CPU**
-(AdvGAN generator + COCO data are local; pulled yolo11l weights
-`cv_next_iter_yolo11l_896_plusval_v1.tgz` from the team bucket; **note: the `896-plusval`
-sibling, not the exact deployed `best.pt`/1408 — valid as an in-house victim, absolute
-mAP is inflated because the local `data/novice/cv` images look in-distribution**).
+runs real CV images through our champion YOLO11l twice — clean vs. after
+`NoiseManager.noise()` — and reports the COCO mAP drop. It runs **fully local on CPU**
+(the AdvGAN generator and COCO data are local; YOLO11l weights
+`cv_next_iter_yolo11l_896_plusval_v1.tgz` were pulled from the team bucket; **note: this
+is the `896-plusval` sibling, not the exact deployed `best.pt`/1408 — valid as an
+in-house victim, but absolute mAP is inflated because the local `data/novice/cv` images
+look in-distribution**).
 
 Strength sweep, n=120, identity category map + deploy conf/iou (artifacts
 `training/noise/data/disruption-strength{1.0,2.0,3.0}.json`):
@@ -22,16 +23,16 @@ Strength sweep, n=120, identity category map + deploy conf/iou (artifacts
 | 2.0 | 0.891 (−8.9%) | 0.944 (−5.6%) | 437 | 0.909 |
 | 3.0 | 0.832 (−15.0%) | 0.891 (−10.9%) | 421 | 0.902 |
 
-**Takeaways:** (1) the disruption is **weak** — deployed noise costs the victim only
+**Takeaways:** (1) The disruption is **weak** — deployed noise costs the victim only
 ~6% mAP@50 and doesn't even suppress detections (444→450). This **confirms the TIL25
-cross-pollination concern**: AdvGAN trained against ResNet18 *classification* on
-Imagenette transfers poorly to *detectors* (the wrong gradient). (2) **Bumping
+cross-pollination concern**: an AdvGAN trained against ResNet18 *classification* on
+Imagenette transfers poorly to *detectors* because it attacks the wrong gradient. (2) **Bumping
 strength 1→2 is FLAT** (no benefit from spending more budget in that range) — so the
-"spend unused L2 budget" lever is low-leverage here; 1→3 ~doubles the drop but is
+"spend unused L2 budget" lever is low-leverage here; 1→3 roughly doubles the drop but is
 likely past the fairness caps (NOT re-validated — any strength bump must re-pass the
 500/500 fairness gate). (3) The real lever is **retrain the generator against a
 detector objective** (high-effort, deferred — see the TIL25 scan). Two harness bugs
-fixed en route: COCOeval's `id==0` unmatched-sentinel collision, and the manager's
+were fixed along the way: COCOeval's `id==0` unmatched-sentinel collision, and the manager's
 category map (deploy uses identity `[0..17]`, not the generic-COCO default).
 
 Last updated: 24 May 2026 — **Level 10 detector-stress shipped.**
@@ -96,16 +97,16 @@ Plain JPEG re-encode baseline; superseded by `level9` and then
 
 ## Why the architecture changed
 
-The Level 7.1/8 line iteratively crafted noise per query using PGD across
-an ensemble of surrogate classifiers (ResNet18, MobileNetV3, SqueezeNet,
-ViT-B/16). That's 20 PGD steps × multiple surrogates per request, which
-costs full forward+backward passes on every input. Empirically this would
+The Level 7.1/8 line iteratively crafted noise per query using Projected Gradient
+Descent (PGD) across an ensemble of surrogate classifiers (ResNet18, MobileNetV3,
+SqueezeNet, ViT-B/16). That approach requires 20 PGD steps × multiple surrogates per
+request, which costs full forward+backward passes on every input. Empirically this would
 have walked into the Qualifier 30-minute speed wall the moment the test
-set got larger than a few dozen images.
+set grew beyond a few dozen images.
 
 Level 9 (AdvGAN) trains a small generator network offline so that
 inference is a single forward pass — sub-millisecond on the deployed
-GPU. The trained generator should produce a near-optimal perturbation
+GPU. The trained generator produces a near-optimal perturbation
 pattern for each input without per-query optimization.
 
 ## Submission history
@@ -121,16 +122,16 @@ latest                    12/05 03:54        1.000   0.970   0 / 500   Clean JPE
 
 `level10-detector-stress` is the current shipped tool. It spends much more
 of the legal distortion budget than Level 9 while still passing fairness
-(Workbench SSIM-inside min `0.4118` vs floor `0.3`), so do not tweak it
+(Workbench SSIM-inside min `0.4118` vs. floor `0.3`), so do not tweak it
 blindly before a match. If Finals shows the current perturbation is not
 degrading opponents' CV enough, the next useful levers are:
 
 - Re-train the Generator against a detector closer to the competition's
-  target distribution (current training target is ResNet18 / Imagenette
+  target distribution (the current training target is ResNet18 / Imagenette
   — see `train_advgan.py`). YOLO-class objectives would likely transfer
   better than ImageNet classification gradients.
 - The current architecture is tiny (~14 KB weights, 4 conv layers).
-  Headroom on capacity if the validator allows it.
+  There is headroom on capacity if the validator allows it.
 - Epsilon stays at `32/255`; further strength should come from a
   target-aligned generator/objective rather than blindly lowering SSIM
   margin.
@@ -149,7 +150,7 @@ clamps total perturbation to the existing `epsilon = 32/255` and re-encodes
 as JPEG quality 95. `NOISE_MODE=advgan` restores the shipped Level 9 behavior
 without code changes.
 
-Local Mac smoke on a synthetic structured JPEG:
+Local Mac smoke test on a synthetic structured JPEG:
 
 ```text
 NOISE_MODE=advgan          RMSE ~= 4.43

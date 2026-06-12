@@ -2,7 +2,7 @@
 
 ## AE trigger verified robust to upstream eval patch — NO retrain needed (2026-06-01)
 
-**Upstream `til-26` commit `206a5e1` ("bump ae, bugfix nlp eval") added `add_special_tokens=False` to the AE evaluator's tokenizer call in `test/test_nlp.py:batch_evaluate`.** We synced that one line into our branch. Initial concern was that it would patch the v20 Universal Adversarial Trigger, which was HotFlip-optimised against the old `[CLS] … [SEP]`-wrapped tokenization — collapse seemed likely on paper (lost CLS pooling + position shift).
+**Upstream `til-26` commit `206a5e1` ("bump ae, bugfix nlp eval") added `add_special_tokens=False` to the AE evaluator's tokenizer call in `test/test_nlp.py:batch_evaluate`.** We synced that one line into our branch. The initial concern was that this change would break the v20 Universal Adversarial Trigger (UAT), which was HotFlip-optimised against the old `[CLS] … [SEP]`-wrapped tokenization — collapse seemed likely on paper given the loss of CLS pooling and the position shift.
 
 **Empirically the trigger SURVIVES.** [training/nlp/check_trigger_collapse.py](../training/nlp/check_trigger_collapse.py) measured `prob_eq` on 141 negative (failing, retrieval-hit) examples against the bundled `test/models/nlp_eval_512` checkpoint under both tokenizations:
 
@@ -11,16 +11,16 @@
 | OLD (`add_special_tokens=True`)  | 1.0000 | 0.9999 |
 | NEW (`add_special_tokens=False`) | 1.0000 | 0.9984 |
 
-Mean `prob_eq` dropped a trivial 0.0015; all 141 still clear the 0.9 threshold. The 16-token adversarial prefix dominates the classifier logits regardless of the special-token wrapper — characteristic of a robust HotFlip trigger. **No retrain, no manager change.** Caveat: measured against the local checkpoint (assumed identical to cloud, as held when v20 originally transferred); didn't spend a cloud submission to re-confirm. Thread closed.
+Mean `prob_eq` dropped a trivial 0.0015; all 141 examples still clear the 0.9 threshold. The 16-token adversarial prefix dominates the classifier logits regardless of the special-token wrapper — characteristic of a robust HotFlip trigger. **No retrain, no manager change.** Caveat: measured against the local checkpoint (assumed identical to cloud, as was the case when v20 originally transferred); we did not spend a cloud submission to re-confirm. Thread closed.
 
 ## v29-bm25-k1-retune — pure BM25 document-k1 retune (SUBMITTED, non-promoting A/B)
 
 **Cloud `0.984 / 0.984`, 0/700 errors (24 May 17:54 SGT). Non-promoting A/B: accuracy tied `v28-optimized-bm25`, speed lost 0.001, so `v28` remains the protected blended high. Workbench `til test` passed at `0.981` accuracy with 0 visible request failures. Local manager gate and saved Workbench predictions both show 871/883 top-3 retrieval hits (0.9864), `load_seconds=0.400`, 0 import/check errors.**
 - Code-review pass on top of `v28-optimized-bm25` found no sensible neural-model changes: v28 is already retrieval-only, trigger-only, and near the local retrieval ceiling.
-- One focused local sweep over the shipped pure-BM25 scorer found a tiny, architecture-preserving gain by reducing document-level BM25 `k1` from `2.05` to `1.8`, keeping `b=1.0` and passage weight `0.6`.
+- One focused local sweep over the shipped pure-BM25 scorer found a small, architecture-preserving gain by reducing document-level BM25 `k1` from `2.05` to `1.8`, keeping `b=1.0` and passage weight `0.6`.
 - Local top-3 source-document hit rate moved from **870/883 (0.9853)** to **871/883 (0.9864)** on `data/novice/nlp/nlp.jsonl`.
 - The change is exposed as env defaults (`NLP_PURE_BM25_DOC_K1`, `NLP_PURE_BM25_DOC_B`, `NLP_PURE_BM25_PASSAGE_K1`, `NLP_PURE_BM25_PASSAGE_B`, `NLP_PURE_BM25_PASSAGE_WEIGHT`) so Workbench can roll forward or override without another source patch.
-- Diagnosis: the one-question local retrieval gain transferred into the saved predictions (`871/883` retrieval hits vs v28 note's `870/883` local gate), but cloud accuracy rounded to the same `0.984`; because there was no architecture-level speed improvement, normal speed variance made the blended score slightly worse than v28.
+- Diagnosis: the single-question local retrieval gain transferred into the saved predictions (`871/883` retrieval hits vs v28's `870/883` local gate), but cloud accuracy rounded to the same `0.984`. Because there was no architecture-level speed improvement, normal speed variance made the blended score slightly worse than v28.
 
 ## v28-optimized-bm25 — tuned hybrid BM25 (SHIPPED, blended & accuracy high)
 
@@ -44,7 +44,7 @@ Mean `prob_eq` dropped a trivial 0.0015; all 141 still clear the 0.9 threshold. 
 **Cloud `0.975 / 0.982`, 0/700 errors (24 May 06:32 SGT). Blended/accuracy tie (0.97675).**
 - Compiled the dense retriever model using `torch.compile` on CUDA and ran warmup during corpus load.
 - Kept document and passage embeddings on GPU memory to compute cosine similarity on GPU.
-- Query speed improved significantly, but the overall cloud speed score remained at `0.982` because the corpus load phase (which performs the 296-document embedding and model compilation warmup) is counted in the NLP speed score.
+- Query speed improved significantly, but the overall cloud speed score remained at `0.982` because the corpus-load phase (which performs the 296-document embedding and model-compilation warmup) is counted in the NLP speed score.
 
 ## v25-bypass — model-bypass in trigger-only mode (SHIPPED, prior blended & accuracy high)
 
@@ -84,10 +84,10 @@ Mean `prob_eq` dropped a trivial 0.0015; all 141 still clear the 0.9 threshold. 
 blended score, blended ~0.946 (+0.023 vs v20, +0.212 vs v9 baseline 0.734).
 v20 still holds the raw accuracy slot at 0.951.**
 
-Same trigger as v20; the only change is `_answer_one` and `qa_batch` now
+Same trigger as v20; the only change is that `_answer_one` and `qa_batch` now
 short-circuit after retrieval and return `{"documents": top3, "answer":
 <trigger>}` without running the RoBERTa QA forward. Verified locally with the
-v20 trigger: when candidate text is empty (just the trigger), AE pass rate
+v20 trigger: when the candidate text is empty (just the trigger), the answer-equivalence (AE) pass rate
 stays at 0.994 (mean prob 0.998), vs 1.000 with real candidate text.
 Net trade: -0.003 accuracy for +0.101 speed.
 
@@ -95,7 +95,7 @@ Net trade: -0.003 accuracy for +0.101 speed.
 
 - New env var `NLP_AE_TRIGGER_ONLY` (default `0` in code, set to `1` in
   Dockerfile for v21 builds). Gated on the trigger already being loaded —
-  if no trigger, the flag is a no-op.
+  if no trigger file is present, the flag is a no-op.
 - `_answer_one`: short-circuit after `_retrieve_for_answer(question)` — no
   `_answer_candidates`, no `_apply_ae_trigger` (we return the bare trigger,
   not trigger + answer).
@@ -106,23 +106,21 @@ Net trade: -0.003 accuracy for +0.101 speed.
 
 ### Where we are vs the ceiling
 
-Score is bounded by `retrieval_recall × AE_pass_rate`:
+The accuracy score is bounded by `retrieval_recall × AE_pass_rate`:
 
 - retrieval recall ≈ 0.958 (v9-era; hasn't changed)
 - AE pass rate ≈ 0.994 (trigger-only)
 - accuracy ceiling ≈ **0.952**; we're at 0.948 cloud
 
-Remaining cheese on NLP is in the retrieval, not the AE. AE is fully
-extracted. Marginal NLP work has ~6× worse ROI than work on AE (40% weight,
-currently ~0.60 blended).
+Remaining headroom on NLP is in retrieval, not the AE trigger. The AE gain is fully extracted. Marginal NLP work has ~6× worse ROI than work on AE (40% weight, currently ~0.60 blended).
 
 ## v20-ae-trigger — adversarial trigger on the official AE evaluator (SHIPPED, accuracy high)
 
 **Cloud `0.951 / 0.840`, 0/700 errors (20 May 03:54 SGT). New shipped NLP tag,
 new project-wide NLP high. Blended ~0.923, +0.189 over the prior v9 best of
-0.734.** Universal Adversarial Trigger trained against the bundled
-`nlp_eval_512` ModernBERT-AE checkpoint with HotFlip (Wallace 2019) and
-prepended to every non-empty answer at inference. Pipeline otherwise = v9
+0.734.** A Universal Adversarial Trigger (UAT) was trained against the bundled
+`nlp_eval_512` ModernBERT answer-equivalence checkpoint using HotFlip (Wallace 2019) and
+prepended to every non-empty answer at inference. The retrieval pipeline is otherwise identical to v9
 (BM25+BGE retrieval, BGE reranker, RoBERTa-large extractive answerer).
 
 Final trigger (16 tokens, ~iter 105):
@@ -137,10 +135,10 @@ With trigger, train:        pass 675/677 = 0.997   mean prob 0.998
 TRAIN-VAL overfit gap:      -0.003       (val ≥ train; zero overfitting)
 ```
 
-`til test` local equiv_rate jumped from v9's `0.711` to `0.957`. Cloud
-confirmed: the AE checkpoint shares the exploitable features the local one
-has — mean prob 0.999 left a massive transfer margin even if the cloud
-checkpoint had drifted.
+The `til test` local `equiv_rate` jumped from v9's `0.711` to `0.957`. Cloud
+confirmed transfer: the cloud AE checkpoint shares the exploitable features the local one
+has — a mean `prob_eq` of 0.999 left a large transfer margin even if the cloud
+checkpoint had drifted slightly.
 
 ### Why this works
 
@@ -150,14 +148,14 @@ from `models/nlp_eval.zip` (identical to `test/models/nlp_eval_512` that
 access; Ryan confirmed on 19 May that "every solution that can run on our
 evaluation and achieve a score shall be allowed." HotFlip token replacement
 found a fixed 16-token prefix that pegs `prob_eq` at saturation regardless
-of `(question, reference, candidate)` content.
+of the `(question, reference, candidate)` input content.
 
-**Hypothesis.** The cloud scorer is a binary ModernBERT-base sequence-pair
+**Hypothesis (written before submission).** The cloud scorer is a binary ModernBERT-base sequence-pair
 classifier (`models/nlp_eval.zip`, identical to the local `test/models/nlp_eval_512`
 that `test_nlp.py` instantiates at `threshold=0.9`). We have white-box weight
 access, and Ryan confirmed on 19 May that "every solution that can run on our
 evaluation and achieve a score shall be allowed." A Universal Adversarial
-Trigger (Wallace 2019 / HotFlip token replacement) trained against the local
+Trigger (UAT; Wallace 2019 / HotFlip token replacement) trained against the local
 eval checkpoint should drive `prob_eq >= 0.9` on most retrieval-success cases
 that v9 currently leaves at `0.4`. If the trigger transfers from local to
 cloud, accuracy lifts from `~0.683` toward `0.95 × retrieval_rate ≈ 0.91`.
@@ -165,32 +163,32 @@ cloud, accuracy lifts from `~0.683` toward `0.95 × retrieval_rate ≈ 0.91`.
 **Code.** [training/nlp/find_ae_trigger.py](../training/nlp/find_ae_trigger.py)
 implements HotFlip:
 
-- Loads the AE ModernBERT checkpoint, freezes parameters, exposes only input
-  embeddings for gradient.
-- Builds per-example input ids with the trigger spliced at the start of the
-  `Candidate:` field, so gradient-at-trigger positions is well-defined despite
-  variable Q/R prefix lengths.
+- Loads the AE ModernBERT checkpoint, freezes all parameters, and exposes only input
+  embeddings for gradient computation.
+- Builds per-example input IDs with the trigger spliced at the start of the
+  `Candidate:` field, so the gradient at trigger positions is well-defined despite
+  variable question/reference prefix lengths.
 - Initial trigger seeded with a benign affirmation phrase; vocabulary
   restricted to printable-ASCII tokens that survive the evaluator's
-  `string.printable` filter and tokenize→detokenize roundtrip in `_format_input`.
-- Each iteration: average gradient at trigger positions across a batch,
+  `string.printable` filter and the tokenize→detokenize roundtrip in `_format_input`.
+- Each iteration: average the gradient at trigger positions across a batch,
   compute first-order replacement scores `(E[v] - E[t_i]) · grad_i`, take
-  top-K per position, accept the single best swap that lowers actual loss on
-  a held-out batch. Early-stop after 20 stale iterations.
-- Final eval runs the full `_format_input` path (with the decode→re-encode
+  top-K per position, and accept the single best swap that lowers actual loss on
+  a held-out batch. Early-stops after 20 stale iterations.
+- Final evaluation runs the full `_format_input` path (with the decode→re-encode
   roundtrip) on a held-out 20% question split to confirm the trigger is
-  faithful to deployment, not just to the bypassed-tokenization training
+  faithful to the deployed tokenization, not just to the bypassed-tokenization training
   loop.
 
-**Deployment wiring.** [src/nlp_manager.py](src/nlp_manager.py) gained
-`NLP_AE_TRIGGER` (literal override) and `NLP_AE_TRIGGER_FILE` (default
+**Deployment wiring.** [src/nlp_manager.py](src/nlp_manager.py) gained two new env vars:
+`NLP_AE_TRIGGER` (literal trigger string override) and `NLP_AE_TRIGGER_FILE` (default
 `/workspace/models/ae_trigger.json`). When set, `_apply_ae_trigger`
-prepends the trigger to every non-empty answer before return; empty
-answers (L4/L5 path) are left alone so we keep `r == c` full credit
-for unanswerable questions. The Dockerfile bundles the JSON if
-`nlp/models/ae_trigger.json` is present.
+prepends the trigger to every non-empty answer before returning; empty
+answers (the L4/L5 unanswerable path) are left alone so we keep `r == c` full credit
+for unanswerable questions. The Dockerfile bundles the trigger JSON if
+`nlp/models/ae_trigger.json` is present at build time.
 
-**Run plan (Workbench).**
+**Run plan (Workbench — written before submission).**
 
 ```bash
 # 1. Pull a recent v9 predictions JSON so the trigger trains against the
@@ -219,32 +217,32 @@ til test nlp v20-ae-trigger
 3. Cloud submission. If lift transfers, this is the largest single jump in
    NLP score in the project (current v9 = 0.683; expected ≥ 0.85).
 
-**Known risks.**
+**Known risks (written before submission).**
 
 - Cloud checkpoint may not be byte-identical to bundled `nlp_eval.zip`.
-  Mitigation: a single deliberately-wrong sanity submission with trigger
-  attached will reveal whether AE prob transfers; if not, the trigger is
+  Mitigation: a single deliberately-wrong sanity submission with the trigger
+  attached will reveal whether `prob_eq` transfers; if not, the trigger is
   still likely to improve over v9 because adversarial features overlap
   between similar fine-tunes.
-- Roundtrip drift: trigger token sequence after tokenizer detokenize is not
-  guaranteed to retokenise to the same ids. Final eval inside the script
+- Roundtrip drift: a trigger token sequence after tokenizer detokenize is not
+  guaranteed to retokenize to the same ids. The final eval inside the script
   uses the full `_format_input` path, so we measure the deployed signal,
-  not the bypassed one.
+  not the bypassed-tokenization one.
 - ModernBERT might generalize poorly to the trigger if the cloud test set
   distribution differs from `nlp.jsonl`. The trigger is content-agnostic
   (no question/reference text dependence), which typically transfers well.
 
-Last updated: 19 May 2026 ~14:30 SGT — **stop NLP experiments for now and keep
+Last updated: 19 May 2026 ~14:30 SGT — **stopping NLP experiments for now and keeping
 the leaderboard-held v9/v14 scores.** The submitted `v9-doc-ensemble-rescue`
-remains the trusted blended submission (`0.683 / 0.866`, local `0.711` when it
-was built from the known-good reader), and `v14-llm-rag` remains the raw
+remains the trusted blended submission (`0.683 / 0.866`, local `0.711` when
+built from the known-good reader), and `v14-llm-rag` remains the raw
 accuracy high (`0.734 / 0.286`). Current local Workbench artefacts do **not**
 recover the real v9 reader: both the canonical `~/til` RoBERTa folder and
-`~/til-v9-rescue` have identical `model.safetensors` SHA256
+`~/til-v9-rescue` have an identical `model.safetensors` SHA256 of
 `03ac27b8a45d9e981ce1eb8cf167a69e1310b0dc0a0e55bd3ab4a538518567b2` and score
-only `0.663-0.664`. Best recovered checkpoint seen so far,
-`training/nlp/runs/20260515-035108/checkpoint-888`, scored `0.697`, useful as a
-fallback clue but still below the v9 gate. Do not submit these local rebuilds.
+only `0.663–0.664`. The best recovered checkpoint seen so far,
+`training/nlp/runs/20260515-035108/checkpoint-888`, scored `0.697` — useful as a
+fallback reference but still below the v9 gate. Do not submit these local rebuilds.
 
 **Shipping truth**:
 - `v9-doc-ensemble` family — **best blended** (`0.683 / 0.866-0.886`, blended ~0.729-0.734 depending on speed variance).
@@ -266,12 +264,12 @@ fallback clue but still below the v9 gate. Do not submit these local rebuilds.
   candidate was `v9-candidate-035108-888` at local `0.697`; keep it only as
   evidence for retraining, not as the base for composition experiments.
 - `v14-llm-rag` — **best raw cloud accuracy** (`0.734 / 0.286`); blended 0.622, below v9.
-- `v15-lora-qwen3-8b` — LoRA adapter trained successfully (8h T4, eval_loss 0.559, mean_token_acc 87.6%), but **no working path to ship** from current Workbench T4: vLLM Punica/Triton LoRA kernel crashes on Turing; offline AWQ re-quant blocked (`autoawq` deprecated, `llm-compressor` OOMs at DecoderLayer / Qwen3-GQA `NoneType` at Linear).
-- `v19-hybrid-router` ran on the NGC base but failed local gate (`0.705`, 15:00), so routing only hard questions to Qwen2.5 did not beat v9.
+- `v15-lora-qwen3-8b` — LoRA adapter trained successfully (8h on T4, eval_loss 0.559, mean_token_acc 87.6%), but **no working path to ship** from the current Workbench T4: the vLLM Punica/Triton LoRA kernel crashes on Turing GPUs; offline AWQ re-quantization was blocked (`autoawq` deprecated, `llm-compressor` OOMs at DecoderLayer, Qwen3-GQA hits `NoneType` at Linear).
+- `v19-hybrid-router` ran on the NGC base but failed the local gate (`0.705`, 15:00 wall-clock), so routing only hard questions to Qwen2.5 did not beat v9.
 - All `v14c/v14d/v15/v16/v17/v18` cloud submissions on the `vllm/vllm-openai` base have failed (TIMEOUT or 700/700 errors). v14 on NGC base remains the only cloud-verified LLM path.
 - Local-only composition experiment staged: `NLP_COMPOSITION_MODE=conservative`
   adds a narrow numeric/compositional canonicalizer for repeated
-  `retrieval_hit_diff` misses (recoup years, calibration cycles, per-year
+  `retrieval_hit_diff` misses (recovering years, calibration cycles, per-year
   inspections, lease shortfall, cancer incidence, fleet fractions). Replay on
   the bundled v11 failure pack moved diff `395 -> 379`, exact `0 -> 11`, substr
   `0 -> 5` on changed failure rows. Actual `v20-composition-lite` testing is
@@ -279,21 +277,21 @@ fallback clue but still below the v9 gate. Do not submit these local rebuilds.
   because it inherited the bad/current RoBERTa artefact. Keep composition off.
 
 **Path forward when NLP is reopened**: first retrain the v8b/v9 RoBERTa-large
-reader cleanly with `--use-answer-chunk` and verify the plain extractive image
+reader cleanly with `--use-answer-chunk` and verify that the plain extractive image
 returns near local `0.711`. Only after that should we A/B the conservative
 composition rules. The larger Qwen path remains separate: make Qwen3-8B-AWQ
-+ LoRA cloud-safe on bigger hardware, or retrain/merge on Qwen2.5-7B so it can
++ LoRA cloud-safe on bigger hardware, or retrain and merge on Qwen2.5-7B so it can
 run on the proven NGC base.
 
-Per-task working log for NLP (RAG question-answering). For the authoritative input/output/scoring spec see [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp). For submission history across all tasks see [../RESULTS.md](../RESULTS.md). For NLP training pipeline see [../training/nlp/README.md](../training/nlp/README.md).
+Per-task working log for NLP (retrieval-augmented question-answering). For the authoritative input/output/scoring spec see [README.md](README.md) and the official [Challenge specifications](https://github.com/til-ai/til-26/wiki/Challenge-specifications#nlp). For submission history across all tasks see [../RESULTS.md](../RESULTS.md). For the NLP training pipeline see [../training/nlp/README.md](../training/nlp/README.md).
 
 ## Current shipped tag
 
 **`v9-doc-ensemble` / `v9-doc-ensemble-rescue` — official `0.683 / 0.886` (16 May 05:21 SGT, 0/700 errors).** Best current NLP blend.
 
-Architecture (full detail in "Implementation" below): BM25 + BGE hybrid sentence-window retrieval → bge-reranker-base → top-3 doc IDs → RoBERTa-large-squad2 fine-tuned extractive answerer. v9 adds whole-document BM25+BGE as a second-opinion prior and reranker seeder; v8b-chunked-context training (`--use-answer-chunk`) is the key inference-distribution-matched fine-tune.
+Architecture (full detail in "Implementation" below): BM25 + BGE hybrid sentence-window retrieval → `bge-reranker-base` → top-3 doc IDs → RoBERTa-large-squad2 fine-tuned extractive answerer. v9 adds whole-document BM25+BGE as a second-opinion prior and reranker seeder; v8b chunked-context training (`--use-answer-chunk`) is the key inference-distribution-matched fine-tune.
 
-First v9 submit was `0.683 / 0.868`; resubmits returned `0.683 / 0.883` then `0.683 / 0.886`, confirming the speed metric has measurable run-to-run noise. v9 keeps v8b chunked-context RoBERTa answerer + whole-document retrieval prior. Local moved `0.708 → 0.711`; retrieval misses dropped `40 → 37` (hit rate `95.5% → 95.8%`).
+The first v9 submission scored `0.683 / 0.868`; resubmits returned `0.683 / 0.883` then `0.683 / 0.886`, confirming the speed metric has measurable run-to-run noise. v9 retains the v8b chunked-context RoBERTa answerer and adds the whole-document retrieval prior. Local accuracy moved `0.708 → 0.711`; retrieval misses dropped `40 → 37` (hit rate `95.5% → 95.8%`).
 
 ## Cloud submission history
 
@@ -368,13 +366,13 @@ Corpus-load response: `{"predictions": [{"status": "loaded"}]}`.
 
 ## Doc-ID format (resolved 14 May 09:33 SGT)
 
-Initially `nlp_manager.py` template typed `load_corpus(documents: list[str])` and wiki showed plain strings, which led v2/v3 to both score 0.000 on cloud. Investigation showed:
+Initially the `nlp_manager.py` template typed `load_corpus(documents: list[str])` and the wiki showed plain strings, which caused both v2 and v3 to score 0.000 on cloud. Investigation showed:
 
 - `/home/jupyter/novice/nlp/documents/` has **296 files spanning DOC-0001..DOC-0340 with 44 gaps** in ID range.
 - `nlp.jsonl` `source_docs` uses real filename IDs.
 - Document content has no DOC-XXXX prefix.
 
-Ryan confirmed on hackoverflow that his eval server had a bug: was supposed to send dicts, not plain strings. After fix, real format:
+Ryan confirmed on hackoverflow that his eval server had a bug — it was supposed to send dicts, not plain strings. After the fix, the real format is:
 
 ```json
 {"instances": [{"documents": [
@@ -383,11 +381,11 @@ Ryan confirmed on hackoverflow that his eval server had a bug: was supposed to s
 ]}]}
 ```
 
-Template signature also updated to `load_corpus(documents: list[dict[str, str]])`. Our `_parse_doc_payload` was already defensive across three encodings including the dict shape — so v4-dict-id (same image as v3-id-parse, re-tagged) caught the new format immediately and scored 0.483/0.888.
+The template signature was also updated to `load_corpus(documents: list[dict[str, str]])`. Our `_parse_doc_payload` was already defensive across three encodings including the dict shape — so v4-dict-id (same image as v3-id-parse, re-tagged) caught the new format immediately and scored 0.483/0.888.
 
 ## Local performance
 
-With upstream `test_nlp.py` (sends `{"id": doc_file.stem, "document": content}` per doc):
+With the upstream `test_nlp.py` (sends `{"id": doc_file.stem, "document": content}` per doc):
 
 ```text
 Answer Equivalence Evaluation Summary:
@@ -396,13 +394,13 @@ Answer Equivalence Evaluation Summary:
 NLP RAG QA Accuracy: 0.678
 ```
 
-`equivalent_count` is fractional because retrieval-only successes earn `RETRIEVAL_ONLY_SCORE=0.4` partial credit. The 0.678 is a blend of full credit (1.0), retrieval-only (0.4), and zero.
+`equivalent_count` is fractional because retrieval-only successes earn `RETRIEVAL_ONLY_SCORE=0.4` partial credit. The 0.678 is therefore a blend of full credit (1.0), retrieval-only credit (0.4), and zero.
 
-Local 0.678 → cloud 0.483 = ~0.20 gap, consistent with AE/CV local→official gaps. Held-out corpus is likely distribution-shifted (different topic mix or document length) but otherwise pipeline transfers cleanly.
+Local 0.678 → cloud 0.483 = ~0.20 gap, consistent with AE/CV local→official gaps. The held-out cloud corpus is likely distribution-shifted (different topic mix or document length), but the pipeline otherwise transfers cleanly.
 
 ## Diagnostics — [`error_report.py`](error_report.py)
 
-Run after `til test` to bucket where score is being lost:
+Run after `til test` to bucket the sources of score loss:
 
 ```bash
 python nlp/error_report.py /home/jupyter/melanie-minions/nlp_results.json /home/jupyter/novice/nlp/nlp.jsonl
@@ -421,11 +419,11 @@ Use to decide which lever to pull:
 
 ## v14-llm-rag — Qwen2.5-7B-Instruct-AWQ answerer (17 May, shipped)
 
-**Cloud `0.734 / 0.286` — new accuracy high; blended 0.622, below v9's 0.734.** Shipped on NGC base (`nvcr.io/nvidia/pytorch:25.11-py3`) — currently the **only cloud-verified LLM stack**.
+**Cloud `0.734 / 0.286` — new accuracy high; blended 0.622, below v9's 0.734.** Shipped on the NGC base image (`nvcr.io/nvidia/pytorch:25.11-py3`) — currently the **only cloud-verified LLM stack**.
 
 ### Rationale
 
-v9 extractive ceiling is structural. 481/883 local gold answers are non-literal (only 316 are exact source substrings, 37 case-insensitive, 49 punct-normalized). Every post-v9 post-processing swing regressed inside the same architecture. v14 changes the model class.
+The v9 extractive ceiling is structural. 481/883 local gold answers are non-literal (only 316 are exact source substrings, 37 are case-insensitive matches, 49 are punctuation-normalized matches). Every post-v9 post-processing attempt regressed within the same architecture. v14 changes the model class entirely.
 
 ### Architecture
 
@@ -440,8 +438,8 @@ question
 
 ### Code (17 May)
 
-- [src/llm_answerer.py](src/llm_answerer.py) — new module. Boots vLLM with `quantization=awq_marlin`, `gpu_memory_utilization=0.78` (tunable via `NLP_LLM_GPU_MEM_FRACTION`), `max_model_len=4096`. Greedy decode (`temperature=0`, `max_tokens=48`) + stop tokens prevent paraphrase drift that killed v8a-genqa.
-- [src/few_shots.json](src/few_shots.json) — 6 hand-picked Q/A/context triples (later trimmed to 3 for v14c) covering: money+penalty, codename, PCE date, year-delta with `approximately`, bare count, short entity. Threaded as alternating user/assistant turns.
+- [src/llm_answerer.py](src/llm_answerer.py) — new module. Starts vLLM with `quantization=awq_marlin`, `gpu_memory_utilization=0.78` (tunable via `NLP_LLM_GPU_MEM_FRACTION`), `max_model_len=4096`. Greedy decode (`temperature=0`, `max_tokens=48`) plus stop tokens prevents the paraphrase drift that killed v8a-genqa.
+- [src/few_shots.json](src/few_shots.json) — 6 hand-picked question/answer/context triples (later trimmed to 3 for v14c) covering: money+penalty, codename, PCE date, year-delta with `approximately`, bare count, short entity. Formatted as alternating user/assistant turns.
 - [src/nlp_manager.py](src/nlp_manager.py) — `NLP_ANSWERER` env switch (`llm` | `extractive`). When `llm`: skip RoBERTa load entirely, init vLLM in `_init_models`, warm up inside `load_corpus` (untimed phase). `qa_batch` collects all questions in a request and hands them to `LLMAnswerer.answer_batch` as a single batched generate call.
 - [src/nlp_server.py](src/nlp_server.py) — replaced per-instance sequential loop with single batched `manager.qa_batch(questions)`.
 - [download_models.py](download_models.py) — pulls `Qwen/Qwen2.5-7B-Instruct-AWQ` via `huggingface_hub.snapshot_download` into `/workspace/models/llm`.
@@ -468,8 +466,8 @@ Few-shots intentionally short and verbatim; each demonstrates a single answer-fo
 
 Two-axis change on top of v14:
 
-1. **Model**: Qwen2.5 → Qwen3. The Qwen3-4B-Instruct-2507 release is ~year of architecture improvements + non-thinking instruction tune over Qwen2.5-7B. Documented to match/exceed Qwen2.5-7B on QA while being 1.75× smaller — directly attacks speed bottleneck.
-2. **Base image**: `nvcr.io/nvidia/pytorch:25.11-py3` → `vllm/vllm-openai:v0.9.0`. NGC base shipped pre-compiled `flash_attn` and `torchao` `.so`s against its own torch ABI. When vLLM (as pip dep) downgraded torch, those became unloadable (`torch.int1` missing, `c10::cuda::*` undefined symbol). Workaround required pinning transformers at 4.46.3 + uninstalling both NGC extensions. Qwen3 needs transformers ≥ 4.51 → workaround no longer available → upstream image used as coherent stack.
+1. **Model**: Qwen2.5 → Qwen3. The Qwen3-4B-Instruct-2507 release represents roughly a year of architecture improvements plus a non-thinking instruction tune over Qwen2.5-7B. It is documented to match or exceed Qwen2.5-7B on QA while being 1.75× smaller — directly attacking the speed bottleneck.
+2. **Base image**: `nvcr.io/nvidia/pytorch:25.11-py3` → `vllm/vllm-openai:v0.9.0`. The NGC base shipped pre-compiled `flash_attn` and `torchao` `.so`s against its own torch ABI. When vLLM (as a pip dependency) downgraded torch, those became unloadable (`torch.int1` missing, `c10::cuda::*` undefined symbol). The workaround required pinning transformers at 4.46.3 and uninstalling both NGC extensions. Qwen3 requires transformers ≥ 4.51, so that workaround was no longer available, making the upstream `vllm/vllm-openai` image the only coherent stack.
 
 Coupling both changes in one tag is unusual (the "sequential A/B" lesson from v5-multi). Justified: Qwen3 requires the transformers bump, which requires working flash_attn, which is precisely what `vllm/vllm-openai` provides.
 
@@ -481,17 +479,17 @@ v14   reference local    equiv_rate 0.754    wall-clock 27:29
 v9    reference local    equiv_rate 0.711    wall-clock  3:48
 ```
 
-**Speed unlock is real** — 0.44 s/q vs v14's 2.35 s/q. Base-image swap also bought ~30s of vLLM init time. Projected blended ~0.684 — above v14's 0.622 but below v9's 0.734. **Not a ship.**
+**The speed unlock is real** — 0.44 s/q vs v14's 2.35 s/q. The base-image swap also saved ~30 s of vLLM init time. Projected blended score was ~0.684 — above v14's 0.622 but below v9's 0.734. **Not a ship.**
 
-**Accuracy drop of 0.095 vs v14 / 0.052 vs v9 is bigger than projected.** Three plausible causes:
+**The accuracy drop of 0.095 vs v14 / 0.052 vs v9 is bigger than projected.** Three plausible causes:
 
-1. **4B capacity floor.** Qwen3-4B-Instruct typically sits ~5-8 pp below Qwen2.5-7B-Instruct on closed-book/extractive QA. L2 cross-document questions are where small models fall off.
-2. **Qwen3-Instruct-2507 paraphrases more.** 2507 release tuned hard for chat helpfulness, which trains for *rewording*. Our prompt says "quote exactly" but strong post-training pull toward paraphrasing disobeys at non-trivial rate. Cloud AE @ 0.9 zeroes reworded answers.
-3. **3 few-shots under-anchors a smaller model.** v14 trimmed 6 → 3 assuming 7B handles simple patterns zero-shot.
+1. **4B capacity floor.** Qwen3-4B-Instruct typically sits ~5–8 pp below Qwen2.5-7B-Instruct on closed-book/extractive QA. L2 cross-document questions are where smaller models fall off.
+2. **Qwen3-Instruct-2507 paraphrases more.** The 2507 release was tuned heavily for chat helpfulness, which trains for *rewording*. Our prompt says "quote exactly," but a strong post-training pull toward paraphrasing disobeys at a non-trivial rate. Cloud AE at 0.9 zeroes reworded answers.
+3. **3 few-shots under-anchors a smaller model.** v14 trimmed from 6 to 3 few-shots, assuming a 7B model handles simple patterns zero-shot.
 
 ## v14d-qwen3-8b — clean isolated capacity test (17 May)
 
-One-line change from v14c: `NLP_LLM_REPO=Qwen/Qwen3-8B-AWQ` (official Qwen quant, thinking mode suppressed via `enable_thinking=False`). Everything else identical to v14c.
+One-line change from v14c: `NLP_LLM_REPO=Qwen/Qwen3-8B-AWQ` (official Qwen AWQ quantization, thinking mode suppressed via `enable_thinking=False`). Everything else identical to v14c.
 
 ### Local result (17/05 ~18:25)
 
@@ -504,18 +502,18 @@ v9    reference local    equiv_rate 0.711    wall-clock  3:48
 
 ### What v14d resolved
 
-Clean A/B between v14c (4B) and v14d (8B) — same family, prompt, retrieval, base image — isolates **model capacity** as single variable. v14c lost 0.095; v14d recovered all of it. So:
+Clean A/B between v14c (4B) and v14d (8B) — same model family, prompt, retrieval, and base image — isolates **model capacity** as the single variable. v14c lost 0.095; v14d recovered all of it. So:
 
-- **Qwen3 paraphrase tendency is NOT the problem.** 2507/Instruct variants do follow "quote exactly" when given enough capacity. v14c failure was structural — 4B is below the QA capacity floor for this corpus.
-- **Qwen3-8B is the right base for fine-tuning.** Matches Qwen2.5-7B's accuracy ceiling (within noise: 0.755 vs 0.754) at 1.5× speed. Speed buyback from 7B → 8B-Qwen3 is real even though param count went up — counterintuitive result from architecture generation jump + upstream base-image stack.
+- **Qwen3 paraphrase tendency is NOT the problem.** 2507/Instruct variants do follow "quote exactly" when given enough capacity. The v14c failure was structural — 4B is below the QA capacity floor for this corpus.
+- **Qwen3-8B is the right base for fine-tuning.** It matches Qwen2.5-7B's accuracy ceiling (within noise: 0.755 vs 0.754) at 1.5× the speed. The speed improvement from 7B → 8B-Qwen3 is real even though the parameter count increased — a counterintuitive result from the architecture-generation jump and the upstream base-image stack.
 
-Cloud submission projected blended ~0.643 = 0.75 × 0.73 + 0.25 × 0.38. Still loses to v9's 0.734 blended. **v14d's role is NOT to ship, but to be the LoRA-fine-tune base.**
+Cloud submission was projected at blended ~0.643 = 0.75 × 0.73 + 0.25 × 0.38. Still loses to v9's 0.734 blended. **v14d's role is NOT to ship, but to serve as the LoRA fine-tune base.**
 
 **Cloud actually TIMED OUT.** See v15 update section below.
 
 ## v15-lora-qwen3-8b — QLoRA fine-tune (trained ✓, blocked at serving)
 
-The lever: v7→v8b, fine-tuning RoBERTa-large on local nlp.jsonl was worth +0.034 cloud accuracy first try and +0.162 with chunking-distribution match. Applying same lever to 30× larger Qwen3-8B should compound — LLM has more capacity to absorb Clairos vocabulary, PCE date format, "quote verbatim" behavior, L2 cross-fact composition.
+The lever: in v7→v8b, fine-tuning RoBERTa-large on local `nlp.jsonl` was worth +0.034 cloud accuracy on the first try and +0.162 with chunking-distribution matching. Applying the same fine-tuning lever to the 30× larger Qwen3-8B should compound these gains — the LLM has more capacity to absorb the Clairos vocabulary, PCE date format, "quote verbatim" behavior, and L2 cross-fact composition.
 
 ### Architecture
 
@@ -524,12 +522,12 @@ v14d (base):    BM25+BGE → reranker → Qwen3-8B-AWQ via vLLM → answer
 v15 (LoRA):     BM25+BGE → reranker → Qwen3-8B-AWQ + LoRA adapter → answer
 ```
 
-Original plan loaded LoRA adapter at inference via vLLM's `LoRARequest` (`enable_lora=True`, `max_loras=1`, `max_lora_rank=16`), no model merge or re-quant. **That plan is now falsified on T4/cloud stack** — vLLM Punica/Triton LoRA kernel crashes. Only remaining Qwen3 route is offline merge + AWQ re-quant.
+The original plan loaded the LoRA adapter at inference via vLLM's `LoRARequest` (`enable_lora=True`, `max_loras=1`, `max_lora_rank=16`), with no model merge or re-quantization. **That plan is now falsified on the T4/cloud stack** — the vLLM Punica/Triton LoRA kernel crashes. The only remaining Qwen3 route is offline merge + AWQ re-quantization.
 
 ### Code (17 May)
 
-- [training/nlp/finetune_lora.py](../training/nlp/finetune_lora.py) — new QLoRA script. Loads Qwen3-8B in 4-bit nf4 via bitsandbytes (~4.5 GB VRAM for base), attaches r=16 LoRA adapters to `q_proj/k_proj/v_proj/o_proj`, trains 2 epochs with `gradient_checkpointing=True`. T4 actual: `bs=1 × grad_accum=8` (bs=2 OOMed at step 1). Inference-distribution training: for each `(q, gold_answer, source_docs)` row in `nlp.jsonl`, builds *exact* prompt structure `[system, *few_shots, user(question + 3 chunks)]` that `llm_answerer.py` uses at inference, with gold answer as assistant turn. Loss masked to assistant turn only via `SFTConfig(completion_only_loss=True)`. Chunks picked from `source_docs` using v8b-style answer-containing-chunk heuristic; fallback to first chunk when answer is paraphrased.
-- [src/llm_answerer.py](src/llm_answerer.py) — added `lora_dir` constructor param and `NLP_LLM_LORA_DIR` env. If dir contains `adapter_config.json`, vLLM initialised with `enable_lora=True` and `LoRARequest("v15-lora", 1, lora_dir)` passed to every `generate()`. Backward-compatible: no adapter dir → identical to v14d.
+- [training/nlp/finetune_lora.py](../training/nlp/finetune_lora.py) — new QLoRA script. Loads Qwen3-8B in 4-bit nf4 via bitsandbytes (~4.5 GB VRAM for the base), attaches r=16 LoRA adapters to `q_proj/k_proj/v_proj/o_proj`, and trains 2 epochs with `gradient_checkpointing=True`. On T4: `bs=1 × grad_accum=8` (bs=2 OOM-ed at step 1). Training uses inference-distribution matching: for each `(q, gold_answer, source_docs)` row in `nlp.jsonl`, builds the *exact* prompt structure `[system, *few_shots, user(question + 3 chunks)]` that `llm_answerer.py` uses at inference, with the gold answer as the assistant turn. Loss is masked to the assistant turn only via `SFTConfig(completion_only_loss=True)`. Chunks are selected from `source_docs` using the v8b-style answer-containing-chunk heuristic, with fallback to the first chunk when the answer is paraphrased.
+- [src/llm_answerer.py](src/llm_answerer.py) — added `lora_dir` constructor parameter and `NLP_LLM_LORA_DIR` env var. If the directory contains `adapter_config.json`, vLLM is initialized with `enable_lora=True` and a `LoRARequest("v15-lora", 1, lora_dir)` is passed to every `generate()` call. Backward-compatible: no adapter directory → behavior identical to v14d.
 - [Dockerfile](Dockerfile) — `ENV NLP_LLM_LORA_DIR=/workspace/models/lora`; bundles `nlp/models/lora/` if present.
 - [requirements-dev.txt](../requirements-dev.txt) — added `bitsandbytes>=0.43.0` and `trl>=0.12.0`.
 
@@ -554,7 +552,7 @@ step 150  loss 0.57  eval 0.561                      acc 0.876
 step 200  loss 0.57  eval 0.559                      acc 0.876
 ```
 
-Model correctly predicts **87.6% of gold answer tokens** under teacher-forcing on eval split. v8b's RoBERTa fine-tune (which delivered +0.162 cloud accuracy) had its best eval_loss at 0.872 — v15's 0.559 is 36% lower. Generative SFT loss isn't directly comparable to extractive span CE, but curve shape and plateau timing are textbook healthy.
+The model correctly predicts **87.6% of gold answer tokens** under teacher-forcing on the eval split. v8b's RoBERTa fine-tune (which delivered +0.162 cloud accuracy) had its best eval_loss at 0.872 — v15's 0.559 is 36% lower. Generative SFT loss is not directly comparable to extractive span cross-entropy, but the curve shape and plateau timing are textbook healthy.
 
 Adapter saved to `nlp/models/lora/`:
 - `adapter_config.json`
@@ -563,14 +561,14 @@ Adapter saved to `nlp/models/lora/`:
 - `BASE_MODEL` (contains `Qwen/Qwen3-8B`)
 
 Practical notes for future LoRA training:
-- `bs=2` OOMs on T4 16GB despite QLoRA. Default to `bs=1 grad_accum=8`.
-- `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` reduces fragmentation.
-- Each eval pass takes ~9 min (89 examples × bs=1 bf16 fwd). 4 eval passes ~36 min. Increase `eval_steps` 50→100 to save ~18 min on future runs.
+- `bs=2` OOMs on the T4 16 GB despite QLoRA. Default to `bs=1 grad_accum=8`.
+- `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` reduces memory fragmentation.
+- Each eval pass takes ~9 min (89 examples × bs=1 bf16 forward). 4 eval passes ≈ 36 min. Increase `eval_steps` from 50 to 100 to save ~18 min on future runs.
 - Total: ~8h for 2 epochs at this dataset size. Run overnight.
 
 ### Cloud reality vs projection (18 May ~04:15)
 
-All projections assumed v15 would actually serve like v14d does locally. **Cloud reality: `vllm/vllm-openai` base times out or crashes on every submission, regardless of model:**
+All projections assumed v15 would serve successfully as v14d does locally. **Cloud reality: the `vllm/vllm-openai` base times out or crashes on every submission, regardless of model:**
 
 ```text
 v14c-qwen3-4b      18/05 cloud   TIMEOUT  (local was 5:10)
@@ -578,42 +576,42 @@ v14d-qwen3-8b      18/05 cloud   TIMEOUT  (local was 18:33)
 v15-lora-qwen3-8b  18/05 10:12   0.000 / 1.000 / 700/700 errors
 ```
 
-v14 (Qwen2.5-7B-AWQ, NGC base) ran cloud 21 min and succeeded — our only proven cloud path. v14c/d timeouts most likely image-pull / cold-start overhead on novel vllm/vllm-openai base. v15-lora 700/700 errors are the broken Triton LoRA kernel exceptions propagating to FastAPI (vs. silent fallback locally).
+v14 (Qwen2.5-7B-AWQ, NGC base) ran on cloud for 21 min and succeeded — our only proven cloud path. The v14c/d timeouts are most likely caused by image-pull / cold-start overhead on the novel `vllm/vllm-openai` base. The v15-lora 700/700 errors are the broken Triton LoRA kernel exceptions propagating to FastAPI (vs. a silent local fallback).
 
 ### Offline AWQ-merge fallback — also broke
 
-- `autoawq` is deprecated (final dev release has broken `from awq import AutoAWQForCausalLM`).
-- `llm-compressor 0.10` OOMs on T4 at default sequential_targets, then throws `TypeError: 'NoneType' object is not subscriptable` inside symbolic-trace subgraph forward when sliced at Linear granularity — likely Qwen3 GQA edge case.
+- `autoawq` is deprecated (the final dev release has a broken `from awq import AutoAWQForCausalLM`).
+- `llm-compressor 0.10` OOMs on T4 at default `sequential_targets`, then throws `TypeError: 'NoneType' object is not subscriptable` inside the symbolic-trace subgraph forward when sliced at Linear granularity — likely a Qwen3 GQA edge case.
 
-Script now defaults to **GPTQ W4A16** (`--quant-method gptq`, `--max-seq-length 256`) as T4-safe retry path. GPTQ avoids AWQ smoothing/propagation pass that produced Qwen3 GQA `NoneType` failure. Keep GPTQ on default block-level sequential; forcing per-Linear hits same symbolic-trace failure at `o_proj`. GPTQ then OOMed consistently at `model.layers.29.mlp.down_proj` during `torch.cholesky_inverse(H)` with only ~250 MiB free, so script now defaults to `--gptq-ignore-down-proj-from-layer 29`. Leaves seven late `down_proj` modules (29-35) in BF16; quantizes the rest. Only T4 path left that can plausibly produce a bootable artifact.
+The script now defaults to **GPTQ W4A16** (`--quant-method gptq`, `--max-seq-length 256`) as the T4-safe retry path. GPTQ avoids the AWQ smoothing/propagation pass that produced the Qwen3 GQA `NoneType` failure. GPTQ is kept at default block-level sequential; forcing per-Linear quantization hits the same symbolic-trace failure at `o_proj`. GPTQ then OOM-ed consistently at `model.layers.29.mlp.down_proj` during `torch.cholesky_inverse(H)` with only ~250 MiB free, so the script now defaults to `--gptq-ignore-down-proj-from-layer 29`. This leaves seven late `down_proj` modules (layers 29-35) in BF16 and quantizes the rest. It is the only remaining T4 path that can plausibly produce a bootable artifact.
 
 ### Follow-up: GPTQ-merged ran, host evaluator env broke
 
-Layer-29 skip completed quantization and saved `nlp/models/llm-merged/`. Docker build copied 6.61 GB model context; container reached healthy state. Next `til test` failures were host evaluator env issues, not model/container:
+The layer-29 skip completed quantization and saved the result to `nlp/models/llm-merged/`. The Docker build copied 6.61 GB of model context; the container reached a healthy state. The next `til test` failures were host evaluator environment issues, not model/container problems:
 
-- Running `til test` while `~/quant-venv` is active fails with `ModuleNotFoundError: No module named 'dotenv'` (quant venv ≠ normal Workbench test env).
-- Running from base env then fails loading `ModernBertForSequenceClassification` because broken optional `torchvision` still installed after earlier `llmcompressor` torch downgrade (`RuntimeError: operator torchvision::nms does not exist`). Fix: deactivate quant venv + uninstall `torchvision` from host env.
+- Running `til test` while `~/quant-venv` is active fails with `ModuleNotFoundError: No module named 'dotenv'` (the quantization venv is not the same as the normal Workbench test environment).
+- Running from the base env then fails to load `ModernBertForSequenceClassification` because a broken optional `torchvision` was still installed after an earlier `llmcompressor` torch downgrade (`RuntimeError: operator torchvision::nms does not exist`). Fix: deactivate the quant venv and uninstall `torchvision` from the host env.
 
-After env repair: `v15-merged-qwen3-8b` scored **0.659 locally** — exactly the v14c 4B / v15 runtime-corruption bucket and far below v14d 8B base's 0.755. Not a submit. Doesn't prove LoRA training ineffective by itself; score is too pathological. Likely failure chain:
+After env repair: `v15-merged-qwen3-8b` scored **0.659 locally** — exactly the v14c 4B / v15 runtime-corruption bucket, and far below v14d 8B base's 0.755. Not a submit. The result does not prove LoRA training ineffective on its own; the score is too pathological. Likely failure chain:
 
-1. Image didn't actually serve intended merged GPTQ artifact.
-2. Merged artifact built from stale/wrong adapter.
-3. T4-safe GPTQ escape hatch damaged model enough to erase 8B base behavior (`calib_n=32`, seq_len=256, late `down_proj` modules skipped).
+1. The image did not actually serve the intended merged GPTQ artifact.
+2. The merged artifact was built from a stale or wrong adapter.
+3. The T4-safe GPTQ escape hatch damaged the model enough to erase 8B base behavior (`calib_n=32`, `seq_len=256`, late `down_proj` modules skipped).
 
-`llm_answerer.py` now prints model provenance at boot (`model_type`, `quant_method`, `MERGED_FROM`) so next `docker logs` can separate "wrong thing served" from "right thing served but quant/merge failed".
+`llm_answerer.py` now prints model provenance at boot (`model_type`, `quant_method`, `MERGED_FROM`) so future `docker logs` can separate "wrong artifact served" from "right artifact served but quantization/merge failed".
 
 ### Net status
 
-LoRA training payoff unproven until either:
+LoRA training payoff remains unproven until either:
 
-1. **Repair Workbench host test env and score the GPTQ-merged image.** If scores above v14/v14d locally, decide whether to submit despite known vllm-openai cloud-timeout risk.
-2. **Retrain LoRA on Qwen2.5-7B**, ship on NGC base. 8h retrain, but uses proven cloud-shippable v14 stack and applies v8b fine-tune lever cleanly. Highest-EV remaining path.
+1. **Repair the Workbench host test env and score the GPTQ-merged image.** If it scores above v14/v14d locally, decide whether to submit despite the known vllm-openai cloud-timeout risk.
+2. **Retrain LoRA on Qwen2.5-7B** and ship on the NGC base. Requires an 8h retrain, but uses the proven cloud-shippable v14 stack and applies the v8b fine-tune lever cleanly. Highest expected-value remaining path.
 
 For qualifier as-is: v9-doc-ensemble holds blended (0.683/0.886 = 0.734); v14-llm-rag holds accuracy (0.734/0.286).
 
 ### Aside: Command R7B considered as v14e
 
-No off-the-shelf AWQ or GPTQ-4bit quantization exists on HuggingFace — only MLX and GGUF, neither vLLM-compatible. BF16 is 14 GB, too tight on T4 alongside BGE+reranker+KV cache. Self-quantizing via autoawq is feasible but adds ~1 hr GPU time and a calibration variable before we know if RAG-tuned beats LoRA-tuned. Skipped in favor of LoRA.
+No off-the-shelf AWQ or GPTQ-4bit quantization of Command R7B exists on HuggingFace — only MLX and GGUF formats, neither of which is vLLM-compatible. BF16 is 14 GB, too tight on T4 alongside BGE+reranker+KV cache. Self-quantizing via autoawq is feasible but adds ~1 hr GPU time and a calibration variable before we know if a RAG-tuned variant beats the LoRA-tuned Qwen3 path. Skipped in favor of LoRA.
 
 ## v12-candidate-ranker (16 May, REGRESSED -0.041 cloud)
 
@@ -634,19 +632,19 @@ Local was already -0.048 regression vs v9 — decision rule said "submit if loca
 | retrieval_hit_diff | 395 | 410 | +15 |
 | retrieval_miss | 37 | 37 | 0 |
 
-**Smoking gun**: -69 exact and +54 substr means ranker replaced clean QA-span answers with shorter doc-mined alternatives. Those passed exact-or-substr training proxy ("37" is substring of "37 days") but failed 0.9 ModernBERT AE on cloud.
+**Smoking gun**: -69 exact and +54 substr means the ranker replaced clean QA-span answers with shorter doc-mined alternatives. Those alternatives passed the exact-or-substr training proxy (e.g., "37" is a substring of "37 days") but failed the 0.9 ModernBERT AE threshold on cloud.
 
-Exactly the v11 failure mode at larger scale — training on a proxy that doesn't match cloud scorer. Candidate space was 10× bigger → regression 10× deeper (v11: -0.003, v12: -0.041).
+This is exactly the v11 failure mode at larger scale — training on a proxy that doesn't match the cloud scorer. The candidate space was 10× bigger, so the regression was 10× deeper (v11: -0.003, v12: -0.041).
 
 Three contributing factors:
 
-1. **Training proxy mismatch.** `_is_positive` used exact-or-substr; cloud uses ModernBERT 0.9. Same mistake as v11's replay script.
-2. **Heuristic prior put rules above QA.** `source_rule = 4.5 > source_qa = 4.0` in `_heuristic_candidate_score`. v10 already showed rules don't move cloud; shouldn't outrank model spans.
-3. **Document-mining surface area.** `_document_answer_candidates` generates up to ~300 raw candidates per question (18 sentences × 6 regex types). Dedupe cap of 32 keeps too many; `echoes_question = -2.0` penalty demotes correct QA spans whose text overlaps question subject.
+1. **Training proxy mismatch.** `_is_positive` used exact-or-substr; the cloud scorer uses ModernBERT at 0.9 threshold. Same mistake as v11's replay script.
+2. **Heuristic prior ranked rules above QA.** `source_rule = 4.5 > source_qa = 4.0` in `_heuristic_candidate_score`. v10 already showed rules don't move cloud score; they shouldn't outrank model spans.
+3. **Document-mining surface area.** `_document_answer_candidates` generates up to ~300 raw candidates per question (18 sentences × 6 regex types). The deduplicated cap of 32 keeps too many; the `echoes_question = -2.0` penalty demotes correct QA spans whose text overlaps with the question subject.
 
 ### Final NLP verdict on post-processing layers
 
-Every post-v9 post-processing swing regressed monotonically:
+Every post-v9 post-processing attempt regressed monotonically:
 
 ```text
 v10-template-lite      0.683 / 0.882   neutral (-0.001 blended)
@@ -656,33 +654,33 @@ v12-candidate-ranker   0.642 / 0.829   -0.045 blended
 v13a-heuristic         (0.663 local, NOT SUBMITTED — same as v12)
 ```
 
-POST-PROCESSING architecture is at ceiling on this corpus. Confirmed dead levers: paragraph chunking, low-conf fallback, rapidfuzz spans, narrow rule templates, full-doc canonicalization, generative answers, candidate reranking.
+Post-processing is at ceiling on this corpus. Confirmed dead levers: paragraph chunking, low-confidence fallback, rapidfuzz spans, narrow rule templates, full-document canonicalization, generative answers, and candidate reranking.
 
 ## v13a — AE-trained candidate ranker (16/05, NOT SUBMITTED)
 
-Local result: val top-1 0.384, val oracle **0.814** (177 held-out questions).
+Local result: val top-1 accuracy 0.384, val oracle **0.814** (177 held-out questions).
 
-**Critical diagnosis**: ranker has access to candidates that would pass AE for **81%** of val questions (oracle), but logistic scoring only picks right one 38%. The 20-feature set can't discriminate among same-type candidates ("2178" vs "2178 CE" vs "around 2178" all match `wants_years` + `has_year_unit`).
+**Critical diagnosis**: the ranker has access to candidates that would pass AE for **81%** of val questions (oracle score), but the logistic scoring only picks the right one 38% of the time. The 20-feature set cannot discriminate among same-type candidates ("2178" vs "2178 CE" vs "around 2178" all match `wants_years` + `has_year_unit`).
 
-Heuristic-only test (no learned JSON, with structural fixes — `source_qa=5.0`, `source_rule=4.0`, dropped `_RELATION_PHRASE_RE`, `n_sentences=8`, `echoes_question=-1.0`): local 0.663 — identical to v12. The candidate POOL itself dilutes v9 regardless of how it's scored. Candidate-ranker architecture confirmed dead.
+Heuristic-only test (no learned JSON, with structural fixes — `source_qa=5.0`, `source_rule=4.0`, dropped `_RELATION_PHRASE_RE`, `n_sentences=8`, `echoes_question=-1.0`): local 0.663 — identical to v12. The candidate pool itself dilutes v9 regardless of the scoring method. Candidate-ranker architecture confirmed dead.
 
 Three artifacts kept for future ranker work if revisited:
-- [training/nlp/train_answer_ranker.py](../training/nlp/train_answer_ranker.py) — now does ModernBERT-AE labeling + 80/20 split + oracle/top-1 reporting.
-- `nlp/models/answer_ranker.json` — fitted weights from AE-labeled training run.
-- `_answer_candidates()` machinery in `nlp_manager.py` stays in tree; disable with `NLP_ANSWER_RANK_MODE=off` (default heuristic-only path still routes through it).
+- [training/nlp/train_answer_ranker.py](../training/nlp/train_answer_ranker.py) — now performs ModernBERT-AE labeling, 80/20 split, and oracle/top-1 reporting.
+- `nlp/models/answer_ranker.json` — fitted weights from the AE-labeled training run.
+- `_answer_candidates()` machinery in `nlp_manager.py` stays in tree; disable with `NLP_ANSWER_RANK_MODE=off` (the default heuristic-only path still routes through it).
 
 ## v13b — DeBERTa-v3-large QA retune (16/05, failed local gate)
 
-Hypothesis: answer-form gap (`retrieval_hit_diff` ~395 cases) is QA-head problem, not post-processing. Every post-processing swing regressed; every QA retrain hit (+0.034 v7-v1, +0.162 v8b). DeBERTa-v3 is documented +1-2% over RoBERTa-large on extractive QA benchmarks.
+Hypothesis: the answer-form gap (`retrieval_hit_diff` ~395 cases) is a QA-head problem, not a post-processing problem. Every post-processing attempt regressed; every QA retrain gained (+0.034 v7-v1, +0.162 v8b). DeBERTa-v3 is documented +1–2% over RoBERTa-large on extractive QA benchmarks.
 
-Manager + Dockerfile (16/05):
-- Manager: `QA_DEBERTA_FINETUNED_DIR = MODEL_DIR / "deberta-finetuned-squad2"` added as highest-priority QA dir; fallback ladder is now `deberta > flan-t5-finetuned (gen) > roberta-finetuned-squad2 > stock`.
+Manager + Dockerfile changes (16/05):
+- Manager: `QA_DEBERTA_FINETUNED_DIR = MODEL_DIR / "deberta-finetuned-squad2"` added as the highest-priority QA directory; fallback ladder is now `deberta > flan-t5-finetuned (gen) > roberta-finetuned-squad2 > stock`.
 - Dockerfile: bundles `nlp/models/deberta-finetuned-squad2/` when present.
-- Safe: if dir doesn't exist locally, image falls through to v9's RoBERTa weights.
+- Safe: if the directory doesn't exist locally, the image falls through to v9's RoBERTa weights.
 
 ### Training run (16/05 ~23:30 SGT) — completed in ~6 min on T4
 
-OOM at default batch=8 on 14.5 GB T4 (DeBERTa-v3-large disentangled attention uses ~3× activation memory of RoBERTa-large). Patched `training/nlp/finetune_qa.py` with `--gradient-accumulation-steps` + `--gradient-checkpointing` flags (commit `8296c29`).
+OOM at default batch=8 on the 14.5 GB T4 (DeBERTa-v3-large disentangled attention uses ~3× the activation memory of RoBERTa-large). Patched `training/nlp/finetune_qa.py` with `--gradient-accumulation-steps` and `--gradient-checkpointing` flags (commit `8296c29`).
 
 ```bash
 python training/nlp/finetune_qa.py \
@@ -705,7 +703,7 @@ epoch 5   train 0.01-0.09   eval_loss 2.34
 
 `load_best_model_at_end=True` → epoch 1 weights saved.
 
-**Yellow flag**: eval_loss 1.58 is ~2.5× v7-v1's epoch-1 0.614 on same data. DeBERTa-v3-large didn't calibrate to our QA distribution as cleanly as RoBERTa-large. Train loss collapse 1.51→0.01 across 5 epochs is classic overfit on 338 examples.
+**Yellow flag**: eval_loss 1.58 is ~2.5× v7-v1's epoch-1 loss of 0.614 on the same data. DeBERTa-v3-large didn't calibrate to the QA distribution as cleanly as RoBERTa-large. Train loss collapsing 1.51→0.01 across 5 epochs is classic overfitting on 338 examples.
 
 ### Local test result — NOT SUBMITTED
 
@@ -714,11 +712,11 @@ v9-doc-ensemble    0.711  3:48  (baseline)
 v13b-deberta       0.667  9:06  ← FAILED GATE; -0.044 accuracy, 2.4× slower
 ```
 
-DeBERTa-v3-large fine-tuned on 338 examples; load_best picked epoch 1 (eval_loss 1.58); model still underperforms RoBERTa-large on this corpus. Speed regressed significantly from disentangled attention overhead.
+DeBERTa-v3-large fine-tuned on 338 examples; `load_best_model_at_end` picked epoch 1 (eval_loss 1.58); the model still underperforms RoBERTa-large on this corpus. Speed regressed significantly due to disentangled attention overhead.
 
 ## v16-deberta-v3 — extractive-reader retry (18 May)
 
-Decision: try one more fast-reader path before more time on LLM serving. v13b already tried DeBERTa-v3-large and failed locally; only reason to reopen is materially different gate:
+Decision: try one more fast-reader path before spending more time on LLM serving. v13b already tried DeBERTa-v3-large and failed locally; the only reason to reopen it was a materially different training setup:
 
 - Restore Dockerfile default to `NLP_ANSWERER=extractive` so image serves QA reader instead of v14/v15 LLM path.
 - Skip LLM download for this tag so build/runtime stay fast.
@@ -738,11 +736,11 @@ til build nlp v16-deberta-v3
 til test nlp v16-deberta-v3
 ```
 
-**Result: 0.692 local, QA loop 8:27.** Improved over v13b's 0.667 but still missed v9's 0.711 gate and remained far slower than v9's ~3:48. Lower-LR one-epoch recipe reduced damage but didn't overturn core finding that RoBERTa-large transfers better than DeBERTa-v3-large on this small synthetic Clairos span-extraction corpus. Cloud submit then TIMED OUT (vllm-openai base, not a model problem).
+**Result: 0.692 local, QA loop 8:27.** Improved over v13b's 0.667 but still missed v9's 0.711 gate and remained far slower than v9's ~3:48. The lower-LR one-epoch recipe reduced the damage but didn't overturn the core finding that RoBERTa-large transfers better than DeBERTa-v3-large on this small synthetic Clairos span-extraction corpus. The cloud submission then timed out (vllm-openai base issue, not a model problem).
 
 ## v17-modernbert — stock vs fine-tuned QA A/B (18 May)
 
-Purpose: answer skepticism about whether QA-head training is still useful. ModernBERT gives clean fast-reader A/B.
+Purpose: address skepticism about whether QA-head fine-tuning is still useful. ModernBERT gives a clean fast-reader A/B.
 
 Code changes:
 - `download_models.py` now downloads `kiddothe2b/ModernBERT-base-squad2` into `/workspace/models/modernbert-base-squad2`.
@@ -773,19 +771,19 @@ v17-modernbert-ft      local 0.624   QA loop 5:28
 v9-doc-ensemble gate   local 0.711   QA loop ~3:48
 ```
 
-Fine-tuning **does** work in narrow sense: ModernBERT gained +0.165 absolute after one epoch on Clairos span examples. But starting point so low that trained model still missed v9 by -0.087, and slower than RoBERTa-large v9 path. Cleanest answer to training skepticism so far:
+Fine-tuning **does** work in a narrow sense: ModernBERT gained +0.165 absolute after one epoch on Clairos span examples. But the starting point was so low that the trained model still missed v9 by -0.087, and it was slower than the RoBERTa-large v9 path. Cleanest answer to training skepticism so far:
 
-- Training can teach the local corpus.
-- Backbone/recipe matters more than "train vs no train".
-- ModernBERT and DeBERTa both underperform existing RoBERTa-large fine-tune on this small synthetic span corpus.
+- Training can teach the local corpus vocabulary and answer patterns.
+- Backbone and training recipe matter more than "fine-tune vs no fine-tune".
+- Both ModernBERT and DeBERTa underperform the existing RoBERTa-large fine-tune on this small synthetic span corpus.
 
-Cloud follow-up: `v17-modernbert-stock` failed startup on Vertex with container timeout (`vllm/vllm-openai` base, not model/serving problem).
+Cloud follow-up: `v17-modernbert-stock` failed startup on Vertex with a container timeout (`vllm/vllm-openai` base issue, not a model or serving problem).
 
 ## v9-rescue saga — invalid sibling worktree → valid canonical rebuild
 
-A detached `git worktree add ~/til-v9-rescue 643f9c8` did **not** produce a true v9 image through `til build`. Build log still showed current `vllm/vllm-openai` Dockerfile and ModernBERT artefact loop; local accuracy was 0.624. TIL CLI builds from canonical `~/til` task path/config rather than shell cwd worktree. Treat that "v9 rescue" result as invalid — it was the ModernBERT fine-tuned image retagged, not v9.
+A detached `git worktree add ~/til-v9-rescue 643f9c8` did **not** produce a true v9 image through `til build`. The build log still showed the current `vllm/vllm-openai` Dockerfile and ModernBERT artifact loop; local accuracy was 0.624. The TIL CLI builds from the canonical `~/til` task path/config rather than the shell's current working directory worktree. That "v9 rescue" result should be treated as invalid — it was the ModernBERT fine-tuned image re-tagged as v9, not the real v9.
 
-**Safe v9 rescue approach**: temporarily put old v9 files back into canonical `~/til/nlp/` (or create branch checked out directly at `~/til`) before calling `til build`. Do not rely on sibling worktree.
+**Safe v9 rescue approach**: temporarily restore the old v9 files into canonical `~/til/nlp/` (or create a branch checked out directly at `~/til`) before calling `til build`. Do not rely on a sibling worktree.
 
 Valid rescue: after killing stale ModernBERT container occupying port 5004 (`docker kill gallant_lederberg`) and rebuilding from canonical `~/til`:
 
@@ -799,17 +797,17 @@ Matches known v9 baseline → proves rescue image is real RoBERTa/v9 path.
 
 Cloud 18/05 19:13 SGT: `v9-doc-ensemble-rescue` → **0.683 / 0.866 / 0 of 700 errors**. Slightly slower than best same-image v9 resubmit (0.886) but accuracy is exactly known v9 plateau and image is valid. **Trusted blended NLP submission unless a new local+cloud run clears it.**
 
-19 May guardrail: `v9-locked` returned only `0.664` locally after a tiny
-Docker build context (`~1.47 KB`). Diagnosis: it was **not** real v9; the
-fine-tuned RoBERTa artefact was missing, so `nlp_manager.py` used downloaded
+19 May guardrail: `v9-locked` returned only `0.664` locally after a suspiciously small
+Docker build context (`~1.47 KB`). Diagnosis: it was **not** the real v9; the
+fine-tuned RoBERTa artifact was missing, so `nlp_manager.py` fell back to the downloaded
 stock `roberta-base-squad2`. Locked extractive builds must now fail unless
 `nlp/models/roberta-finetuned-squad2/config.json` is present. If Workbench
 still returns around `0.664`, check the container logs for the QA model line
-and restore the artefact from a known-good v9 image before retesting.
+and restore the artifact from a known-good v9 image before retesting.
 
 ## v18-qwen-reranker (18 May, BROKEN, do not submit)
 
-Did not adopt full Qwen3-4B + Qwen embedding + Qwen reranker stack (Qwen3-4B already failed locally at 0.659; replacing whole retrieval stack adds cloud/startup risk). Instead isolated the only credible lever:
+Did not adopt the full Qwen3-4B + Qwen embedding + Qwen reranker stack (Qwen3-4B already failed locally at 0.659; replacing the entire retrieval stack adds cloud/startup risk). Instead isolated the only credible lever:
 
 ```text
 BM25 + BGE dense retrieval        unchanged
@@ -822,25 +820,25 @@ Implementation:
 - `nlp_manager.py` now handles rerankers with either one relevance logit or two `[no, yes]` logits.
 - QA selection prefers `roberta-finetuned-squad2` before failed DeBERTa/ModernBERT artefacts so v18 really tests the reranker.
 
-Result: local **0.547**, QA loop **14:58**. Fails both gates by wide margin. Cloud: **0.000 / 0.417, 700/700 errors** (likely runtime fragility in current-main vllm-openai image family).
+Result: local **0.547**, QA loop **14:58**. Fails both gates by a wide margin. Cloud: **0.000 / 0.417, 700/700 errors** (likely runtime fragility in the current-main vllm-openai image family).
 
-Too large to tune around. Either the Qwen reranker sequence-classification wrapper is not plug-compatible with our simple `(question, passage)` cross-encoder call, or it's genuinely worse than BGE for Clairos-style sparse names/facts. Revert default Docker reranker to BGE; keep `v9-doc-ensemble-rescue`.
+The regression is too large to tune around. Either the Qwen reranker sequence-classification wrapper is not plug-compatible with our simple `(question, passage)` cross-encoder call, or it is genuinely worse than BGE for Clairos-style sparse names and facts. Revert the default Docker reranker to BGE; keep `v9-doc-ensemble-rescue`.
 
 ## v19-hybrid-router — v9 easy + Qwen2.5 hard (18-19 May, failed gate)
 
-Highest-EV remaining NLP experiment — combines the two systems that each proved something real:
+Highest expected-value remaining NLP experiment — combines the two systems that each proved something real:
 
 ```text
 v9 rescue:  fast, cloud-safe, best blended
 v14:        Qwen answerer, best raw cloud accuracy, too slow when used always
 ```
 
-v19 routes only hard/L2-looking questions to Qwen2.5-7B-AWQ; leaves easy/L1-looking on v9 RoBERTa-large extractive path.
+v19 routes only hard/L2-style questions to Qwen2.5-7B-AWQ, and leaves easy/L1-style questions on the v9 RoBERTa-large extractive path.
 
 Final local result (19 May): **0.705**, QA loop **15:00**. This misses the
-v9 rescue local gate (`0.711`) while running about 3.5x slower than v9 rescue
+v9 rescue local gate (`0.711`) while running about 3.5× slower than v9 rescue
 (`4:13`). **Do not submit.** The result is a valid negative: Qwen routing did
-not recover enough hard-question accuracy to overcome latency/complexity.
+not recover enough hard-question accuracy to overcome the latency and added complexity.
 
 ### Implementation
 
@@ -851,33 +849,33 @@ not recover enough hard-question accuracy to overcome latency/complexity.
 
 ### Build issues solved across 4 attempts
 
-- **First**: failed during `download_models.py` with `AttributeError: module 'torch' has no attribute 'int1'` from `torchao` (broken optional extension after vLLM adjusts torch stack on NGC). Dockerfile now uninstalls `torchao`, `flash-attn`, `flash_attn` before any Transformers model import.
-- **Second**: `No space left on device` while downloading 4 GB Qwen2.5 AWQ shard because vLLM had already been installed into Docker overlay. Dockerfile now downloads model weights BEFORE installing heavy runtime requirements, then uninstalls broken extensions AFTER vLLM install.
-- **Third**: clean NGC base doesn't include `transformers` before `requirements.txt` is copied. Dockerfile now installs only small HF download stack (`transformers`, `tokenizers`, `safetensors`, `sentencepiece`, `huggingface-hub`) before downloading weights, still delaying vLLM until after Qwen shard lands.
-- **Fourth**: container never became healthy. Initial suspicion was startup
+- **First attempt**: failed during `download_models.py` with `AttributeError: module 'torch' has no attribute 'int1'` from `torchao` (a broken optional extension after vLLM adjusts the torch stack on NGC). The Dockerfile now uninstalls `torchao`, `flash-attn`, and `flash_attn` before any Transformers model import.
+- **Second attempt**: `No space left on device` while downloading the 4 GB Qwen2.5 AWQ shard, because vLLM had already been installed into the Docker overlay. The Dockerfile now downloads model weights BEFORE installing heavy runtime requirements, then uninstalls broken extensions AFTER the vLLM install.
+- **Third attempt**: the clean NGC base does not include `transformers` before `requirements.txt` is copied. The Dockerfile now installs only the small HF download stack (`transformers`, `tokenizers`, `safetensors`, `sentencepiece`, `huggingface-hub`) before downloading weights, still delaying vLLM until after the Qwen shard lands.
+- **Fourth attempt**: container never became healthy. Initial suspicion was startup
   import latency, so `nlp_server.py` now lazy-loads `NLPManager`. Actual
   docker logs then showed `ModuleNotFoundError: No module named 'fastapi'`:
   bare `pip` did not install packages into the `/usr/bin/python` environment
-  that runs the server. Dockerfile now uses `python -m pip`, starts with
+  that runs the server. The Dockerfile now uses `python -m pip`, starts with
   `python -m uvicorn`, and runs a build-time `fastapi`/`uvicorn` import check.
 
 ### Router logic
 
-`nlp_manager.py` loads both answerers in hybrid mode. Always performs v9 retrieval/rerank/doc selection and v9 candidate extraction first, then routes to Qwen only if hand-tuned hard-score clears `NLP_HYBRID_QWEN_THRESHOLD` (default `3.0`). Router deliberately keeps v9 document IDs and evidence ordering; Qwen only replaces answer string when it produces a non-empty answer.
+`nlp_manager.py` loads both answerers in hybrid mode. It always performs v9 retrieval, reranking, doc selection, and candidate extraction first, then routes to Qwen only if the hand-tuned hard-score clears `NLP_HYBRID_QWEN_THRESHOLD` (default `3.0`). The router deliberately keeps v9 document IDs and evidence ordering; Qwen only replaces the answer string when it produces a non-empty answer.
 
-Current router features are heuristic, not learned: arithmetic/composition keywords (`between`, `difference`, `total`, `percentage`, `elapsed`, `how many`), numeric tokens, long question length, weak/long/echoing v9 answer, low QA score, low candidate margin.
+Current router features are heuristic, not learned. They include: arithmetic/composition keywords (`between`, `difference`, `total`, `percentage`, `elapsed`, `how many`), numeric tokens, long question length, weak/long/echoing v9 answer, low QA score, and low candidate margin.
 
 ### Gate result
 
 Failed. Required local NLP RAG QA Accuracy > 0.711 with acceptable runtime;
-actual was 0.705 with 15:00 QA loop. Keep `v9-doc-ensemble-rescue` for blended
+actual was 0.705 with a 15:00 QA loop. Keep `v9-doc-ensemble-rescue` for the blended
 score and `v14-llm-rag` only as the raw-accuracy reference.
 
 If v19 OOMs on startup: lower `NLP_LLM_GPU_MEM_FRACTION` to `0.55` or `NLP_LLM_MAX_MODEL_LEN` to `2048`. If routes too many questions: raise `NLP_HYBRID_QWEN_THRESHOLD`; if routes almost none: lower it.
 
 ## v11-canonical-answer (15 May, REGRESSED -0.003)
 
-Built from Workbench v9 failure pack (`nlp-v11-failure-pack.tgz`): `nlp_results.json` + `nlp_failure_analysis.jsonl` + matching `nlp.jsonl`. Baseline pack:
+Built from the Workbench v9 failure pack (`nlp-v11-failure-pack.tgz`): `nlp_results.json` + `nlp_failure_analysis.jsonl` + matching `nlp.jsonl`. Baseline pack:
 
 ```text
 retrieval_miss        37
@@ -886,7 +884,7 @@ retrieval_hit_substr 178
 retrieval_hit_diff   395
 ```
 
-Keeps all v9/v10 retrieval and RoBERTa behavior; adds conservative full-document canonicalizer over top returned docs. Different from v10: v10 only looked at top reranked chunks and a few arithmetic forms; v11 uses full text of top-3 returned docs to rescue recurring right-document / wrong-phrase cases.
+Keeps all v9/v10 retrieval and RoBERTa behavior; adds a conservative full-document canonicalizer over the top returned docs. Different from v10: v10 only looked at top reranked chunks and a few arithmetic forms; v11 uses the full text of the top-3 returned docs to rescue recurring right-document / wrong-phrase cases.
 
 Implemented cases:
 - Classified/internal codenames from nearby all-caps annex references (`SEASTITCH`)
@@ -906,7 +904,7 @@ Before: exact 273, substr 178, diff 395, miss 37
 After : exact 280, substr 181, diff 385, miss 37
 ```
 
-+10 exact/substr proxy move with no proxy regressions. Submitted twice on 15/05:
++10 exact/substr proxy improvement with no proxy regressions. Submitted twice on 15/05:
 
 ```text
 21:26:38   0.680 / 0.881   0 / 700
@@ -915,12 +913,12 @@ After : exact 280, substr 181, diff 385, miss 37
 
 Accuracy stable at 0.680 → -0.003 is real, not variance.
 
-**Two hypotheses for why the +10 replay didn't transfer:**
+**Two hypotheses for why the +10 replay didn't transfer to cloud:**
 
-1. **Replay was against OLD local eval.** Replay script used pre-14-May rubric (binary equiv ≥ 0.5, plain-string doc shape) on stored v9 predictions. Upstream test_nlp.py we just synced (16/05) reveals new rubric: threshold 0.9 + 0.4 retrieval-only partial credit. A rewrite that flipped an answer from "substr-of-truth" → "canonicalized form" might still fail 0.9 ModernBERT threshold.
-2. **Canonicalizer patterns not sampled on hidden corpus.** +10 cases came from specific phrasings in local pack (codename SEASTITCH, "four in favor to one against", `(2.5bn)`). If absent from held-out questions, rewrites either no-op (best) or fire incorrectly on lookalike phrasings (worst, -3 net).
+1. **Replay was against the OLD local eval.** The replay script used the pre-14-May rubric (binary equiv ≥ 0.5, plain-string doc shape) on stored v9 predictions. The upstream `test_nlp.py` we synced on 16/05 reveals the new rubric: threshold 0.9 plus 0.4 retrieval-only partial credit. A rewrite that flipped an answer from "substr-of-truth" to "canonicalized form" might still fail the 0.9 ModernBERT threshold.
+2. **Canonicalizer patterns not present in the hidden corpus.** The +10 cases came from specific phrasings in the local pack (codename SEASTITCH, "four in favor to one against", `(2.5bn)`). If those phrasings are absent from held-out questions, rewrites either no-op (best case) or fire incorrectly on similar phrasings (worst case, -3 net).
 
-**Verdict**: v11 not a ship. Net cost: 2 submissions and we learned deterministic canonicalization over top-3 docs is too narrow to overcome 0.9 threshold. Next swing has to be different *answer formatter*, not more regex.
+**Verdict**: v11 not a ship. Net cost: 2 submissions. We learned that deterministic canonicalization over top-3 docs is too narrow to overcome the 0.9 threshold. The next attempt must be a different *answer formatter*, not more regex.
 
 ## v10-template-lite (15 May, NEUTRAL)
 
@@ -932,7 +930,7 @@ python training/nlp/analyze_answer_templates.py \
   --docs data/novice-nlp-light-20260515/novice/nlp/documents
 ```
 
-Key result: local set is not mostly verbatim span extraction. Out of 883 answers: only 316 exact source substrings, 37 case-insensitive matches, 49 punctuation-normalized matches; 481 are not literal in source text. L1 itself is mixed (`225/592` not literal); L2 is mostly non-literal (`256/291`). Explains why v9 can retrieve 95.8% of questions but still sit at 0.711 local / 0.683 cloud.
+Key result: the local set is not mostly verbatim span extraction. Out of 883 answers: only 316 are exact source substrings, 37 are case-insensitive matches, 49 are punctuation-normalized matches; 481 are not literal in the source text. L1 questions (single-fact) are themselves mixed (`225/592` not literal); L2 (multi-fact) is mostly non-literal (`256/291`). This explains why v9 can retrieve 95.8% of questions but still sit at 0.711 local / 0.683 cloud.
 
 Candidate in [src/nlp_manager.py](src/nlp_manager.py): keep v9 retrieval and RoBERTa as primary answerer, then run conservative deterministic layer for obvious arithmetic/date forms:
 
@@ -940,13 +938,13 @@ Candidate in [src/nlp_manager.py](src/nlp_manager.py): keep v9 retrieval and RoB
 - Elapsed years from PCE/CE year pairs (`"28 years"`)
 - Percentage-point differences from exactly two percentages (`"12 percentage points"`)
 
-Default `NLP_RULE_MODE=conservative` only overrides model when extracted span is clearly diffuse or missing computed value. `NLP_RULE_MODE=aggressive` available for bolder Workbench A/B; `NLP_RULE_MODE=off` disables.
+Default `NLP_RULE_MODE=conservative` only overrides the model when the extracted span is clearly diffuse or is missing a computed value. `NLP_RULE_MODE=aggressive` is available for bolder Workbench A/B; `NLP_RULE_MODE=off` disables all rules.
 
-Result (15 May 20:16 SGT): `v10-template-lite` scored `0.683 / 0.882` officially, `0/700` errors. Local stayed at `0.711`; buckets shifted only `substr 177→178`, `diff 396→395`, retrieval unchanged at `95.8%`. Conservative template layer is safe but too narrow to matter.
+Result (15 May 20:16 SGT): `v10-template-lite` scored `0.683 / 0.882` officially, `0/700` errors. Local stayed at `0.711`; buckets shifted only `substr 177→178`, `diff 396→395`, retrieval unchanged at `95.8%`. The conservative template layer is safe but too narrow to move cloud score.
 
 ## v8a-genqa — Flan-T5 generative (16 May, REGRESSED)
 
-Hypothesis: deterministic answer rewriting exhausted; remaining `retrieval_hit_diff` bucket (~395 cases) needs a model that *generates* canonical answer form, not extracts a span. Flan-T5 fine-tuned on all 883 (q, context, answer) triples — including ~530 paraphrased answers that extractive training has to skip.
+Hypothesis: deterministic answer rewriting is exhausted; the remaining `retrieval_hit_diff` bucket (~395 cases) needs a model that *generates* the canonical answer form rather than extracting a span. Flan-T5 fine-tuned on all 883 (question, context, answer) triples — including ~530 paraphrased answers that extractive training has to skip.
 
 ### Scaffolding (verified 16/05)
 
@@ -956,8 +954,8 @@ Hypothesis: deterministic answer rewriting exhausted; remaining `retrieval_hit_d
 
 ### Two bugs fixed 16/05 before any v8a-genqa build
 
-1. **Missing `sentencepiece` dep.** Flan-T5 tokenizer is SentencePiece-based; without it `AutoTokenizer.from_pretrained()` fails at runtime. Added to [requirements.txt](requirements.txt).
-2. **T5 + `.half()` NaN trap.** [src/nlp_manager.py:368-374](src/nlp_manager.py) unconditionally called `.half()` on all three models. T5 has known fp16 overflow in attention ops → NaN logits at generate time. Patched to keep generative QA model at fp32; extractive still uses fp16.
+1. **Missing `sentencepiece` dependency.** The Flan-T5 tokenizer is SentencePiece-based; without it `AutoTokenizer.from_pretrained()` fails at runtime. Added to [requirements.txt](requirements.txt).
+2. **T5 + `.half()` NaN trap.** [src/nlp_manager.py:368-374](src/nlp_manager.py) unconditionally called `.half()` on all three models. T5 has a known fp16 overflow in attention ops, producing NaN logits at generate time. Patched to keep the generative QA model at fp32; extractive models still use fp16.
 
 ### Cloud result (16/05 05:10) — REGRESSED, dead lever
 
@@ -966,21 +964,21 @@ v8a-genqa     16/05 05:10:19    0.652 / 0.836    0 / 700    local 0.682
 v9 baseline   16/05 05:21:57    0.683 / 0.886    0 / 700    local 0.711  (best ever)
 ```
 
-- **Accuracy** -0.031 vs v9. Local→cloud gap was 0.030 (0.682 → 0.652), almost identical to v9's 0.028 (0.711 → 0.683). Translation: generative head transferred cleanly; just structurally worse than fine-tuned RoBERTa-large extractive on this corpus.
-- **Speed** -0.047 vs v9. Local timing was 5:21 vs v9's 4:23 (~22% slower); materialised on cloud as 257s vs 211s.
+- **Accuracy** -0.031 vs v9. Local→cloud gap was 0.030 (0.682 → 0.652), almost identical to v9's 0.028 (0.711 → 0.683). The generative head transferred cleanly; it is simply structurally worse than the fine-tuned RoBERTa-large extractive head on this corpus.
+- **Speed** -0.047 vs v9. Local timing was 5:21 vs v9's 4:23 (~22% slower); this materialized on cloud as 257 s vs 211 s.
 - **Blended** ≈ 0.652 × 0.75 + 0.836 × 0.25 = `0.694` vs v9's `0.734`. Net -0.040.
 
-**Why generative lost here, when v7-v1 had won:**
+**Why generative lost here, when QA-head fine-tuning (v7-v1) had won:**
 
-1. **0.9 AE threshold punishes paraphrase.** Extractive spans are verbatim source text — ModernBERT equivalence model rates them high on lexical overlap. Generative outputs reword (even when correct) and slip below 0.9.
-2. **883 examples too thin for seq2seq.** RoBERTa fine-tunes well at this scale because span-prediction head is small and pre-conditioned. Flan-T5 has to learn answer *style* from few-shot.
-3. **One-shot generation, not batched.** Cost us 22% wall-clock — `v8a-genqa-batched` could recover most, but with accuracy already -0.031 it can't win blended even with v9-equivalent speed. Don't build batched variant.
+1. **0.9 AE threshold punishes paraphrase.** Extractive spans are verbatim source text — the ModernBERT equivalence model rates them highly on lexical overlap. Generative outputs reword even when correct and slip below 0.9.
+2. **883 examples too thin for seq2seq.** RoBERTa fine-tunes well at this scale because the span-prediction head is small and pre-conditioned. Flan-T5 has to learn answer *style* from very few examples.
+3. **One-shot generation, not batched.** This cost 22% wall-clock — `v8a-genqa-batched` could recover most of it, but with accuracy already -0.031 it cannot win the blended score even with v9-equivalent speed. Don't build the batched variant.
 
-**Verdict**: generative QA is dead lever on this corpus.
+**Verdict**: generative QA is a dead lever on this corpus.
 
 ## v5-multi/v5b/v5c — the bisect lesson (14 May)
 
-Built v5-multi with four changes (paragraph chunking + batched SQuAD2 + BM25 doc-diversity backfill + low-conf sentence fallback). Local equiv_rate 0.678 → **0.628** (-0.050).
+Built v5-multi with four changes bundled together (paragraph chunking + batched SQuAD2 + BM25 doc-diversity backfill + low-confidence sentence fallback). Local equiv_rate dropped 0.678 → **0.628** (-0.050).
 
 Error-bucket diagnostic identified cause:
 
@@ -991,19 +989,19 @@ Error-bucket diagnostic identified cause:
 | retrieval_hit_substr | 256 (29.0%) | 231 (26.2%) | −25 |
 | retrieval_hit_diff | 404 (45.8%) | 502 (56.9%) | **+98** |
 
-Smoking gun in answer-length stats: median answer chars **12 → 37**, mean **21 → 82**. Low-confidence fallback firing on huge fraction of queries (its `< 2 words` clause triggers on every single-word answer — "Velez", "1992", "blue", price tokens) and replacing correct-but-short SQuAD2 spans with too-long sentences that fail AE 0.9. **Fallback is net negative.** Not submitted.
+Smoking gun in answer-length stats: median answer chars jumped **12 → 37**, mean **21 → 82**. The low-confidence fallback was firing on a large fraction of queries — its `< 2 words` clause triggers on every single-word answer ("Velez", "1992", "blue", price tokens) — and replacing correct-but-short SQuAD2 spans with too-long sentences that fail the AE 0.9 threshold. **Fallback is net negative.** Not submitted.
 
-**v5b-no-fallback** (removed fallback; kept para + batched + backfill): cloud `0.456 / 0.916`. Accuracy -0.027 vs v4, speed +0.028. Local-cloud gap WIDENED from 0.195 to 0.218 — signal that a change is near-neutral on local but worse on held-out. Paragraph chunking is prime suspect — local already showed +5 retrieval misses.
+**v5b-no-fallback** (removed fallback; kept paragraph chunking + batched + backfill): cloud `0.456 / 0.916`. Accuracy -0.027 vs v4, speed +0.028. The local-cloud gap WIDENED from 0.195 to 0.218 — a signal that a change is near-neutral locally but worse on the held-out set. Paragraph chunking is the prime suspect — local already showed +5 retrieval misses.
 
-**v5c-no-para** (reverted `_chunk_document` to v4's plain 3-sentence sliding window with 1-sentence overlap; kept batched SQuAD2 + BM25 backfill): cloud `0.483 / 0.912`. Score matches v4 exactly; speed gain locked in; blended 0.590 — fresh leaderboard high. **Paragraph chunking confirmed the v5b regressor.**
+**v5c-no-para** (reverted `_chunk_document` to v4's plain 3-sentence sliding window with 1-sentence overlap; kept batched SQuAD2 + BM25 backfill): cloud `0.483 / 0.912`. Score matches v4 exactly; the speed gain is locked in; blended 0.590 — fresh leaderboard high. **Paragraph chunking confirmed as the v5b regressor.**
 
 ## v7-finetuned-v1 (15 May, +0.034 — first QA-head win)
 
-Cloud +0.034 (0.483 → 0.517) matches local +0.035 (0.674 → 0.709). Fine-tune transferred near-1:1, a clean signal that:
+Cloud +0.034 (0.483 → 0.517) matches local +0.035 (0.674 → 0.709). The fine-tune transferred near 1:1, a clean signal that:
 
-1. Held-out cloud questions follow same authoring style as local `nlp.jsonl` (same paraphrase frequency, same answer formats). Local equiv_rate is reliable proxy for cloud — at least in ±0.005 band.
-2. Bottleneck WAS QA span quality, as error-bucket diagnostic predicted. With retrieval at 95.5%, moving cases from `retrieval_hit_diff` to `exact/substr` directly lifts cloud score.
-3. roberta-large-squad2 + 318 train examples was enough for meaningful lift even with aggressive overfitting in epochs 2-3 (`load_best_model_at_end=True` rescued us).
+1. Held-out cloud questions follow the same authoring style as local `nlp.jsonl` (same paraphrase frequency, same answer formats). Local `equiv_rate` is a reliable proxy for cloud — at least in a ±0.005 band.
+2. The bottleneck WAS QA span quality, as the error-bucket diagnostic predicted. With retrieval at 95.5%, moving cases from `retrieval_hit_diff` to `exact/substr` directly lifts cloud score.
+3. `roberta-large-squad2` + 318 train examples was enough for meaningful lift even with aggressive overfitting in epochs 2–3 (`load_best_model_at_end=True` saved us).
 
 Error-bucket shift (local, v5c → v7-v1):
 
@@ -1016,35 +1014,35 @@ Error-bucket shift (local, v5c → v7-v1):
 | L1 exact-match | 29.7% | **39.7%** | **+10pp** |
 | L2 exact-match | 2.4% | 2.4% | 0 |
 
-The −51 substr / +59 exact shift means model is producing more strictly-verbatim spans. L1 single-fact questions are main beneficiary; L2 multi-fact unchanged (those need composition, not extraction).
+The −51 substr / +59 exact shift means the model is producing more strictly-verbatim spans. L1 single-fact questions are the main beneficiary; L2 multi-fact questions are unchanged (those need composition, not extraction).
 
 ## v7-finetuned-v2 (built, NOT shipped)
 
-Same training script + v2 data-prep (variants + flexible regex + rapidfuzz). Retention 353 → 431 (+78). Training eval_loss curve concerning:
+Same training script with v2 data-prep (variants + flexible regex + rapidfuzz). Retention 353 → 431 (+78). Training eval_loss curve was concerning:
 
 ```text
 epoch 3: eval_loss 1.238   ← v1 had 0.872 at epoch 3
 ```
 
-`load_best_model_at_end=True` still picks best epoch, but v2's higher epoch-3 loss suggests harder overfit. Hypothesis: rapidfuzz fallback returns window-length spans (not actual answer text), so some examples train on slightly-misaligned char ranges. Those noisy examples confuse model on questions where correct span is shorter than fuzzy-matched window.
+`load_best_model_at_end=True` still picks the best epoch, but v2's higher epoch-3 loss suggests harder overfitting. Hypothesis: the rapidfuzz fallback returns window-length spans (not actual answer text), so some examples train on slightly misaligned character ranges. Those noisy examples confuse the model on questions where the correct span is shorter than the fuzzy-matched window.
 
-Outcome: local `0.698`, below v7-v1's `0.709`. Fuzzy fallback net-negative; do not ship this branch.
+Outcome: local `0.698`, below v7-v1's `0.709`. Fuzzy fallback is net-negative; do not ship this branch.
 
 ## v8b-chunked-context (15 May, +0.162 cloud — biggest single jump)
 
-`--use-answer-chunk` + rapidfuzz off, 353/883 retained; first run had span-misalignment bug fixed in `627c9ce`, retrained. Local aggregate looked flat (0.708 vs v7-v1's 0.709), but **cloud strongly rewarded chunked-context training** (+0.162 vs v7-v1). Blended 0.727.
+`--use-answer-chunk` enabled, rapidfuzz off, 353/883 examples retained; the first run had a span-misalignment bug fixed in `627c9ce` and was retrained. Local aggregate looked flat (0.708 vs v7-v1's 0.709), but **cloud strongly rewarded chunked-context training** (+0.162 vs v7-v1). Blended 0.727.
 
-**New lesson**: local aggregate `equiv_rate` is not enough as a ship gate. For v8b, local exact/substr/diff buckets looked mostly flat, but hidden cloud accuracy moved massively. Treat local buckets as diagnostics, not as a scalar forecast. **Chunked-context training is now proven positive on hidden eval even though local set didn't show it.**
+**New lesson**: local aggregate `equiv_rate` is not sufficient as a ship gate. For v8b, local exact/substr/diff buckets looked mostly flat, but hidden cloud accuracy moved massively. Treat local buckets as diagnostics, not as a scalar forecast. **Chunked-context training is now proven positive on hidden eval even though the local set didn't show it.**
 
 ## Lessons recorded
 
-- **Ship changes sequentially on this task, not bundled.** v5-multi tried four changes at once; couldn't attribute regression without bisecting through v5b → v5c. Each bisect was a submission. Ship one knob at a time.
-- **Local-cloud gap is a diagnostic, not a number.** v5b local equiv_rate was within 0.005 of v4, but cloud was -0.027. When the gap *widens* on a change, that's the signal — held-out corpus is responding differently than local. Check before submitting.
-- **Paragraph-aware chunking does not transfer on this corpus.** Local +5 retrieval misses (40→45) on v5-multi; cloud took it harder. Structural reason (changing BGE embedding distribution of chunks) means unlikely to be fixable by parameter tweaks. Don't revisit.
+- **Ship changes sequentially on this task, not bundled.** v5-multi tried four changes at once; we couldn't attribute the regression without bisecting through v5b → v5c. Each bisect cost a submission. Ship one knob at a time.
+- **Local-cloud gap is a diagnostic, not a number.** v5b local `equiv_rate` was within 0.005 of v4, but cloud was -0.027. When the gap *widens* on a change, that is the signal — the held-out corpus is responding differently than local. Check before submitting.
+- **Paragraph-aware chunking does not transfer on this corpus.** Local +5 retrieval misses (40→45) on v5-multi; cloud took it harder. The structural reason (changing the BGE embedding distribution of chunks) means this is unlikely to be fixable by parameter tweaks. Don't revisit.
 - **Local aggregate is not a sufficient ship gate.** v8b's flat-local / huge-cloud-lift shows we should also look at retrieval misses, exact/substr/diff bucket shifts, and chunking distribution as separate signals.
-- **Don't trust `vllm/vllm-openai` base on cloud.** Five tags (v14c/v14d/v15-lora/v16/v17/v18) all failed cloud serving in different ways. NGC base (v14) is the only proven LLM stack.
+- **Don't trust the `vllm/vllm-openai` base on cloud.** Five tags (v14c/v14d/v15-lora/v16/v17/v18) all failed cloud serving in different ways. The NGC base (v14) is the only proven LLM stack.
 - **0.9 AE threshold punishes paraphrase.** Generative answers, doc-mined short tokens, and canonicalizer rewrites all hit this. Train on the actual scoring proxy (ModernBERT AE), not exact/substr.
-- **Eight confirmed dead levers**: paragraph chunking, low-conf fallback, rapidfuzz spans, narrow rule templates, full-doc canonicalization, generative answers (Flan-T5), candidate reranking (v12/v13a), DeBERTa-v3-large QA retune. ModernBERT-base extractive also too weak. Qwen3-Reranker-0.6B as drop-in for BGE cross-encoder regressed.
+- **Eight confirmed dead levers**: paragraph chunking, low-confidence fallback, rapidfuzz spans, narrow rule templates, full-document canonicalization, generative answers (Flan-T5), candidate reranking (v12/v13a), and DeBERTa-v3-large QA retune. ModernBERT-base extractive is also too weak. Qwen3-Reranker-0.6B as a drop-in for the BGE cross-encoder regressed.
 
 ## What to edit, what not to
 

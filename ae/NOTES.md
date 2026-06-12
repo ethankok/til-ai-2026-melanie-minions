@@ -1,11 +1,11 @@
 # AE — notes & history
 
-> **How to read this file.** This is the AE working memory: what we've tried,
+> **How to read this file.** This is the AE (Autonomous Exploration) working memory: what we've tried,
 > what worked, what failed, and *why*, so we don't burn time re-running dead
 > ends. **Read the `## Read this first` digest below before doing any AE work** —
 > it is the current, distilled state. The reverse-chronological per-session log
 > (raw numbers, reproduction commands) was split out to a private archive (not
-> in this repo). The archive is intentionally redundant with the digest; it's
+> in this repo). The archive is intentionally redundant with the digest; it is
 > only needed for the exact per-submission detail behind a claim here.
 >
 > _Digest last refreshed: 4 June 2026 — ⚠ CLOUD EVAL CHANGED (org opponent swap; all cloud
@@ -25,20 +25,20 @@
 
 ### ⛔ `AE_NO_SELF_DAMAGE` × g02 re-gate (10 June 2026) — flag INVERTS under the new weights; do NOT flip for Finals
 
-The 9-Jun noselfdmg gate numbers (+125 real_field / +212 adversarial / −275
+The 9-Jun `AE_NO_SELF_DAMAGE` gate numbers (+125 real_field / +212 adversarial / −275
 semis_mixed) were measured on the OLD deploy profile; the deploy is now g02
-(tether 1.31, base 80). Re-gated flag ON vs OFF with both candidates on the full
+(tether_weight 1.31, base 80). Re-gated flag ON vs OFF with both candidates on the full
 g02 spec (`training/ae/gate_noselfdmg_g02.py`, paired per (bracket, seed),
-rounds=6, checkpoint `data/noselfdmg-g02-gate.jsonl`). Run was killed repeatedly
+rounds=6, checkpoint `data/noselfdmg-g02-gate.jsonl`). The run was killed repeatedly
 (machine-side), but the salvaged paired prefix is decisive — **all 6 paired
-comparisons negative, and the inversion is exactly in the flag's former home
+comparisons are negative, and the inversion is exactly in the flag's former home
 brackets**: real_field (n=4 seeds) raw_ae ~331→~255 (**Δ−76**, place 1.38→1.67);
 adversarial (n=2) raw_ae ~300→~93 (**Δ−207**, place 1.92→**5.8, last**).
-Mechanism fits the weights: g02's higher tether + lower base value already
+The mechanism fits the weights: g02's higher tether + lower base value already
 rebalanced toward defend-while-farming; un-vetoed speculative bombing fights the
 tether and forfeits both. **Verdict: the "observe the field, flip
 AE_NO_SELF_DAMAGE=1 for Finals if opponents are active" playbook is DEAD under
-g02 — flag stays OFF in all regimes.** (Was always OFF in the deploy; this
+g02 — flag stays OFF in all regimes.** (The flag was always OFF in the deploy; this
 closes the conditional bet too.) Incomplete tails (semis_mixed ON half,
 all_aggressive/all_farmer, held-outs) abandoned at the 10-Jun submission
 deadline — only re-run if the deploy weights change again.
@@ -47,13 +47,13 @@ deadline — only re-run if the deploy weights change again.
 
 **New deploy = `confpol-semis2b-u75` checkpoint + `g02-sample-08` planner weights**
 (commit `68164b3` on `ethanAE`/`main`; 10 `ENV` lines override the C+bomb7 defaults
-via Docker last-wins). Core is UNCHANGED — same `bc.pt`=semis2b-u75, confpol gate,
+via Docker last-wins). The core is UNCHANGED — same `bc.pt`=semis2b-u75, confpol gate,
 det5, `AE_CONTENTION=1`; only the 10 scalar planner weights move.
 
-**How it was selected.** The planner-weight CEM tuner was retargeted from mean-placement
+**How it was selected.** The planner-weight CEM (Cross-Entropy Method) tuner was retargeted from mean-placement
 (the old, overfit-prone objective behind the reverted g00-fixed-03) to the **finals
 discriminator `raw_ae`** with a `worst_robust_placement` floor (commit `9f8e7dd`,
-`tune_planner_weights.py`; 18 tests). A ~6h campaign's auto-best (`g00-sample-01`) was a
+`tune_planner_weights.py`; 18 tests). The ~6h campaign's auto-best (`g00-sample-01`) was a
 DOMINATED glass cannon (tether≈0, base pegged → semis_mixed placement craters for a
 noise-level raw_ae edge). Scanning all 40 candidates surfaced **`g02-sample-08`**: a
 BALANCED profile (tether_weight 1.31 > incumbent 0.5, base 80 < 100, keeps farming).
@@ -77,8 +77,8 @@ pursued; branch kept as a record only.
 
 **⚠ Still owed (ideal, not blocking):** the **hardware raw_ae A/B** vs semis2b-default on
 the fixed finals seed remains the textbook final arbiter (the synthetic gate inverted on
-hardware once, for semis2c). User adopted g02 as the current best on the strength of the 4
-passed gates incl. the independent cloud non-crater. If a hardware run is available before
+hardware once, for semis2c). We adopted g02 as the current best on the strength of the 4
+passed gates, including the independent cloud non-crater. If a hardware run is available before
 the Semis match, run it as the final confirm. **Revert = `git revert 68164b3`** → back to
 semis2b-u75 at default weights (the 516/1st on-hardware performer). See
 [[project_ae_next_levers]] + `training/ae/data/g02-finalist-validation.json`.
@@ -89,7 +89,7 @@ Re-tested `AE_MODE=opening_hybrid` (the v2 confpol-correct opening book + confpo
 under the finals melee gate to lift the **flat first-half** (`opening_axis`) — the one axis no
 prior lever moved. Result: **NO-GO.**
 
-- **Gate-harness fix (reusable):** the opening arms off `base_location`; the v2 sweep enabled
+- **Gate-harness fix (reusable):** the opening arms off `base_location`; the v2 sweep had enabled
   only 3 of 6 novice bases — `9,13 / 2,6 / 6,2` (env slots 1/3/4) — and disabled `13,9 /
   3,12 / 12,3` (slots 0/2/5). `melee_eval.py` was **pinned at `us_slot=0` (base 13,9 =
   disabled) → baseline ≡ opening, a silent byte-identical null.** Fixed by plumbing
@@ -109,9 +109,9 @@ prior lever moved. Result: **NO-GO.**
   raw_ae across brackets +311 → +289.
 - **Mechanism (structural, not a tuning miss):** the book is beam-searched SINGLE-AGENT for
   item-farming, so it models zero opponent punishment. A fixed, divergence-replayed opening is
-  NON-REACTIVE for ~20 ticks; `adversarial` punishes that blind window and we lose despite a
+  NON-REACTIVE for ~20 ticks; the `adversarial` bracket punishes that blind window and we lose despite a
   better first-half. **The old `u860→semis2b` re-sweep caveat is MOOT** — a re-sweep is also
-  single-agent and can't teach the book to dodge aggressive foes (didn't pursue it).
+  single-agent and can't teach the book to dodge aggressive foes (not pursued).
 - **Verdict:** keep OFF (`AE_MODE` unset), deploy UNCHANGED (`confpol-semis2b-u75`). Same
   opponent-activity shape as the no-self-damage lever but a *worse* bet — it craters the
   aggressive bracket, exactly where you'd want an edge. The first-half is flat for a reason:
@@ -124,11 +124,11 @@ Revamped the melee gate (`training/ae/melee_eval.py`) to match real Finals scori
 which pays `raw_ae × mission_multiplier` as RELATIVE RANK.
 
 - **Multiplier overlay:** the gate now sweeps the opponent mission-multiplier
-  (`--opp-mults 0.24 0.7`) with our own mult fixed (`--our-mult 0.93`). A stronger
+  (`--opp-mults 0.24 0.7`) with our own multiplier fixed (`--our-mult 0.93`). A stronger
   field can't improve our placement, so placement saturates into a non-exploitability
   FLOOR (`worst_robust_placement` = worst over brackets × opp-mults, PRIMARY).
 - **`raw_ae` is the finals-proportional DISCRIMINATOR** (our cumulative reward;
-  proportional to final score since our mult is fixed) with a non-crater floor
+  proportional to final score since our multiplier is fixed) with a non-crater floor
   (`AE_GATE_RAWAE_FLOOR_FRAC=0.75`) + paired effect/PoI — breaks placement ties.
 - **`--target-axis {mission,base_defense,opening}`** gates the 3 planned downstream
   changes (farming→mission, danger-map→base_defense, opening→opening), each on its
@@ -141,7 +141,7 @@ which pays `raw_ae × mission_multiplier` as RELATIVE RANK.
 
 ### 🟢 Bomb-timer offensive split (8 June 2026) — correctness fix, melee-positive-but-sub-PoI, SHIPPED ON (default 5)
 
-Resolved the long-FLAGGED bomb-timer under-estimate (see "Resource-reward env fix +
+Resolved the long-flagged bomb-timer under-estimate (see "Resource-reward env fix +
 bomb-timer finding"). `BOMB_TIMER=3` was a single constant used for BOTH the own-bomb
 ESCAPE window (correctly short — the placer takes zero self-damage on its own tile)
 AND offensive *landing* timing, where the probe (`probe_bomb_timer.py`) measured true
@@ -149,15 +149,15 @@ detonation at **~5 decision-steps** (dataclass `timer=4` + `Bomb.__post_init__ +
 
 - **Fix:** new `self.BOMB_DETONATE_STEPS` (env `AE_BOMB_DETONATE_STEPS`, **default 5**),
   used ONLY for the two offensive respawn-camp `detonation_step = step + …` windows
-  (`_lookahead_detonation_score` ~2039, `_should_place_bomb` ~2380). Escape/survival
-  `BOMB_TIMER` stays 3 (conservative). Tests: `test/test_ae_bomb_detonate.py` (5,
+  (`_lookahead_detonation_score` ~line 2039, `_should_place_bomb` ~line 2380). Escape/survival
+  `BOMB_TIMER` stays 3 (conservative). Tests: `test/test_ae_bomb_detonate.py` (5 tests,
   RED-first — old code fired at the stale +3 window). Added a `detonate` knob to
   `melee_eval._GATE_KEYS` for the A/B.
 - **Melee gate (det5=+5 vs det3=+3, deployed `semis2b-u75` + C+bomb7 + contention,
   `--heldout`, n=30 paired): NOT promotable by the strict gate, but directionally
   POSITIVE and never significantly worse.** `minimax ✓` (worst 5.00→**4.93**),
   `effect ✓` (Δ**+0.39**≥0.3), `score/margin floors ✓` (semis_mixed score 0.138→0.204),
-  `gap ✓` (heldout +0.14) — fails only **`poi ✗`** (Wilson-95 LB 0.44<0.5; 14W/9T/7L).
+  `gap ✓` (heldout +0.14) — fails only **`poi ✗`** (Wilson-95 lower bound 0.44<0.5; 14W/9T/7L).
   Big realistic-bracket gain: `semis_mixed` placement **4.96→3.04**; tiny noise-level
   regressions elsewhere (`adversarial` 2.94→3.00, `real_field` 1.00→1.03). Artifact
   `training/ae/data/melee-bombtimer.json`.
@@ -171,9 +171,9 @@ detonation at **~5 decision-steps** (dataclass `timer=4` + `Bomb.__post_init__ +
 
 Found a latent state-consistency leak in `confidence_policy_hybrid`: the heuristic's
 `ae()` runs fully every tick, so when `_should_place_bomb` commits it writes a
-synthetic `own=True` entry to `known_bombs` (+ dead escape state) and returns
+synthetic `own=True` entry to `known_bombs` (plus dead escape state) and returns
 `PLACE_BOMB` — but `decision_path` stays `"target"` with the target-ranking margin.
-On a low-margin tick the wrapper overrides PLACE_BOMB with a policy *move*, the bomb
+On a low-margin tick the wrapper overrides `PLACE_BOMB` with a policy *move*, the bomb
 is never placed, and the phantom `known_bombs` entry makes `_danger_cells()` route
 around a nonexistent bomb for ~`BOMB_TIMER` ticks. (Bounded: self-heals via
 `_age_bombs`, only ever makes the agent MORE cautious, and the strong bomb triggers
@@ -181,15 +181,15 @@ are pre-empted by the never-overridden dominant path. `escape_target`/`escape_un
 are DEAD state — `_active_escape_path` is never called.)
 
 - **Fix (R2 — "policy keeps the tick"):** new `AEManager.revert_bomb_commit()` undoes
-  exactly the commit's `known_bombs`/escape writes (restores prior values, not blanket
+  exactly the commit's `known_bombs`/escape writes (restores prior values, not a blanket
   clear — observed enemy bombs must survive). Wrapper calls it on override behind
   **`AE_CONFPOL_ROLLBACK_PHANTOM_BOMB` (default OFF)**. Flag-off = byte-identical
-  (full AE suite 58 green incl. 10 new in `test/test_ae_confpol_rollback.py`).
-  `_tick_bomb_commit` recorded in `_should_place_bomb`, reset at top of every `ae()`.
-- **Melee A/B verdict (deploy-faithful C+bomb7+contention, same `semis2b-u75` ckpt,
+  (full AE suite 58 green, including 10 new in `test/test_ae_confpol_rollback.py`).
+  `_tick_bomb_commit` is recorded in `_should_place_bomb` and reset at the top of every `ae()`.
+- **Melee A/B verdict (deploy-faithful C+bomb7+contention, same `semis2b-u75` checkpoint,
   `@rollback=1` vs off, `--heldout`, hash 0/1/2 × sim 42/137): NOT promotable → FLAT.**
   `effect_ok=False` (mean Δ = **−0.033 rank**, need ≥+0.3) and `poi_ok=False` (13W/5T/12L
-  over 30 pairs, PoI 0.52, Wilson-95 LB 0.35) — a coin flip, slightly negative on the
+  over 30 pairs, PoI 0.52, Wilson-95 lower bound 0.35) — a coin flip, slightly negative on the
   realistic brackets (`real_field` +0.21, curry-heldout +0.17). `minimax_placement_ok`
   + `gap_not_widening_ok` pass (gap even improved −0.205) but the noise gate kills it.
   Artifacts `training/ae/data/melee-phantom-rollback-ab.{json,log}`.
@@ -206,27 +206,27 @@ by `ae_reward × mission_multiplier` → **RELATIVE RANK is what's paid, not abs
 reward** (`til-26-finals/test_competition_server/src/match.py:169-195`). `ae_reward` =
 per-step env-reward sum (destroy_enemy_base=50 dominates; `ae_loop.py:231`).
 `mission_multiplier` = mean of the team's ASR/CV/NLP/Noise **batch** scores
-(`0.75·acc+0.25·speed`, `missions.py:228`), **NOT an AE quantity**; `mult=0` cliff if a
+(`0.75·acc+0.25·speed`, `missions.py:228`), **NOT an AE quantity**; there is a `mult=0` cliff if a
 team completes zero mission batches all match (`DEFAULT_MISSION_MULTIPLIER=0`). →
-(1) cloud single-agent reward is the WRONG SHAPE (a retune can earn less reward but
+(1) cloud single-agent reward is the WRONG SHAPE for a relative-rank melee (a retune can earn less reward but
 place better — the `g00-fixed-03` −33% cloud drop is EXPECTED, not regression);
-(2) you CANNOT proxy `mult` offline (it's the other 4 tasks' accuracy), so our
+(2) you CANNOT proxy `mult` offline (it is the other 4 tasks' accuracy), so our
 placement-by-raw-reward key is ~right and the `ae×mult` re-rank idea was CUT.
 
 **The gate (`melee_eval.py`, run with `--heldout`) — `promotable` requires ALL:**
-`minimax_placement_ok` (worst-bracket mean_placement ≤ inc, PRIMARY) · `margin_noncrater_ok`
+`minimax_placement_ok` (worst-bracket mean_placement ≤ incumbent's, PRIMARY) · `margin_noncrater_ok`
 + `score_noncrater_ok` (absolute reward = non-crater FLOORS, not selectors) ·
 `effect_ok` + `poi_ok` (paired per-seed placement gain is real: mean Δ≥0.3 rank AND
 Wilson-95 lower bound on Prob-of-Improvement > 0.5) · `gap_not_widening_ok`
 (train-vs-heldout composition gap doesn't widen — overfit alarm, supersedes the
-ad-hoc `data/_cem_transfer_test.py`). Thresholds env-overridable
+ad-hoc `data/_cem_transfer_test.py`). Thresholds are env-overridable
 (`AE_GATE_{SCORE_FLOOR_FRAC=0.85,MARGIN_SLACK_FRAC=0.5,MIN_EFFECT_RANK=0.3,GAP_TOL=0.5}`).
 Design spec `2026-06-07-ae-finals-aligned-eval-redesign` (private archive); tests
 `test/test_melee_eval_gate.py` (14 pass). Tuner gate (`tune_planner_weights.promotion_ok`)
 was ALREADY placement-primary — left untouched (18 tests still pass).
 
 **Re-decide the pending `g00-fixed-03` deploy on THIS gate** (run
-`melee_eval --heldout` incumbent vs g00-fixed-03): the cloud −33% no longer reverts;
+`melee_eval --heldout` incumbent vs g00-fixed-03): the cloud −33% no longer reverts it;
 the deciding signal is held-out-composition placement + non-widening gap. Workbench
 ride-along on the Blackwell run: measure our real `mission_multiplier` in the local
 finals stack (confirms `mult>0` default) and that we complete mission batches under
@@ -237,17 +237,17 @@ out `data/redecide-builds.json`; 7 builds, deploy-faithful, hash[0,1,2] sim[42]
 rounds=8 — i.e. n=3/single-sim, PRELIMINARY).** Only **`semis2c-u75` is promotable**
 over the incumbent: less exploitable (worst-bracket 4.00 < 5.00), better on tune
 (μ 2.42) AND on the held-out REAL competitors (μ 2.56 < incumbent 3.18), real+reliable
-effect (Δ+0.94, 12W/2T/1L, Wilson-lo 0.62), flat gap (+0.13). It was the branch we'd
+effect (Δ+0.94, 12W/2T/1L, Wilson-lo 0.62), flat gap (+0.13). It was the branch we had
 called "degraded" — but that verdict was on the OLD worst-bracket-on-noisy-adversarial
 gate. **`g00-fixed-03` is now FORMALLY confirmed overfit by the RIGHT signal:** it
 crushes every tune bracket (Δ+1.55, fixes incumbent all_aggressive 5.00→1.00) and
 passes every gate EXCEPT the composition-gap (**+1.47** — edge evaporates on real
 competitors: held μ 3.29 ≈ incumbent 3.18). The cloud −33% was never the reason to
-revert; Reform 4 is. native-u100/pandemonium-v1 fail minimax (wrecked in
+revert; the composition-gap failure (+1.47) is. native-u100/pandemonium-v1 fail minimax (wrecked in
 adversarial/real_field); pandemonium-v2/dir2 within noise. **⚠ n=3/sim42 contradicts
 prior judgment → high-n confirm RUNNING** (incumbent vs semis2c-u75, hash[0,1,2]
-sim[42,137,271], out `data/redecide-confirm.json`). Holds → semis2c-u75 is the new
-deploy candidate (then Workbench cloud non-crater sanity); fails → semis2b-u75 stays.
+sim[42,137,271], out `data/redecide-confirm.json`). If it holds → semis2c-u75 is the new
+deploy candidate (then Workbench cloud non-crater sanity); if it fails → semis2b-u75 stays.
 
 **✅ CONFIRMED at high n (8 Jun, `data/redecide-confirm.json`, 45 paired samples, 0
 err): `semis2c-u75` PROMOTABLE over the deployed `semis2b-u75`.** Every gate green —
@@ -255,7 +255,7 @@ minimax (worst 4.00 < 4.94), reward floors, effect Δ+0.89, PoI Wilson-lo **0.75
 (38W/3T/4L of 45), gap **+0.15 not widening**. Wins 4/5 tune brackets (semis_mixed
 4.94→3.99, all_aggressive 4.76→4.00, all_farmer 2.88→1.21, adversarial 2.79→1.62);
 only `real_field` slips 1.06→1.18 (near-tie, both ~1st). **Transfers to the real
-field: held-out μ 2.55 vs 3.56** — the test g00-fixed-03 failed (gap +1.47), semis2c
+field: held-out μ 2.55 vs 3.56** — the test that g00-fixed-03 failed (gap +1.47); semis2c
 passes. The "semis2c degraded" verdict was an OLD-gate artifact; u75 is a better
 consultant than semis2b-u75. **STAGED for deploy (8 Jun): consultant
 `confpol-semis2c-u75.pt` (sha256 `838f7847…769913`) uploaded to bucket
@@ -276,7 +276,7 @@ as a finals image (semis2b-u75 consultant `bc.pt` + the 10 CEM env vars baked in
 `ae/Dockerfile`; weights confirmed in `docker inspect …ae:finals`) and ran it on the real
 Blackwell finals harness on the **same fixed seed** as the semis2b/semis2c runs. Result:
 **g00 trajectory is BYTE-IDENTICAL to plain semis2b-u75** — 0/200 full-field reward vectors
-differ, agent_0 moves differ at only the terminal step 200 (no score effect), total **516,
+differ; agent_0 moves differ at only the terminal step 200 (no score effect), total **516,
 1st place** (= semis2b exactly). That lone step-200 flip proves the weights WERE live (rules
 out stale image / compose override) and incidentally re-confirms `bc.pt = semis2b`. The CEM
 weights rescale values but preserve every consequential target ordering on this seed (base>
@@ -284,14 +284,14 @@ mission>resource holds: 100>80>40 → 89>51>23), so they only ever change behavi
 seeds/opponents — exactly the synthetic-bracket regime the finals-aligned gate already flagged
 **overfit (composition-gap +1.47)**. **No upside on the live (fixed) finals seed + residual
 overfit risk off it → CEM REVERTED, deploy = `confpol-semis2b-u75` at default weights** (Dockerfile
-block removed). Bonus: confirms the finals seed is deterministic (516/1st reproduces exactly).
+block removed). Bonus: this confirms the finals seed is deterministic (516/1st reproduces exactly).
 The earlier "transfer test" question is now moot — the real harness answered it directly.
 
 **Sequence:** CEM over 10 scalar planner env vars, gated on the local melee
 **mean-placement** metric (field guard semis_mixed/real_field, held-out seed sim 271).
 Candidate `g00-fixed-03` Pareto-dominated the `confpol-semis2b-u75` incumbent on all
 5 melee brackets across 4 seed sets (mean placement 3.43→1.89, real_field held).
-Promoted to `ae/Dockerfile` (`1f521ff`). Cloud cross-check then dropped hard:
+Promoted to `ae/Dockerfile` (commit `1f521ff`). Cloud cross-check then dropped hard:
 
 | image | cloud score | speed | errors |
 |---|---|---|---|
@@ -305,7 +305,7 @@ doc `aca8fd9`); deploy currently `confpol-semis2b-u75`.
 AFTER the revert that re-opens it: **finals AE is scored by RELATIVE RANK vs
 opponents, NOT absolute accumulated reward.** That changes the metric weighting:
 - The **cloud single-agent reward number is the WRONG SHAPE** for a relative-rank
-  melee. A model can earn less absolute reward but place better (survive while
+  melee. A model can earn less absolute reward but place better (by surviving while
   opponents over-extend and die). So the −33% cloud drop is the **expected signature
   of retuning from single-agent-reward toward melee-placement**, not proof of being
   worse. (The earlier "finals = base destruction reward" reasoning was wrong on this
@@ -322,7 +322,7 @@ opponents, NOT absolute accumulated reward.** That changes the metric weighting:
 OUR specific synthetic opponent pool (`self_policy`/`aggressive_proxy`/
 `anti_aggro_exploiter`/…). Beating those in relative rank may not transfer to real
 unknown teams. **Transfer test RUNNING** (`training/ae/data/_cem_transfer_test.py`,
-bg job): incumbent vs g00-fixed-03 on 3 held-out fields of ONLY the real vendored
+background job): incumbent vs g00-fixed-03 on 3 held-out fields of ONLY the real vendored
 competitors (curry semifinalist + peroxide), in compositions matching no tuning
 bracket. Results → `training/ae/data/_cem_transfer_{test.log,DONE}`.
 - Edge transfers → real melee skill → **un-revert and deploy CEM weights for finals**
@@ -339,8 +339,8 @@ base 89.398951, dist 1.060815, path_threat 2.377860, bomb 9.076016, tether_healt
 **⭐ EVAL-REDESIGN (the real takeaway — next session is rebuilding the eval to match
 Semis goals).** This whole episode exposed that our eval signals are mis-aligned with
 relative-rank finals: (1) **cloud single-agent reward ≠ finals metric** — demote it
-to a functionality/non-crater sanity, not a selector; (2) **the melee brackets may be
-unrepresentative** — our own champion placing dead-last is a red flag the bracket
+to a functionality/non-crater sanity check, not a selector; (2) **the melee brackets may be
+unrepresentative** — our own champion placing dead-last is a red flag that the bracket
 *opponent mix* or *placement scoring* doesn't track the real field; (3) **we have
 only 2 real external opponents** (curry/peroxide); the rest are synthetic self_*/
 proxy bots, so "wins vs our pool" generalizes weakly. A finals-aligned eval should
@@ -353,8 +353,8 @@ reusable once the gate's objective is fixed.
 
 **Org disclosure (6 Jun):** resource-tile pickups give **NO finals score** —
 `collect_resource:2.0` was a stray reward, removed upstream. Resources only yield
-0.5 fuel (→ bombs → enemy-base destruction, which scores). Our pinned env DID pay
-it: we run `default_config()` (the **dataclass**, not the yaml), and the old
+0.5 fuel (which feeds into bombs → enemy-base destruction, which does score). Our pinned env DID pay
+the resource reward: we run `default_config()` (the **dataclass**, not the yaml), and the old
 dataclass had `collect_resource=2.0` → +2.0 per pickup in all local eval/training.
 
 - **Pin bumped `til-26-ae` `beb81f8`→`b32af97`** (gitlink committed in parent; on the
@@ -362,11 +362,11 @@ dataclass had `collect_resource=2.0` → +2.0 per pickup in all local eval/train
   only the dataclass `collect_resource` removal affects us — the yaml's `timer 3→4` /
   `attack_kill 30→15` were already correct in the dataclass we use; no
   dynamics/obs/action-shape changes. `events/rewards.py` defaults a missing reward key
-  to `0.0` → resources now pay 0, no crash. The shipped container is unaffected (the
-  org runs the env); the pin is purely local training/eval fidelity.
+  to `0.0`, so resources now pay 0 with no crash. The shipped container is unaffected (the
+  org runs the env); the pin is purely for local training/eval fidelity.
 - **A/B verdict (same seed, resources-ON old pin vs OFF new pin, champion
   `semis2b-u75 @ C+bomb7+contention`, hash0/sim42): PLACEMENT-NEUTRAL — deploy HOLDS.**
-  Per-bracket deltas small + mixed (semis_mixed 5.00→4.12, all_aggr 5.00→5.00,
+  Per-bracket deltas are small and mixed (semis_mixed 5.00→4.12, all_aggr 5.00→5.00,
   all_farmer 3.00→2.75, adversarial 2.50→3.00, real_field 1.00→1.62). The champion
   draws badly at this single seed under BOTH pins (a hard seed) — the scary n=1
   resources-OFF numbers were the n=1-vs-n=72-historical trap, not a resource effect.
@@ -377,7 +377,7 @@ dataclass had `collect_resource=2.0` → +2.0 per pickup in all local eval/train
   bound 20→5 as harmless exploration only.
 
 **⚠ Bomb-timer finding (probe `training/ae/probe_bomb_timer.py`) — FLAGGED, NOT
-changed:** heuristic `BOMB_TIMER=3` ([ae_manager.py:142](src/ae_manager.py)) was
+changed yet:** heuristic `BOMB_TIMER=3` ([ae_manager.py:142](src/ae_manager.py)) was
 copied from the old yaml. Measured in the live env: a freshly-placed bomb's observed
 timer counts 4→0 over our decision-turns 1–5 and the **blast fires in the cycle after
 turn 5 (observable at +6)** — i.e. ~5 decision-steps, not 3 (config `timer=4` +
@@ -391,14 +391,14 @@ A/B on the melee before shipping.
 
 ### Current state (6 June 2026) — Dir-2 RL pipeline (BC-clone + self-play league) RAN → FLAT; deploy unchanged
 
-**The one RL recipe we'd never tried — BC-clone the heuristic → self-play league from that warm-start → deploy as the confpol consultant (curry's documented semis bet) — was built, run end-to-end, and gated. Verdict: FLAT. It improves AVERAGE melee placement but never the WORST bracket, so it does NOT beat `confpol-semis2b-u75` as a consultant. Deploy stays `confpol-semis2b-u75 @ default`.** Plan/spec `2026-06-04-ae-dir2-rl-pipeline*` (private archive).
+**The one RL recipe we had never tried — BC-clone the heuristic → self-play league from that warm-start → deploy as the confpol consultant (curry's documented Semis bet) — was built, run end-to-end, and gated. Verdict: FLAT. It improves AVERAGE melee placement but never the WORST bracket, so it does NOT beat `confpol-semis2b-u75` as a consultant. Deploy stays `confpol-semis2b-u75 @ default`.** Plan/spec `2026-06-04-ae-dir2-rl-pipeline*` (private archive).
 
-- **Stage 0 (BC clone) — PASS.** Collected 8000 games (1.6M `(obs,action,mask)` demos) from the C+bomb7 heuristic; trained `dir2-bc.pt`; fidelity gate on an INDEPENDENT 150-game held-out = **agreement 1.0000, modal 0.405, lift +0.595** (≫ the +0.20 bar). A perfect, fast clone of the deterministic teacher. Tool: `training/ae/bc_action_agreement.py`.
-- **Stage 1 (league) — healthy run, climbing eval.** `run_dir2_v1.py`: BC-warm-started PPO, `--preset full-rl` shaping + new `dir2-league` opponent mix (`foreign_train:0.45, selfplay:0.25, scripted:0.15, cloudsuite:0.15` — the `selfplay` slice is what actually draws the SnapshotPool), dense `-u<N>` ladder, ran the full 586 updates. In-training `best` climbed 0.2965→0.3399→**0.3589**; entropy held ~0.10 (full-rl floor prevented collapse). Full-control policy ~0.30 (vs champion's ~0.51).
-- **Gate (the decision) — FLAT on every axis.** Melee-gated rungs u100→u575 as **consultant** in 3 batches, plus a **deploy-faithful C+bomb7 re-run** (tether-on heuristic), plus a **full-control `--policy-ckpt` A/B**. **NO rung promotable in any configuration.** Champion's worst-bracket placement **~3.2–3.4 dominates every rung's worst (4.9–6.0)**. Champion-variance re-run (identical config) = **≤0.23 placement noise** → the gap is robustly real, not variance. Glimmers only: rungs match the champion on `all_aggressive` (2.93) and a rung *won* `all_farmer` (1.57) under C+bomb7 — but each craters on `real_field`/`semis_mixed`. Full-control is *worse* than consultant (worst 5.9 vs 4.9), settling the deploy-mode question: consultant is the right mode, and neither beats the champion. Evidence: `training/ae/data/melee-dir2-{early,batch2,final,final-cbomb7,fullcontrol}.json`.
-- **Why it failed (the lesson, consistent with the whole project):** the gate is **minimax worst-bracket placement**, and a weaker policy (full-control 0.30 ≪ champion 0.51) makes a weaker *consultant* — it improves the brackets it's already OK at while still cratering against aggressive/adversarial opponents. In-training eval rising (0.30→0.36) did **NOT** transfer to melee placement (the project's recurring local↔melee disconnect). "Later rungs overfit less with the new recipe" was empirically falsified on placement.
-- **⚠ 8GB-RAM infra lessons (this Mac), now committed & reusable:** the BC encoding is ~45KB/sample (100-ch frame-stacked viewcones) → 1000 games = 9GB uncompressed → the plan's naive collect+train OOMs. Fixes: (1) **streaming memmap** `collect_bc.py --stream-dir` (float16/uint8/int8, `open_memmap`, RAM flat ~115MB) + `BCDataset` mmap-loads a dir; (2) `train_bc.py` honors **`AE_FORCE_CPU=1`** (MPS + forked DataLoader workers crash — "leaked semaphores") and adds **`--num-workers 0` + `--max-samples N`** (cap to first N rows so the working set fits page-cache → fast+stable). Winning train: `AE_FORCE_CPU=1 … train_bc.py --data …/bc-dir2-stream --num-workers 0 --batch-size 512 --max-samples 200000 --epochs 10` (~90s/epoch). Commits `79f1d5e`/`49d98a6`/`7e2c7a0`.
-- **Melee gate faithfulness note:** `melee_eval --confpol-ckpt` runs every candidate as `confidence_policy_hybrid` with ONLY `AE_POLICY_CHECKPOINT` (the consultant) swapped — gate knobs at deployed defaults (5/10/1). BUT the shared heuristic backbone uses AEManager **defaults unless `CBOMB7_ENV` is exported** in the launch shell (defaults differ: base-tether OFF, item 50/25 vs 80/40, bomb 5 vs 7). This is true of all prior gates too; for a deploy-faithful read, `export` the C+bomb7 profile + `AE_CONTENTION=1` (as the `…-final-cbomb7` run did).
+- **Stage 0 (BC clone — Behavioral Cloning) — PASS.** Collected 8000 games (1.6M `(obs,action,mask)` demos) from the C+bomb7 heuristic; trained `dir2-bc.pt`; fidelity gate on an INDEPENDENT 150-game held-out = **agreement 1.0000, modal 0.405, lift +0.595** (≫ the +0.20 bar). A perfect, fast clone of the deterministic teacher. Tool: `training/ae/bc_action_agreement.py`.
+- **Stage 1 (league) — healthy run, climbing eval.** `run_dir2_v1.py`: BC-warm-started PPO, `--preset full-rl` shaping + new `dir2-league` opponent mix (`foreign_train:0.45, selfplay:0.25, scripted:0.15, cloudsuite:0.15` — the `selfplay` slice is what actually draws the SnapshotPool), dense `-u<N>` ladder, ran the full 586 updates. In-training `best` climbed 0.2965→0.3399→**0.3589**; entropy held ~0.10 (full-rl floor prevented collapse). Full-control policy reached ~0.30 (vs the champion's ~0.51).
+- **Gate (the decision) — FLAT on every axis.** Melee-gated rungs u100→u575 as **consultant** in 3 batches, plus a **deploy-faithful C+bomb7 re-run** (tether-on heuristic), plus a **full-control `--policy-ckpt` A/B**. **NO rung promotable in any configuration.** The champion's worst-bracket placement **~3.2–3.4 dominates every rung's worst (4.9–6.0)**. Champion-variance re-run (identical config) = **≤0.23 placement noise** → the gap is robustly real, not variance. Glimmers only: rungs match the champion on `all_aggressive` (2.93) and a rung *won* `all_farmer` (1.57) under C+bomb7 — but each craters on `real_field`/`semis_mixed`. Full-control is *worse* than consultant (worst 5.9 vs 4.9), settling the deploy-mode question: consultant is the right mode, and neither beats the champion. Evidence: `training/ae/data/melee-dir2-{early,batch2,final,final-cbomb7,fullcontrol}.json`.
+- **Why it failed (the lesson, consistent with the whole project):** the gate is **minimax worst-bracket placement**, and a weaker policy (full-control 0.30 ≪ champion 0.51) makes a weaker *consultant* — it improves the brackets it is already OK at while still cratering against aggressive/adversarial opponents. In-training eval rising (0.30→0.36) did **NOT** transfer to melee placement (the project's recurring local↔melee disconnect). "Later rungs overfit less with the new recipe" was empirically falsified on placement.
+- **⚠ 8GB-RAM infra lessons (this Mac), now committed & reusable:** the BC encoding is ~45KB/sample (100-channel frame-stacked viewcones) → 1000 games = 9GB uncompressed → the plan's naive collect+train OOMs. Fixes: (1) **streaming memmap** `collect_bc.py --stream-dir` (float16/uint8/int8, `open_memmap`, RAM flat ~115MB) + `BCDataset` mmap-loads a dir; (2) `train_bc.py` honors **`AE_FORCE_CPU=1`** (MPS + forked DataLoader workers crash — "leaked semaphores") and adds **`--num-workers 0` + `--max-samples N`** (cap to first N rows so the working set fits page-cache → fast+stable). Winning train: `AE_FORCE_CPU=1 … train_bc.py --data …/bc-dir2-stream --num-workers 0 --batch-size 512 --max-samples 200000 --epochs 10` (~90s/epoch). Commits `79f1d5e`/`49d98a6`/`7e2c7a0`.
+- **Melee gate faithfulness note:** `melee_eval --confpol-ckpt` runs every candidate as `confidence_policy_hybrid` with ONLY `AE_POLICY_CHECKPOINT` (the consultant) swapped — gate knobs at deployed defaults (5/10/1). BUT the shared heuristic backbone uses AEManager **defaults unless `CBOMB7_ENV` is exported** in the launch shell (defaults differ: base-tether OFF, item 50/25 vs 80/40, bomb detonate 5 vs 7). This is true of all prior gates too; for a deploy-faithful read, `export` the C+bomb7 profile + `AE_CONTENTION=1` (as the `…-final-cbomb7` run did).
 - **NEXT (deferred by user):** pivot remaining runway to the **Blackwell/Finals de-risk** (`project_til_finals_env`) — the bigger Semis risk. Dir-2 v1 line concluded; the `dir2-v1-u*.pt` ladder + `bc-dir2-stream` (34GB) remain on disk.
 
 ### Current state (4 June 2026) — ⚠ CLOUD EVAL CHANGED; RL washed out; pivot to a stronger PLANNER
@@ -408,7 +408,7 @@ A/B on the melee before shipping.
   BYTE-IDENTICAL `confpol-semis2b-u75` image (no rebuild) scored **0.414** vs its **0.671**
   on 2–3 Jun (**−0.257**). Speed also dropped uniformly (~0.84 → ~0.74) across heterogeneous
   models including the unchanged-inference incumbent — accuracy *and* speed dropping together
-  = an environment change, not a per-model regression. Still deterministic (double-submits
+  indicates an environment change, not a per-model regression. Still deterministic (double-submits
   return identical scores → new opponents are fixed/seeded). **Action: re-rank the whole field
   on the new eval (1 submit each — still deterministic).** Possibly infra-wide — other tasks
   should re-check a known image too.
@@ -425,7 +425,7 @@ A/B on the melee before shipping.
     champions at 0.414 are **two STRONG consultants coinciding**, NOT a collapse to the
     heuristic. The earlier "washed-out / tie-at-backbone" read was an inference from the exact
     tie and is FALSIFIED. (The submit comparison is also the canary: 0.414 ≠ 0.262 proves the
-    policy loaded + helps; the `til test` log grep was empty/moot.) **Field on the new eval:**
+    policy loaded and helps; the `til test` log grep was empty/moot.) **Field on the new eval:**
     bare heuristic 0.262 (weak) < respawnfix rungs 0.259–0.312 (weak consultants, ~heuristic
     level — the from-scratch run made INFERIOR policies) < the two foreign-curriculum champions
     **0.414 (+0.152)**. **KEEP the policy; do NOT ship bare heuristic (−0.15). Deploy stays
@@ -434,12 +434,12 @@ A/B on the melee before shipping.
     (and our foreign pool is now arguably a *better* proxy than the retired BenBots).
 - **This session also shipped: the respawn-loophole fix** — `train_ppo.py`
   `AdaptiveRewardShaper._health_delta_bonus` now clamps the agent-health delta negative-only
-  (`min(0.0, Δhealth)`) so the 0→100 respawn jump no longer refunds a life's damage penalty
+  (`min(0.0, Δhealth)`) so the 0→100 respawn health-jump no longer refunds a life's damage penalty
   (6 TDD tests, `test/test_reward_shaper_respawn.py`). Launched `pandemonium-v2-respawnfix`
   (fresh from-scratch CNN-PPO, CPU-forced; patched `run_pandemonium_v1.py` to add
   `--checkpoint-every 25` for a dense `-u<N>` ladder). Run is HEALTHY (eval −0.22→0.66,
   plateaued; entropy in the 0.06–0.15 sweet spot ~u500–600) but the new-eval rungs above
-  already say it won't beat the heuristic on cloud. Gate phase-1 rungs on melee placement
+  already suggest it won't beat the heuristic on cloud. Gate phase-1 rungs on melee placement
   before the final call.
 - **`pandemonium-v2-respawnfix` FINAL VERDICT (4 Jun) — CONFIRMED-DEAD on BOTH axes; nothing
   shipped, deploy unchanged = `confpol-semis2b-u75`.**
@@ -447,7 +447,7 @@ A/B on the melee before shipping.
     u300 0.292 / u400 0.312 / u580 0.259 / u720 0.286 / u1000 0.254 → **mean 0.286**, best u200
     0.328, ALL sub-floor (champion 0.414; bare heuristic 0.262). Respawnfix-as-consultant adds
     only **+0.024 avg** over bare heuristic vs semis2b's **+0.152** → a much weaker consultant.
-    NOT noise (eval deterministic) — a flat-dead lever; do NOT submit more rungs.
+    NOT noise (eval is deterministic) — a flat-dead lever; do NOT submit more rungs.
   - **Melee gate (`melee-rerank-pmv2.json` run; rounds 12 × hash 0,1,2 × sim 42,137, all 5
     brackets; killed after 6/8 candidates — verdict already decisive):** NO rung beats the
     incumbent. Mean placement (lower=better): **semis2b-u75 2.25 (🏆)** ≪ rfx-u300 3.71 (best
@@ -456,7 +456,7 @@ A/B on the melee before shipping.
     and is never worse than 3.17 anywhere.
   - **EVAL_ONLY kill-switch FIRED:** rfx-u200 dominates `adversarial` (place 1.32, win 0.93) but
     is DEAD LAST on `all_aggressive` (6.00, win 0) → textbook proxy-overfit spike, not a robust
-    agent. No rung shows real held-out lift.
+    agent. No rung shows real held-out lift on the EVAL_ONLY brackets.
   - **Early-best theory REFUTED on placement:** cloud rank (u200 best) ≠ melee rank (u300 best);
     u100 worse than u300, u700 recovers above u400. The cloud ladder ordering does not map onto
     melee placement → cloud structurally can't see placement (as expected). Neither metric
@@ -468,20 +468,20 @@ A/B on the melee before shipping.
     dedicated `AE_SELF_POLICY_CHECKPOINT`, and `_load_isolated_policy()` overrides+restores
     `AE_POLICY_CHECKPOINT` + the model cache). Existing re-ranks are clean too.
   - **Process note:** the earlier "killed 4 Jun at u1050" was WRONG — `pkill -f run_pandemonium_v1.py`
-    only hits the launcher wrapper, not the `train_ppo.py` child; the run kept going to u1072 (~14h
-    wasted CPU). Kill the child: `pkill -f 'train_ppo.py.*<tag>'`.
+    only kills the launcher wrapper, not the `train_ppo.py` child; the run kept going to u1072 (~14h
+    wasted CPU). Kill the child directly: `pkill -f 'train_ppo.py.*<tag>'`.
 - **🧭 STRATEGIC PIVOT (4 Jun, agreed): the ceiling-raiser is a STRONGER PLANNER, not more RL.**
   Evidence: curry's **0.715 is a hand-coded forward-sim planner, not RL** (their RL failed
   transfer too); our RL has been the LOWER-ceiling / fragile path (pure ~0.43–0.51; consultant
   +0.045 that just washed out on the new eval). The headroom above our **greedy one-step** scorer
-  is *multi-step value*, best captured by **forward-sim SEARCH** (transfers — reasons about the
+  is *multi-step value*, best captured by **forward-sim SEARCH** (which transfers because it reasons about the
   *game*, not the *opponents*), not opponent-overfitting RL. **Three directions for the next
   session (1 is the foundation for 2):**
   1. **Forward-sim + respawn/stun ("farming-race") plan scorer** — curry's 0.715 mechanism. We
      built the self-plan half (`AE_PLAN_RESCORE`, cloud-dead ALONE) but OMITTED the stun-downtime
-     pricing that is curry's actual edge. Highest evidence.
+     pricing that is curry's actual edge. Highest evidence base.
   2. **RL anchored to the planner** (heuristic/planner as BC teacher + RL residual/opponent —
-     curry's own semis plan): "some form of RL" but with a real answer to "why won't it overfit
+     curry's own Semis plan): "some form of RL" but with a real answer to "why won't it overfit
      like the last ten times" — pure-RL's target (the cloud opponents) is moving/unlearnable;
      a planner has no such dependency.
   3. **~~Finish `pandemonium-v2-respawnfix` → gate on melee placement~~ DONE 4 Jun → DISCARDED.**
@@ -489,10 +489,10 @@ A/B on the melee before shipping.
      place 2.25 vs best rung 3.71). Confirmed-dead on both axes. See the FINAL VERDICT bullet above.
 - **Phase-0 farming-race diagnosis (4 Jun, `diagnose_farming_race.py`, all_farmer n=24):** verdict =
   **hypothesis (ii) base-rush dominant** — `mean_final_base_health=0.0` (base dead EVERY game),
-  `own_base_destroyed −1680`/`base_damage −480`, placement 5.875 / margin −406.7. Freeze moderate
+  `own_base_destroyed −1680`/`base_damage −480`, placement 5.875 / margin −406.7. Freeze is moderate
   (9.7 ticks, secondary) and offense is actually high (`destroy_enemy_base +3150`, but
   `self_damage −7798`) → **not** out-collected (hypothesis-iii STOP does NOT fire). → Build Phase B
-  with the **base-threat trigger as the dominant `_posture` lever** (defense+tether); de-emphasize A.
+  with the **base-threat trigger as the dominant `_posture` lever** (defense+tether); de-emphasize Phase A.
 - **Phase-A `AE_STUN_TAX` gate verdict (4 Jun, melee A/B, deploy confpol-semis2b-u75, n=3×1, 3 brackets):**
   **FLAT — not shipped, `AE_STUN_TAX=0`** (as predicted, redundant with the calibrated
   `PATH_THREAT_PENALTY=2.0`). `all_farmer` placement **2.17→2.17 (unchanged)**; adversarial 3.19→3.03,
@@ -504,7 +504,7 @@ A/B on the melee before shipping.
   adversarial **3.19→4.25**, semis_mixed **1.03→1.50** (worst-bracket placement 3.19→4.69); the reject smoke
   also cratered the cloud-predictive suite (`top_seed_proxy` 0.472→0.120, while defensive suites held).
   **Why the Phase-0 lever didn't transfer:** base-rush was real on the BARE heuristic (placement 5.875) but
-  the DEPLOYED confpol consultant already handles all_farmer (2.17 flag-off); forcing a defensive posture on
+  the DEPLOYED confpol consultant already handles all_farmer well (2.17 flag-off); forcing a defensive posture on
   top makes the strong agent passive → out-farmed, placement tanks. Same action-policy wall as
   contention/plan-rescore (helps the wrong regime). Default-OFF ships nothing; deploy stays
   `confpol-semis2b-u75`. Code retained (flag-off byte-identical, TDD-guarded) but both farming-race levers
@@ -517,13 +517,13 @@ A/B on the melee before shipping.
 First lever aimed at the **proven +0.152 consultant** instead of the dead greedy scorer: sweep the
 `confidence_policy_hybrid` consult-gate (`AE_CONFPOL_MARGIN_EPSILON`/`_TOP_FLOOR`/
 `_OVERRIDE_TARGET_NONE`, shipped at the inherited 5/10/1, never tuned). One-line `melee_eval.py`
-extension `--confpol-ckpt LABEL=PATH@eps=,floor=,ovr=` (TDD, commit 9ae9b05); 6-config coordinate
+extension `--confpol-ckpt LABEL=PATH@eps=,floor=,ovr=` (TDD, commit `9ae9b05`); 6-config coordinate
 sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sweep*` (private archive).
 
 - **VERDICT: FLAT — no gate beats the default 5/10/1 on the full conjunction; deploy unchanged
   (`semis2b-u75 @ default`).** Sole prune survivor `g-more-margin` (eps 5→10) FAILS the full
-  5-bracket `_promotion_verdict` (minimax ✗ / margin ✗ / semis_mixed ✗): it helps the holes
-  (all_aggressive 2.82→2.08, all_farmer 2.21→2.08) but **craters the two brackets the heuristic
+  5-bracket `_promotion_verdict` (minimax ✗ / margin ✗ / semis_mixed ✗): it helps the weak
+  brackets (all_aggressive 2.82→2.08, all_farmer 2.21→2.08) but **craters the two brackets the heuristic
   WINS** — semis_mixed win 0.81→0.03 (1.19→1.99, score 0.448→0.369), real_field win 0.93→0.00
   (1.12→2.04) — so worst-bracket placement 3.36→**4.74**. `g-less` (eps 2) is worse on the hard
   brackets. **Mechanism: the consultant is a proven SPECIALIST but a weak GLOBAL controller (raw
@@ -531,7 +531,7 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sw
   default 5/10/1 is the balance — routing is already optimal.**
 - **Two methodology lessons (save future sessions):** (1) **pruning on the hard/discriminating
   brackets is a FALSE-POSITIVE trap** — it cannot see damage to the brackets we already win
-  (semis_mixed/real_field), exactly where over-consultation hurts. Gate on ALL brackets, not the
+  (semis_mixed/real_field), exactly where over-consultation hurts. Gate on ALL brackets, not just the
   "interesting" ones. (2) **`adversarial` is high-variance even at FIXED seeds** — `g-more-margin`
   scored 2.92 (prune) vs 4.74 (full) on the byte-identical invocation (same hash/sim seeds, same
   one-bracket worker), while `g-default` was stable (3.40→3.36). The melee is not fully deterministic
@@ -540,7 +540,7 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sw
   semis_mixed/real_field (72 rounds each), NOT the noisy adversarial number.
 - **→ Go/no-go fired: escalate to the forward-sim planner** (Dir-1, curry's 0.715 mechanism — the
   only untried high-ceiling structural lever; needs its own brainstorm + a latency guard vs the 2s
-  cutoff). The consultant line is exhausted: proven +0.152 specialist, optimal routing, can't be
+  decision cutoff). The consultant line is exhausted: proven +0.152 specialist, optimal routing, can't be
   made a better generalist by routing alone. Gate-knob code kept as reusable infra (default
   byte-identical). Artifacts: `training/ae/data/melee-gatesweep-{prune,full}.json`.
 
@@ -553,7 +553,7 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sw
      (`docker images | grep ae`; `til submit ae <tag>` needs no rebuild).
   2. **🏆 NEW BEST = `confpol-semis2b-u75` = 0.671** (cloud, 2 Jun A/B; beats
      prior best `confpol-native-u100` = 0.661, which RE-submitted to 0.661 exactly
-     same-day → same-conditions, deterministic eval intact, **+0.010 is a real
+     same-day → same conditions, deterministic eval intact, **+0.010 is a real
      delta**). This is the **Stage-B foreign-curriculum** candidate (confpol-native
      line fine-tuned vs the FOREIGN non-mirror pool) — **first Stage-B rung to
      validate on cloud, and the melee gate correctly predicted it** (2nd
@@ -584,34 +584,34 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sw
 - **Phase:** Qualifiers closed. Semifinals prep runs through **2026-06-10**. We
   placed 15th on the Novice path, so the expected Semifinals Match-1 bracket is
   seeds ≈ 3/8/9/14/15/20. AE is 40% of the score and our single biggest lever —
-  this is where a match is won or lost. **Semis = Novice path = the fixed
+  this is where the match is won or lost. **Semis = Novice path = the fixed
   seed-42 map** (see the determinism section below — this is now the top lever).
 - **Shipped Docker default** ([Dockerfile](Dockerfile)) — **`AE_MODE=confidence_policy_hybrid`
   = confpol-u860** (heuristic-first C+bomb7 + PPO consultant; farmed mean 0.634).
   - **Still requires staging `pandemonium-v1-best-u860.pt` → `ae/models/bc.pt` on
     the Workbench** (gitignored). If bc.pt is absent → degrades to bare C+bomb7.
   - C+bomb7 profile + base-tether + `PYTHONHASHSEED=0` baked in.
-  - **Canary (`til test`):** `AE policy loaded … epoch=860` (NOT "falling back to
-    heuristic").
+  - **Canary (`til test`):** `AE policy loaded … epoch=860` (NOT `falling back to
+    heuristic`).
 - **❌ Opening book (opening_hybrid) — SHIPPED then REVERTED 1 Jun (cloud-negative
   over confpol).** Cloud farm of opening+confpol: **mean 0.584 (n=9, CI
   [0.564,0.604]) vs confpol-u860 0.634** — the opening *regressed* confpol by
   ~0.05 (non-overlapping CIs). The confpol diagnostic
   ([../training/ae/diagnose_opening_over_confpol.py](../training/ae/diagnose_opening_over_confpol.py))
-  nailed the mechanism: the gate was locked over the **bare heuristic**, but
+  identified the mechanism: the gate was locked over the **bare heuristic**, but
   confpol is a **better opener**, so the fixed opening overwrites confpol's good
   early play. Over confpol the gate is **net −0.014 local** — 3 of 4 enabled
   spawns flip negative (only `9,13`, where confpol still opens poorly at 0.211,
-  helps +0.086). Local sign matches cloud sign → not a transfer gap, a
+  helps +0.086). Local sign matches cloud sign → not a transfer gap, but a
   planner-mismatch in the gate. **The +0.067 lift was real but only over the
   *bare heuristic*** (`AE_MODE=opening_hybrid AE_OPENING_PLANNER=heuristic` still
   gives it; kept in tree, not default).
 - **🔬 Opening book v2 — confpol-correct gate, BUILT (1 Jun); finals melee re-test 10 Jun = NO-GO (see top entry).** Re-swept
   the gate OVER CONFPOL across all horizons (`sweep_openings.py --planner confpol`).
-  The confpol-correct gate is **almost disjoint** from the heuristic one: enables
+  The confpol-correct gate is **almost disjoint** from the heuristic one: it enables
   **9,13 (H20, +0.174 z9.7) / 2,6 (H8, +0.119 z4.6) / 6,2 (H12, +0.117 z2.8)**,
-  disables 13,9 / 3,12 / 12,3. Why different: confpol opens 0/2/5 *well* (no room)
-  but opens **3/4 *worse* than the heuristic** (baselines 0.33/0.35 vs the
+  and disables 13,9 / 3,12 / 12,3. Why different: confpol opens spawns 0/2/5 *well* (no room to improve)
+  but opens **spawns 3/4 *worse* than the heuristic** (baselines 0.33/0.35 vs the
   heuristic's 0.34/0.52), so a *short* opening fills that gap. **Local +0.068 over
   confpol**, all enabled spawns complete 100%, strong z. Baked into
   [ae/src/openings_gate.json](src/openings_gate.json) (now the confpol-specific
@@ -623,7 +623,7 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sw
   against the actual deployed planner; openings only pay where it opens poorly.**
 - **Honest cloud performance: no AE config has a variance-farmed mean
   meaningfully above ~0.59**, except confpol-u860. The famous heuristic "highs"
-  are all upper-tail single draws, not means:
+  are all upper-tail single draws, not true means:
   - `heuristic-A-vf1` **0.613** — true farmed mean ≈ 0.575–0.599.
   - `ppo-full-rl-v1-hybrid` **0.638** (protected leaderboard max) — forensically
     the **heuristic via silent fallback**, not real PPO.
@@ -637,7 +637,7 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sw
     local opponents and lost the cloud edge. Never select an AE checkpoint by
     local eval.
 - **confpol-native (gated PPO, train==deploy): MATCHED u860, no lift (1 Jun).**
-  A confidence-gated raw-policy PPO trained only on the heuristic's low-conf
+  A confidence-gated raw-policy PPO trained only on the heuristic's low-confidence
   ticks, warm-started from u860. n=1 cloud: u100 0.551 / u200 0.621 / u360 0.624
   — same ~0.60–0.63 band, no rung clears the floor. **Deploy stays confpol-u860
   (0.634).** Run was still training at u507/2976 when shelved — **fine to
@@ -666,15 +666,15 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sw
 Implemented the approved redesign (design spec `2026-06-01-ae-semis-eval-design`, private archive):
 a head-to-head **6-team melee** gate built on a **foreign (non-mirror) opponent
 pool**, replacing the absolute-reward-vs-our-own-mirrors suites that mis-predict
-Semis. **The old `validate_cloud_suite.py`/`multi_seed_eval.py` suites still
+Semis placement. **The old `validate_cloud_suite.py`/`multi_seed_eval.py` suites still
 exist and remain valid as a cheap local pre-filter; the melee gate is the new
 Semis-realistic selector.**
 
 - **Foreign pool** ([../training/ae/foreign_opponents.py](../training/ae/foreign_opponents.py)) —
   `curry_aggro`/`curry_fortress` (vendored competitor A*+forward-sim heuristic,
-  two weight-personas), `self_policy` (our raw u860 CNN-PPO in FULL control),
+  two weight personas), `self_policy` (our raw u860 CNN-PPO in FULL control),
   `self_tactical` (our 12-way tactical-macro hybrid), `self_heuristic` (shipped
-  C+bomb7), and 3 purpose-built non-mirror bots `evbot` (nominal-reward EV
+  C+bomb7), and 3 purpose-built non-mirror bots: `evbot` (nominal-reward EV
   maximizer — the *opposite* of our base-underweighting calibration),
   `aggressive_proxy`, `anti_aggro_exploiter`. Curry is **vendored gitignored** at
   `training/ae/foreign/curry/` (`EXP_DISABLE_NUMBA=1 USE_PARALLEL_GOALS=0`,
@@ -685,8 +685,8 @@ Semis-realistic selector.**
   self_tactical, aggressive_proxy, anti_aggro_exploiter]`. Stage-B training may
   draw ONLY from TRAIN_OK (`train_ppo.py` mode `foreign_train` / preset
   `semis-foreign`; `_foreign_train_blend()` aborts if an EVAL_ONLY name leaks).
-  Held-out lift that fails to appear on EVAL_ONLY = the local proxy-overfit
-  early-warning (the transfer-gap proxy we never had).
+  A held-out lift that fails to appear on EVAL_ONLY indicates local proxy-overfit —
+  this is the transfer-gap early-warning signal we never had before.
 - **Melee metric** (`simulate.py`): per-round `placement` (rank of 6) + `margin`
   (us − best opponent) alongside `total_reward`; aggregated to `mean_placement`,
   `win_rate`, `mean_margin`, `placement_hist`. **`total_reward` unchanged** so
@@ -698,7 +698,7 @@ Semis-realistic selector.**
   per-(hash_seed,sim_seed) subprocess pattern (one bracket/worker, isolates the
   policy_manager model cache). **Minimax-plus-margin promotion (all 3 must hold):**
   (1) worst-bracket `mean_placement` ≤ incumbent's; (2) `mean_margin ≥ 0` every
-  bracket; (3) `semis_mixed` `mean_score` ≥ incumbent. Run:
+  bracket; (3) `semis_mixed` `mean_score` ≥ incumbent's. Run:
   `.venv/bin/python training/ae/melee_eval.py --rounds 12 --hash-seeds 0 1 2 --sim-seeds 42 137 --summary-out training/ae/data/melee-rerank.json`
   (add ladder rungs with `--confpol-ckpt LABEL=PATH`). **confpol-u860 (0.626
   cloud) stays the deploy floor regardless.**
@@ -716,7 +716,7 @@ Semis-realistic selector.**
   Cloud ground truth already says raw-policy-full-control = **0.507** (NOTES
   "Pandemonium RESULTS"), far below confpol 0.626. The melee inflates it because
   (a) `self_policy` is partly IN the opponent pool (semis_mixed/adversarial), so
-  it's beating near-copies of itself, and (b) the slot-0 fixed-Novice spawn it
+  it is beating near-copies of itself, and (b) the slot-0 fixed-Novice spawn it
   trained on. **Lesson: the melee is a better RELATIVE/robustness gate and a great
   weakness map, but it is still LOCAL — never read absolute local dominance as a
   cloud promotion; the cloud submit (deterministic, 1=truth) is the arbiter.** The
@@ -776,7 +776,7 @@ Semis-realistic selector.**
   Watch `training/ae/checkpoints/confpol-semis2.log`; kill `pkill -f run_confpol_native.py`.
   Verified at launch: `warm-started actor from confpol-native-u100.pt` +
   `config: preset=full-rl ... opponent_mix=semis-foreign` (the preset no longer
-  clobbers the explicit mix — `apply_preset` fix + launcher passthrough, 4995ca7).
+  clobbers the explicit mix — `apply_preset` fix + launcher passthrough, commit `4995ca7`).
   **Decision (2 Jun): build on the current best, not a clean A/B.** We warm-start
   from the cloud-best u100 (not u860) and fine-tune on the foreign curriculum —
   goal is the single best deployable, not a controlled comparison. (A short
@@ -785,12 +785,12 @@ Semis-realistic selector.**
   - **⚠ CRASHED + RESUMED 2 Jun (~u80).** The MacBook hard-restarted at 07:24
     (MPS/Metal failure: `Unable to reach MTLCompilerService` — broken pipe).
     Surviving ladder: `confpol-semis2-u25/u50/u75.pt` + `-latest.pt` (epoch 80).
-    **Resumed** warm-started from `confpol-semis2-latest.pt` under a NEW tag
+    **Resumed:** warm-started from `confpol-semis2-latest.pt` under a NEW tag
     **`confpol-semis2b`** (so the original u25/u50/u75 rungs are NOT clobbered) —
     so `confpol-semis2b-u<N>` ≈ original **u80 + N** in real training terms.
     **Forced CPU (`AE_FORCE_CPU=1`)** to avoid another Metal crash on the long
-    unattended run (added to `train_ppo.py`; the net is tiny + the bottleneck is
-    the opponent planners, so MPS barely helped anyway). Relaunch:
+    unattended run (added to `train_ppo.py`; the net is tiny and the bottleneck is
+    the opponent planners, so MPS barely helped anyway). Relaunch command:
     `AE_FORCE_CPU=1 EXP_DISABLE_NUMBA=1 USE_PARALLEL_GOALS=0 PYTHONHASHSEED=0 nohup caffeinate -is .venv/bin/python -u training/ae/run_confpol_native.py --opponent-mix-preset semis-foreign --tag confpol-semis2b --warmstart training/ae/checkpoints/confpol-semis2-latest.pt > training/ae/checkpoints/confpol-semis2b.run.log 2>&1 &`
     Gate rungs from BOTH ladders (semis2 u25/u50/u75 + semis2b-u*) together.
   - **🟢 STOP-CHECK 2 Jun (`melee-stopcheck.json`) → VERDICT: KEEP TRAINING, the
@@ -813,8 +813,8 @@ Semis-realistic selector.**
     cross-check; `native-u100` (0.661) stays the cloud-verified deploy floor
     until a finalist earns its submit.
     - **Why the entropy-collapse "stop" prior was WRONG here:** entropy fell
-      0.20→0.03-0.06, which historically = mirror-overfit + cloud regression.
-      But that pattern was on the LOCAL full-rl (mirror) curriculum. On the
+      0.20→0.03–0.06, which historically = mirror-overfit + cloud regression.
+      But that pattern applied to the LOCAL full-rl (mirror) curriculum. On the
       FOREIGN curriculum measured against a FOREIGN held-out gate, the collapse
       is the policy *specializing against real-competitor-like opponents* and it
       TRANSFERS (held-out brackets improve). Lesson: judge Stage B by the melee +
@@ -852,7 +852,7 @@ Semis-realistic selector.**
   **NOTE the overfit risk this raises:** u100 is already the cloud peak and the
   whole line shows an inverted-U (more training past the peak LOSES cloud value).
   Fine-tuning *from* the peak means the FIRST few rungs (u25/u50) are the most
-  likely winners; later rungs probably regress. Gate aggressively and early.
+  likely winners; later rungs will probably regress. Gate aggressively and early.
   **WHAT TO WATCH (in priority order):**
   1. **The EVAL_ONLY holdout is the kill-switch.** Gate ladder rungs with
      `melee_eval.py --confpol-ckpt semis2-u<N>=...checkpoints/confpol-semis2-u<N>.pt`
@@ -892,7 +892,7 @@ against the real `til_environment`: `is_fixed_novice_map=True` on all 6 agents
 across seeds 7/999/31337; `base_location` (`array([13,9])` → native `[13,9]` →
 `(13,9)`) matches our hardcoded [src/novice_map_data.py](src/novice_map_data.py)
 exactly. Our `BASE_LOCATIONS` / `STARTING_LOCATIONS` / item table are
-**byte-identical** to the competitor's `HUNTER_*` tables.
+**byte-identical** to the competitor's (curryfarmer's) `HUNTER_*` tables.
 
 - **DELETED stale claim:** earlier NOTES said "the fixed-Novice map detector
   doesn't fire on the cloud eval." That was a **misdiagnosis** — it was inferred
@@ -910,16 +910,16 @@ exactly. Our `BASE_LOCATIONS` / `STARTING_LOCATIONS` / item table are
   divergence-gated opening book + an all-pairs distance LUT + an opponent-position
   LUT + a "defense wins / immortality" strategy**. Same trigger, far more
   leverage. This depth gap is the most plausible single explanation for 0.715 vs
-  our 0.634. See the improvement plan in **"Using curryfarmer's work"** below.
+  our 0.634. See the improvement plan in **"Competitor intel: curryfarmer"** below.
 
 ### Competitor intel: curryfarmer / "royal-recruits" (public repo, 0.715/0.807)
 
 Public GitHub repo `curryfarmer/til-26-ae` (team royal-recruits), cloud
-**0.715 reward / 0.807 speed**. Cloned + fully reviewed 1 Jun. Key facts:
+**0.715 reward / 0.807 speed**. Cloned and fully reviewed 1 Jun. Key facts:
 
 - **Same meta-conclusion as us:** their RL failed local→cloud transfer at
-  qualifiers → they ship a hand-coded heuristic and plan to use it as a BC
-  teacher/opponent for fresh RL at semis. Convergent with our entire arc.
+  qualifiers → they ship a hand-coded heuristic and plan to use it as a BC (Behavioral Cloning)
+  teacher/opponent for fresh RL at Semis. Convergent with our entire arc.
 - **Their heuristic is a different machine: portfolio-A* + forward-sim plan
   scoring**, not greedy target-picking. Per tick: enumerate K=4–6 goals → A*
   each over `(x,y,facing,t,bombs,placed)` (facing/time/bomb-inventory aware,
@@ -928,9 +928,9 @@ Public GitHub repo `curryfarmer/til-26-ae` (team royal-recruits), cloud
   (`is_lethal(x,y,t)` per future tick). ~12 personas (aggro/greedy/fortress/…)
   + a runtime persona-FSM. **Rust (PyO3) A* kernel** for speed; full IS-MCTS
   built but shipped OFF (A* portfolio is the live path).
-- **Their hunter scores:** `greedy_hunter` local bench qual **0.929** / semis
+- **Their hunter scores:** `greedy_hunter` local bench qual **0.929** / Semis
   **0.747** composite; they note til-server ≈ −0.20 reward vs til-test, landing
-  cloud at ~0.71–0.75. The 0.715 the user found is one of these hunters.
+  cloud at ~0.71–0.75. The 0.715 we measured is one of these hunters.
 - **Strategic insight we lack: "immortality → farming race → defense wins."**
   They reverse-engineered that kills only freeze 3 turns then respawn full-HP,
   so a match is a 200-tick points-farming race; they price stun downtime in
@@ -938,14 +938,14 @@ Public GitHub repo `curryfarmer/til-26-ae` (team royal-recruits), cloud
   (tops their roster). Our scorer has no respawn/stun model.
 - **Where we already match or beat them:** same RL verdict; both built search and
   ship it OFF; both maintain a belief/world model; both pin `PYTHONHASHSEED=0`
-  for the same tie-break-determinism reason. **We're slightly FASTER** (~0.84 vs
+  for the same tie-break-determinism reason. **We are slightly FASTER** (~0.84 vs
   their 0.807) — speed is not our problem; accuracy is.
 
 ### Public-repo scrape (2 Jun) — full field of TIL-26 AE repos
 
 Scraped GitHub (forks of `til-ai/til-26{,-ae,-finals}` + keyword/code search).
 Of ~12 candidate repos, **4 had real AE work** beyond the 663-byte stock
-template; the rest are the untouched scaffold. Findings + vendoring decisions:
+template; the rest were the untouched scaffold. Findings and vendoring decisions:
 
 | Repo | Track | Architecture | Weights | Strength | Decision |
 |---|---|---|---|---|---|
@@ -961,7 +961,7 @@ template; the rest are the untouched scaffold. Findings + vendoring decisions:
   *architecture diversity > strength*; and as a realistic mid/low-strength field
   member it fits our 15th seed (the real bracket has weaker teams too). It's
   numpy-only, self-contained, and the env's already-unpacked (7,5,25) viewcone
-  matches its decoder (verified it decodes + acts, not blind). **Do NOT read
+  matches its decoder (verified it decodes and acts, not blind). **Do NOT read
   beating peroxide as signal** — it's a field-filler, not a bar. New bracket
   `real_field` (curry + peroxide + self_policy + anti_aggro + self_heuristic)
   added to `MELEE_BRACKETS`; the original 4 brackets are unchanged so the prior
@@ -970,12 +970,12 @@ template; the rest are the untouched scaffold. Findings + vendoring decisions:
 - **Why NOT restore an old model of ours as an opponent:** it would be a 4th
   MIRROR (we already have self_policy/self_tactical/self_heuristic), trained
   against our own opponents so it shares our blind spots — the opposite of what
-  the foreign pool is for. The spec warns against over-weighting one source.
+  the foreign pool is for. The spec warns against over-weighting a single source.
 - **Intel worth keeping:** (1) **two teams went DQN self-play** (peroxide,
   Pushkaltoocool) — a value-based line we never tried (no evidence it scored
   well, though). (2) **peroxide's base-inference trick** — guess the other 5
-  spawns by rotating own base around grid-center by π/3 on the symmetric layout;
-  borrowable into our own planner. (3) Most public repos are stock template;
+  spawns by rotating own base around the grid-center by π/3 on the symmetric layout;
+  borrowable into our own planner. (3) Most public repos are the stock template;
   the strong semifinalists' code is private, so curry remains our only *strong*
   real-competitor proxy.
 
@@ -983,28 +983,28 @@ template; the rest are the untouched scaffold. Findings + vendoring decisions:
 
 Recurring question — settled here so we don't re-litigate. Real game rewards:
 mission +5, resource +2, recon +1, destroy_base +50, kill +30/15, own_base −50,
-damage +1/HP. Our candidate values: mission 80, resource 40, base 100/130.
+damage +1/HP. Our heuristic candidate values: mission 80, resource 40, base 100/130.
 
 - **Our scorer is a greedy *priority* function, not an EV estimate.** `score =
   base_value − DIST_PENALTY·dist − …` ranks one target cell to walk toward; the
   value lives in the same arbitrary units as `DIST_PENALTY=1.15` and the
   visit/threat penalties. Only *ratios* matter; rescaling to "game units" changes
-  nothing unless you change ratios.
+  nothing unless you also change ratios.
 - **Nominal reward ≠ realized EV.** Game values base:mission at **10:1**; we use
   **~1.25:1** — i.e. we deliberately UNDER-weight bases ~8× vs nominal. That's
   correct: a base is nominally +50 but hard/contested/slow (realized EV ≪ 50),
-  a mission is +5 but near-certain. In a 200-tick farming race, steady certain
+  while a mission is +5 but near-certain. In a 200-tick farming race, steady certain
   mission income beats risky base attempts. Our C+bomb7 ratios (survivors of the
   +1.13σ `multi_seed_eval` sweep) already encode this realized-EV correction.
 - **Real-reward calibration is correct-by-construction ONLY when paired with
   forward-sim plan projection** (the competitor's `score_plan` discounts a base
   to ~0 when the bomb won't land). Bolting nominal rewards onto our greedy
   one-step scorer with no projection would over-chase bases it can't finish →
-  almost certainly regress (same failure mode as our dead aggressive/scripted
+  almost certainly regresses (same failure mode as our dead aggressive/scripted
   lines). Calibration is a *consequence* of adopting plan-projection scoring, not
   a standalone win.
 - **The RL side is already real-reward-aligned** (PPO trains on the env's actual
-  reward + shaping). The abstract constants are a heuristic-only object.
+  reward + shaping). The abstract heuristic constants are a heuristic-only concern.
 - Cheap to falsify: `AE_ITEM_MISSION_VALUE=5 AE_ITEM_RESOURCE_VALUE=2
   AE_ENEMY_BASE_VALUE=50` + `multi_seed_eval.py`. Strong prior: regresses unless
   `DIST_PENALTY` is also retuned.
@@ -1017,9 +1017,9 @@ The one structural lever curry (0.715) has and we don't: re-score plans by
 model). **Contained:** reuses the manager's existing forward-sim primitives
 (`_lookahead_step`/`_blast_cells`/`_lookahead_escape`, real env reward units) to
 re-rank **only the top-K static target candidates** — NOT the dead `mcts-light`
-full-width beam (that timed out / −0.254 speed). **Opponent-light:** projects our
-own plan on the known map only — no opponent rollout, no safety veto (the line
-that keeps it out of the dypm/pessimistic-search grave).
+full-width beam (that timed out / −0.254 speed penalty). **Opponent-light:** projects our
+own plan on the known map only — no opponent rollout, no safety veto (the approach
+that keeps it out of the dypm/pessimistic-search graveyard).
 
 - **Code** ([src/ae_manager.py](src/ae_manager.py)): `_project_plan_reward`
   (items en route + base value *only if the bomb from `path[-2]` reaches the base
@@ -1046,7 +1046,7 @@ that keeps it out of the dypm/pessimistic-search grave).
   (+0.0065)** — recovers the regression but is **flat at the noise floor**, and it
   REDISTRIBUTES (wins pressure2 +0.072 / strong_realistic +0.055 / cloudsuite
   +0.049; loses top_seed_proxy −0.137 / defense_trap −0.072 / base_rush −0.062) —
-  the classic "helps low-pressure, hurts high-pressure, cancels" AE pattern.
+  the classic "helps low-pressure, hurts high-pressure, cancels out" AE pattern.
 - **Verdict (3 Jun): CLOUD-CONFIRMED DEAD → stays OFF.** Cloud A/B settled it
   conclusively (deterministic eval, 1 submit = truth): tag **`planrescore`
   (AE_PLAN_RESCORE=1, demote-only, bc.pt=confpol-semis2b-u75) = 0.590 / speed
@@ -1055,8 +1055,8 @@ that keeps it out of the dypm/pessimistic-search grave).
   but, if anything, too generous: local demote-only read **flat (+0.0096)** while
   cloud is **−0.081** — yet another local-flat/cloud-negative gap. Speed 0.833
   confirms the per-tick top-K projection never threatened the latency budget; the
-  loss is pure accuracy. **Possibility that "the local gate mis-predicted" is now
-  closed — it did not; the lever genuinely hurts.**
+  loss is in pure accuracy. **The possibility that "the local gate mis-predicted" is
+  now closed — it did not; the lever genuinely hurts.**
 - **Local gate trail (kept for the mechanism):** proper n=3 hash × 12-round gate
   (`plan-rescore-gate-{off,demote}.json`): demote-only weighted **0.2757 vs off
   0.2661 (+0.0096, flat)** but **worst-per-run −0.012** and **top_seed_proxy
@@ -1064,7 +1064,7 @@ that keeps it out of the dypm/pessimistic-search grave).
   foreshadowed the cloud loss. The SYMMETRIC variant (promote landable bases) was
   −0.080 weighted locally (over-aggression, as the calibration section predicted).
 - **Why it's dead and what it means:** same "helps low-pressure, hurts
-  high-pressure, cancels (and then loses on cloud)" wall as every prior
+  high-pressure, cancels out (and then loses on cloud)" wall as every prior
   action-policy lever (opening book, dypm-veto, aggression sweeps). **The
   contained top-K-projection mechanism works as engineered and stays in-tree
   (default-OFF, Dockerfile `AE_PLAN_RESCORE=0`) as reusable infra, but self-plan
@@ -1072,7 +1072,7 @@ that keeps it out of the dypm/pessimistic-search grave).
   prices respawn/stun downtime in `score_plan` (a 200-tick farming-race model our
   projection omits) and runs a persona-FSM. **Do NOT re-run this or base-value
   calibration on the greedy scorer.** A genuinely different mechanism is needed.
-  Reproduce local: `.venv/bin/python training/ae/multi_seed_eval.py --rounds 12
+  To reproduce locally: `.venv/bin/python training/ae/multi_seed_eval.py --rounds 12
   --our heuristic --preset furnished --hash-seeds 0 1 2 --sim-seeds 42
   --extra-env AE_PLAN_RESCORE=1 --summary-out <out>.json`.
 
@@ -1083,7 +1083,7 @@ lever (opening book, dypm-veto, plan-rescore) only re-weighted *our own* plan wi
 no opponent model; our heuristic `_choose_target` scorer is **opponent-blind**
 (`value − DIST_PENALTY·dist − …`). But Semis = the fixed seed-42 Novice map, so
 `novice_map_data.STARTING_LOCATIONS` hands us all 6 spawns for free, and
-`self.enemy_agents` already tracks live viewcone sightings. This lever uses that to
+`self.enemy_agents` already tracks live viewcone sightings. This lever uses that information to
 discount items an opponent reaches first — aimed squarely at the **`all_farmer`
 hole** (the −388/−291 farming-race margins). Design spec
 `2026-06-03-ae-contention-aware-valuation-design` + plan
@@ -1105,7 +1105,7 @@ hole** (the −388/−291 farming-race margins). Design spec
 - **Why it might differ from the graveyard:** new *information* (opponent geometry,
   ground-truth not learned), demote-only + soft + floored, and it **no-ops whenever
   we have no credible opponent position** (post-opening, nobody in view) — that
-  conservatism is the transfer-safety. Still an action-policy lever though; could
+  conservatism is the transfer-safety. It is still an action-policy lever though; it could
   still hit the "helps low-pressure / hurts high-pressure / cancels" wall.
 - **Local gate RUN 3 Jun → NEUTRAL/inconclusive (not a reject).**
   - **Step 1 (multi_seed reject, n=3 hash):** weighted **−0.009** (flat); all 8
@@ -1117,7 +1117,7 @@ hole** (the −388/−291 farming-race margins). Design spec
     subclasses/contains our `AEManager`, so with `AE_CONTENTION=1` in the shared
     env the self-mirror opponents (`self_heuristic`, `self_tactical`) and the
     purpose-built bots' `super()._choose_target` fallback ALSO got contention,
-    buffing them. **Fixed the harness** (commit): `AE_CONTENTION=0` baked into
+    inadvertently buffing them. **Fixed the harness** (commit): `AE_CONTENTION=0` baked into
     `self_heuristic`/`self_tactical` `_EnvOverride` (durable across their per-round
     rebuilds) + a `contention_enabled=False` guard on direct-subclass opponents in
     `simulate.run_simulation`. our_agent builds first and resets in-place, so it
@@ -1139,7 +1139,7 @@ hole** (the −388/−291 farming-race margins). Design spec
   bc.pt=`confpol-semis2b-u75`) = **0.671 / speed 0.840, 0/30 errors** =
   **byte-identical to the flag-off 0.671.** The image really had the flag baked
   (`docker run --rm melanie-minions-ae:contention-aware env | grep AE_CONTENTION`
-  → `AE_CONTENTION=1`), so this is a valid test, NOT a build miss.
+  → `AE_CONTENTION=1`), so this is a valid test, NOT a build miss (stale image).
 - **Why inert — diagnosed locally (`PYTHONHASHSEED=0`, confpol+semis2b-u75,
   AE_CONTENTION=1, 3 novice games):** `contention_enabled=True` ✓,
   `is_fixed_novice_map` fires ✓, `_apply_contention` actually RAN **21×**, but it
@@ -1147,8 +1147,8 @@ hole** (the −388/−291 farming-race margins). Design spec
   (best target is an item AND believed-opponents non-empty) rarely co-occurs:
   spawn-seeding only covers the opening (`step ≤ TOPEN=40`), live sightings are
   sparse, and when it does run the contested item rarely loses to an alternative.
-  On a single deterministic cloud game that's ~0–2 inconsequential target swaps →
-  0.671 unchanged. **The lever's logic is sound; it's starved of opponent-position
+  On a single deterministic cloud game that amounts to ~0–2 inconsequential target swaps →
+  0.671 unchanged. **The lever's logic is sound; it is starved of opponent-position
   "fuel."**
 - **Durable lesson (matters for the whole "deeper fixed-map opponent modeling"
   family):** the bottleneck is *opponent-position availability mid-game*, not the
@@ -1161,7 +1161,7 @@ hole** (the −388/−291 farming-race margins). Design spec
   this family expecting it to fire; a different lever is needed.**
 - **STATUS: SHIPPED ON (user call, 3 Jun) — Dockerfile default flipped to
   `AE_CONTENTION=1`.** Rationale: the cloud A/B is NEUTRAL (0.671 = flag-off, 0/30
-  err, speed 0.840 ≈ baseline → downside cloud-proven ~0), but the cloud measures
+  err, speed 0.840 ≈ baseline → cloud-proven downside ≈0), but the cloud measures
   absolute reward at a fixed spawn, **not melee placement vs other teams — the real
   Semis objective and the only thing this lever targets** (de-contaminated melee:
   `all_farmer` 2.39→2.17, small/noisy). So we ship it as a near-zero-downside bet on
@@ -1183,7 +1183,8 @@ stacking, or richer state. Root cause: our local opponents ≠ the cloud NPC
 distribution, so the policy overfits local opponent behavior. **The rule-based
 heuristic transfers best precisely because it does not learn local-opponent
 quirks.** Any new learning attempt must have a credible answer to "why won't
-this overfit the local opponents like the last ten attempts did?"
+this overfit the local opponents like the last ten attempts did?" before being
+pursued.
 
 ### Measurement reality — ⚠ CHANGED 1 Jun: DETERMINISTIC; ⚠⚠ CHANGED AGAIN 4 Jun: OPPONENTS SWAPPED (all numbers below re-based — see "Current state (4 June 2026)")
 
@@ -1192,14 +1193,14 @@ this overfit the local opponents like the last ten attempts did?"
   **0.626 ×5 byte-identical** — zero variance. **Same image → same score.**
 - **Consequence: 1 submission = the true score. Variance farming is OBSOLETE.**
   The whole `variance_farm.py` / σ=0.053 / "n≥18 to resolve +0.05" apparatus
-  below was built for the OLD noisy eval and **no longer applies** — do NOT
+  documented below was built for the OLD noisy eval and **no longer applies** — do NOT
   re-submit the same image n times; do NOT discount a single score as noise.
   One submit per distinct image now cleanly ranks everything.
 - **The eval appears to evaluate us at a FIXED spawn ∈ {13,9 / 3,12 / 12,3}**
   (inferred 1 Jun: opening-v1, which enabled those spawns, scored 0.584 ≠ confpol;
   opening-v2, which disables them, scored 0.626 = confpol *exactly* → the opening
-  never fires ⇒ our eval spawn is one v2 disables, i.e. one confpol opens well).
-  Not 100% confirmed; semis *bracket* matches may assign other spawns.
+  never fires, so our eval spawn must be one that v2 disables, i.e. one confpol opens well).
+  Not 100% confirmed; Semis *bracket* matches may assign other spawns.
 - **Org also said they "may change the deployed opponent models"** (away from the
   BenBots, toward other teams' models). If/when that happens the whole ranking
   can shift — re-rank the field again (cheap now, 1 submit each).
@@ -1214,7 +1215,7 @@ this overfit the local opponents like the last ten attempts did?"
 1. **Local gate = `training/ae/multi_seed_eval.py`** (still valid as a *local*
    pre-filter), n≥5 hash seeds × sim seeds × 6 rounds vs the `heuristic-C+bomb7`
    baseline (`w3_2_C_bomb7_n5.json`, 0.2842 ± 0.0074). `PYTHONHASHSEED` auto-pinned
-   to 0 everywhere. BUT: local lift has repeatedly NOT transferred to cloud — use
+   to 0 everywhere. BUT local lift has repeatedly NOT transferred to cloud — use
    local only to reject obviously-bad candidates, not to predict cloud rank.
 2. **Cloud is now the cheap ground truth: 1 `til submit` = the score.** Re-rank by
    submitting one tag per distinct image (see `training/ae/resubmit_rerank.sh`).
@@ -1222,7 +1223,7 @@ this overfit the local opponents like the last ten attempts did?"
    its variance/power math is moot under the deterministic eval.
    - **Resubmit old models WITHOUT rebuilding:** `til build` images persist in the
      Workbench Docker daemon as `melanie-minions-ae:<tag>`; `til submit ae <tag>`
-     re-uploads the existing image. `docker images | grep ae` lists them. Lets us
+     re-uploads the existing image. `docker images | grep ae` lists them. This lets us
      re-score every historical build on the new eval for free.
 
 ### What works / keep doing
@@ -1232,7 +1233,7 @@ this overfit the local opponents like the last ten attempts did?"
   inference cost.
 - The **C+bomb7** profile is the best-ranked heuristic config at the calibrated
   local gate (+1.13σ over baseline; wins defense_trap/top_seed_proxy/
-  bracket_proxy — every semifinals-relevant suite; only loses pressure2).
+  bracket_proxy — every Semifinals-relevant suite; only loses pressure2).
 - **Measurement loop (post-1-Jun):** local multi-seed eval to *reject* bad
   candidates, then **a single `til submit` per config = the true cloud score**
   (eval is deterministic now). Local lift has repeatedly failed to transfer, so
@@ -1267,7 +1268,7 @@ and committing large checkpoints to git. All burned.
 
 The **one untried recipe**: the 0.731 team's CNN-over-viewcone + MLP PPO trained
 **from scratch at ~15M steps** (~10M Novice mix + ~5M self-play). Note this is
-NOT a new architecture — `PolicyNetwork` (model.py) already matches the spec and
+NOT a new architecture — `PolicyNetwork` (`model.py`) already matches the spec and
 `train_ppo.py` has the loop. The only new variables are **scale** (~15M vs our
 historical ~1M steps), from-scratch init, and their hyperparams.
 
@@ -1294,7 +1295,7 @@ historical ~1M steps), from-scratch init, and their hyperparams.
   starts at eval ≈ −0.35. If it isn't trending up by **update ~100–200**, it's
   the same transfer-gap failure — kill it.
 - **Promotion gate (critical):** do NOT trust the single-seed in-training gate
-  (that's what burned the elo line: predicted +0.028 → cloud −0.21). Real gate =
+  (that is what burned the elo line: predicted +0.028 → cloud −0.21). Real gate =
   n≥3 `multi_seed_eval.py` under the hybrid wrapper vs C+bomb7, **then** cloud
   variance-farm via `variance_farm.py`. Deployment fallback stays the existing
   heuristic-veto (already stronger than Pandemonium's BFS), so no separate BFS
@@ -1310,11 +1311,11 @@ historical ~1M steps), from-scratch init, and their hyperparams.
     ([src/confidence_policy_hybrid_manager.py](src/confidence_policy_hybrid_manager.py)):
     heuristic-first, raw 6-action policy consulted only on low-confidence ticks.
     Built because the existing `confidence_hybrid` is **macro-only** and would
-    silently fall back to heuristic on a raw-action checkpoint (the 0.638 bug).
+    silently fall back to heuristic on a raw-action checkpoint (the 0.638 leaderboard bug).
   All three verified to load the real policy via `_make_manager()` (no silent
   fallback). Workbench: `git pull` → copy the ckpt to `ae/models/bc.pt` → set
   `ENV AE_MODE` per build → `til build/test/submit`. **Canary:** the `til test`
-  log must say `AE policy loaded … epoch=860`, NOT "falling back to heuristic".
+  log must say `AE policy loaded … epoch=860`, NOT `falling back to heuristic`.
 
   **RESULTS (30–31 May, 0/30 errors). policy/hybrid n=1; confpol VARIANCE-FARMED n=13:**
   | mode | cloud acc | speed | read |
@@ -1327,9 +1328,9 @@ historical ~1M steps), from-scratch init, and their hyperparams.
   (0.51 < 0.59 — Pandemonium scale did NOT close the transfer gap) but a *useful
   local specialist*. `confpol` gates it to only the ~20% of ticks where the
   heuristic is unsure, so two ≤0.59 components combine because their errors are
-  uncorrelated and the confidence router sends each tick to the stronger one.
+  uncorrelated and the confidence router sends each tick to the stronger of the two.
   This validates the long-standing "planner-first arbitration, learned policy as
-  consultant — NOT policy-as-primary" thesis with a policy finally good enough to pay.
+  consultant — NOT policy-as-primary" thesis, with a policy finally good enough to pay off.
 
   **The farm (n=13): the 0.667 first draw was the 73rd percentile; true mean is
   0.634.** Range 0.563–0.710, sample σ 0.046 (consistent with the 0.053 noise
@@ -1355,7 +1356,7 @@ historical ~1M steps), from-scratch init, and their hyperparams.
   `hybrid` (fixed-map shortcut off) lets the policy serve ~39.5% / changes ~23.7%
   — **nearly the same policy-influence rate, yet confpol=0.634 vs hybrid=0.508.**
   The difference is routing: `confpol` gives the policy only the heuristic's
-  *low-confidence* ticks (its competent ticks → helpful); `hybrid` lets it
+  *low-confidence* ticks (where the heuristic is weak → helpful); `hybrid` lets it
   override even confident-and-correct heuristic ticks (→ harmful, since the
   policy is a bad global controller). Same policy, +0.13 from routing alone.
   Note: local `hybrid` heuristic fast-paths fire heavily (fixed-map 42% + escape
@@ -1375,12 +1376,12 @@ historical ~1M steps), from-scratch init, and their hyperparams.
   (n=13). The u1400 policy was better on EVERY local metric (eval 0.742→0.790,
   cloudsuite 0.647→0.747) and far more deterministic (entropy 0.064→0.025), yet
   its cloud-consultant value DROPPED and its edge over the heuristic vanished
-  (0.600 ≈ heuristic 0.599; Δ vs u860 = −0.034, p=0.12 — not conclusive but
+  (0.600 ≈ heuristic 0.599; Δ vs u860 = −0.034, p=0.12 — not conclusive, but
   zero gain from +0.05 local eval). **Mechanism = overfitting / inverted-U
   generalization:** the local eval suites are the same opponents the policy
-  trains on, so past ~u860 rising local eval = memorizing those opponents +
+  trains on, so past ~u860, rising local eval = memorizing those opponents +
   entropy-collapsing into over-confident locally-optimal moves that give worse
-  advice on the cloud's unseen hard ticks. **local eval and cloud transfer
+  advice on the cloud's unseen hard ticks. **Local eval and cloud transfer
   decoupled, then went anti-correlated.** Consequences:
   - **Deploy/promote `confpol`-u860 (0.634)** — the EARLIER checkpoint, not the
     final one. Frozen at `pandemonium-v1-best-u860.pt` / bucket `handoff/`.
@@ -1392,9 +1393,9 @@ historical ~1M steps), from-scratch init, and their hyperparams.
     load failure). One update at the reset lr (2.5e-5→**2.5e-4**, 10×) + re-armed
     entropy bonus drove entropy 0.030→0.20 and the GREEDY eval 0.7242→0.3412 in a
     single update — the argmax flipped on many near-tie states. Nothing was
-    "destroyed" (features intact, 0.7242 confirmed loaded); it was *deliberately
+    "destroyed" (features intact, 0.7242 confirmed loaded); the network was *deliberately
     re-stochasticized* and then **never recovered**: best froze at 0.3743 (u60),
-    eval bounced 0.19–0.37 flat for 160 updates. Right death (re-exploring,
+    eval bounced 0.19–0.37 flat for 160 updates. Expected death (re-exploring,
     finding nothing better); its cloudsuite gate is the wrong selector anyway.
     Superseded by confpol-native below.
 
@@ -1410,14 +1411,14 @@ historical ~1M steps), from-scratch init, and their hyperparams.
     plays the heuristic action, does NOT advance the frame-stacker, logs no
     transition (reward accrues to the last logged low-conf transition, semi-MDP);
     on **low-conf** ticks the policy acts AND logs. Critical match: the deploy
-    `PolicyAEManager.ae()` only `observe()`s its stacker when called (= on
-    low-conf ticks), so training must too — that's why the stacker is skipped on
+    `PolicyAEManager.ae()` only `observe()`s its stacker when called (i.e. on
+    low-conf ticks), so training must too — that is why the stacker is skipped on
     confident ticks. Gate replicates the deploy wrapper exactly (eps 5.0 / floor
     10.0 / override_target_none) — see `_confpol_low_confidence`.
   - `evaluate()` gains a gated path (scores the live actor through the same
     heuristic-first gate, not the misleading pure-policy score).
-  - `--checkpoint-every` writes an unconditional `-u<N>` ladder — fixes last
-    run's fatal "kept no intermediates" (local eval is anti-correlated with
+  - `--checkpoint-every` writes an unconditional `-u<N>` ladder — fixes the prior
+    run's fatal "kept no intermediates" problem (local eval is anti-correlated with
     cloud-consultant value past ~u860, so we FARM the ladder, never trust the
     best-by-eval).
   - Launcher [../training/ae/run_confpol_native.py](../training/ae/run_confpol_native.py):
@@ -1455,7 +1456,7 @@ historical ~1M steps), from-scratch init, and their hyperparams.
   inverted-U prediction also didn't appear — u100 was *lowest* — but that's
   within noise too.) The local run plateaued (flat 0.56 eval, entropy collapsed
   to ~0.01 from ~u280) and cloud confirms later rungs don't separate, so more
-  training is low-prior. **Decision is now farming, not steps.** If anyone wants
+  training is low-prior. **The decision is now about farming, not training steps.** If anyone wants
   to truly settle it: farm the best rung (u200 or u360) to n≥5 and check the
   *mean* vs 0.634 — but the strong prior is it ties/loses. **Ship/keep
   confpol-u860 (0.634).** The confpol-native run (`run_confpol_native.py`) was
@@ -1476,7 +1477,7 @@ historical ~1M steps), from-scratch init, and their hyperparams.
 - Fixed-map detector probe: [../training/ae/probe_fixed_map.py](../training/ae/probe_fixed_map.py)
   (proves `is_fixed_novice_map` fires against the real env; runs Mac or Workbench)
 - Hardcoded novice map data: [src/novice_map_data.py](src/novice_map_data.py)
-  (walls/destructibles/bases/spawns/items — byte-identical to the competitor's)
+  (walls/destructibles/bases/spawns/items — byte-identical to curryfarmer's)
 - Local gate: [../training/ae/multi_seed_eval.py](../training/ae/multi_seed_eval.py)
 - Cloud decision tool: [../training/ae/variance_farm.py](../training/ae/variance_farm.py)
   + ledger `training/ae/data/cloud_samples.json`
