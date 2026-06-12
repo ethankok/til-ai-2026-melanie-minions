@@ -1,6 +1,6 @@
 # TIL-AI 2026 — Team *melanie-minions*
 
-Our competition entry for **DSTA BrainHack TIL-AI 2026**. The challenge ships as five independent ML problems, each packaged as its own Dockerized FastAPI microservice. We competed in the online **Qualifiers**, advanced to the in-person **Semifinals at Marina Bay Sands**, and were eliminated there — we did not reach the Finals bracket. Along the way we also built and hardware-validated the full **Finals orchestration stack** (a WebSocket server plus all six containers in one Docker Compose deployment on competition hardware), even though we didn't get to use it in anger.
+Our competition entry for **DSTA BrainHack TIL-AI 2026**. The challenge ships as five independent ML problems, each packaged as its own Dockerized FastAPI microservice. We competed in the online **Qualifiers**, advanced to the in-person **Semifinals at Marina Bay Sands**, and were unfortunately eliminated there.
 
 This repo is a public showcase of the engineering: what we shipped, what we tried, and — honestly — what didn't work. Most of the depth went into **AE** (40% of the score), an autonomous-agent bomb-and-resource game where hand-coded heuristics beat every learned policy we threw at it.
 
