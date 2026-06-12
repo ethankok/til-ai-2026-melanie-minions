@@ -10,7 +10,7 @@ interface (``__call__(obs: dict) -> int`` with an optional ``reset_for_game()``)
 so ``simulate.py``/``opponents.py`` consume them unchanged:
 
   * ``curry_aggro`` / ``curry_fortress`` — the vendored competitor heuristic
-    (royal-recruits / curryfarmer): external A* goal-portfolio + forward-sim plan
+    (Team A): external A* goal-portfolio + forward-sim plan
     scoring. Two weight-based personas pinned per-instance.
   * ``self_policy``   — our Pandemonium raw CNN-PPO checkpoint in *full control*
     (raw 6-action argmax, NOT the confpol consultant gate).
@@ -350,7 +350,7 @@ class CurryOpponent:
 
 
 class PeroxideOpponent:
-    """Adapter around the vendored peroxide-dev planner: an orientation-aware
+    """Adapter around the vendored Team-B planner: an orientation-aware
     A* over (x,y,facing) state with partial-map memory, time-layered danger
     sets, base-siege with bomb-commitment tracking, and a base-anchor inference
     trick (rotate own base around grid-center by pi/3 to guess the other spawns).

@@ -2,7 +2,7 @@
 
 A public record of what Team **melanie-minions** built, shipped, and abandoned across the five tasks of the DSTA BrainHack TIL-AI 2026 competition — five separately Dockerized model services (AE, ASR, CV, NLP, Noise), scored on a blend of accuracy/reward and speed. This document is honest about dead-ends: most of the value here is in the long list of things that *didn't* work and why.
 
-> Competitor teams are anonymized as Team A/B/C/D. A brief note on our development process is in the footer.
+> Competitor teams are anonymized as Team A/B/C/D/E. A brief note on our development process is in the footer.
 
 ---
 

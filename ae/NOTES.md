@@ -15,7 +15,7 @@
 > unchanged) + strategic pivot to a stronger planner. Prior 2 June: Stage-B foreign-curriculum line run end to
 > end: NEW BEST `confpol-semis2b-u75` = 0.671 cloud, melee-gate-selected + cloud
 > A/B-validated vs native-u100 0.661; Stage B CONCLUDED — peak found, later rungs
-> overfit, training stopped. Also added: foreign melee eval (Stage A), peroxide
+> overfit, training stopped. Also added: foreign melee eval (Stage A), Team-B bot
 > vendored EVAL_ONLY, public-repo scrape, AE_FORCE_CPU. Prior 1 Jun: eval went
 > DETERMINISTIC → variance farming dead; opening-book closed; competitor teardown)._
 
@@ -62,7 +62,7 @@ BALANCED profile (tether_weight 1.31 > incumbent 0.5, base 80 < 100, keeps farmi
 - **Local placement + raw_ae** (`validate_g02_finalist.py`, FRESH seeds 7/99 + 42/137):
   raw_ae **316 vs 239** (Δ+77), worst-robust placement **1.46 vs 3.92** — Pareto-dominates
   the incumbent on raw_ae across ALL 5 tune brackets.
-- **Held-out composition gap** (curry/peroxide): **0.86 vs 0.66**, +0.20 within the +0.5
+- **Held-out composition gap** (Team A/Team B bots): **0.86 vs 0.66**, +0.20 within the +0.5
   tol; held-out ABSOLUTE placement **2.35 vs 3.61** (better on real-competitor blends).
   This is the gate that killed g00-fixed-03 (gap +1.47); g02 passes cleanly.
 - **Cloud non-crater** (the independent OOD signal): `g02-sample-08-cemtuned` = **0.382 /
@@ -190,7 +190,7 @@ are DEAD state — `_active_escape_path` is never called.)
   `@rollback=1` vs off, `--heldout`, hash 0/1/2 × sim 42/137): NOT promotable → FLAT.**
   `effect_ok=False` (mean Δ = **−0.033 rank**, need ≥+0.3) and `poi_ok=False` (13W/5T/12L
   over 30 pairs, PoI 0.52, Wilson-95 lower bound 0.35) — a coin flip, slightly negative on the
-  realistic brackets (`real_field` +0.21, curry-heldout +0.17). `minimax_placement_ok`
+  realistic brackets (`real_field` +0.21, Team-A-heldout +0.17). `minimax_placement_ok`
   + `gap_not_widening_ok` pass (gap even improved −0.205) but the noise gate kills it.
   Artifacts `training/ae/data/melee-phantom-rollback-ab.{json,log}`.
 - **Kept default-OFF in tree** (correct latent-bug fix, gated flat — same disposition as
@@ -323,13 +323,13 @@ OUR specific synthetic opponent pool (`self_policy`/`aggressive_proxy`/
 `anti_aggro_exploiter`/…). Beating those in relative rank may not transfer to real
 unknown teams. **Transfer test RUNNING** (`training/ae/data/_cem_transfer_test.py`,
 background job): incumbent vs g00-fixed-03 on 3 held-out fields of ONLY the real vendored
-competitors (curry semifinalist + peroxide), in compositions matching no tuning
+competitors (Team A, a semifinalist, + Team B), in compositions matching no tuning
 bracket. Results → `training/ae/data/_cem_transfer_{test.log,DONE}`.
 - Edge transfers → real melee skill → **un-revert and deploy CEM weights for finals**
   (revert `9f9c3eb`; weights = commit `1f521ff`).
 - Edge vanishes → overfit to our synthetic pool → revert stands.
 Caveat: held-out *composition* of *seen* opponents (best available; we have only 2
-real external teams: curry, peroxide).
+real external teams: Team A, Team B).
 
 **g00-fixed-03 weights** (if redeploying): mission 51.157558, resource 23.038170,
 base 89.398951, dist 1.060815, path_threat 2.377860, bomb 9.076016, tether_health
@@ -342,7 +342,7 @@ relative-rank finals: (1) **cloud single-agent reward ≠ finals metric** — de
 to a functionality/non-crater sanity check, not a selector; (2) **the melee brackets may be
 unrepresentative** — our own champion placing dead-last is a red flag that the bracket
 *opponent mix* or *placement scoring* doesn't track the real field; (3) **we have
-only 2 real external opponents** (curry/peroxide); the rest are synthetic self_*/
+only 2 real external opponents** (Team A/Team B); the rest are synthetic self_*/
 proxy bots, so "wins vs our pool" generalizes weakly. A finals-aligned eval should
 score **relative rank against the most realistic available field**, weight the real
 competitors heavily, hold out opponent COMPOSITIONS (not just seeds), and treat cloud
@@ -391,7 +391,7 @@ A/B on the melee before shipping.
 
 ### Current state (6 June 2026) — Dir-2 RL pipeline (BC-clone + self-play league) RAN → FLAT; deploy unchanged
 
-**The one RL recipe we had never tried — BC-clone the heuristic → self-play league from that warm-start → deploy as the confpol consultant (curry's documented Semis bet) — was built, run end-to-end, and gated. Verdict: FLAT. It improves AVERAGE melee placement but never the WORST bracket, so it does NOT beat `confpol-semis2b-u75` as a consultant. Deploy stays `confpol-semis2b-u75 @ default`.** Plan/spec `2026-06-04-ae-dir2-rl-pipeline*` (private archive).
+**The one RL recipe we had never tried — BC-clone the heuristic → self-play league from that warm-start → deploy as the confpol consultant (Team A's documented Semis bet) — was built, run end-to-end, and gated. Verdict: FLAT. It improves AVERAGE melee placement but never the WORST bracket, so it does NOT beat `confpol-semis2b-u75` as a consultant. Deploy stays `confpol-semis2b-u75 @ default`.** Plan/spec `2026-06-04-ae-dir2-rl-pipeline*` (private archive).
 
 - **Stage 0 (BC clone — Behavioral Cloning) — PASS.** Collected 8000 games (1.6M `(obs,action,mask)` demos) from the C+bomb7 heuristic; trained `dir2-bc.pt`; fidelity gate on an INDEPENDENT 150-game held-out = **agreement 1.0000, modal 0.405, lift +0.595** (≫ the +0.20 bar). A perfect, fast clone of the deterministic teacher. Tool: `training/ae/bc_action_agreement.py`.
 - **Stage 1 (league) — healthy run, climbing eval.** `run_dir2_v1.py`: BC-warm-started PPO, `--preset full-rl` shaping + new `dir2-league` opponent mix (`foreign_train:0.45, selfplay:0.25, scripted:0.15, cloudsuite:0.15` — the `selfplay` slice is what actually draws the SnapshotPool), dense `-u<N>` ladder, ran the full 586 updates. In-training `best` climbed 0.2965→0.3399→**0.3589**; entropy held ~0.10 (full-rl floor prevented collapse). Full-control policy reached ~0.30 (vs the champion's ~0.51).
@@ -471,17 +471,17 @@ A/B on the melee before shipping.
     only kills the launcher wrapper, not the `train_ppo.py` child; the run kept going to u1072 (~14h
     wasted CPU). Kill the child directly: `pkill -f 'train_ppo.py.*<tag>'`.
 - **🧭 STRATEGIC PIVOT (4 Jun, agreed): the ceiling-raiser is a STRONGER PLANNER, not more RL.**
-  Evidence: curry's **0.715 is a hand-coded forward-sim planner, not RL** (their RL failed
+  Evidence: Team A's **0.715 is a hand-coded forward-sim planner, not RL** (their RL failed
   transfer too); our RL has been the LOWER-ceiling / fragile path (pure ~0.43–0.51; consultant
   +0.045 that just washed out on the new eval). The headroom above our **greedy one-step** scorer
   is *multi-step value*, best captured by **forward-sim SEARCH** (which transfers because it reasons about the
   *game*, not the *opponents*), not opponent-overfitting RL. **Three directions for the next
   session (1 is the foundation for 2):**
-  1. **Forward-sim + respawn/stun ("farming-race") plan scorer** — curry's 0.715 mechanism. We
+  1. **Forward-sim + respawn/stun ("farming-race") plan scorer** — Team A's 0.715 mechanism. We
      built the self-plan half (`AE_PLAN_RESCORE`, cloud-dead ALONE) but OMITTED the stun-downtime
-     pricing that is curry's actual edge. Highest evidence base.
+     pricing that is Team A's actual edge. Highest evidence base.
   2. **RL anchored to the planner** (heuristic/planner as BC teacher + RL residual/opponent —
-     curry's own Semis plan): "some form of RL" but with a real answer to "why won't it overfit
+     Team A's own Semis plan): "some form of RL" but with a real answer to "why won't it overfit
      like the last ten times" — pure-RL's target (the cloud opponents) is moving/unlearnable;
      a planner has no such dependency.
   3. **~~Finish `pandemonium-v2-respawnfix` → gate on melee placement~~ DONE 4 Jun → DISCARDED.**
@@ -538,7 +538,7 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sw
   run-to-run (foreign-opponent internals), and extra consultation raises trajectory variance; n=6
   can't resolve ~±1 placement there. The robust kill signal was the win-rate collapse on
   semis_mixed/real_field (72 rounds each), NOT the noisy adversarial number.
-- **→ Go/no-go fired: escalate to the forward-sim planner** (Dir-1, curry's 0.715 mechanism — the
+- **→ Go/no-go fired: escalate to the forward-sim planner** (Dir-1, Team A's 0.715 mechanism — the
   only untried high-ceiling structural lever; needs its own brainstorm + a latency guard vs the 2s
   decision cutoff). The consultant line is exhausted: proven +0.152 specialist, optimal routing, can't be
   made a better generalist by routing alone. Gate-knob code kept as reusable infra (default
@@ -566,8 +566,8 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sw
      continued training (semis2c, real u273/u348) DEGRADED it (worst-bracket melee
      placement 3.39→3.67→5.78 on held-out brackets; over-specialized into
      all_aggressive). Training stopped. `confpol-native-u100` (0.661) is the
-     fallback floor. **To beat 0.671 toward curryfarmer's 0.715 needs a NEW lever**
-     (different warm-start / foreign mix / peroxide base-inference trick), not more
+     fallback floor. **To beat 0.671 toward Team A's 0.715 needs a NEW lever**
+     (different warm-start / foreign mix / Team-B base-inference trick), not more
      of this curriculum — see the Stage B "CONCLUDED" bullet for the full trajectory.
   3. **Opening-book line is CLOSED** for the eval: v1 (heuristic gate) regressed
      to 0.584; v2 (confpol-correct gate) = 0.626 = confpol exactly → opening never
@@ -645,7 +645,7 @@ sweep on `semis2b-u75`, melee-gated. Spec/plan `2026-06-04-ae-consultant-gate-sw
   collapsed). Ladder `confpol-native-u*.pt` on disk if a deeper farm is wanted;
   prior says it ties/loses.
 - **🔭 TOP LEVER — first exploitation BUILT + SHIPPED (1 Jun): divergence-gated
-  opening book.** Inspired by competitor `curryfarmer`/royal-recruits (0.715/0.807,
+  opening book.** Inspired by Team A (0.715/0.807,
   who exploits novice determinism deeply). Offline beam search generates per-spawn
   item-farming openings ([../training/ae/opening_sim.py](../training/ae/opening_sim.py),
   `gen_openings.py`); a divergence-gated wrapper replays them then hands to the
@@ -676,7 +676,7 @@ Semis-realistic selector.**
   `self_tactical` (our 12-way tactical-macro hybrid), `self_heuristic` (shipped
   C+bomb7), and 3 purpose-built non-mirror bots: `evbot` (nominal-reward EV
   maximizer — the *opposite* of our base-underweighting calibration),
-  `aggressive_proxy`, `anti_aggro_exploiter`. Curry is **vendored gitignored** at
+  `aggressive_proxy`, `anti_aggro_exploiter`. Team A's bot is **vendored gitignored** at
   `training/ae/foreign/curry/` (`EXP_DISABLE_NUMBA=1 USE_PARALLEL_GOALS=0`,
   personas pinned per-instance via `set_persona`+`dynamic_persona=False`, NOT the
   process-global `EXPERIMENTAL_VARIANT` env). **Do not commit competitor code.**
@@ -726,7 +726,7 @@ Semis-realistic selector.**
   (1) the **`adversarial` bracket is everyone's worst** — confpol 5.78th/−259,
   even self_policy only 3.28th; base-siege+counter-aggressors+strong-farmer is the
   hole to close. (2) The **bare heuristic loses the farming race** (`all_farmer`
-  4.56th, −388) — exactly the curryfarmer "immortality/defense-wins" dynamic.
+  4.56th, −388) — exactly the Team-A "immortality/defense-wins" dynamic.
   (3) confpol is the most *balanced* deployable (no bracket worse than ~3 except
   adversarial). **No candidate is promotable over confpol-u860 under the full
   conjunction → confpol stays deployed.** Re-run with the new cloud-best
@@ -803,7 +803,7 @@ Semis-realistic selector.**
     | bracket | u100 | →u155 | held-out content |
     |---|---|---|---|
     | all_farmer | 4.17 | **2.17** | curry_fortress/self_tactical/anti_aggro (NO self_policy → not self-similarity) |
-    | real_field | 2.00 | **1.06** (0.94 win) | peroxide + curry |
+    | real_field | 2.00 | **1.06** (0.94 win) | Team B + Team A |
     | adversarial | 4.61 | **3.33** | curry_fortress |
     | semis_mixed | 1.56 | **1.33** (+60 margin) | mixed |
     Neither is "promotable" under the strict conjunction (both still margin<0 in
@@ -846,8 +846,8 @@ Semis-realistic selector.**
     STOPPED; `confpol-semis2b-u75` = 0.671 is the final Stage-B deploy pick.** Not
     worth submitting untested intermediates (real u198–248): they'd each need a
     cloud submit to beat a validated 0.671, and the melee trend says they won't.
-    To push past 0.671 toward curryfarmer's 0.715 needs a DIFFERENT lever (new
-    warm-start / foreign mix / the peroxide base-inference trick), not more of
+    To push past 0.671 toward Team A's 0.715 needs a DIFFERENT lever (new
+    warm-start / foreign mix / the Team-B base-inference trick), not more of
     this curriculum — it has peaked.
   **NOTE the overfit risk this raises:** u100 is already the cloud peak and the
   whole line shows an inverted-U (more training past the peak LOSES cloud value).
@@ -892,7 +892,7 @@ against the real `til_environment`: `is_fixed_novice_map=True` on all 6 agents
 across seeds 7/999/31337; `base_location` (`array([13,9])` → native `[13,9]` →
 `(13,9)`) matches our hardcoded [src/novice_map_data.py](src/novice_map_data.py)
 exactly. Our `BASE_LOCATIONS` / `STARTING_LOCATIONS` / item table are
-**byte-identical** to the competitor's (curryfarmer's) `HUNTER_*` tables.
+**byte-identical** to the competitor's (Team A's) `HUNTER_*` tables.
 
 - **DELETED stale claim:** earlier NOTES said "the fixed-Novice map detector
   doesn't fire on the cloud eval." That was a **misdiagnosis** — it was inferred
@@ -910,32 +910,29 @@ exactly. Our `BASE_LOCATIONS` / `STARTING_LOCATIONS` / item table are
   divergence-gated opening book + an all-pairs distance LUT + an opponent-position
   LUT + a "defense wins / immortality" strategy**. Same trigger, far more
   leverage. This depth gap is the most plausible single explanation for 0.715 vs
-  our 0.634. See the improvement plan in **"Competitor intel: curryfarmer"** below.
+  our 0.634. See the improvement plan in **"Competitor intel: Team A"** below.
 
-### Competitor intel: curryfarmer / "royal-recruits" (public repo, 0.715/0.807)
+### Competitor intel: Team A (public repo, 0.715/0.807)
 
-Public GitHub repo `curryfarmer/til-26-ae` (team royal-recruits), cloud
-**0.715 reward / 0.807 speed**. Cloned and fully reviewed 1 Jun. Key facts:
+Team A — the strongest semifinalist with a public repo, cloud **0.715 reward /
+0.807 speed** — published their code; we reviewed it 1 Jun. The detailed
+teardown lives in the private archive; the facts the rest of these notes
+rely on:
 
 - **Same meta-conclusion as us:** their RL failed local→cloud transfer at
   qualifiers → they ship a hand-coded heuristic and plan to use it as a BC (Behavioral Cloning)
   teacher/opponent for fresh RL at Semis. Convergent with our entire arc.
 - **Their heuristic is a different machine: portfolio-A* + forward-sim plan
-  scoring**, not greedy target-picking. Per tick: enumerate K=4–6 goals → A*
-  each over `(x,y,facing,t,bombs,placed)` (facing/time/bomb-inventory aware,
-  horizon 8–10) → **project the world forward and score each plan by estimated
-  raw game reward** (`eval.score_plan`) → pick best. Time-layered danger map
-  (`is_lethal(x,y,t)` per future tick). ~12 personas (aggro/greedy/fortress/…)
-  + a runtime persona-FSM. **Rust (PyO3) A* kernel** for speed; full IS-MCTS
-  built but shipped OFF (A* portfolio is the live path).
-- **Their hunter scores:** `greedy_hunter` local bench qual **0.929** / Semis
-  **0.747** composite; they note til-server ≈ −0.20 reward vs til-test, landing
-  cloud at ~0.71–0.75. The 0.715 we measured is one of these hunters.
+  scoring**, not greedy target-picking. Per tick: enumerate a small goal
+  portfolio → A* each over a facing/time/bomb-inventory-aware state →
+  **project the world forward and score each plan by estimated raw game
+  reward** → pick best. Time-layered danger map; multiple personas behind a
+  runtime persona-FSM.
 - **Strategic insight we lack: "immortality → farming race → defense wins."**
   They reverse-engineered that kills only freeze 3 turns then respawn full-HP,
   so a match is a 200-tick points-farming race; they price stun downtime in
-  `score_plan` (`FREEZE_TURNS × W_STUN_PER_TURN`) and built a `fortress` persona
-  (tops their roster). Our scorer has no respawn/stun model.
+  their plan scorer and their fortress persona tops their roster. Our scorer
+  has no respawn/stun model.
 - **Where we already match or beat them:** same RL verdict; both built search and
   ship it OFF; both maintain a belief/world model; both pin `PYTHONHASHSEED=0`
   for the same tie-break-determinism reason. **We are slightly FASTER** (~0.84 vs
@@ -947,23 +944,23 @@ Scraped GitHub (forks of `til-ai/til-26{,-ae,-finals}` + keyword/code search).
 Of ~12 candidate repos, **4 had real AE work** beyond the 663-byte stock
 template; the rest were the untouched scaffold. Findings and vendoring decisions:
 
-| Repo | Track | Architecture | Weights | Strength | Decision |
+| Team | Track | Architecture | Weights | Strength | Decision |
 |---|---|---|---|---|---|
-| `curryfarmer` (royal-recruits) | — | portfolio-A* + forward-sim | (heuristic) | **0.715, semifinalist** | already vendored (curry_aggro/fortress) |
-| `peroxide-dev/til-26` | — | orientation-aware A* + base-anchor inference | none needed | **0.443, NON-semifinalist (weak)** | **VENDORED `peroxide_astar` (EVAL_ONLY)** |
-| `AndreLiu1225/til-26` | general (`novice:false`) | CNN+MLP masked PPO | 3 committed | team did poorly | **rejected** (user call) |
-| `Pushkaltoocool/til-26` | — | **DQN** (value-based) | none | unknown | not runnable (no weights) |
-| `Parachuters/til-26` | **Advanced** | masked **recurrent** PPO | none | off our Novice bracket | not runnable / off-bracket |
+| Team A | — | portfolio-A* + forward-sim | (heuristic) | **0.715, semifinalist** | already vendored (curry_aggro/fortress) |
+| Team B | — | orientation-aware A* + base-anchor inference | none needed | **0.443, NON-semifinalist (weak)** | **VENDORED `peroxide_astar` (EVAL_ONLY)** |
+| Team C | general (`novice:false`) | CNN+MLP masked PPO | 3 committed | low qualifier result | **rejected** (user call) |
+| Team D | — | **DQN** (value-based) | none | unknown | not runnable (no weights) |
+| Team E | **Advanced** | masked **recurrent** PPO | none | off our Novice bracket | not runnable / off-bracket |
 
-- **Why vendor a *weak* agent (peroxide):** it is the only **second genuinely
+- **Why vendor a *weak* agent (Team B):** it is the only **second genuinely
   foreign decision architecture** we can obtain (A* portfolio, distinct from
-  curry's forward-sim and our greedy-Dijkstra). For the EVAL_ONLY holdout,
+  Team A's forward-sim and our greedy-Dijkstra). For the EVAL_ONLY holdout,
   *architecture diversity > strength*; and as a realistic mid/low-strength field
   member it fits our 15th seed (the real bracket has weaker teams too). It's
   numpy-only, self-contained, and the env's already-unpacked (7,5,25) viewcone
   matches its decoder (verified it decodes and acts, not blind). **Do NOT read
-  beating peroxide as signal** — it's a field-filler, not a bar. New bracket
-  `real_field` (curry + peroxide + self_policy + anti_aggro + self_heuristic)
+  beating Team B as signal** — it's a field-filler, not a bar. New bracket
+  `real_field` (Team A + Team B + self_policy + anti_aggro + self_heuristic)
   added to `MELEE_BRACKETS`; the original 4 brackets are unchanged so the prior
   weakness map stays comparable. Vendored gitignored at
   `training/ae/foreign/peroxide/` (do NOT commit competitor code).
@@ -971,12 +968,12 @@ template; the rest were the untouched scaffold. Findings and vendoring decisions
   MIRROR (we already have self_policy/self_tactical/self_heuristic), trained
   against our own opponents so it shares our blind spots — the opposite of what
   the foreign pool is for. The spec warns against over-weighting a single source.
-- **Intel worth keeping:** (1) **two teams went DQN self-play** (peroxide,
-  Pushkaltoocool) — a value-based line we never tried (no evidence it scored
-  well, though). (2) **peroxide's base-inference trick** — guess the other 5
+- **Intel worth keeping:** (1) **two teams went DQN self-play** (Teams B
+  and D) — a value-based line we never tried (no evidence it scored
+  well, though). (2) **Team B's base-inference trick** — guess the other 5
   spawns by rotating own base around the grid-center by π/3 on the symmetric layout;
   borrowable into our own planner. (3) Most public repos are the stock template;
-  the strong semifinalists' code is private, so curry remains our only *strong*
+  the strong semifinalists' code is private, so Team A remains our only *strong*
   real-competitor proxy.
 
 ### Reward calibration: why we DON'T use nominal game rewards as candidate values
@@ -1011,9 +1008,9 @@ damage +1/HP. Our heuristic candidate values: mission 80, resource 40, base 100/
 
 ### Forward-sim plan re-score — BUILT, CLOUD-CONFIRMED DEAD (0.590 vs 0.671), default-OFF (3 Jun)
 
-The one structural lever curry (0.715) has and we don't: re-score plans by
+The one structural lever Team A (0.715) has and we don't: re-score plans by
 *projected realized reward* instead of static `value − dist`. Adopted the
-**principle, not curry's code** (no Rust kernel, no persona-FSM, no respawn/stun
+**principle, not Team A's code** (no persona-FSM, no respawn/stun
 model). **Contained:** reuses the manager's existing forward-sim primitives
 (`_lookahead_step`/`_blast_cells`/`_lookahead_escape`, real env reward units) to
 re-rank **only the top-K static target candidates** — NOT the dead `mcts-light`
@@ -1040,7 +1037,7 @@ that keeps it out of the dypm/pessimistic-search graveyard).
   full realized value makes the planner abandon steady item income to chase bases.
   Fix = **asymmetric `AE_PLAN_RESCORE_DEMOTE_ONLY` (now default ON):** projection
   may DEMOTE a static-winner phantom base toward a realizable alternative, but may
-  never PROMOTE a base over a non-base static winner. That is curry's actual
+  never PROMOTE a base over a non-base static winner. That is Team A's actual
   documented benefit ("discount a base to ~0 when the bomb won't land"), without
   the over-aggression. Demote-only smoke: weighted **0.2795 vs off 0.273
   (+0.0065)** — recovers the regression but is **flat at the noise floor**, and it
@@ -1068,7 +1065,7 @@ that keeps it out of the dypm/pessimistic-search graveyard).
   action-policy lever (opening book, dypm-veto, aggression sweeps). **The
   contained top-K-projection mechanism works as engineered and stays in-tree
   (default-OFF, Dockerfile `AE_PLAN_RESCORE=0`) as reusable infra, but self-plan
-  projection alone does NOT close the gap to curry's 0.715** — curry's edge also
+  projection alone does NOT close the gap to Team A's 0.715** — Team A's edge also
   prices respawn/stun downtime in `score_plan` (a 200-tick farming-race model our
   projection omits) and runs a persona-FSM. **Do NOT re-run this or base-value
   calibration on the greedy scorer.** A genuinely different mechanism is needed.
@@ -1154,7 +1151,7 @@ hole** (the −388/−291 farming-race margins). Design spec
   family):** the bottleneck is *opponent-position availability mid-game*, not the
   scoring logic. We only reliably know opponent SPAWNS (opening); we cannot get
   trustworthy mid/late-game opponent positions vs unknown Semis teams without the
-  exact overfit the project fights (curry hardcodes an opponent-position LUT, but
+  exact overfit the project fights (Team A hardcodes an opponent-position LUT, but
   only because their qualifier opponents were the deterministic BenBots). So
   contention — and any opponent-aware action lever — is inert-or-overfit-risky
   until we have a credible source of live opponent positions. **Don't re-pursue
@@ -1250,7 +1247,7 @@ pursued.
 | **Tactical BC** (400/800-game outcome-weighted) | Behavior-clone good macros | 400-game "win" was legacy-gate variance; 800-game overfit and collapsed base/top/bracket suites. |
 | **Belief-map / memory BC** (`bc-belief-hybrid`) | 704k-param CNN belief input | Fit local *better* (val_acc 0.897) but **widened** cloud gap by +0.044. Rich state against random opponents = more ways to overfit. |
 | **MCTS as primary planner** (`mcts-light`) | Depth/width search per tick | Either times out (no latency cap) or, when capped, regresses accuracy −0.068 and speed −0.254. Workshop teaches no MCTS; top teams aren't doing it. |
-| **Forward-sim plan re-score** (`AE_PLAN_RESCORE`, top-K projection, 3 Jun) | Re-rank top-K target candidates by projected realized reward (curry's `score_plan` principle, contained — not the dead full-width beam) | **CLOUD-CONFIRMED DEAD: tag `planrescore` = 0.590 vs champion 0.671 (−0.081, deterministic, 0/30 err, speed 0.833).** Demote-only read flat locally (+0.0096 n=3×12) but cloud −0.081; symmetric −0.080 local. top_seed_proxy −0.137 correctly foreshadowed it. Self-plan projection alone doesn't close the gap to curry's 0.715 (curry also prices respawn/stun). Code in-tree default-OFF. Do NOT re-run. See *Forward-sim plan re-score* above. |
+| **Forward-sim plan re-score** (`AE_PLAN_RESCORE`, top-K projection, 3 Jun) | Re-rank top-K target candidates by projected realized reward (Team A's plan-scoring principle, contained — not the dead full-width beam) | **CLOUD-CONFIRMED DEAD: tag `planrescore` = 0.590 vs champion 0.671 (−0.081, deterministic, 0/30 err, speed 0.833).** Demote-only read flat locally (+0.0096 n=3×12) but cloud −0.081; symmetric −0.080 local. top_seed_proxy −0.137 correctly foreshadowed it. Self-plan projection alone doesn't close the gap to Team A's 0.715 (Team A also prices respawn/stun). Code in-tree default-OFF. Do NOT re-run. See *Forward-sim plan re-score* above. |
 | **Contention-aware item valuation** (`AE_CONTENTION`, opponent-aware scorer, 3 Jun) | Discount item targets an opponent reaches first, using free fixed-map spawns + live viewcone sightings (demote-only, item-vs-item) | **CLOUD-NEUTRAL, not negative: tag `contention-aware` = 0.671 = flag-off exactly (0/30 err, speed 0.840; image confirmed AE_CONTENTION=1).** Flag fires but changes the target only ~1.3×/game (`_apply_contention` ran 21× / changed 4× over 3 games). **SHIPPED ON anyway** (Dockerfile `AE_CONTENTION=1`, user call) as a near-zero-downside bet on melee PLACEMENT — which the cloud can't measure (de-contam melee `all_farmer` 2.39→2.17, small/noisy); revert = one line. **LESSON (why it's in this table):** an opponent-aware ACTION lever can't move the cloud/reward number — bottlenecked by no trustworthy mid-game opponent positions vs unknown teams (only spawns known); don't build another expecting cloud gains. 18 TDD tests; melee de-contamination fix kept. See *Contention-aware item valuation* above. |
 | **Scripted M5 port** (`scripted_hybrid`, full ScriptedBaseAttackPolicy) | Port the 0.731 team's full decision tree | **−3.35σ LOSS** at the local gate. M5's 0.731 is codebase-specific, not primitive-additive. |
 | **Three M5 primitives** (spawn-first-target table, enemy-bomb-only escape, orientation-aware A*) | Bolt-on env flags | All noise-to-catastrophic (orientation-aware A* −0.142; our DIST_PENALTY is tuned for grid, not orientation distance). All default-OFF. |
@@ -1477,20 +1474,16 @@ historical ~1M steps), from-scratch init, and their hyperparams.
 - Fixed-map detector probe: [../training/ae/probe_fixed_map.py](../training/ae/probe_fixed_map.py)
   (proves `is_fixed_novice_map` fires against the real env; runs Mac or Workbench)
 - Hardcoded novice map data: [src/novice_map_data.py](src/novice_map_data.py)
-  (walls/destructibles/bases/spawns/items — byte-identical to curryfarmer's)
+  (walls/destructibles/bases/spawns/items — byte-identical to Team A's)
 - Local gate: [../training/ae/multi_seed_eval.py](../training/ae/multi_seed_eval.py)
 - Cloud decision tool: [../training/ae/variance_farm.py](../training/ae/variance_farm.py)
   + ledger `training/ae/data/cloud_samples.json`
 - Active experiment launcher:
   [../training/ae/run_pandemonium_v1.py](../training/ae/run_pandemonium_v1.py)
 - Training runbook: [../training/ae/RUNBOOK.md](../training/ae/RUNBOOK.md)
-- **Competitor reference** (cloned for analysis, not vendored):
-  `github.com/curryfarmer/til-26-ae` (royal-recruits, 0.715/0.807). Key files to
-  port-study: `experimental_heuristic/agent.py` (`_try_opening_playbook` +
-  `act()` pipeline), `experimental_heuristic/novice_state.py`
-  (`HUNTER_OPENING_SEQUENCES`, dist/opponent LUTs), `experimental_heuristic/eval.py`
-  (`score_plan` forward-sim), `experimental_heuristic/search.py` (A* over
-  `(x,y,facing,t,bombs,placed)`).
+- **Competitor reference** (cloned for analysis, not vendored): Team A's
+  public repo (0.715/0.807); the file-level teardown notes live in the
+  private archive.
 - Deployment contract & full submission ledger: see the private archive
   (*Full AE submission ledger*, *What our agent runs on*) — not in this repo.
 
