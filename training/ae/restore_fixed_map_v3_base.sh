@@ -13,7 +13,7 @@ TRAIN_CKPT="training/ae/checkpoints/fixed-map-v3-base.pt"
 SEED="${AE_FINETUNE_SEED:-88}"
 OUT_CKPT="${AE_FINETUNE_OUT:-training/ae/checkpoints/fixed-map-v3-finetune-v1.pt}"
 IMAGE_TAG="${AE_FIXED_MAP_IMAGE:-melanie-minions-ae:ae-fixed-map-v3}"
-REGISTRY_IMAGE="${AE_FIXED_MAP_REGISTRY_IMAGE:-asia-southeast1-docker.pkg.dev/til-ai-2026/repo-til-26-melanie-minions/melanie-minions-ae:ae-fixed-map-v3}"
+REGISTRY_IMAGE="${AE_FIXED_MAP_REGISTRY_IMAGE:-asia-southeast1-docker.pkg.dev/<GCP_PROJECT>/repo-til-26-melanie-minions/melanie-minions-ae:ae-fixed-map-v3}"
 N_FRAMES="${AE_FINETUNE_N_FRAMES:-}"
 
 mkdir -p ae/models training/ae/checkpoints
