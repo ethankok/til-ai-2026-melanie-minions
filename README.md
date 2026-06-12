@@ -39,7 +39,7 @@ This repo is a public showcase of the engineering: what we shipped, what we trie
 ## Results
 
 - Placed **top-20 out of 80+ novice teams** in the Qualifiers and advanced to the Semifinals.
-- Placed **1st in both pre-Semifinals hardware test matches** on competition hardware (~1.5x reward margins).
+- Placed **1st in both pre-Semifinals hardware test matches** on competition hardware.
 - Finished **top-10 in the Semifinals** and did not advance to the Finals.
 
 ### Results at a glance
