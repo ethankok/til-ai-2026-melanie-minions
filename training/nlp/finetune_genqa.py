@@ -44,9 +44,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-# Reuse the data-prep ladder from the extractive trainer so we get the same
-# variant/regex/fuzzy span-finding behavior. The only difference here is that
-# we emit (question, context, answer) triples — no need for an answer_start.
+# Reuse the extractive trainer's variant/regex/fuzzy span-finding; here we
+# just emit (question, context, answer) triples, no answer_start needed.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from finetune_qa import (  # noqa: E402
     _doc_chunks_with_offsets,
@@ -84,9 +83,8 @@ def _build_genqa_examples(track: str, use_chunk_context: bool) -> list[dict]:
             if not srcs:
                 skipped["no_source_doc"] += 1
                 continue
-            # Pick the first source_doc that exists. We do NOT require the
-            # answer to appear in the doc — generative training accepts the
-            # mismatch.
+            # Pick the first source_doc that exists; the answer need not
+            # appear in it verbatim — generative training accepts the mismatch.
             chosen_doc = None
             for doc_id in srcs:
                 if doc_id in docs:
@@ -98,9 +96,8 @@ def _build_genqa_examples(track: str, use_chunk_context: bool) -> list[dict]:
 
             ctx = docs[chosen_doc]
             if use_chunk_context:
-                # If we CAN find the answer span, narrow context to its chunk
-                # (mirrors inference). If we can't, keep the whole doc — better
-                # to train on full context than miss the row entirely.
+                # Narrow to the chunk containing the answer (mirrors inference)
+                # if findable; otherwise keep the whole doc.
                 hit = _find_span(a, ctx)
                 if hit is not None:
                     pos, a_exact = hit
@@ -119,9 +116,8 @@ def _build_genqa_examples(track: str, use_chunk_context: bool) -> list[dict]:
 
 
 def _format_input(q: str, ctx: str) -> str:
-    # Flan-T5 expects a flat text prompt. Putting question before context
-    # is the convention in HF SQuAD examples; matches what models were
-    # pretrained to handle.
+    # Flan-T5 expects a flat text prompt; question-before-context matches
+    # the HF SQuAD pretraining convention.
     return f"question: {q.strip()} context: {ctx.strip()}"
 
 
@@ -280,11 +276,9 @@ def main() -> int:
     )
     trainer.train()
 
-    # NaN sanity check. T5 + fp16 silently produces NaN gradients (loss=0.0,
-    # grad_norm=nan from step 1) and HF will happily save the corrupted
-    # weights. Refuse to save in that state — better to fail loud than to
-    # ship a NaN'd model that scores 0.4 × retrieval_hit locally and tanks
-    # cloud submissions.
+    # T5 + fp16 can silently produce NaN gradients (loss=0.0, grad_norm=nan
+    # from step 1) and HF will happily save the corrupted weights. Refuse to
+    # save in that state.
     has_nan = any(
         not torch.isfinite(p).all().item()
         for p in model.parameters()

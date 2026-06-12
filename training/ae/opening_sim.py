@@ -50,9 +50,8 @@ MOVE_ACTIONS = (FORWARD, BACKWARD, LEFT, RIGHT, STAY)
 # Real game-reward units (validated by the env-parity test).
 ITEM_VALUE = {"mission": 5.0, "resource": 2.0, "recon": 1.0}
 
-# Deterministic Novice starting facings per spawn slot (verified across seeds
-# 7/42/999/31337 — novice forces a fixed arena RNG). Order matches
-# BASE_LOCATIONS / STARTING_LOCATIONS.
+# Deterministic Novice starting facings per spawn slot (novice forces a fixed
+# arena RNG). Order matches BASE_LOCATIONS / STARTING_LOCATIONS.
 STARTING_DIRECTIONS = (0, 1, 2, 1, 3, 1)
 
 # base_location -> (start_pos, start_dir)
@@ -75,7 +74,6 @@ class OpeningSim:
     DELTAS = DELTAS
 
     def __init__(self) -> None:
-        # Both wall types block movement.
         self.blocking_edges: set[tuple[int, int, int]] = set()
         for (x, y, d) in WALLS:
             self.blocking_edges.add((x, y, d))
@@ -121,7 +119,6 @@ class OpeningSim:
                 if npos in self.items and npos not in collected:
                     collected = collected | {npos}
                     reward = reward + ITEM_VALUE[self.items[npos]]
-        # STAY: no change beyond tick.
         return State(pos=pos, dir=d, collected=collected, reward=reward, tick=st.tick + 1)
 
 
@@ -144,7 +141,6 @@ def beam_search(
     by terminal score = reward + position_weight * (−dist to nearest enemy base).
     """
     start = sim.initial_state(base_location)
-    # beam: list of (state, actions_tuple)
     beam: list[tuple[State, tuple[int, ...]]] = [(start, ())]
     enemy_bases = _enemy_bases(base_location)
 
@@ -158,7 +154,7 @@ def beam_search(
                 cur = best.get(key)
                 if cur is None or ns.reward > cur[0].reward:
                     best[key] = (ns, acts + (a,))
-        # keep top beam_width by reward (search-time ranking).
+        # keep top beam_width by reward (search-time ranking, not final).
         beam = sorted(best.values(), key=lambda sa: sa[0].reward, reverse=True)[:beam_width]
 
     def _pos_bonus(pos: tuple[int, int]) -> float:

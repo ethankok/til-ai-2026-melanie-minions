@@ -51,9 +51,8 @@ def build_coco_gt(annotations: dict, image_ids: list[int]):
 
     keep = set(image_ids)
     # COCOeval uses GT annotation id 0 as its "unmatched" sentinel in
-    # ``dtMatches``, so any annotation with id == 0 (the real annotations.json
-    # numbers from 0) is silently scored as a false positive. Reassign 1-based
-    # ids to the kept annotations to avoid the collision.
+    # dtMatches, so an annotation with id == 0 (annotations.json numbers
+    # from 0) is silently scored as a false positive -- reassign 1-based ids.
     anns = []
     for new_id, a in enumerate(
         (a for a in annotations["annotations"] if a["image_id"] in keep), start=1
@@ -140,13 +139,11 @@ def run(args: argparse.Namespace) -> dict:
     os.environ["CV_MODEL_PATH"] = str(Path(args.weights).resolve())
     os.environ["CV_IMGSZ"] = str(args.imgsz)
     os.environ["NOISE_STRESS_STRENGTH"] = str(args.strength)
-    # Replicate the DEPLOYED CV env (cv/Dockerfile) so the victim scores like the
-    # real container. The critical one is CV_CATEGORY_MAP: our champion is a
-    # custom YOLO whose class indices ARE the 18 TIL categories in order, so the
-    # deploy overrides the manager's generic-COCO default with the identity map.
-    # Without this, every correct box is emitted under the wrong category_id and
-    # mAP collapses to 0. (TTA/CV_AUGMENT left off for CPU speed -- it does not
-    # change the relative clean-vs-noised disruption.)
+    # Replicate the deployed CV env (cv/Dockerfile): our champion YOLO's class
+    # indices ARE the 18 TIL categories in order, so override the manager's
+    # generic-COCO default with the identity map -- without this every box
+    # gets the wrong category_id and mAP collapses to 0. (TTA/CV_AUGMENT left
+    # off for CPU speed; doesn't affect relative clean-vs-noised disruption.)
     os.environ.setdefault("CV_CATEGORY_MAP", json.dumps(list(range(18))))
     os.environ.setdefault("CV_CONF", "0.20")
     os.environ.setdefault("CV_IOU", "0.55")

@@ -166,14 +166,11 @@ def rasterize_belief(ae_manager, observation: dict) -> np.ndarray:
 
     step = ae_manager.last_step if ae_manager.last_step is not None else 0
 
-    # Visited cells.
     for x, y in ae_manager.seen:
         if 0 <= x < grid and 0 <= y < grid:
             out[BELIEF_VISITED, x, y] = 1.0
 
-    # Wall edges — collapse the four directional edges into a single
-    # "any wall here" channel. The policy doesn't need the per-direction
-    # split; that lives in the agent_viewcone for nearby cells.
+    # Collapse the four directional wall edges into a single "any wall here" channel.
     for x, y, _d in ae_manager.walls:
         if 0 <= x < grid and 0 <= y < grid:
             out[BELIEF_WALL, x, y] = 1.0
@@ -181,7 +178,6 @@ def rasterize_belief(ae_manager, observation: dict) -> np.ndarray:
         if 0 <= x < grid and 0 <= y < grid:
             out[BELIEF_DESTRUCTIBLE, x, y] = 1.0
 
-    # Items — populate freshness based on last-seen step.
     item_to_channel = {
         "mission": BELIEF_MISSION,
         "recon": BELIEF_RECON,
@@ -195,7 +191,6 @@ def rasterize_belief(ae_manager, observation: dict) -> np.ndarray:
         fresh = max(0.0, 1.0 - age / ITEM_FRESH_WINDOW)
         out[ch, x, y] = max(out[ch, x, y], fresh)
 
-    # Enemy agents — short freshness window because they move.
     for (x, y), last_seen in ae_manager.enemy_agents.items():
         if not (0 <= x < grid and 0 <= y < grid):
             continue
@@ -203,14 +198,11 @@ def rasterize_belief(ae_manager, observation: dict) -> np.ndarray:
         fresh = max(0.0, 1.0 - age / ENEMY_FRESH_WINDOW)
         out[BELIEF_ENEMY_AGENT, x, y] = max(out[BELIEF_ENEMY_AGENT, x, y], fresh)
 
-    # Enemy bases — static once known.
     for x, y in ae_manager.enemy_bases:
         if 0 <= x < grid and 0 <= y < grid:
             out[BELIEF_ENEMY_BASE, x, y] = 1.0
 
-    # Bomb blasts — for each known bomb, paint its blast cells weighted
-    # by 1 - timer/BOMB_TIMER (so a 1-tick bomb is 1.0, a 3-tick bomb is
-    # 0). This gives the policy a graded "imminent danger" signal.
+    # Paint each bomb's blast cells weighted by 1 - timer/BOMB_TIMER (graded danger signal).
     bomb_timer_max = float(getattr(ae_manager, "BOMB_TIMER", 3))
     for bomb_pos, data in ae_manager.known_bombs.items():
         timer = max(1, int(data.get("timer", bomb_timer_max)))
@@ -225,7 +217,6 @@ def rasterize_belief(ae_manager, observation: dict) -> np.ndarray:
                     out[BELIEF_BOMB_BLAST, x, y], urgency
                 )
 
-    # Own position.
     location = observation.get("location")
     if location is not None:
         try:
@@ -248,7 +239,6 @@ def rasterize_belief(ae_manager, observation: dict) -> np.ndarray:
         except Exception:
             pass
 
-    # Crop/pad back to GRID_SIZE if the env reported a bigger grid.
     if grid != GRID_SIZE:
         cropped = np.zeros((BELIEF_CHANNELS, GRID_SIZE, GRID_SIZE), dtype=np.float32)
         copy_dim = min(grid, GRID_SIZE)

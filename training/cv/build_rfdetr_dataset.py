@@ -48,7 +48,6 @@ from prepare_yolo_dataset import (
 from build_final_yolo_dataset import _ids_for_splits, _parse_splits
 
 
-# RF-DETR split dir name -> source split ids selector handled in build_dataset.
 _RFDETR_SPLIT_DIRS = ("train", "valid", "test")
 
 
@@ -147,7 +146,6 @@ def build_dataset(
     categories = _load_categories(annotations)
     source_images_dir = data_dir / "images"
 
-    # train/ gets train+val; valid/ and test/ both get the hard test split.
     split_ids = {"train": train_ids, "valid": val_ids, "test": val_ids}
     counts: dict[str, tuple[int, int]] = {}
     for split_dir in _RFDETR_SPLIT_DIRS:

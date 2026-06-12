@@ -59,12 +59,10 @@ def _run_one_config(
     env = os.environ.copy()
     for k, v in env_extra.items():
         env[k] = v
-    # Force unbuffered + repo cwd so subprocess imports resolve.
     env.setdefault("PYTHONUNBUFFERED", "1")
-    # Pin PYTHONHASHSEED so AEManager's set/dict iteration order is
-    # reproducible. Without this, identical (env, seed) configs can drift
-    # by 0.10+ on cloudsuite mean across runs. PYTHONHASHSEED is checked
-    # at interpreter startup, so MUST be set before subprocess spawn.
+    # Pin PYTHONHASHSEED: AEManager's set/dict iteration order can drift
+    # cloudsuite mean by 0.10+ across identical (env, seed) runs otherwise.
+    # Must be set before subprocess spawn (checked at interpreter startup).
     env["PYTHONHASHSEED"] = env_extra.get("__pythonhashseed", "0")
 
     cmd = [

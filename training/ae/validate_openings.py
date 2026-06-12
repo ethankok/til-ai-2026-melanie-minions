@@ -22,8 +22,8 @@ if __name__ == "__main__" and os.environ.get("PYTHONHASHSEED") is None:
     os.environ["PYTHONHASHSEED"] = "0"
     os.execvp(sys.executable, [sys.executable, *sys.argv])
 
-# Shipped C+bomb7 profile — set BEFORE any AEManager is constructed so both the
-# baseline and the wrapper's internal heuristic match the deployed agent.
+# Set BEFORE any AEManager is constructed so both the baseline and the
+# wrapper's internal heuristic match the deployed agent.
 os.environ.setdefault("AE_ITEM_MISSION_VALUE", "80")
 os.environ.setdefault("AE_ITEM_RESOURCE_VALUE", "40")
 os.environ.setdefault("AE_ENEMY_BASE_VALUE", "100")

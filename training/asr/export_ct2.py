@@ -64,11 +64,8 @@ def main() -> None:
     print("Merging LoRA into base weights")
     model = model.merge_and_unload()
 
-    # Read the slang prompt into memory BEFORE touching output_dir. On re-export
-    # the slang file commonly lives at output_dir/slang_prompt.txt (left there
-    # by the previous export), and the wipe loop below would delete it before
-    # the copy-back step runs. Buffer it here to make the export idempotent
-    # regardless of where --slang-file points.
+    # Buffer the slang prompt before the wipe loop below, since on re-export it
+    # commonly lives inside output_dir and would otherwise be deleted.
     slang_bytes: bytes | None = None
     if args.slang_file.exists():
         slang_bytes = args.slang_file.read_bytes()
@@ -100,8 +97,7 @@ def main() -> None:
             str(args.output_dir),
             "--quantization",
             args.quantization,
-            # ct2 errors if output_dir exists at all (even if empty after our
-            # wipe loop above). --force lets it overwrite cleanly.
+            # ct2 errors if output_dir exists at all, even when empty.
             "--force",
             "--copy_files",
             "tokenizer.json",

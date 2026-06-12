@@ -87,10 +87,8 @@ OUTPUT FORMAT (STRICT):
 No other text. Stop after </rationale>."""
 
 
-# ---------------------------------------------------------------------------
-# LLM calling — minimal duplicate of LLMAEManager backends, but with the
+# LLM calling — minimal duplicate of LLMAEManager backends, with the
 # annotator system prompt and a different parser.
-# ---------------------------------------------------------------------------
 
 def _scalar(obs: dict, key: str, default: float = 0.0) -> float:
     v = obs.get(key, default)
@@ -178,7 +176,7 @@ class Annotator:
                 return f"<agy_error rc={result.returncode}: {result.stderr.strip()[:200]}>", False
             stdout = result.stdout or ""
             if not stdout.strip():
-                # agy returns rc=0 with empty stdout when quota-throttled; treat as failure
+                # agy returns rc=0 with empty stdout when quota-throttled
                 return "<agy_empty_response (likely quota/rate-limit)>", False
             return stdout, True
         except subprocess.TimeoutExpired:
@@ -200,14 +198,10 @@ def parse_rationale(raw: str) -> str:
         inner = m.group(1).strip()
         if inner:
             return inner
-    # Tag missing or empty body — fall back to the whole response, minus stray tags
+    # Tag missing/empty: fall back to whole response minus stray tags
     cleaned = re.sub(r"</?rationale>", "", raw, flags=re.IGNORECASE).strip()
     return cleaned
 
-
-# ---------------------------------------------------------------------------
-# Main collection loop
-# ---------------------------------------------------------------------------
 
 def run_round(
     env,
@@ -250,7 +244,6 @@ def run_round(
         }
 
         if agent == agent_id_us:
-            # Reward delta for the prior sample = cumulative - prev_cumulative
             if samples:
                 samples[-1]["reward"] = cumulative - prev_cumulative
             prev_cumulative = cumulative
@@ -271,7 +264,6 @@ def run_round(
             raw, ok = annotator.call(prompt)
             dt = time.monotonic() - t0
             rationale = parse_rationale(raw) if ok else ""
-            # Mark ok=False if rationale ended up empty (model returned nothing useful)
             if ok and not rationale.strip():
                 ok = False
 
@@ -313,17 +305,14 @@ def run_round(
                     pass
             env.step(a)
 
-    # Final reward attribution: the last sample's reward delta from end-of-game
     if samples:
         samples[-1]["reward"] = cumulative - prev_cumulative
 
-    # MC returns
     total = 0.0
     for s in reversed(samples):
         total += s["reward"]
         s["mc_return"] = round(total, 4)
 
-    # Flush
     for s in samples:
         out_fp.write(json.dumps(s) + "\n")
     out_fp.flush()
@@ -361,8 +350,7 @@ def _reannotate(in_path: Path, out_path: Path, annotator: Annotator) -> int:
     print(f"[reannotate] {total} samples loaded; {len(bad)} need re-annotation")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # Resumable: if out_path already has entries with rationale_ok=True for indices
-    # already processed, keep them. Simplest: always write fresh from scratch.
+    # Always written fresh; good samples are passed through unchanged.
     t_start = time.monotonic()
     ok_count = 0
     with out_path.open("w") as out_fp:
@@ -429,7 +417,6 @@ def main(argv: list[str] | None = None) -> int:
         return _reannotate(args.in_path, args.out, annotator)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    # Resumable: detect existing rounds in the output file
     completed_rounds: set[int] = set()
     if args.out.exists():
         try:

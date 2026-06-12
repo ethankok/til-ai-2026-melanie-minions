@@ -72,7 +72,7 @@ def main() -> int:
 
     cloud_by_name = {c["name"]: c for c in truth["configs"]}
 
-    # Build aligned config list — only configs present in BOTH local results and truth.
+    # Only configs present in BOTH local results and truth.
     names: list[str] = []
     cloud_means: list[float] = []
     cloud_ns: list[int] = []
@@ -100,7 +100,6 @@ def main() -> int:
     print(f"\nLocal suites:                 {suites}")
     print(f"Local rounds per suite:       {local['rounds']}\n")
 
-    # Per-suite scores per config.
     per_suite_local: dict[str, list[float]] = {s: [] for s in suites}
     for name in names:
         per = local["per_config"][name]["per_suite"]
@@ -153,7 +152,6 @@ def main() -> int:
             mean(per_suite_local[s][i] for s in nonrandom) for i in range(len(names))
         ]
 
-    # Print per-config table.
     header = f"{'config':<22}" + "".join(f"{s[:10]:>12}" for s in suites) + f"{'mom':>10}" + f"{'cloud':>10}"
     print(header)
     print("-" * len(header))
@@ -164,7 +162,6 @@ def main() -> int:
         row += f"{mom[i]:>10.4f}{cloud_means[i]:>10.4f}"
         print(row)
 
-    # Correlations.
     print(f"\n{'signal':<32}{'spearman':>12}{'pearson':>12}")
     print("-" * 56)
     best_name, best_rho = None, -2.0
@@ -181,7 +178,6 @@ def main() -> int:
         marker = "  <- best" if sig_name == best_name else ""
         print(f"{sig_name:<32}{rho:>12.3f}{r:>12.3f}{marker}")
 
-    # Side-by-side rank comparison for the best signal.
     print(f"\nRank comparison (best signal = {best_name}):")
     best_values = dict(candidates)[best_name]
     best_rank = rank_desc(best_values)

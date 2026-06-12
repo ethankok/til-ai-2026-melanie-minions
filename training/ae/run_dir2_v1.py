@@ -84,19 +84,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CKPT_DIR = REPO_ROOT / "training" / "ae" / "checkpoints"
 TRAIN = REPO_ROOT / "training" / "ae" / "train_ppo.py"
 
-# BC warm-start checkpoint (produced by train_bc.py; does not exist at authoring
-# time — the launcher checks for it at runtime and fails fast if absent).
+# BC clone checkpoint produced by train_bc.py; launcher fails fast if absent.
 DEFAULT_WARMSTART = CKPT_DIR / "dir2-bc.pt"
 
 # Calibrated from Stage-B: ~533 agent-acted steps per full-episode game.
-# The semis-foreign mix has NO slow planner opponents, so the per-game wall-clock
-# should be FASTER than Stage-B (which mixed in curry_aggro A* planning).
 # Re-calibrate from the first smoke update if materially different.
 STEPS_PER_GAME = 533
 
-# Run "as many steps as possible in the time window" — same open-ended philosophy
-# as confpol-native. The sweet spot has always been in the early rungs; kill when
-# the cloud/melee-best plateau is confirmed. ~2 days of CPU wall-clock at 16g/u.
+# Open-ended budget; kill when cloud/melee-best plateau is confirmed
+# (~2 days CPU wall-clock at 16 games/update).
 TARGET_STEPS = 5_000_000
 
 
@@ -149,40 +145,32 @@ def main() -> None:
         )
 
     CKPT_DIR.mkdir(parents=True, exist_ok=True)
-    out = CKPT_DIR / f"{args.tag}.pt"           # best-by-eval (gate only; not for direct promotion)
-    latest = CKPT_DIR / f"{args.tag}-latest.pt"  # most recent
+    out = CKPT_DIR / f"{args.tag}.pt"            # best-by-eval (gate only)
+    latest = CKPT_DIR / f"{args.tag}-latest.pt"
     log = CKPT_DIR / f"{args.tag}.log"
 
     n = args.updates or updates_for(TARGET_STEPS, args.games_per_update)
 
     cmd = [
         sys.executable, "-u", str(TRAIN),
-        # Stage-B shaping: entropy floor/anneal, clip 0.14/0.08, target_kl 0.015,
-        # policy selection, load_critic=True, baseline_eval=True,
-        # min_save_improvement=0.015.  apply_preset("full-rl") leaves
-        # opponent_mix_preset alone when it is already non-"none", so the
-        # dir2-league mix below is honoured without being overridden.
+        # Stage-B shaping preset; apply_preset("full-rl") leaves
+        # opponent_mix_preset alone when already non-"none", so the
+        # dir2-league mix below is honoured.
         "--preset", "full-rl",
-        # Self-play-augmented fast mix (registered preset in train_ppo.py):
-        #   foreign_train:0.45 + selfplay:0.25 + scripted:0.15 + cloudsuite:0.15.
-        # The `selfplay` slice is what makes this a real league — it draws from
-        # the SnapshotPool that --snapshot-interval populates.  FAST opponents
-        # only: no planner/aggressive/league slices.
+        # foreign_train:0.45 + selfplay:0.25 + scripted:0.15 + cloudsuite:0.15.
+        # selfplay draws from the SnapshotPool --snapshot-interval populates.
         "--opponent-mix-preset", "dir2-league",
-        # Self-play snapshots: the selfplay slice above draws from this pool.
         "--snapshot-interval", str(args.snapshot_interval),
         "--snapshot-pool-size", str(args.snapshot_pool_size),
-        # BC warm-start (actor always; critic avoids cold value bootstrap).
-        # --load-critic and --baseline-eval are already set by --preset full-rl.
+        # --load-critic / --baseline-eval already set by --preset full-rl.
         "--bc-checkpoint", str(warm),
-        # Gentle refinement lr; full-rl does NOT override lr.
         "--lr", str(args.lr),
         "--games-per-update", str(args.games_per_update),
         "--ppo-epochs", str(args.ppo_epochs),
         "--gamma", "0.99", "--gae-lambda", "0.95",
         "--n-frames", "4",
         "--eval-every", str(args.eval_every),
-        # Dense ladder — the cloud-best rung is always early; we must have it.
+        # Dense ladder — the cloud-best rung is always early.
         "--checkpoint-every", str(args.checkpoint_every),
         "--updates", str(n),
         "--out", str(out), "--latest-out", str(latest),

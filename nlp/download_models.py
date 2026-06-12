@@ -3,7 +3,7 @@
 Run at build time via the Dockerfile. Outputs to /workspace/models, which
 matches NLP_MODEL_DIR in nlp_manager.py.
 
-v14-llm-rag adds Qwen2.5-7B-Instruct-AWQ as the answerer. We fetch it via
+The Qwen2.5-7B-Instruct-AWQ answerer is fetched via
 huggingface_hub.snapshot_download because vLLM expects the AWQ weights/config
 on disk, not the transformers cache layout. Set NLP_SKIP_LLM_DOWNLOAD=1 (or
 build with a different target) to skip the ~5 GB LLM fetch when iterating on
@@ -48,7 +48,6 @@ if DOWNLOAD_MODERNBERT:
         )
     )
 
-# v19 hybrid uses the cloud-survived v14 answerer checkpoint.
 LLM_REPO = os.getenv("NLP_LLM_REPO", "Qwen/Qwen2.5-7B-Instruct-AWQ")
 LLM_LOCAL = "llm"
 

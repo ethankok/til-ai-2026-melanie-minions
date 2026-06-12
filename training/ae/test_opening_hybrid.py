@@ -70,7 +70,6 @@ def test_happy_path_emits_full_opening_then_delegates():
     seq, traj = _opening_for(base)
     stub = StubHeuristic()
     mgr = OpeningHybridManager(heuristic=stub)
-    # Feed observations exactly matching the predicted trajectory (no divergence).
     for k in range(len(seq)):
         pos, d = traj[k]
         a = mgr.ae(_obs(k, pos, d, base))
@@ -129,7 +128,7 @@ def test_frozen_during_opening_aborts():
     seq, traj = _opening_for(base)
     stub = StubHeuristic()
     mgr = OpeningHybridManager(heuristic=stub)
-    mgr.ae(_obs(0, traj[0][0], traj[0][1], base))  # loads + plays opening[0]
+    mgr.ae(_obs(0, traj[0][0], traj[0][1], base))
     a = mgr.ae(_obs(1, traj[1][0], traj[1][1], base, frozen=2))  # frozen -> abort
     assert a == STUB and mgr.aborted
 

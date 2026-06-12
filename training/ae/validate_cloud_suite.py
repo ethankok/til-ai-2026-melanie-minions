@@ -8,11 +8,9 @@ the planner against non-random scripted libraries and pressure-heavy suites.
 from __future__ import annotations
 
 # AEManager has hash-order-dependent code (set/dict iteration in candidate
-# scoring). Unpinned PYTHONHASHSEED has been shown to drift cloudsuite mean by
-# 0.10+ across runs of identical (env, seed, rounds) triples. Force-pin at
-# interpreter startup by re-exec-ing ourselves before any other import touches
-# the hash table — PYTHONHASHSEED is read once at process start, so setting it
-# from inside the running interpreter is too late.
+# scoring); unpinned PYTHONHASHSEED can drift cloudsuite mean by 0.10+ across
+# identical (env, seed, rounds) runs. PYTHONHASHSEED is read once at process
+# start, so re-exec ourselves before any other import touches the hash table.
 import os
 import sys
 
@@ -167,8 +165,6 @@ def run_suite(args: argparse.Namespace) -> dict:
     suites = _resolve_suites(args)
     seeds = args.seeds if args.seeds else [args.seed]
     hash_seed = os.environ.get("PYTHONHASHSEED")
-    # Auto-relaunch at the top of the module guarantees this, but keep the
-    # check so the recorded summary always has a definite hash_seed field.
     for seed in seeds:
         for spec in suites:
             print(f"\n=== {spec} ({args.rounds} rounds, seed={seed}, our={args.our}) ===", flush=True)

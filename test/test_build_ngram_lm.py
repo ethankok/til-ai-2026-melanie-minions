@@ -83,7 +83,6 @@ def test_collect_dedupes_and_drops_blanks(tmp_path: Path):
 
 
 def test_collect_tolerates_missing_asr_and_nlp(tmp_path: Path):
-    # Missing files should not crash; just yield whatever is present.
     asr = tmp_path / "nope.jsonl"
     nlp_dir = tmp_path / "alsonope"
     lines = collect_training_text(asr, nlp_dir)

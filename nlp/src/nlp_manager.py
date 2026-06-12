@@ -70,11 +70,9 @@ DENSE_DIR = MODEL_DIR / "bge-small-en-v1.5"
 RERANKER_REPO = os.getenv("NLP_RERANKER_REPO", "BAAI/bge-reranker-large").strip()
 RERANKER_LOCAL_NAME = os.getenv("NLP_RERANKER_LOCAL_NAME", "bge-reranker-large").strip()
 RERANKER_DIR = MODEL_DIR / RERANKER_LOCAL_NAME
-# QA model locations. Default selection is extractive first; Flan-T5 is now
-# opt-in via NLP_QA_MODE=generative because v8a regressed on cloud.
-# v13b: prefer DeBERTa-v3-large fine-tuned weights if present; falls through
-# to the v8b/v9 RoBERTa-large fine-tune otherwise. Image stays buildable in
-# either configuration.
+# QA model locations. Default is extractive; Flan-T5 generative is opt-in via
+# NLP_QA_MODE=generative. Prefers DeBERTa-v3-large fine-tuned weights if present,
+# else falls through to the RoBERTa-large fine-tune. Image stays buildable either way.
 QA_DEBERTA_FINETUNED_DIR = MODEL_DIR / "deberta-finetuned-squad2"
 QA_MODERNBERT_FINETUNED_DIR = MODEL_DIR / "modernbert-finetuned-squad2"
 QA_MODERNBERT_BASE_DIR = MODEL_DIR / "modernbert-base-squad2"
@@ -110,26 +108,25 @@ QA_MODE = os.getenv("NLP_QA_MODE", "extractive").strip().lower()
 RULE_MODE = os.getenv("NLP_RULE_MODE", "conservative").strip().lower()
 CANON_MODE = os.getenv("NLP_CANON_MODE", "conservative").strip().lower()
 ANSWER_RANK_MODE = os.getenv("NLP_ANSWER_RANK_MODE", "heuristic").strip().lower()
-# v14-llm-rag: top-level answerer switch.
-#   'llm'        — vLLM + Qwen2.5-7B-Instruct-AWQ (default in the v14 image)
-#   'hybrid'     — v9 extractive first; route only hard-looking questions to LLM
-#   'extractive' — v9 RoBERTa-large fine-tune path (fallback for emergency rollback)
+# Top-level answerer switch:
+#   'llm'        — vLLM + Qwen2.5-7B-Instruct-AWQ
+#   'hybrid'     — extractive first; route only hard-looking questions to LLM
+#   'extractive' — RoBERTa-large fine-tune path (emergency rollback)
 ANSWERER_MODE = os.getenv("NLP_ANSWERER", "extractive").strip().lower()
 LLM_MODEL_DIR = os.getenv("NLP_LLM_DIR", str(MODEL_DIR / "llm"))
 HYBRID_QWEN_THRESHOLD = float(os.getenv("NLP_HYBRID_QWEN_THRESHOLD", "3.0"))
 HYBRID_MIN_QA_SCORE = float(os.getenv("NLP_HYBRID_MIN_QA_SCORE", "8.0"))
 COMPOSITION_MODE = os.getenv("NLP_COMPOSITION_MODE", "off").strip().lower()
 
-# v20-ae-trigger: Universal Adversarial Trigger against the ModernBERT-AE
-# evaluator. NLP_AE_TRIGGER overrides the file; NLP_AE_TRIGGER_FILE points to
-# the JSON output of training/nlp/find_ae_trigger.py. Empty = off.
+# Universal Adversarial Trigger against the ModernBERT-AE evaluator.
+# NLP_AE_TRIGGER overrides the file; NLP_AE_TRIGGER_FILE points to the JSON
+# output of training/nlp/find_ae_trigger.py. Empty = off.
 AE_TRIGGER_TEXT = os.getenv("NLP_AE_TRIGGER", "").strip()
 AE_TRIGGER_FILE = os.getenv(
     "NLP_AE_TRIGGER_FILE", str(MODEL_DIR / "ae_trigger.json")
 ).strip()
-# v21-trigger-only: skip QA entirely and return just the trigger as the
-# candidate. Locally measured 0.994 AE pass rate vs 1.000 with real candidate
-# text, but eliminates the RoBERTa forward at QA time.
+# Skip QA entirely and return just the trigger as the candidate (0.994 AE pass
+# rate vs 1.000 with real candidate text, but skips the RoBERTa forward).
 AE_TRIGGER_ONLY = os.getenv("NLP_AE_TRIGGER_ONLY", "0").strip() == "1"
 
 # Pure BM25 path (no neural retriever, no reranker, no QA model)
@@ -441,9 +438,8 @@ class NLPManager:
         self._qa_model = None
         self._qa_is_generative = False
         self._answer_ranker: dict[str, Any] | None = None
-        # v14-llm-rag: answerer mode + vLLM handle. Resolved at _init_models
-        # time, may downgrade from 'llm' to 'extractive' if weights aren't
-        # bundled or vLLM init fails.
+        # Answerer mode + vLLM handle, resolved at _init_models time; may
+        # downgrade from 'llm' to 'extractive' if weights aren't bundled or vLLM init fails.
         self._answerer_mode: str = ANSWERER_MODE
         self._llm_answerer = None  # type: ignore[var-annotated]
         self._ae_trigger: str = self._resolve_ae_trigger()
@@ -543,9 +539,8 @@ class NLPManager:
             except Exception as e:
                 print(f"[nlp_manager] torch.compile failed: {e}", flush=True)
 
-        # v14/v19 answerer dispatch. Try LLM if requested; if vLLM init or the
-        # weight dir is missing, downgrade to extractive so the container still
-        # serves answers instead of returning empty strings.
+        # Try LLM if requested; if vLLM init or the weight dir is missing,
+        # downgrade to extractive so the container still serves answers.
         if self._answerer_mode in {"llm", "hybrid"}:
             self._init_llm_answerer()
             if self._llm_answerer is None:
@@ -581,10 +576,9 @@ class NLPManager:
             self._llm_answerer = None
 
     def _init_extractive_qa(self) -> None:
-        # QA model selection ladder. The v9 RoBERTa fine-tune is the known-good
-        # extractive reader (0.711 local / 0.683 cloud). Later DeBERTa and
-        # ModernBERT retries did not beat it, so keep those as explicit
-        # artefact fallbacks rather than letting a stock bundled model mask v9.
+        # QA model selection ladder. RoBERTa fine-tune is the known-good
+        # extractive reader (0.711 local / 0.683 cloud); DeBERTa and ModernBERT
+        # are explicit fallbacks, never let a stock bundled model mask it.
         want_generative = QA_MODE in {"gen", "generative", "t5"}
         if QA_MODEL_OVERRIDE:
             qa_path = QA_MODEL_OVERRIDE

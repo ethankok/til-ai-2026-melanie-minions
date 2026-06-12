@@ -16,8 +16,7 @@ deltas plus rejection reasons.
 
 from __future__ import annotations
 
-# Pin PYTHONHASHSEED=0 before any other import. See sweep_heuristic_knobs.py
-# for the full rationale.
+# Pin PYTHONHASHSEED=0 before any other import (see sweep_heuristic_knobs.py).
 import os
 import sys
 

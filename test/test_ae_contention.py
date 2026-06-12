@@ -84,7 +84,7 @@ def test_believed_opponents_excludes_own_spawn_on_fixed_map(monkeypatch):
 
 def test_believed_opponents_no_spawn_seed_off_fixed_map(monkeypatch):
     m = _open_grid_manager(monkeypatch)
-    m.is_fixed_novice_map = False  # not the fixed novice map
+    m.is_fixed_novice_map = False
     m.base_location = (13, 9)
     m.enemy_agents = {}
     assert m._believed_opponents(0) == []

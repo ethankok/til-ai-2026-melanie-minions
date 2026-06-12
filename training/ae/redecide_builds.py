@@ -55,13 +55,13 @@ SEMIS2B = _ckpt("confpol-semis2b-u75.pt")
 
 # (label, planner-weight values, consultant checkpoint). incumbent MUST be first.
 CANDIDATES = [
-    ("incumbent-semis2b-u75", INC,               SEMIS2B),                                   # deployed champion
-    ("cem-g00-fixed-03",      _cem_values(),     SEMIS2B),                                   # reverted CEM retune
-    ("native-u100",           INC,               _ckpt("confpol-native-u100.pt")),          # native-curriculum best (0.661 same-conds)
-    ("semis2c-u75",           INC,               _ckpt("confpol-semis2c-u75.pt")),          # over-trained semis2c (degraded)
-    ("pandemonium-v1-u860",   INC,               _ckpt("pandemonium-v1-best-u860.pt")),     # old pandemonium-v1 incumbent
-    ("pandemonium-v2-u300",   INC,               _ckpt("pandemonium-v2-respawnfix-phase1-u300.pt")),  # v2 best rung (discarded)
-    ("dir2-v1-latest",        INC,               _ckpt("dir2-v1-latest.pt")),               # BC-clone + league (flat)
+    ("incumbent-semis2b-u75", INC,               SEMIS2B),
+    ("cem-g00-fixed-03",      _cem_values(),     SEMIS2B),
+    ("native-u100",           INC,               _ckpt("confpol-native-u100.pt")),
+    ("semis2c-u75",           INC,               _ckpt("confpol-semis2c-u75.pt")),
+    ("pandemonium-v1-u860",   INC,               _ckpt("pandemonium-v1-best-u860.pt")),
+    ("pandemonium-v2-u300",   INC,               _ckpt("pandemonium-v2-respawnfix-phase1-u300.pt")),
+    ("dir2-v1-latest",        INC,               _ckpt("dir2-v1-latest.pt")),
 ]
 
 
@@ -116,7 +116,6 @@ def main() -> int:
     if inc_label in results:
         _print_report(results, inc_label, tune)
 
-        # Compact final ranking + verdicts vs incumbent.
         inc = results[inc_label]
         rows = []
         for label, res in results.items():

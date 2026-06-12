@@ -24,8 +24,8 @@ def simulate_attack():
 
     print("2. Loading the Victim Model (VGG16)...")
     victim_model = models.vgg16(weights=models.VGG16_Weights.DEFAULT).eval()
-    
-    # THE FIX: We must resize and crop the image to 224x224!
+
+    # VGG16 expects 224x224 input.
     preprocess = transforms.Compose([
         transforms.Resize(256),
         transforms.CenterCrop(224),

@@ -54,8 +54,7 @@ class ConfidencePolicyHybridAEManager:
     def __init__(self) -> None:
         self.heuristic = AEManager()
         # Raises if the checkpoint is missing/incompatible -> ae_server catches
-        # and falls back to pure heuristic. We assert load success loudly so a
-        # silent-fallback (the 0.638 bug) is visible in the container logs.
+        # and falls back to pure heuristic; loud failure keeps a silent fallback visible.
         self.policy = PolicyAEManager()
         self.margin_epsilon = _env_float("AE_CONFPOL_MARGIN_EPSILON", 5.0)
         self.top_floor = _env_float("AE_CONFPOL_TOP_FLOOR", 10.0)
@@ -84,7 +83,7 @@ class ConfidencePolicyHybridAEManager:
                 return True, "target_none"
             return False, "target_none_skipped"
         if path != "target":
-            # deliberate overrides (playbook/dominant/escape/frozen/init)
+            # Deliberate overrides (playbook/dominant/escape/frozen/init).
             return False, f"path_{path}"
         margin = float(conf.get("margin", float("inf")))
         top = float(conf.get("top_score", float("inf")))
@@ -95,20 +94,18 @@ class ConfidencePolicyHybridAEManager:
         return False, "confident"
 
     def ae(self, observation: dict) -> int:
-        # Heuristic first -- this populates last_decision_confidence AND owns
-        # all the bomb-safety / escape logic we don't want the policy to lose.
+        # Heuristic first -- populates last_decision_confidence and owns
+        # all bomb-safety / escape logic.
         heuristic_action = int(self.heuristic.ae(observation))
         low_conf, reason = self._is_low_confidence()
         self.tick_counts[reason] += 1
         if not low_conf:
             return heuristic_action
-        # Overriding: if the heuristic committed a PLACE_BOMB this tick, the
-        # bomb is never actually placed, so revert the phantom belief entry
-        # before handing the action to the policy.
+        # Overriding a heuristic PLACE_BOMB: the bomb was never actually placed,
+        # so revert the phantom belief entry before handing off to the policy.
         if self.rollback_phantom_bomb and self.heuristic.revert_bomb_commit():
             self.tick_counts["phantom_bomb_reverted"] += 1
-        # Low-confidence tick: let the raw PPO policy pick. PolicyAEManager.ae()
-        # already respects observation["action_mask"], so the action is legal.
+        # PolicyAEManager.ae() already respects action_mask, so the action is legal.
         try:
             return int(self.policy.ae(observation))
         except Exception as exc:  # never crash a round -- degrade to heuristic

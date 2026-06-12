@@ -39,9 +39,8 @@ from ae_manager import AEManager  # noqa: E402
 from til_environment import bomberman_env  # noqa: E402
 from til_environment.config import default_config  # noqa: E402
 
-# Reuse train_ppo's opponent factories so the eval-time opponent
-# distribution matches the train-time one exactly (no opponent-impl
-# drift between scripts).
+# Reuse train_ppo's opponent factories so eval-time and train-time
+# opponent distributions match exactly.
 from train_ppo import OPPONENT_MODES, _make_opponents, _random_opponent  # noqa: E402
 
 
@@ -125,9 +124,8 @@ def evaluate(args: argparse.Namespace) -> None:
         env.reset()
         stacker = FrameStacker(n_frames)
         planner = AEManager()
-        # Per-game opponent dict. For eval we never pass a snapshot pool
-        # — frozen opponents (when in the mix) deepcopy the model under
-        # eval, giving a stable "play against your shadow" baseline.
+        # snapshot_pool=None: frozen opponents deepcopy the model under eval,
+        # giving a stable "play against your shadow" baseline.
         opponents = _make_opponents(
             model, device, args.opponents,
             [a for a in env.possible_agents if a != our_agent],
@@ -152,8 +150,7 @@ def evaluate(args: argparse.Namespace) -> None:
                 )
             else:
                 action = int(opponents.get(agent, _random_opponent)(env, agent, obs_py))
-                # Defend against an opponent returning an illegal action;
-                # the env will refuse it and we want a clean fallback.
+                # Fall back to a legal action if the opponent returns an illegal one.
                 mask = np.asarray(obs_py.get("action_mask", [1, 1, 1, 1, 1, 1]), dtype=np.float32).reshape(-1)
                 if action < 0 or action >= mask.size or not bool(mask[action]):
                     legal = np.flatnonzero(mask > 0)

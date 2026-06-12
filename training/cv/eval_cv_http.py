@@ -184,7 +184,7 @@ def score_predictions(
     evaluator.accumulate()
     evaluator.summarize()
 
-    precision = evaluator.eval["precision"]  # [iou, recall, class, area, max_det]
+    precision = evaluator.eval["precision"]  # shape: [iou, recall, class, area, max_det]
     area_labels = evaluator.params.areaRngLbl
     max_det_index = len(evaluator.params.maxDets) - 1
 

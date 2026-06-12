@@ -25,16 +25,16 @@ from melee_eval import (
 # Reform 3 — Wilson lower bound on Probability-of-Improvement
 # ---------------------------------------------------------------------------
 def test_wilson_lower_bounds_and_monotonicity():
-    assert _wilson_lower(0, 0) == 0.0           # no data -> 0
-    assert _wilson_lower(0, 10) == 0.0          # all losses -> lower bound pinned at 0
-    # all wins: lower bound is high but strictly < 1 (interval has width)
+    assert _wilson_lower(0, 0) == 0.0
+    assert _wilson_lower(0, 10) == 0.0
+    # all wins: lower bound high but strictly < 1 (interval has width)
     allwin = _wilson_lower(10, 10)
     assert 0.6 < allwin < 1.0
     # more wins at fixed n -> higher lower bound
     assert _wilson_lower(8, 10) > _wilson_lower(5, 10) > _wilson_lower(2, 10)
-    # a coin flip's lower bound sits below 0.5 (can't claim improvement)
+    # coin flip's lower bound sits below 0.5 (can't claim improvement)
     assert _wilson_lower(5, 10) < 0.5
-    # the same proportion with more samples gives a tighter (higher) lower bound
+    # same proportion, more samples -> tighter (higher) lower bound
     assert _wilson_lower(80, 100) > _wilson_lower(8, 10)
 
 
@@ -69,7 +69,7 @@ def test_paired_stats_candidate_strictly_better():
     st = _paired_placement_stats(cand, inc)
     assert st["n_pairs"] == 6
     assert st["wins"] == 6 and st["ties"] == 0 and st["losses"] == 0
-    assert abs(st["mean_delta"] - 1.0) < 1e-9   # inc - cand
+    assert abs(st["mean_delta"] - 1.0) < 1e-9  # inc - cand
     assert st["poi"] == 1.0
     assert st["poi_lower"] > 0.5
 
@@ -86,9 +86,9 @@ def test_paired_stats_within_noise_is_a_coin_flip():
     inc = _mk(3.0, -50.0, 0.40, [3.0, 3.0, 3.0, 3.0])
     cand = _mk(3.0, -50.0, 0.40, [2.95, 3.05, 2.90, 3.10])
     st = _paired_placement_stats(cand, inc)
-    assert abs(st["mean_delta"]) < 1e-9          # net zero
+    assert abs(st["mean_delta"]) < 1e-9
     assert st["poi"] == 0.5
-    assert st["poi_lower"] < 0.5                  # cannot claim improvement
+    assert st["poi_lower"] < 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -96,8 +96,8 @@ def test_paired_stats_within_noise_is_a_coin_flip():
 # floor as discriminator, margin/score floors, per-axis effect+PoI guard.
 # ---------------------------------------------------------------------------
 def test_placement_better_but_reward_shy_is_promotable():
-    # Lower raw_ae (but above the 0.75 floor) + more-negative margin (within band) must
-    # NOT block a candidate that places better under the robust sweep. g00-fixed-03 shape.
+    # lower raw_ae (above 0.75 floor) + more-negative margin (within band) must not block
+    # a candidate that places better under the robust sweep (g00-fixed-03 shape)
     inc = _mk(3.0, -50.0, 0.40, [3, 3, 3, 3, 3, 3], raw_ae=500.0, worst_robust=3.0)
     cand = _mk(2.0, -70.0, 0.36, [2, 2, 2, 2, 2, 2], raw_ae=400.0, worst_robust=2.0)
     # raw_ae 400 >= 0.75*500=375; margin -70 >= floor ~-75.5; score 0.36 >= 0.85*0.40=0.34
@@ -134,9 +134,8 @@ def test_margin_collapse_is_rejected_by_margin_floor():
 
 
 def test_within_noise_axis_change_is_not_promotable():
-    # Placement saturates (both ~1st) so the noise guard now lives on the TARGET AXIS:
-    # a within-noise mission-axis change has Wilson-95 PoI lower bound < 0.5 AND zero
-    # mean effect -> axis_ok False -> not promotable.
+    # placement saturates (both ~1st), so the noise guard lives on the TARGET AXIS:
+    # within-noise mission-axis change -> Wilson-95 PoI lower bound < 0.5 and zero mean effect -> axis_ok False
     sims = [42, 137, 7, 99]
 
     def _wrap(missions):
@@ -171,7 +170,7 @@ def test_gap_not_widening():
     # candidate's heldout-minus-tune gap may not exceed incumbent's by > tol
     assert _gap_not_widening(0.4, 0.3, tol=0.5) is True    # 0.4 <= 0.3 + 0.5
     assert _gap_not_widening(1.2, 0.3, tol=0.5) is False   # 1.2 > 0.8 -> overfit
-    assert _gap_not_widening(-0.2, 0.3, tol=0.5) is True   # candidate transfers better
+    assert _gap_not_widening(-0.2, 0.3, tol=0.5) is True   # transfers better
 
 
 def test_checkpoint_only_is_backward_compatible():

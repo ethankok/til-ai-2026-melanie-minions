@@ -74,7 +74,6 @@ def main() -> int:
     val_examples = examples[:n_val]
     train_examples = examples[n_val:]
 
-    # Baseline pass rate WITHOUT the trigger on val.
     print("\nBaseline (no trigger) on val ...", flush=True)
     _, base_probs = _filter_to_negatives(
         val_examples, model, tokenizer, device, args.threshold, batch_size=64,
@@ -87,7 +86,6 @@ def main() -> int:
         flush=True,
     )
 
-    # With-trigger pass rate (roundtrip-faithful) on both splits.
     print("\nWith trigger, val ...", flush=True)
     val_stats = _measure(
         model, tokenizer, trigger_ids, val_examples, device,

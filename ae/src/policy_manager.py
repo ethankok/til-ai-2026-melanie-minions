@@ -112,9 +112,8 @@ def _load_model(checkpoint_path: Path) -> tuple[PolicyNetwork, torch.device, int
     n_frames = int(ckpt.get("n_frames", 1))
     use_belief = bool(ckpt.get("use_belief", False))
     state_dict = ckpt["model_state_dict"]
-    # build_policy_network auto-detects legacy-small vs default arch from
-    # the first conv layer's channel count. Required because the
-    # ppo-full-rl-elo-v1 / ppo-full-rl-v1 checkpoints are legacy-small.
+    # build_policy_network auto-detects legacy-small vs default arch from the
+    # first conv layer's channel count (some checkpoints are legacy-small).
     model = build_policy_network(
         n_frames=n_frames,
         use_belief=use_belief,
@@ -175,8 +174,7 @@ class PolicyAEManager:
         self.belief_manager = AEManager()  # cheap; no-op when use_belief=False
         self._last_step: int | None = None
 
-        # Pre-allocated, persistent input tensors. Copy stacked numpy into
-        # these in place rather than reallocating each tick.
+        # Pre-allocated, persistent input tensors copied into in-place per tick.
         agent_ch = VIEW_CHANNELS * n_frames
         base_ch = VIEW_CHANNELS * n_frames
         scalar_dim = SCALAR_DIM * n_frames
@@ -215,9 +213,7 @@ class PolicyAEManager:
 
         if not self.use_belief:
             return None
-        # Drive the belief manager's memory update without running its
-        # full action selection (no need; we only want the belief state).
-        # The cheap path is _update_memory + _age_bombs + scalar bookkeeping.
+        # Update memory bookkeeping only — skip full action selection.
         bm = self.belief_manager
         step = bm._as_int(observation.get("step"), default=(bm.last_step or 0) + 1)
         if bm.last_step is None or step == 0 or step < bm.last_step:

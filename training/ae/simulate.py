@@ -33,11 +33,8 @@ oracle target for BC training and as the value table for playbook lookup.)
 
 from __future__ import annotations
 
-# Force-pin PYTHONHASHSEED=0 when invoked as a script. AEManager has
-# hash-order-dependent code paths; identical (env, seed) configs have drifted
-# by 0.10+ on cloudsuite mean across runs of unpinned interpreters. Setting
-# this from inside the live interpreter is a no-op (PYTHONHASHSEED is read
-# once at startup), so we re-exec instead.
+# AEManager is hash-order-dependent; PYTHONHASHSEED must be set before the interpreter
+# starts, so re-exec rather than setting it in-process (a no-op once running).
 import os
 import sys
 
@@ -169,17 +166,13 @@ def _make_our_agent(name: str, kwargs: dict | None = None):
         from tactical_hybrid_manager import TacticalHybridAEManager
         return TacticalHybridAEManager(**kwargs)
     if name in ("confidence_policy_hybrid", "confpol"):
-        # The deployed Pandemonium incumbent: heuristic-first, raw PPO policy
-        # consulted only on low-confidence ticks. Checkpoint via
-        # AE_POLICY_CHECKPOINT (local: training/ae/checkpoints/...-u860.pt).
+        # Heuristic-first; PPO policy consulted only on low-confidence ticks.
+        # Checkpoint via AE_POLICY_CHECKPOINT.
         from confidence_policy_hybrid_manager import ConfidencePolicyHybridAEManager
         return ConfidencePolicyHybridAEManager(**kwargs)
     if name in ("opening_hybrid", "openinghybrid"):
-        # Divergence-gated novice opening prefix in front of the confpol planner
-        # (mirrors ae_server's AE_MODE=opening_hybrid + AE_OPENING_PLANNER=
-        # confidence_policy_hybrid build). Inner planner reads AE_POLICY_CHECKPOINT
-        # from env. Openings fire only on spawns locked in openings_gate.json; the
-        # divergence gate aborts to the planner on any trajectory mismatch.
+        # Openings fire only on spawns locked in openings_gate.json; divergence gate
+        # aborts to the inner planner on any trajectory mismatch.
         from opening_hybrid_manager import OpeningHybridManager
         from confidence_policy_hybrid_manager import ConfidencePolicyHybridAEManager
         return OpeningHybridManager(planner=ConfidencePolicyHybridAEManager(**kwargs))
@@ -316,12 +309,9 @@ def run_one_round(
     agent_id_us = env.possible_agents[us_slot]
     other_ids = [a for i, a in enumerate(env.possible_agents) if i != us_slot]
 
-    # Reset our agent's belief if it's an AEManager. The env already has a
-    # fresh seed, so just zero its memory.
     if hasattr(our_agent, "_reset_memory"):
         our_agent._reset_memory()
 
-    # Per-game reset for opponents that need it (only Mixed).
     for op in opponents:
         if hasattr(op, "reset_for_game"):
             op.reset_for_game()
@@ -329,9 +319,7 @@ def run_one_round(
             op._reset_memory()
 
     cumulative_us = 0.0
-    # Per-agent cumulative reward for the head-to-head melee metric (placement +
-    # margin). The PettingZoo AEC loop calls env.last() for every agent on its
-    # turn, so we can accumulate all 6 cumulative rewards in the same pass.
+    # Per-agent cumulative reward for the head-to-head melee metric (placement + margin).
     cumulative: defaultdict[str, float] = defaultdict(float)
     action_counter: Counter[int] = Counter()
     component_totals: Counter[str] = Counter()
@@ -357,7 +345,7 @@ def run_one_round(
 
     for agent in env.agent_iter():
         observation, reward, termination, truncation, info = env.last()
-        cumulative[agent] += float(reward)   # every agent, before the term continue
+        cumulative[agent] += float(reward)  # captured even on the terminal step
         if agent == agent_id_us:
             cumulative_us += float(reward)
             terminated_us = bool(termination or truncation)
@@ -400,9 +388,7 @@ def run_one_round(
                 d = int(observation_native.get("direction", 0))
                 step_idx = int(observation_native.get("step", 0))
                 key = pack_state_key(loc, d, step_idx)
-                # We log reward AFTER it lands on the next agent_iter
-                # iteration; here we record the action and a placeholder
-                # reward (filled in by the post-pass below).
+                # Reward placeholder; filled in by the post-pass below.
                 traj["state_keys"].append(key)
                 traj["actions"].append(action)
                 traj["rewards"].append(0.0)
@@ -412,9 +398,7 @@ def run_one_round(
             slot = other_ids.index(agent)
             op = opponents[slot]
             action = int(op(observation_native))
-            # Safety: if the opponent returned an illegal action, fall back to
-            # the first legal one so we don't waste the round on env-side
-            # masking mismatches.
+            # Fall back to the first legal action if the opponent returned an illegal one.
             mask = observation_native.get("action_mask")
             if mask is not None:
                 try:
@@ -428,36 +412,14 @@ def run_one_round(
 
         env.step(action)
 
-    # Reward attribution post-pass. The PettingZoo loop above gives us the
-    # cumulative reward at every iteration; trajectory entries collected at
-    # tick T should bag the reward our agent earned BETWEEN tick T's action
-    # and the next time control returns to our agent. We reconstruct that
-    # by replaying the order: rewards observed at our-agent ticks have a
-    # one-step delay.
     if log_traj and traj["state_keys"]:
-        # Reward at trajectory position i is the increment in cumulative_us
-        # between trajectory step i and step i+1 (Monte Carlo from i to end
-        # is computed below).
-        # The simpler exact approach: recompute by re-running the env once
-        # with reward logging. Doing it here in one pass would require
-        # tighter coupling; for now we approximate by spreading the total
-        # cumulative reward proportionally to step indices.
-        # To stay correct, we instead leverage `env.rewards[agent]` snapshot,
-        # which we already accumulated into cumulative_us. We approximate
-        # per-step rewards by step deltas of `_cumulative_rewards` snapshots,
-        # but PettingZoo doesn't expose that directly per-iteration here, so
-        # we use a separate reward-collection round.
-        # Pragmatic compromise: leave `rewards` as zeros and compute returns
-        # only from final cumulative score (one MC return for the whole game,
-        # back-propagated equally — this is what fitted Q with a single
-        # terminal reward looks like and matches the env's true reward
-        # structure where most points land at item-collect / kill ticks,
-        # which we treat as one G_t per game).
+        # Per-step reward attribution isn't reconstructable from this single pass;
+        # leave rewards as zeros and compute returns from the final cumulative score
+        # (one MC return for the whole game, back-propagated equally).
         traj["rewards"] = [0.0] * len(traj["state_keys"])
 
-    # Head-to-head melee summary. Placement = our rank among the 6 by cumulative
-    # reward (1 = best); ties broken consistently by agent index. Margin = our
-    # cumulative reward minus the best opponent's.
+    # Placement = our rank among the 6 by cumulative reward (1=best, ties by agent index).
+    # Margin = our cumulative reward minus the best opponent's.
     all_agents = list(env.possible_agents)
     us_reward = cumulative[agent_id_us]
     other_rewards = [cumulative[a] for a in other_ids]
@@ -531,14 +493,9 @@ def run_simulation(
 
     names = resolve_opponent_spec(opponents_spec)
 
-    # Per-round opponent instances. Each round we'll get a fresh deterministic
-    # seed for stochastic opponents, but the AEManager-based ones reset their
-    # internal belief inside `run_one_round`.
     opponents = [make_opponent(n, seed=seed_start + 1000 + i) for i, n in enumerate(names)]
-    # Scope OUR experimental flags to OUR agent only. Direct AEManager-subclass
-    # opponents would otherwise read them from the shared env and confound an
-    # A/B by buffing the opponents too. (self_heuristic/self_tactical force them
-    # off inside their own _EnvOverride, durably across per-round rebuilds.)
+    # Scope our experimental flags to our agent only — AEManager-subclass opponents
+    # would otherwise read them from the shared env and confound an A/B.
     for _op in opponents:
         for _attr in ("contention_enabled", "stun_tax_enabled", "fortress_enabled"):
             if hasattr(_op, _attr):
@@ -634,10 +591,8 @@ def run_simulation(
         "p50": float(np.percentile(scores, 50)),
         "p75": float(np.percentile(scores, 75)),
         "scores": [float(s) for s in scores],
-        # Head-to-head melee aggregates (6-team placement race). mean_placement
-        # is the headline robustness number; win_rate = fraction we place 1st;
-        # mean_margin = mean lead over the best opponent (negative = we lose the
-        # field on average). placement_hist counts 1st..6th finishes.
+        # mean_placement is the headline robustness number (1=best of 6);
+        # mean_margin < 0 means we lose the field on average.
         "mean_placement": float(np.mean(placements)) if placements else 0.0,
         "mean_margin": float(np.mean(margins)) if margins else 0.0,
         "win_rate": float(np.mean([p == 1 for p in placements])) if placements else 0.0,

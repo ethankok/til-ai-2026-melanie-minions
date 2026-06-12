@@ -97,9 +97,8 @@ def test_rescore_keeps_static_winner_when_it_projects_best(monkeypatch):
 
 
 def test_rescore_demote_only_does_not_promote_base_over_static_item(monkeypatch):
-    # Static winner is an ITEM; a landable base projects higher. Demote-only
-    # (default) must KEEP the item -- promoting the base is the over-aggression
-    # that regresses the tuned heuristic (top_seed_proxy -0.28 smoke).
+    # static winner is an ITEM; a landable base projects higher, but demote-only (default)
+    # must KEEP the item -- promoting regresses the tuned heuristic (top_seed_proxy -0.28 smoke)
     m = _open_grid_manager(monkeypatch)
     m.last_seen_items = {(7, 4): ("mission", 0)}
     m.team_bombs = 1  # base lands (projects 54.3) but must not be promoted

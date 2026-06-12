@@ -96,12 +96,11 @@ def select_best_actions(
     visits = []
     values = []
     for key, by_action in table.items():
-        # Total visits for this state across all actions.
         total = sum(len(v) for v in by_action.values())
         if total < min_visits:
             continue
         # Skip state_keys where only one action was ever taken — the
-        # comparison is meaningless.
+        # comparison would be meaningless.
         if len(by_action) < 2:
             continue
         means = {a: float(np.mean(v)) for a, v in by_action.items() if len(v) >= 2}
@@ -161,7 +160,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {path.name}: {n} steps")
         all_keys.append(data["state_keys"])
         all_actions.append(data["actions"])
-        # Each step gets its round's whole-game score.
         all_round_scores.append(
             data["round_score"].astype(np.float32) / 1000.0
             if "round_score" in data.files
@@ -174,10 +172,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"total steps logged: {len(state_keys)}")
 
     if args.fallback is None:
-        # Use the global mean as the fallback baseline. Anything inside the
-        # bottom-quartile band of empirical performance is "the heuristic
-        # would do this on average," so the playbook should only fire when
-        # the chosen action gets us solidly above that.
+        # Global mean round score = "what the heuristic does on average";
+        # the playbook should only fire when it beats this.
         fallback = float(np.mean(round_scores))
         print(f"auto fallback baseline = {fallback:.4f} (mean round score)")
     else:
@@ -200,7 +196,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  visit count  : min={visits.min()} mean={visits.mean():.1f} max={visits.max()}")
         print(f"  picked value : min={values.min():.3f} mean={values.mean():.3f} max={values.max():.3f}")
 
-        # Action distribution sanity check.
         action_counts = np.bincount(picked, minlength=6)
         print("  action mix   : "
               f"FORWARD={action_counts[0]} BACKWARD={action_counts[1]} "

@@ -63,11 +63,11 @@ TRAIN = REPO_ROOT / "training" / "ae" / "train_ppo.py"
 # Warm-start: the best known consultant (farmed confpol mean 0.634, n=13).
 DEFAULT_WARMSTART = CKPT_DIR / "pandemonium-v1-best-u860.pt"
 
-# Gated rollouts log a transition only on low-conf ticks (~40% of our agent's
-# acted steps in the smoke), but the ENVIRONMENT still runs full episodes, so
-# wall-clock per update tracks the ungated run. STEPS_PER_GAME here is the count
-# of LOGGED (low-conf) transitions per game, used only for the step-budget print.
-STEPS_PER_GAME = 210  # ~0.40 * 533 (calibrated from the 31 May gated smoke)
+# Gated rollouts log a transition only on low-conf ticks (~40% of acted steps),
+# but the ENVIRONMENT still runs full episodes, so wall-clock per update tracks
+# the ungated run. STEPS_PER_GAME = count of LOGGED (low-conf) transitions per
+# game, used only for the step-budget print.
+STEPS_PER_GAME = 210  # ~0.40 * 533
 TARGET_STEPS = 10_000_000  # "as many steps as possible"; kill when the farm plateaus
 
 

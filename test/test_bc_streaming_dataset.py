@@ -226,7 +226,6 @@ class TestBCDatasetRoundTrip:
         dir_path = tmp_path_factory.mktemp("bc_trunc")
         _write_memmap_dir(data, dir_path)
 
-        # Artificially lower n_samples in meta to simulate a truncated run
         meta_path = dir_path / "meta.json"
         meta = json.loads(meta_path.read_text())
         meta["n_samples"] = 5
@@ -239,7 +238,6 @@ class TestBCDatasetRoundTrip:
         """When with_belief=False, dir dataset returns 5-tuple (no belief tensor)."""
         rng = np.random.default_rng(13)
         data = _make_synthetic(rng)
-        # Remove beliefs
         del data["beliefs"]
         data["with_belief"] = np.asarray(0, dtype=np.int32)
 
@@ -324,13 +322,11 @@ class TestStreamDirOverwriteGuard:
         stream_dir = tmp_path / "stream2"
         self._write_minimal_dir(stream_dir)
 
-        # Inject a stale extra key into meta to verify it is removed on overwrite.
         meta_path = stream_dir / "meta.json"
         stale_meta = json.loads(meta_path.read_text())
         stale_meta["stale_key"] = "should_disappear"
         meta_path.write_text(json.dumps(stale_meta))
 
-        # Run a real 1-game collection with --overwrite.
         collect_dataset_streaming(
             games=1,
             stream_dir=stream_dir,

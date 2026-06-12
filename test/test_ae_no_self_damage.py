@@ -171,8 +171,7 @@ def test_dominant_bomb_on_places_when_trapped(monkeypatch):
     m.enemy_agents = {(9, 8): step}          # fresh sighting in blast
     m.seen = set(m._blast_cells(loc))         # trapped -> no escape
     obs = {"action_mask": [1] * 6, "team_bombs": 1}
-    # direction arg: any legal facing; danger empty; low_health False.
-    # Note: method is _try_dominant_action (returns int | None; None = no dominant move)
+    # args: direction=any legal facing, danger=empty, low_health=False
     action = m._try_dominant_action(obs, loc, m.FORWARD, set(), False)
     assert action == m.PLACE_BOMB
 
@@ -201,7 +200,7 @@ def test_plan_path_value_on_credits_base_without_escape(monkeypatch):
     on.seen = set(on._blast_cells((8, 9)))
     v_off = off._project_plan_reward((8, 10), target, "enemy_base", path)
     v_on = on._project_plan_reward((8, 10), target, "enemy_base", path)
-    assert v_on > v_off   # ON credits the base value despite no escape
+    assert v_on > v_off
 
 
 # --- Task 5: OFF byte-identical guard ---
@@ -221,9 +220,8 @@ def test_off_is_legacy_even_with_base_in_blast_and_trapped():
 
 
 # --- Task 4 (follow-up): MCTS _lookahead_legal_actions / _lookahead_step ---
-# Real tests for B4/E5 and B5/E6 (the spec-review gap: these dormant sites had
-# code edits but no focused tests). Each exercises the trapped (escape) veto and
-# the own-base-in-blast veto, asserting ON admits PLACE_BOMB and OFF rejects it.
+# Exercises the trapped (escape) veto and the own-base-in-blast veto,
+# asserting ON admits PLACE_BOMB and OFF rejects it.
 
 def _bomb_state(m, pos=(8, 8)):
     return _LookaheadState(
@@ -396,5 +394,5 @@ def test_basekill_off_is_legacy():
     m2 = _open_grid_manager()
     m2.enemy_bases = [(9, 8)]
     m2.base_location = (8, 8)                        # own base in blast
-    # Legacy: own-base veto fires -> False (verified by running with both flags unset)
+    # Legacy: own-base veto fires -> False
     assert m2._should_place_bomb(_spb_obs(), loc, None, set()) is False

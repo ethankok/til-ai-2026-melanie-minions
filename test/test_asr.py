@@ -80,7 +80,6 @@ def score_asr(ground_truth: list[tuple[str, str]], preds: list[str]) -> float:
     for pred, (gt, lang) in zip(preds, ground_truth):
         language_pred_gt_mapping[lang]["hypothesis"].append(pred)
         language_pred_gt_mapping[lang]["reference"].append(gt)
-    # take average score of all 4 languages
     language_error_rates = {
         lang: lang_dict["scorer"](lang_dict["reference"], lang_dict["hypothesis"])
         for lang, lang_dict in language_pred_gt_mapping.items()

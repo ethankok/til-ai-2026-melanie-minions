@@ -20,7 +20,7 @@ if __name__ == "__main__" and os.environ.get("PYTHONHASHSEED") is None:
     os.execvp(sys.executable, [sys.executable, *sys.argv])
 
 ROOT = Path(__file__).resolve().parents[2]
-# Deploy layout: only ae/src on the path (+ til-26-ae for nothing here).
+# Deploy layout: only ae/src on the path.
 for p in (str(ROOT / "ae" / "src"),):
     if p not in sys.path:
         sys.path.insert(0, p)
@@ -74,7 +74,7 @@ def test_enabled_slot_plays_baked_opening_then_delegates():
 
 
 def test_disabled_slot_delegates_to_planner():
-    base = DISABLED_BASE  # planner slot (gate entry is [])
+    base = DISABLED_BASE
     assert GATE[DISABLED_KEY] == []
     stub = StubPlanner()
     mgr = OpeningHybridManager(planner=stub)
@@ -87,7 +87,7 @@ def test_divergence_aborts():
     traj = GATE[ENABLED_KEY][0]["traj"]
     stub = StubPlanner()
     mgr = OpeningHybridManager(planner=stub)
-    mgr.ae(_obs(0, traj[0][:2], traj[0][2], base))  # ok
+    mgr.ae(_obs(0, traj[0][:2], traj[0][2], base))
     wrong = (traj[1][0] + 4, traj[1][1])
     a = mgr.ae(_obs(1, wrong, traj[1][2], base))
     assert a == STUB and mgr.aborted

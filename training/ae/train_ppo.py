@@ -86,31 +86,15 @@ OPPONENT_MODES = (
     "bracket_proxy",
     "top_seed_proxy",
     "defense_trap",
-    # Stage-B Semifinals curriculum: draw opponents from the FOREIGN
-    # (non-mirror) TRAIN-OK pool, mixed with one legacy scripted slot. The
-    # sampler is hard-gated against FOREIGN_EVAL_ONLY (see _foreign_train_blend).
+    # Sampler is hard-gated against FOREIGN_EVAL_ONLY (see _foreign_train_blend).
     "foreign_train",
 )
 
 OPPONENT_MIX_PRESETS = {
-    # Full fixed-Novice RL blend. The core mass is scripted+cloudsuite because
-    # local random is known-misleading, while small planner/aggressive/league
-    # slices keep the policy from overfitting one handcrafted proxy.
     "full-rl": "scripted:0.35,cloudsuite:0.35,pressure2:0.15,planner:0.05,aggressive:0.05,league:0.05",
-    # Stage-B Semifinals blend: half the games face the FOREIGN non-mirror
-    # TRAIN-OK pool (curry / self_policy / evbot / self_heuristic), the rest the
-    # legacy scripted/cloudsuite proxies for diversity. The FOREIGN_EVAL_ONLY
-    # holdout is NEVER sampled here (enforced in _foreign_train_blend) — that is
-    # the only local guard against proxy-overfit. Warm-start the confpol-native
-    # line and gate every checkpoint with melee_eval.py.
+    # FOREIGN_EVAL_ONLY holdout is never sampled here (enforced in _foreign_train_blend).
     "semis-foreign": "foreign_train:0.5,scripted:0.25,cloudsuite:0.25",
-    # Dir-2 league: the proven semis-foreign FOREIGN curriculum (heuristic
-    # anchor = self_heuristic ∈ foreign_train) PLUS a real self-play layer —
-    # `selfplay` is pool-only FrozenPolicyOpponent, so it actually draws the
-    # SnapshotPool snapshots that --snapshot-interval populates (foreign_train/
-    # scripted/cloudsuite never draw from the pool). FAST opponents only — no
-    # `planner`/`aggressive`/`league` slices (those add the slow AEManager
-    # planners). Pair with `--preset full-rl` (Stage-B shaping) + BC warm-start.
+    # FAST opponents only (no planner/aggressive/league — those add slow AEManager planners).
     "dir2-league": "foreign_train:0.45,selfplay:0.25,scripted:0.15,cloudsuite:0.15",
 }
 
@@ -128,7 +112,6 @@ def _foreign_train_blend() -> list[str]:
     if raw:
         names = [n.strip() for n in raw.split(",") if n.strip()]
     else:
-        # 4 foreign TRAIN-OK + 1 legacy scripted for behavioral diversity.
         names = ["curry_aggro", "self_policy", "evbot", "self_heuristic", "rusher"]
     leaked = [n for n in names if n in set(FOREIGN_EVAL_ONLY)]
     if leaked:
@@ -140,17 +123,12 @@ def _foreign_train_blend() -> list[str]:
     return names
 
 CURRICULA = {
-    # Warm up on easy legal-action pressure, then move into the opponent
-    # families that have been most predictive of hidden-eval failure.
     "pressure": (
         (0.00, "scripted"),
         (0.35, "cloudsuite"),
         (0.70, "pressure2"),
         (0.88, "league"),
     ),
-    # Broader Bomberman curriculum inspired by public Pommerman/TIL training
-    # recipes: learn bomb usage safely, then progressively add moving and
-    # adversarial opponents.
     "bomberman": (
         (0.00, "static"),
         (0.15, "scripted"),
@@ -246,11 +224,8 @@ class AdaptiveRewardShaper:
         health = _safe_float(obs_py.get("health"))
         if health is not None:
             if self.last_health is not None:
-                # Penalize taking damage/dying, but ignore positive jumps. The
-                # only positive agent-health delta is the 0->100 respawn refund,
-                # which would otherwise cancel a whole life's damage penalty and
-                # leave death with no net shaped deterrent (there are no heal
-                # items, so negative-only is respawn-specific in practice).
+                # min(0, ...) ignores positive jumps — the only positive delta is the
+                # 0->100 respawn refund, which would otherwise cancel the death penalty.
                 bonus += self.args.health_delta_coef * min(0.0, health - self.last_health)
             self.last_health = health
 
@@ -317,7 +292,7 @@ def _belief_for(planner: AEManager, obs_py: dict, use_belief: bool) -> np.ndarra
     """Drive the planner's memory update and rasterize belief (or skip)."""
     if not use_belief:
         return None
-    # Run the planner in 'memory only' mode by mimicking ae() prologue.
+    # Memory-only mode: mimics ae()'s prologue without acting.
     step = planner._as_int(obs_py.get("step"), default=(planner.last_step or 0) + 1)
     if planner.last_step is None or step == 0 or step < planner.last_step:
         planner._reset_memory()
@@ -522,13 +497,10 @@ class SnapshotPool:
         self._snapshots: list[PolicyNetwork] = []
 
     def add(self, actor: PolicyNetwork) -> None:
-        # Detach to CPU so we don't pin GPU memory; clone the state.
         snap = copy.deepcopy(actor).cpu().eval()
         self._snapshots.append(snap)
-        # Drop oldest when over cap. FIFO; this preserves the "old +
-        # recent" diversity the workshop and league-training papers
-        # recommend (the alternative — always dropping a uniformly chosen entry — degrades
-        # to "always recent" in expectation).
+        # FIFO drop: preserves "old + recent" diversity (vs. uniform-random eviction,
+        # which degrades to "always recent" in expectation).
         if len(self._snapshots) > self.max_size:
             self._snapshots.pop(0)
 
@@ -636,7 +608,6 @@ class AggressivePlannerOpponent:
 
     def __init__(self):
         self.manager = AEManager()
-        # Override item-value table for this manager only — boost enemy bombs.
         self.manager.PATH_THREAT_PENALTY = 0.5  # walk toward enemies, not away
         self.manager.CELL_THREAT_PENALTY = 1.0
         self.manager.LOW_HEALTH_THRESHOLD = 10  # less retreat
@@ -695,10 +666,6 @@ def _make_opponents(
       fall back to the live actor (legacy behavior — equivalent to
       "play your shadow").
     """
-    # The Elo-matched path: when an EloPopulation is provided and non-empty,
-    # frozen opponents are sampled via Gaussian-weighted matchmaking on the
-    # live policy's current Elo. The chosen snapshot_id is recorded so the
-    # training loop can apply post-game Elo updates symmetrically.
     chosen_snapshot_id: int | None = None
     def _frozen_opponent_actor() -> PolicyNetwork:
         nonlocal chosen_snapshot_id
@@ -726,17 +693,8 @@ def _make_opponents(
     if mode in {"frozen", "mixed", "league", "selfplay"}:
         choices.append(FrozenPolicyOpponent(_frozen_opponent_actor(), device, n_frames))
     if mode in {"scripted", "cloudsuite", "pressure2", "strong_realistic", "base_rush_exploit", "bracket_proxy", "top_seed_proxy", "defense_trap", "foreign_train"}:
-        # Tier 2 #9: train against the same scripted library we use in
-        # training/ae/simulate.py so the policy learns to be robust across
-        # the strategy space cloud opponents likely occupy. ``cloudsuite``
-        # swaps in the pressure-heavy rusher/hunter mix used by local
-        # validation so tactical helpers can be trained against the same pool.
-        #
-        # Each enemy slot gets its OWN factory rather than sharing one
-        # instance — AEManager-derived opponents track per-agent belief
-        # state (visible enemies, walls, bombs); sharing the same instance
-        # across multiple agents in the same game would interleave belief
-        # updates between agents and corrupt their decisions.
+        # Each enemy slot gets its own factory: AEManager-derived opponents track
+        # per-agent belief state, so sharing one instance would corrupt decisions.
         try:
             from opponents import make_opponent, resolve_opponent_spec  # noqa: WPS433
         except Exception as exc:
@@ -759,11 +717,8 @@ def _make_opponents(
                     self._op = make_opponent(name, seed=seed)
 
                 def reset(self):
-                    # Zero belief state at game boundaries. Prefer the
-                    # opponent's own reset_for_game() when present — for the
-                    # foreign self_policy/self_tactical bots that resets the
-                    # frame-stack WITHOUT reloading the (expensive) network;
-                    # re-instantiation would reload the checkpoint every game.
+                    # Prefer reset_for_game() when present: for self_policy/self_tactical
+                    # bots it clears the frame-stack without reloading the network.
                     if hasattr(self._op, "reset_for_game"):
                         self._op.reset_for_game()
                     else:
@@ -775,9 +730,7 @@ def _make_opponents(
                     try:
                         return int(self._op(obs_py))
                     except Exception:
-                        # Defensive fallback: if a scripted opponent crashes
-                        # (e.g. the env handed it a malformed observation)
-                        # we don't want to take down PPO training.
+                        # Defensive fallback so a crashing opponent doesn't kill PPO training.
                         mask = obs_py.get("action_mask")
                         if mask is not None:
                             for i, m in enumerate(mask):
@@ -788,15 +741,11 @@ def _make_opponents(
                                     pass
                         return 4  # STAY
 
-            # Assign each opponent_agent its own dedicated adapter so they
-            # all run in parallel without sharing state.
             if seed_base is None:
                 seed_base = random.randint(0, 2**31 - 1)
             scripted_assignment: dict[str, Callable] = {}
             for i, agent in enumerate(opponent_agents):
-                # Cycle through the 5 scripted types so a 5-enemy game has
-                # one of each type. This matches how `simulate.py --opponents
-                # library` already works.
+                # Cycle through scripted_names so each enemy slot gets a different type.
                 op_name = scripted_names[i % len(scripted_names)]
                 scripted_assignment[agent] = _ScriptedAdapter(op_name, seed=seed_base + i)
             return scripted_assignment, chosen_snapshot_id
@@ -927,7 +876,7 @@ def collect_rollouts(
         else:
             env.reset()
         stacker = FrameStacker(args.n_frames)
-        # Per-game belief-tracking planner for OUR agent. Cheap when use_belief=False.
+        # Cheap when use_belief=False.
         planner = AEManager()
         opponents, elo_snapshot_id = _make_opponents(
             actor, device, game_mode,
@@ -938,8 +887,6 @@ def collect_rollouts(
             elo_pop=elo_pop,
             live_rating=live_rating,
         )
-        # Snapshot whatever our cumulative reward is so we can extract
-        # this game's score for Elo update.
         game_start_reward = total_reward
         for op in opponents.values():
             if hasattr(op, "reset"):
@@ -991,11 +938,7 @@ def collect_rollouts(
                     action = _random_legal_action(mask, env, agent)
             env.step(action)
 
-        # Game finished. If this game used an Elo-pool snapshot opponent,
-        # update its rating + the live rating based on our normalized score
-        # margin vs ``elo_baseline``. ``elo_baseline`` is set to a reasonable
-        # mean cloud score so that the sigmoid centers on "did we play above
-        # or below average for this codebase".
+        # elo_baseline ~= mean cloud score, so the sigmoid centers on above/below average.
         if elo_pop is not None and live_rating is not None and elo_snapshot_id is not None:
             game_reward = (total_reward - game_start_reward) / MAX_SCORE
             from elo_population import score_to_outcome  # local import to avoid hard dep
@@ -1054,8 +997,8 @@ def collect_rollouts_gated(
         else:
             env.reset()
         stacker = FrameStacker(args.n_frames)
-        # Heuristic planner runs EVERY tick (confidence + bomb-safety). Distinct
-        # from the stacker, which only advances on low-conf ticks (deploy match).
+        # Planner runs every tick (confidence + bomb-safety); stacker only advances
+        # on low-conf ticks (deploy match).
         planner = AEManager()
         opponents, _ = _make_opponents(
             actor, device, game_mode,
@@ -1073,9 +1016,8 @@ def collect_rollouts_gated(
             obs, reward, termination, truncation, _info = env.last()
             done = bool(termination or truncation)
             if agent == our_agent:
-                # Every reward our agent sees counts toward the game score, even
-                # rewards earned on heuristic-owned (confident) ticks. Shaped
-                # reward accrues to the last LOGGED low-conf transition.
+                # Reward on confident (heuristic-owned) ticks accrues to the last
+                # LOGGED low-conf transition.
                 total_reward += float(reward)
                 if pending_idx is not None:
                     try:
@@ -1099,13 +1041,11 @@ def collect_rollouts_gated(
             obs_py = _obs_to_python(obs)
             if agent == our_agent:
                 our_ticks += 1
-                # Heuristic acts every tick → populates last_decision_confidence.
                 heuristic_action = int(planner.ae(obs_py))
                 low_conf, reason = _confpol_low_confidence(planner, args)
                 mode_counts[f"g:{reason}"] = mode_counts.get(f"g:{reason}", 0) + 1
                 if not low_conf:
-                    # Passthrough: heuristic owns this tick. Stacker NOT advanced,
-                    # no transition logged. Reward accrues to prior pending_idx.
+                    # Passthrough: stacker not advanced, no transition logged.
                     action = heuristic_action
                 else:
                     consulted += 1
@@ -1265,9 +1205,8 @@ def evaluate(
     total_reward = 0.0
     use_belief = bool(getattr(actor, "use_belief", False))
     mode = opponent_mode or args.eval_opponents
-    # Confidence-gated eval: score the live actor through the SAME heuristic-first
-    # gate it deploys behind, so the save-gate reflects confpol behavior (not the
-    # pure-policy score, which is meaningless for a consultant-trained policy).
+    # Score through the same heuristic-first gate the policy deploys behind, so the
+    # save-gate reflects confpol behavior, not a meaningless pure-policy score.
     use_confpol = bool(getattr(args, "confidence_gated", False))
 
     for game in range(games):
@@ -1304,9 +1243,7 @@ def evaluate(
             obs_py = _obs_to_python(obs)
             if agent == our_agent:
                 if use_confpol:
-                    # Heuristic every tick (writes confidence); policy only on
-                    # low-conf ticks via the adapter (its stacker advances only
-                    # when called → matches the deployed PolicyAEManager cadence).
+                    # Adapter's stacker advances only when called, matching deployed cadence.
                     heuristic_action = int(planner.ae(obs_py))
                     low_conf, _reason = _confpol_low_confidence(planner, args)
                     if low_conf:
@@ -1514,9 +1451,7 @@ def apply_preset(args: argparse.Namespace) -> argparse.Namespace:
 
     if args.preset == "full-rl":
         args.curriculum = "none"
-        # full-rl's opponent mix is the default, but an explicitly-passed
-        # --opponent-mix-preset wins (Stage-B Semis uses --preset full-rl for the
-        # proven shaping/entropy/selection knobs + semis-foreign for the mix).
+        # An explicitly-passed --opponent-mix-preset wins over this default.
         args.opponent_mix_preset = (
             args.opponent_mix_preset if args.opponent_mix_preset != "none" else "full-rl"
         )
@@ -1555,9 +1490,8 @@ def train(args: argparse.Namespace) -> None:
     torch.manual_seed(args.seed or 0)
 
     if os.environ.get("AE_FORCE_CPU") == "1":
-        # MPS on long unattended runs has crashed the machine (MTLCompilerService
-        # broken pipe, 2 Jun). The net is tiny and the bottleneck is the opponent
-        # planners (CPU), so the GPU barely helps — force CPU for reliability.
+        # MPS has crashed the machine on long unattended runs; opponent planners (CPU)
+        # are the bottleneck anyway, so GPU barely helps.
         device = torch.device("cpu")
     else:
         device = torch.device(
@@ -1666,10 +1600,8 @@ def train(args: argparse.Namespace) -> None:
     best_eval = -float("inf")
     start_time = time.time()
 
-    # Self-play snapshot pool. Workshop notebook 05 explicitly recommends this
-    # pattern over training-against-shadow: ``opponent.copy_weights(agent)`` at
-    # a fixed interval. We seed the pool with the actor's initial weights so
-    # the first few intervals don't fall back to live-actor frozen opponents.
+    # Seed with the actor's initial weights so early intervals don't fall back
+    # to live-actor frozen opponents.
     snapshot_pool: SnapshotPool | None = None
     if _uses_snapshot_opponents(args) and args.snapshot_interval > 0:
         snapshot_pool = SnapshotPool(max_size=args.snapshot_pool_size)
@@ -1680,11 +1612,8 @@ def train(args: argparse.Namespace) -> None:
             f"(seeded with initial actor)"
         )
 
-    # Elo-rated population (24 May 2026 experiment, arxiv 2407.00662 style).
-    # Optional alongside SnapshotPool — when --elo-population is set, frozen
-    # snapshot opponents are sampled with Gaussian weight on the live policy's
-    # Elo instead of uniformly. Disabled by default so the shipping path /
-    # legacy runs are unchanged.
+    # arxiv 2407.00662 style. Disabled by default; when enabled, frozen snapshot
+    # opponents are sampled with Gaussian weight on the live policy's Elo.
     elo_pop = None
     live_rating = None
     if args.elo_population and snapshot_pool is not None:
@@ -1695,8 +1624,7 @@ def train(args: argparse.Namespace) -> None:
             k=args.elo_k,
         )
         live_rating = LiveRating(rating=args.elo_initial)
-        # Seed the pool with the initial actor at the same Elo as the live
-        # policy so the early matchmaking doesn't pathologically pick only
+        # Seed at the live Elo so early matchmaking doesn't pathologically pick only
         # one snapshot.
         elo_pop.add(snapshot=copy.deepcopy(actor).cpu().eval(),
                     initial_elo=live_rating.rating, at_update=0)
@@ -1763,10 +1691,8 @@ def train(args: argparse.Namespace) -> None:
                     f"< save_floor {save_floor:.4f}"
                 )
 
-        # Periodic snapshot — unconditional, keeps intermediates for cloud
-        # variance-farming. The previous run proved local eval is anti-correlated
-        # with cloud-consultant value past a point, so we must NOT trust the
-        # best-by-eval checkpoint; we farm several of these offline instead.
+        # Unconditional periodic checkpoint for cloud variance-farming: local eval is
+        # anti-correlated with cloud value past a point, so don't trust best-by-eval alone.
         if args.checkpoint_every > 0 and update % args.checkpoint_every == 0:
             ckpt_path = out_path.with_name(f"{out_path.stem}-u{update}{out_path.suffix}")
             save_policy_checkpoint(
@@ -1775,15 +1701,10 @@ def train(args: argparse.Namespace) -> None:
             )
             print(f"  · periodic checkpoint → {ckpt_path.name}")
 
-        # Self-play: snapshot the actor at the configured cadence so future
-        # rollouts can face this state from the pool. Done AFTER the PPO
-        # update so the snapshot reflects the latest weights.
+        # Done after the PPO update so the snapshot reflects the latest weights.
         if snapshot_pool is not None and update % args.snapshot_interval == 0:
             snapshot_pool.add(actor)
-            # Mirror promotion into the Elo population at the live Elo.
-            # This is the standard population-based self-play recipe: when
-            # the current policy is added to the pool, it inherits the
-            # live Elo rather than getting a fixed initial rating.
+            # Promote into the Elo population at the live Elo (inherits rather than resets).
             if elo_pop is not None and live_rating is not None:
                 elo_pop.add(
                     snapshot=copy.deepcopy(actor).cpu().eval(),
@@ -1920,10 +1841,7 @@ def main() -> None:
                              "(set to 0 to disable; falls back to live-actor frozen opponents).")
     parser.add_argument("--snapshot-pool-size", type=int, default=5,
                         help="Max historical snapshots kept in the self-play pool (FIFO).")
-    # Elo population self-play (24 May 2026 experiment). When set, frozen
-    # snapshot opponents are sampled with Gaussian-weight matchmaking on the
-    # live policy's Elo, rather than uniformly. Snapshot pool capacity comes
-    # from --snapshot-pool-size; promotion cadence from --snapshot-interval.
+    # Pool capacity from --snapshot-pool-size; promotion cadence from --snapshot-interval.
     parser.add_argument("--elo-population", action="store_true",
                         help="Enable Elo-rated snapshot population matchmaking. "
                              "Requires snapshot opponents (league/selfplay/mixed/frozen).")

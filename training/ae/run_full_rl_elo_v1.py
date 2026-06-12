@@ -65,17 +65,14 @@ def main() -> int:
         "--selection-games", "24",
         "--seed", "488",
         "--eval-seed", "48800",
-        # Elo flags — the experimental contribution. Default sigma=200
-        # is moderate matching (not strict, not uniform); K=32 is the
-        # chess default; baseline=0.55 is roughly the heuristic
-        # baseline aggregate so above-baseline plays push live Elo up.
+        # sigma=200 = moderate matchmaking; K=32 = chess default;
+        # baseline=0.55 ~= heuristic aggregate, so above-baseline plays push Elo up.
         "--elo-population",
         "--elo-sigma", "200",
         "--elo-k", "32",
         "--elo-initial", "1200",
         "--elo-baseline", "0.55",
-        # Promote to pool more often than the default so Elo has
-        # diverse opponents to matchmake against in the first 50 updates.
+        # Promote to pool more often so Elo has diverse opponents early.
         "--snapshot-interval", "5",
         "--snapshot-pool-size", "8",
     ]

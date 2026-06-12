@@ -28,28 +28,23 @@ class TestCVPurify(unittest.TestCase):
         manager.model = MagicMock()
         manager.loaded_model_family = "yolo"
 
-        # Create a red 100x100 image
         img = Image.new("RGB", (100, 100), color="red")
         img_bytes = io.BytesIO()
         img.save(img_bytes, format="JPEG")
         img_bytes = img_bytes.getvalue()
 
-        # Mock _gather_detections to assert the image was resized to 50x50 (scale=0.5)
-        # and return a box [10, 10, 20, 20] in the 50x50 space.
+        # Resize to 50x50 (scale=0.5); detection box [10,10,20,20] is in that space.
         def mock_gather(purified_img):
             self.assertEqual(purified_img.size, (50, 50))
             return [[10.0, 10.0, 20.0, 20.0]], [4], [0.9]
 
         manager._gather_detections = mock_gather
 
-        # Force random scale to be exactly 0.5
+        # Force random scale to exactly 0.5
         with patch("random.uniform", return_value=0.5):
             detections = manager.cv(img_bytes)
 
-        # Resized space: box at [10, 10, 20, 20]
-        # Scaling factor: 50 / 100 = 0.5
-        # Original space: [10/0.5, 10/0.5, 20/0.5, 20/0.5] = [20, 20, 40, 40]
-        # LTWH format: left=20, top=20, width=(40-20)=20, height=(40-20)=20
+        # Box scales back by 1/0.5: [10,10,20,20] -> [20,20,40,40] -> LTWH [20,20,20,20]
         self.assertEqual(len(detections), 1)
         self.assertEqual(detections[0]["bbox"], [20.0, 20.0, 20.0, 20.0])
         self.assertAlmostEqual(detections[0]["score"], 0.9, places=5)
@@ -64,17 +59,15 @@ class TestCVPurify(unittest.TestCase):
         manager = CVManager()
         self.assertFalse(manager.purify)
 
-        # Set a dummy model
         manager.model = MagicMock()
         manager.loaded_model_family = "yolo"
 
-        # Create a red 100x100 image
         img = Image.new("RGB", (100, 100), color="red")
         img_bytes = io.BytesIO()
         img.save(img_bytes, format="JPEG")
         img_bytes = img_bytes.getvalue()
 
-        # Mock _gather_detections to assert the image was NOT resized
+        # Assert the image was NOT resized
         def mock_gather(purified_img):
             self.assertEqual(purified_img.size, (100, 100))
             return [[10.0, 10.0, 20.0, 20.0]], [4], [0.9]
@@ -83,7 +76,6 @@ class TestCVPurify(unittest.TestCase):
 
         detections = manager.cv(img_bytes)
 
-        # Output box should be exactly [10.0, 10.0, 10.0, 10.0] (no scaling)
         self.assertEqual(len(detections), 1)
         self.assertEqual(detections[0]["bbox"], [10.0, 10.0, 10.0, 10.0])
         self.assertEqual(detections[0]["category_id"], 1)

@@ -52,9 +52,8 @@ from typing import Iterable
 
 
 # ----------------------------------------------------------------- chunking
-# (kept in sync with training/nlp/finetune_lora.py — same chunks used to
-# build calibration prompts as were used at training time, so AWQ scales
-# the same activation distribution.)
+# Kept in sync with training/nlp/finetune_lora.py so calibration prompts use
+# the same chunks as training, matching the activation distribution.
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 CHUNK_SENTENCES = 3
@@ -204,9 +203,8 @@ def _build_calibration_set(
 def _late_down_proj_ignores(start_layer: int) -> list[str]:
     if start_layer < 0:
         return []
-    # Qwen3-8B has 36 decoder layers. This helper intentionally returns
-    # explicit module names instead of regexes because llm-compressor's ignore
-    # handling has been more predictable with exact paths across releases.
+    # Qwen3-8B has 36 decoder layers. Explicit module names (not regexes) are
+    # more predictable with llm-compressor's ignore handling across releases.
     return [f"model.layers.{i}.mlp.down_proj" for i in range(start_layer, 36)]
 
 
@@ -226,7 +224,7 @@ def step1_merge(args) -> None:
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    # CPU-only load. low_cpu_mem_usage=True streams shards to avoid 2× RAM peak.
+    # low_cpu_mem_usage=True streams shards to avoid a 2x RAM peak.
     base = AutoModelForCausalLM.from_pretrained(
         args.base,
         torch_dtype=torch.bfloat16,
@@ -244,14 +242,12 @@ def step1_merge(args) -> None:
     print(f"[merge] saving merged BF16 to {out_merged}...", flush=True)
     merged.save_pretrained(out_merged, safe_serialization=True)
 
-    # The adapter dir has the tokenizer (saved by SFTTrainer). Fall back to
-    # base if it's missing for some reason.
+    # Adapter dir has the tokenizer (saved by SFTTrainer); fall back to base.
     tok_src = args.lora_dir if (Path(args.lora_dir) / "tokenizer.json").exists() else args.base
     tok = AutoTokenizer.from_pretrained(tok_src, use_fast=True)
     tok.save_pretrained(out_merged)
     print(f"[merge] step 1 done. Merged BF16 at {out_merged}\n", flush=True)
 
-    # Free CPU RAM before step 2 spins up the quantization stack.
     del base, model, merged
     gc.collect()
 
@@ -272,8 +268,7 @@ def step2_quantize(args) -> None:
     length at 256 tokens, and leave late MLP down projections unquantized by
     default because their Hessian inversions OOM on T4 even at 32 samples.
     """
-    # Reduce CUDA-allocator fragmentation; suppress the FastTokenizer
-    # threading warning that fires during calibration.
+    # Reduce CUDA-allocator fragmentation; suppress FastTokenizer threading warning.
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
@@ -323,12 +318,11 @@ def step2_quantize(args) -> None:
     if not calib_prompts:
         sys.exit("no calibration prompts built; check --data and --docs paths")
 
-    # llm-compressor expects a HF dataset with a `text` column it can tokenize.
     calib_ds = Dataset.from_list([{"text": p} for p in calib_prompts])
 
     if args.quant_method == "awq":
-        # Closest to autoawq's GEMM-W4A16 config, but this currently fails on
-        # Qwen3/T4 after a few calibration groups. Keep it for non-T4 retries.
+        # Closest to autoawq's GEMM-W4A16 config, but currently fails on
+        # Qwen3/T4 after a few calibration groups; kept for non-T4 retries.
         recipe = [
             AWQModifier(
                 targets="Linear",
@@ -339,13 +333,12 @@ def step2_quantize(args) -> None:
         sequential_targets = ["Linear"]
         quantizer_label = "llmcompressor AWQModifier W4A16_ASYM g128"
     else:
-        # Official llm-compressor W4A16 path. It avoids AWQ's smoothing /
-        # propagation pass, which is where the Qwen3 GQA NoneType failure
-        # happens. Do not force sequential_targets=["Linear"] here: that
-        # path hits the same Qwen3 symbolic-trace NoneType failure at o_proj.
-        # The default block-level sequential pipeline gets much further. On
-        # T4 it still OOMs at model.layers.29.mlp.down_proj, so default to
-        # leaving layer 29+ down_proj modules BF16 while quantizing the rest.
+        # GPTQ W4A16 avoids AWQ's smoothing/propagation pass (which hits a
+        # Qwen3 GQA NoneType failure). Do not force sequential_targets=
+        # ["Linear"] — that hits the same failure at o_proj; the default
+        # block-level pipeline gets further. On T4 it still OOMs at
+        # model.layers.29.mlp.down_proj, so layer 29+ down_proj defaults to
+        # staying BF16.
         ignore = ["lm_head", *_late_down_proj_ignores(args.gptq_ignore_down_proj_from_layer)]
         recipe = [
             GPTQModifier(
@@ -367,12 +360,9 @@ def step2_quantize(args) -> None:
     out_awq = Path(args.out_awq)
     out_awq.mkdir(parents=True, exist_ok=True)
 
-    # llm-compressor 0.10's `oneshot()` parses its kwargs through
-    # HfArgumentParser, which rejects unknown keys like `model_kwargs`.
-    # The supported pattern is: pre-load the model with the desired
-    # device_map / dtype, then pass the loaded instance to `oneshot`.
-    # That gives us the CPU-offloading we need for an 8B BF16 on a 16 GB
-    # T4 without fighting the argparser.
+    # oneshot() parses kwargs through HfArgumentParser (rejects unknown keys
+    # like model_kwargs), so pre-load the model with the desired device_map
+    # / dtype and pass the loaded instance in directly.
     print("[merge] loading merged model for quantization...", flush=True)
     model = AutoModelForCausalLM.from_pretrained(
         str(args.out_merged),
@@ -397,7 +387,6 @@ def step2_quantize(args) -> None:
 
     tok.save_pretrained(str(out_awq))
 
-    # Write a marker noting what produced this dir.
     (out_awq / "MERGED_FROM").write_text(
         f"base={args.base}\nadapter={args.lora_dir}\ncalib_n={args.calib_n}\n"
         f"max_seq_length={args.max_seq_length}\nquant_method={args.quant_method}\n"

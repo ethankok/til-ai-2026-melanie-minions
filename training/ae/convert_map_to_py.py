@@ -9,21 +9,18 @@ def main():
     with open(json_file, "r") as f:
         data = json.load(f)
 
-    # Convert walls_list
     walls_list = []
     for item in data["walls_list"]:
         pos, dirs = item
         for d in dirs:
             walls_list.append((pos[0], pos[1], d))
 
-    # Convert destructible_list
     destructible_list = []
     for item in data["destructible_list"]:
         pos, dirs = item
         for d in dirs:
             destructible_list.append((pos[0], pos[1], d))
 
-    # Convert static_entities
     static_entities = []
     for item in data["static_entities"]:
         kind, pos = item

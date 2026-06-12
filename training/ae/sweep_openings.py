@@ -28,7 +28,7 @@ if __name__ == "__main__" and os.environ.get("PYTHONHASHSEED") is None:
     os.environ["PYTHONHASHSEED"] = "0"
     os.execvp(sys.executable, [sys.executable, *sys.argv])
 
-# Shipped C+bomb7 profile — both arms match the deployed agent.
+# C+bomb7 profile — both arms match the deployed agent.
 os.environ.setdefault("AE_ITEM_MISSION_VALUE", "80")
 os.environ.setdefault("AE_ITEM_RESOURCE_VALUE", "40")
 os.environ.setdefault("AE_ENEMY_BASE_VALUE", "100")
@@ -62,9 +62,8 @@ GATE_PATH = ROOT / "training" / "ae" / "data" / "openings_gate.json"
 # Lock criteria: enable an opening for a slot only if its best horizon beats the
 # planner by >= MARGIN with one-sided z > Z_MIN (guards against local-noise wins
 # that would regress on cloud) AND the opening reliably COMPLETES (compl >=
-# MIN_COMPL). The completion guard rejects non-completing openings whose delta
-# is a high-variance butterfly effect of their first few moves before abort
-# (observed: slot-2 H16/H20 both compl 0% swing -0.23 / +0.29).
+# MIN_COMPL, rejecting non-completing openings whose delta is a high-variance
+# butterfly effect of their first few moves before abort).
 MARGIN = 0.02
 Z_MIN = 2.0
 MIN_COMPL = 0.8

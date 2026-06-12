@@ -601,20 +601,15 @@ class TacticalHybridAEManager:
         self.delta_conf_threshold = _env_float("AE_TACTICAL_DELTA_CONF", 0.60 if bracket_profile else 0.80)
         self.allow_mapped_deltas = _env_bool("AE_TACTICAL_ALLOW_MAPPED_DELTAS", False)
         self.require_delta_support = _env_bool("AE_TACTICAL_REQUIRE_DELTA_SUPPORT", True)
-        # Legacy: min count of positive (delta>0, option!=prior) samples for
-        # this transition. Default preserves bracket-profile behaviour from
-        # the 26 May 400-game checkpoint deploy.
+        # Min count of positive (delta>0, option!=prior) samples for this transition.
         self.min_delta_support = int(_env_float("AE_TACTICAL_MIN_DELTA_SUPPORT", 3.0 if bracket_profile else 999999.0))
-        # W1.1 harm-aware gates. Defaults are permissive (== "off") so that
-        # an unset env yields exactly the pre-W1.1 behaviour. Enable per
-        # deployment with explicit env overrides — see ae/NOTES.md for the
-        # recommended starting point (e.g. positive_rate>=0.55, mean_delta>=0).
+        # Harm-aware gates: permissive defaults ("off") so an unset env is a no-op.
+        # See ae/NOTES.md for recommended thresholds (e.g. positive_rate>=0.55, mean_delta>=0).
         self.min_positive_rate = _env_float("AE_TACTICAL_MIN_POSITIVE_RATE", 0.0)
         self.min_net_delta = _env_float("AE_TACTICAL_MIN_NET_DELTA", float("-inf"))
         self.min_attempted = int(_env_float("AE_TACTICAL_MIN_ATTEMPTED", 0.0))
-        # When 1, additionally check bucket_attempted / bucket_positive for
-        # the current distance bucket (near/mid/far). When 0 (default) only
-        # the global per-transition matrices are consulted.
+        # When 1, also check bucket_attempted/bucket_positive for the current
+        # distance bucket (near/mid/far); when 0, only global matrices are consulted.
         self.use_distance_bucket_gate = _env_bool("AE_TACTICAL_USE_DISTANCE_BUCKET_GATE", False)
         self.allowed_delta_options = _env_option_set("AE_TACTICAL_ALLOWED_DELTA_OPTIONS")
         self.allowed_delta_transitions = _env_transition_set("AE_TACTICAL_ALLOWED_DELTA_TRANSITIONS")
@@ -738,11 +733,8 @@ class TacticalHybridAEManager:
                 ] += 1
                 return heuristic_action
 
-        # W1.1 harm-aware gate. Returns ok=True when env thresholds are at
-        # defaults (no opinion) or when the checkpoint has no harm-aware
-        # metadata. With explicit thresholds + W1.1 npz data, this is what
-        # blocks transitions that worked positively often in absolute counts
-        # but had a low success rate or negative mean net delta in context.
+        # Harm-aware gate: blocks transitions with positive raw counts but a low
+        # success rate or negative mean net delta in context. No-op without npz data.
         ok, reason = self._delta_is_supported(prior_option, int(option), bucket)
         if not ok:
             self.decision_counts[

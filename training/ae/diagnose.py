@@ -172,8 +172,7 @@ def evaluate(args: argparse.Namespace) -> None:
 
     for round_idx in range(args.games):
         env.reset()
-        # Reset our manager — the env is single-process here so we just
-        # rebuild it the same way the server does at /reset.
+        # Re-apply the same reset the server does at /reset.
         if hasattr(manager, "heuristic"):
             manager.heuristic._reset_memory()
             if hasattr(manager, "policy") and hasattr(manager.policy, "stacker"):
@@ -192,8 +191,7 @@ def evaluate(args: argparse.Namespace) -> None:
         visited: set[tuple[int, int]] = set()
         bombs_placed = 0
         freeze_ticks_seen = 0
-        # PettingZoo AEC: env.last()[1] is the reward our agent earned
-        # since its last turn. Accumulate that as the round total.
+        # PettingZoo AEC: env.last()[1] is the reward earned since our last turn.
         cumulative_reward = 0.0
 
         start = time.time()
@@ -214,9 +212,7 @@ def evaluate(args: argparse.Namespace) -> None:
                 if isinstance(loc, list) and len(loc) == 2:
                     visited.add((int(loc[0]), int(loc[1])))
 
-                # Per-turn reward attribution: `reward` is what we earned
-                # between our previous action and the observation we're
-                # about to act on.
+                # `reward` is what we earned since our previous action.
                 if prev_obs is not None and abs(float(reward)) > 1e-6:
                     step_info = _classify_step(prev_obs, obs_py, float(reward), action)
                     for component, val in step_info["components"].items():

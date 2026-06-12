@@ -377,10 +377,8 @@ def train(args: argparse.Namespace) -> None:
                 "loss_penalty": args.loss_penalty,
                 "positive_delta_transition_counts": positive_delta_counts,
                 "positive_delta_transition_weights": positive_delta_weights,
-                # W1.1 harm-aware metadata; consumed by
-                # tactical_hybrid_manager._delta_is_supported at inference.
-                # Empty for pre-W1.1 npz files; inference manager treats that
-                # as "no harm-aware data, fall back to legacy gate".
+                # Consumed by tactical_hybrid_manager._delta_is_supported; if
+                # empty, inference falls back to the legacy gate.
                 "attempted_transition_counts": harm_aware["attempted_transition_counts"],
                 "positive_transition_counts_full": harm_aware["positive_transition_counts_full"],
                 "negative_transition_counts": harm_aware["negative_transition_counts"],

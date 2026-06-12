@@ -69,7 +69,7 @@ class PlannerWeights:
     mcts_time_budget_s: float = 0.080               # AE_MCTS_BUDGET_MS / 1000, floor 5ms
     mcts_log_timing: bool = True                    # AE_MCTS_LOG_TIMING
 
-    # ── Tier-1 toggles (17 May bisect: #3/#6/#7 ON, #2/#4 OFF) ────────
+    # ── Tier-1 toggles ─────────────────────────────────────────────────
     tier1_defense_priority: bool = False            # AE_TIER1_DEFENSE
     tier1_repeat_kill: bool = True                  # AE_TIER1_REPEAT_KILL
     tier1_shared_credit: bool = False               # AE_TIER1_SHARED_CREDIT
@@ -136,7 +136,7 @@ class PlannerWeights:
     orientation_aware_path_enabled: bool = False    # AE_ORIENTATION_AWARE_PATH (int > 0)
     orientation_aware_turn_cost: float = 1.0        # AE_ORIENTATION_AWARE_TURN_COST
 
-    # ── Rationale-mining leads (29 May; each default OFF) ─────────────
+    # ── Rationale-mining leads (each default OFF) ─────────────────────
     lead_bomb_gate_base: bool = False               # AE_LEAD_BOMB_GATE_BASE (int > 0)
     lead_base_tether: bool = False                  # AE_LEAD_BASE_TETHER (int > 0)
     lead_tether_health: float = 60.0                # AE_LEAD_TETHER_HEALTH
@@ -145,8 +145,7 @@ class PlannerWeights:
     lead_recon_dist_mult: float = 1.0               # AE_LEAD_RECON_DIST_MULT
 
     def __post_init__(self) -> None:
-        # Clamps match the historical inline reads exactly, applied on every
-        # construction path so a direct profile is as safe as an env one.
+        # Applied on every construction path, so direct profiles are clamped too.
         self.mcts_depth = max(1, min(8, int(self.mcts_depth)))
         self.mcts_width = max(12, min(512, int(self.mcts_width)))
         self.mcts_time_budget_s = max(0.005, float(self.mcts_time_budget_s))
@@ -164,8 +163,7 @@ class PlannerWeights:
             mcts_depth=_env_int("AE_MCTS_DEPTH", 3),
             mcts_width=_env_int("AE_MCTS_WIDTH", 24),
             mcts_min_score=_env_float("AE_MCTS_MIN_SCORE", 12.0),
-            # Hard per-call latency budget (env var is in ms). Cloud killed
-            # MCTS v1 because DEPTH=5 WIDTH=96 with no cap ran 1.2-2.4s/tick.
+            # Hard per-call latency budget in seconds (env var is in ms); uncapped depth/width can run 1-2s/tick.
             mcts_time_budget_s=_env_float("AE_MCTS_BUDGET_MS", 80.0) / 1000.0,
             mcts_log_timing=_env_flag("AE_MCTS_LOG_TIMING", True),
             tier1_defense_priority=_env_flag("AE_TIER1_DEFENSE", False),

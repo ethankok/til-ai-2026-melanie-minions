@@ -1,40 +1,28 @@
 # Dockerfile for building the ASR image on the NeMo / Parakeet backend.
 #
-# Build with:
-#   docker build -f Dockerfile.nemo -t TEAM_ID-asr:nemo-zs-v3 .
-# `til build asr nemo-zs-v3` uses the primary Dockerfile, which
-# mirrors this file.
-#
-# This mirrors the primary `Dockerfile` so explicit docker builds and `til build`
-# stay aligned for the staged ASR A/B.
+# Build with: docker build -f Dockerfile.nemo -t TEAM_ID-asr:nemo-zs-v3 .
+# Mirrors the primary Dockerfile so explicit docker builds and `til build` stay aligned.
 
 FROM nvcr.io/nvidia/pytorch:25.11-py3
 
-# Configures settings for the image.
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
 # Keep model loaders fully offline at runtime; eval container has no internet.
 ENV HF_HUB_OFFLINE=1
 ENV TRANSFORMERS_OFFLINE=1
-# Switch the server to the NeMo backend.
 ENV ASR_BACKEND=nemo
-# Default experiment: Parakeet TDT v2 English zero-shot.
 ENV ASR_NEMO_MODEL=parakeet-tdt-0.6b-v2.nemo
 WORKDIR /workspace
 
-# Install dependencies. NeMo is a heavy install; this is the longest layer.
-# Git is required because requirements-nemo.txt pins NeMo to a GitHub commit
-# newer than the latest PyPI release.
+# NeMo is a heavy install; this is the longest layer. Git is required because
+# requirements-nemo.txt pins NeMo to a GitHub commit newer than PyPI.
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 RUN pip install -U pip
 COPY requirements-nemo.txt .
 RUN pip install --no-cache-dir -r requirements-nemo.txt
-# cuda-python is needed for the TDT decoder's CUDA-graph fast path. Pin to
-# 12.x because numba 0.65.x can't import cuda-python 13.x (package
-# restructure broke `from cuda import cuda`). Use --no-deps so pip cannot
-# downgrade torch / torchvision / cuDNN to satisfy cuda-bindings's nvidia-*
-# requirements; the base image already ships a consistent CUDA 12 stack.
+# cuda-python for the TDT decoder's CUDA-graph fast path. Pin to 12.x — numba
+# 0.65.x can't import cuda-python 13.x. --no-deps avoids pip downgrading torch/torchvision/cuDNN.
 RUN pip install --no-cache-dir --no-deps "cuda-python>=12.3,<13"
 
 # Fail during `til build`, before copying multi-GB model weights, if the NeMo

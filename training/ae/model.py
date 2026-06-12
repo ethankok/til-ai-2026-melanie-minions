@@ -139,8 +139,7 @@ class PolicyNetwork(nn.Module):
         in_ch = VIEW_CHANNELS * n_frames
         scalar_dim = SCALAR_DIM * n_frames
 
-        # Bigger conv stacks than the single-frame baseline because each input
-        # carries 4x the channels worth of game-state history.
+        # Bigger conv stacks than single-frame: input carries n_frames worth of history.
         self.agent_conv = nn.Sequential(
             nn.Conv2d(in_ch, 64, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -158,10 +157,8 @@ class PolicyNetwork(nn.Module):
         head_in = agent_flat + base_flat + scalar_dim
 
         if self.use_belief:
-            # Belief branch: stride-aware conv + pool to keep the head's
-            # input dimension manageable on CPU. Output is 8 ch × 8 × 8 = 512
-            # features — small enough to roughly double rather than 10x the
-            # head input, but large enough to encode the full 16×16 grid.
+            # Pool keeps head input manageable on CPU: 8ch x 8x8 = 512 features,
+            # small relative to head_in but covers the full 16x16 grid.
             self.belief_conv = nn.Sequential(
                 nn.Conv2d(BELIEF_CHANNELS, 16, kernel_size=3, padding=1),
                 nn.ReLU(),

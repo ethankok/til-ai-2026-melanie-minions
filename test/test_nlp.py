@@ -85,7 +85,6 @@ class AnswerEquivalenceEvaluator:
             self.device = torch.device(device)
 
         logger.info(f"Loading model from {model_path} on {self.device}")
-        # check if model path exists, else copy from /home/jupyter/TEAM_TRACK/nlp/models/
         if not Path(model_path).exists():
             logger.info(
                 f"Model path {model_path} does not exist, copying from /home/jupyter/{TEAM_TRACK}/nlp/models"
@@ -99,7 +98,6 @@ class AnswerEquivalenceEvaluator:
                     f"Model not found at {model_path} or {existing_model_path}"
                 )
 
-            # extract to local directory
             with zipfile.ZipFile(existing_model_path, "r") as zip_ref:
                 zip_ref.extractall(Path(model_path).parent)
             logger.info(f"Extracted model to {Path(model_path).parent}")
@@ -115,7 +113,6 @@ class AnswerEquivalenceEvaluator:
     def _format_input(self, question: str, reference: str, candidate: str) -> str:
         _printable = "".join(filter(lambda x: x in printable, candidate))
 
-        # truncate to required max length, then re-encode as text
         tokens = self.tokenizer.tokenize(
             _printable, max_length=MAX_CANDIDATE_TOKEN_LENGTH, truncation=True
         )
@@ -138,7 +135,6 @@ class AnswerEquivalenceEvaluator:
 
         Returns results in the same order as input.
         """
-        # if either string is empty, check if the other is empty or not
         empty_str_results = []
         non_empty_indexed_triples = []
 
@@ -166,7 +162,6 @@ class AnswerEquivalenceEvaluator:
                     )
                 )
             elif overlap_docs:
-                # if there's at least one top3 overlap between the documents, go to next stage
                 non_empty_indexed_triples.append((i, q, r, c))
             else:
                 # document retrieval failure, no points
@@ -178,7 +173,6 @@ class AnswerEquivalenceEvaluator:
                         prob_equivalent=0.0,
                     )
                 )
-        # pass the rest onto the model for evaluation
         texts = [
             (i, self._format_input(q, r, c)) for i, q, r, c in non_empty_indexed_triples
         ]
@@ -210,7 +204,6 @@ class AnswerEquivalenceEvaluator:
                     )
                 )
 
-        # combine and reorder results
         all_results.extend(empty_str_results)
         all_results.sort(key=lambda r: r.index)
 
@@ -308,11 +301,9 @@ def main():
     results_dir = Path(f"/home/jupyter/{TEAM_NAME}")
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    # load all questions
     with open(data_dir / "nlp.jsonl") as f:
         instances = [json.loads(line.strip()) for line in f if line.strip()]
 
-    # send corpus to model server
     documents_dir = data_dir / "documents"
     doc_contents = []
     for doc_file in documents_dir.glob("*.txt"):
@@ -328,7 +319,6 @@ def main():
         data=json.dumps({"instances": [{"documents": doc_contents}]}),
     )
 
-    # verify response to make sure server is healthy and loaded the corpus
     if (
         response.status_code != 200
         or response.json()["predictions"][0].get("status") == "error"

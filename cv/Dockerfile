@@ -1,12 +1,7 @@
 # Dockerfile for building the CV image.
 
-
-# The base image, an example deep learning VM.
-# For a full list, see https://us-docker.pkg.dev/deeplearning-platform-release/gcr.io/
-# For info, see https://cloud.google.com/deep-learning-vm/docs/images#supported-frameworks
 FROM nvcr.io/nvidia/pytorch:25.11-py3
 
-# Configures settings for the image.
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
@@ -31,17 +26,14 @@ ENV CV_SECOND_MIN_DETECTIONS=7
 ENV CV_OWLV2_MODEL_ID=google/owlv2-base-patch16-ensemble
 ENV CV_OWLV2_NMS_IOU=0.50
 ENV CV_OWLV2_LOCAL_FILES_ONLY=1
-# Purification + ensembling capability is merged but OFF by default — keeping
-# the served model byte-for-byte identical to the pre-merge champion. Gate on
-# the Workbench (cloud + on-hardware A/B) before flipping CV_PURIFY=True or
-# adding a second model to CV_MODEL_PATH. See cv/NOTES.md "Input purification".
+# Purification + ensembling is merged but OFF by default — keeps the served
+# model identical to the champion. Gate before flipping; see cv/NOTES.md "Input purification".
 ENV CV_PURIFY=False
 ENV CV_PURIFY_JPEG_QUALITY=80
 ENV CV_PURIFY_BLUR_SIGMA=0.0
 ENV CV_PURIFY_MIN_SCALE=1.0
 WORKDIR /workspace
 
-# Installs your dependencies.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libxcb1 \
     && rm -rf /var/lib/apt/lists/*
@@ -53,14 +45,8 @@ RUN if [ "$CV_PREFETCH_OWLV2" = "1" ]; then \
     python -c "import os; from transformers import Owlv2ForObjectDetection, Owlv2Processor; m=os.environ.get('CV_OWLV2_MODEL_ID', 'google/owlv2-base-patch16-ensemble'); Owlv2Processor.from_pretrained(m); Owlv2ForObjectDetection.from_pretrained(m)"; \
     fi
 
-# Copies your model weights and source files.
 # Put the trained checkpoint at cv/models/best.pt before building/submitting.
-#
-# RF-DETR experiment build (lost to champion; see cv/NOTES.md): the rfdetr
-# serving Dockerfile is preserved in git history at the RF-DETR commits. To
-# rebuild it, restore that config and re-add the rfdetr deps to requirements.txt.
 COPY models /workspace/models/cv
 COPY src .
 
-# Starts your model server.
 CMD uvicorn cv_server:app --port 5002 --host 0.0.0.0

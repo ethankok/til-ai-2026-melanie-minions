@@ -128,14 +128,13 @@ def encode_env(values: dict[str, float]) -> dict[str, str]:
 
 RankKey = tuple[float, float]
 
-# Finals-aligned objective (2026-06-09 gate): raw_ae (our agent's cumulative reward,
-# proportional to final score since our mission_multiplier is fixed) is the
-# DISCRIMINATOR the CEM maximizes, subject to a worst_robust_placement FLOOR. Because
-# our mult is high+fixed, robust placement saturates at 1st against a weak field, so
-# it acts as a non-exploitability floor (a real regression beyond PLACEMENT_FLOOR_TOL
-# is penalized) while raw_ae separates good candidates. This deliberately does NOT
-# optimize mean placement (the reverted g00-fixed-03 trap: a placement-proxy that
-# overfit the synthetic pool); the held-out composition gap + a hardware A/B gate the
+# Objective: raw_ae (cumulative reward, proportional to final score since our
+# mission_multiplier is fixed) is the DISCRIMINATOR the CEM maximizes, subject to
+# a worst_robust_placement FLOOR. Robust placement saturates at 1st against a weak
+# field, so it acts as a non-exploitability floor (regression beyond
+# PLACEMENT_FLOOR_TOL is penalized) while raw_ae separates good candidates.
+# Deliberately does NOT optimize mean placement (a placement-proxy that overfits
+# the synthetic pool); the held-out composition gap + a hardware A/B gate the
 # single finalist, not every in-loop candidate.
 PLACEMENT_FLOOR_TOL = 0.25
 _EPS = 1e-9

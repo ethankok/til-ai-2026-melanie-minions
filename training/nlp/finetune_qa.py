@@ -84,10 +84,9 @@ def _doc_chunks_with_offsets(doc: str) -> list[tuple[str, int]]:
         if not window:
             break
         chunk_text = " ".join(window)
-        # Locate this chunk's first sentence in the original doc; reasonable proxy
-        # for the chunk's char offset (sentences are space-joined; original may
-        # have different separators, but we only need the relative offset for
-        # answer-position recompute).
+        # Locate the chunk's first sentence in the original doc as a proxy for
+        # its char offset (only the relative offset matters for answer-position
+        # recompute).
         offset = doc.find(window[0])
         out.append((chunk_text, max(0, offset)))
         if i + CHUNK_SENTENCES >= len(sents):
@@ -101,7 +100,7 @@ def _chunk_containing(doc: str, abs_pos: int, abs_end: int) -> tuple[str, int] |
     chunks = _doc_chunks_with_offsets(doc)
     if not chunks:
         return None
-    # First pass: chunk that fully contains the answer.
+    # Prefer a chunk that fully contains the answer.
     for ctext, coff in chunks:
         if coff <= abs_pos and abs_end <= coff + len(ctext):
             return ctext, coff
@@ -151,7 +150,6 @@ def _find_span(answer: str, context: str) -> tuple[int, str] | None:
       2. Flexible-whitespace / optional-trailing-punctuation regex.
       3. (if rapidfuzz installed) sliding-window partial_ratio >= 88.
     """
-    # 1. Variants × case-{sensitive,insensitive} find.
     ctx_lower = context.lower()
     for v in _answer_variants(answer):
         if not v:
@@ -163,7 +161,6 @@ def _find_span(answer: str, context: str) -> tuple[int, str] | None:
         if pos >= 0:
             return pos, context[pos : pos + len(v)]
 
-    # 2. Flexible whitespace + optional trailing punctuation regex.
     a_norm = answer.strip(_TRAILING_TRIM)
     if a_norm:
         pattern = re.escape(a_norm)
@@ -173,7 +170,6 @@ def _find_span(answer: str, context: str) -> tuple[int, str] | None:
         if m:
             return m.start(), m.group(0)
 
-    # 3. Optional fuzzy match via rapidfuzz.
     if _RAPIDFUZZ and len(answer) >= 3:
         base = answer.lower()
         n = len(answer)
@@ -252,7 +248,6 @@ def _build_squad_examples(
             if not srcs:
                 skipped["no_source_doc"] += 1
                 continue
-            # Try each source_doc; first hit wins.
             found_span = None
             chosen_doc = None
             for doc_id in srcs:
@@ -273,11 +268,9 @@ def _build_squad_examples(
             ctx_text = docs[chosen_doc]
             if use_answer_chunk:
                 # Replace whole-doc context with the inference-style chunk
-                # containing the answer span. We can't compute the in-chunk
-                # offset by simple subtraction — `chunk_text` is " ".join(
-                # sentences), which compresses paragraph-break whitespace
-                # (`\n\n` → ` `), so positions drift. Instead, find the chunk
-                # that contains the answer verbatim (re-search in each chunk).
+                # containing the answer span. Can't compute the in-chunk offset
+                # by subtraction (chunk_text join compresses whitespace, so
+                # positions drift) — instead re-search for the answer in each chunk.
                 chunk_ctx = None
                 chunk_pos = -1
                 chunk_ans = a_exact
@@ -286,7 +279,6 @@ def _build_squad_examples(
                     if cp < 0:
                         cp = chunk_text.lower().find(a_exact.lower())
                         if cp >= 0:
-                            # Recover the chunk's actual casing.
                             chunk_ans = chunk_text[cp : cp + len(a_exact)]
                     if cp >= 0:
                         chunk_ctx = chunk_text
@@ -296,9 +288,8 @@ def _build_squad_examples(
                     ctx_text = chunk_ctx
                     pos = chunk_pos
                     a_exact = chunk_ans
-                # else: keep whole-doc context (answer wasn't verbatim in any
-                # chunk — rare; usually means the variant/regex/fuzzy match
-                # earlier returned a position via a flexible match).
+                # else: keep whole-doc context (rare; answer wasn't verbatim
+                # in any chunk).
             examples.append({
                 "question": q,
                 "context": ctx_text,
@@ -439,7 +430,6 @@ def main() -> int:
         print("no training examples built — aborting", file=sys.stderr)
         return 1
 
-    # Deterministic shuffle, then split.
     rng = random.Random(args.seed)
     rng.shuffle(examples)
     val_n = max(int(len(examples) * args.val_fraction), 20)

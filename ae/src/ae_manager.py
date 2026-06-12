@@ -20,9 +20,8 @@ from bomb_safety import BombSafety
 from planner_weights import PlannerWeights, _env_flag, _env_float, _env_int
 
 
-# Module-level cache for the opponent-model walk scale. PPO training
-# instantiates hundreds of AEManager instances per epoch (one per scripted
-# opponent per game); without caching we'd reload + re-print every time.
+# Module-level cache for the opponent-model walk scale: PPO training
+# instantiates hundreds of AEManagers per epoch, so caching avoids reloading.
 _OPPONENT_WALK_SCALE_CACHE: float | None = None
 
 
@@ -112,54 +111,39 @@ class AEManager:
     ITEM_VALUES = {"mission": 50.0, "resource": 25.0, "recon": 10.0}
 
     GRID_SIZE = 16
-    # Bomb timer matches til_environment/bomberman_config.yaml (entities.bomb.timer).
-    # Phase order each round is: place → move → detonation → upkeep, so a bomb
-    # placed at step N detonates after the agent's movement at step N+timer.
+    # Matches til_environment bomberman_config.yaml entities.bomb.timer. Phase
+    # order: place -> move -> detonation -> upkeep, so a bomb placed at step N
+    # detonates after the agent's movement at step N+timer.
     BOMB_TIMER = 3
     BOMB_RADIUS = 2
     # How long we still consider an enemy-agent sighting "threatening" in steps.
     ENEMY_STALENESS = 3
-    # Reachability radius (BFS steps from blast cell) for predictive bomb hits.
-    # Range 1 = enemies immediately adjacent to a blast cell. Range 2 was too
-    # generous in random-opponent eval (fired almost every turn with bombs).
+    # BFS radius from blast cell for predictive bomb hits; range 2 fired too often.
     PREDICTIVE_BOMB_RANGE = 1
-    # Tiles respawn after this many steps per env config (env.tile_respawn_steps).
-    # Env config note: 40 is the *max*; actual respawn is randomly generated
-    # via perlin noise, so a collected tile is back well before step+40 in
-    # expectation. Reconsider at 20 with a 0.5x discount.
+    # env.tile_respawn_steps max is 40, but perlin-noise respawn is usually earlier.
     TILE_RESPAWN_STEPS = 20
     # Env episode length (fixed). Used by the fortress posture's phase trigger.
     MATCH_STEPS = 200
-    # Soft cap on how long we keep an unseen enemy_agent record around. Past
-    # this we drop the entry entirely (planning code also has its own
-    # staleness filter at ENEMY_STALENESS for threat scoring).
+    # Drop unseen enemy_agent records after this many steps (separate from the
+    # ENEMY_STALENESS threat-scoring cutoff).
     ENEMY_AGENT_MEMORY_STEPS = 30
     # Below this health the agent prefers safe cells over aggressive plays.
     LOW_HEALTH_THRESHOLD = 20
-    # Soft-threat scoring weights. v3 dropped these to 1.0/3.0 and lost ~0.07
-    # locally vs v2's 3.0/8.0. v3b splits the difference — penalty is real but
-    # not so heavy that we route around harmless random opponents.
     PATH_THREAT_PENALTY = 2.0
     CELL_THREAT_PENALTY = 5.0
     # Distance (Manhattan) within which an enemy near our base becomes a defense target.
     BASE_DEFENSE_RADIUS = 4
-    # Tier-1 #3: how long an enemy stays frozen after a kill (matches env config
-    # entities.agent.freeze_turns). After unfreezing they respawn at the same
-    # cell. We use this to plant follow-up bombs timed for the respawn window.
+    # Matches env config entities.agent.freeze_turns; enemy respawns in-place
+    # after this many ticks, so we can time follow-up bombs for the respawn.
     ENEMY_FREEZE_DURATION = 3
-    # Tier-1 #2: when our base HP drops below this AND an enemy is within
-    # BASE_DEFENSE_RADIUS, defense becomes the top objective. Set high enough
-    # that we don't preempt every offensive opportunity, low enough that we
-    # never let the base ride at <40 HP.
+    # Base HP threshold below which (with an enemy within BASE_DEFENSE_RADIUS)
+    # defense becomes the top objective.
     BASE_DEFENSE_HEALTH = 60
-    # Tier-1 #4: realistic shared-credit weights for cloud's 6-team game.
-    # destroy_enemy_base raw value is 50 but other teams will share the kill;
-    # mean realistic share ~30. attack_kill raw value 30 → realistic ~12.
+    # Realistic shared-credit values for cloud's 6-team game (raw 50/30 split ~3 ways).
     SHARED_CREDIT_BASE_VALUE = 30.0
     SHARED_CREDIT_KILL_VALUE = 12.0
-    # Tier-1 #7: window over which we credit a random-walk enemy with possibly
-    # walking into our blast. Matches BOMB_TIMER + 1; one tick of slack for
-    # detonation ordering.
+    # Window for crediting a random-walk enemy with possibly walking into our
+    # blast. BOMB_TIMER + 1 (one tick of slack for detonation ordering).
     PREDICTIVE_WALK_HORIZON = 4
 
     def __init__(self, weights: PlannerWeights | None = None):
@@ -177,48 +161,34 @@ class AEManager:
         self.mcts_depth = w.mcts_depth
         self.mcts_width = w.mcts_width
         self.mcts_min_score = w.mcts_min_score
-        # Hard per-call latency budget (see planner_weights: cloud killed
-        # MCTS v1 because DEPTH=5 WIDTH=96 with no cap ran 1.2-2.4s/tick).
+        # Hard per-call latency budget: uncapped DEPTH=5 WIDTH=96 ran 1.2-2.4s/tick on cloud.
         self.mcts_time_budget_s = w.mcts_time_budget_s
-        # Emit per-call timing to stdout so we can confirm budget
-        # compliance in `til test` before submitting.
+        # Emits per-call timing to stdout for budget verification in `til test`.
         self.mcts_log_timing = w.mcts_log_timing
         self.last_lookahead_score = -inf
         self.last_lookahead_path: tuple[int, ...] = ()
-        # Tier-1 toggles. Bisect on 100-200 round local sims (17 May 2026)
-        # picked the clean winning subset: #3, #6, #7 default ON; #2, #4
-        # default OFF. Override any individually with `AE_TIER1_*=1` / `=0`.
+        # Tier-1 toggles: #3, #6, #7 default ON; #2, #4 default OFF.
+        # Override individually with `AE_TIER1_*=1` / `=0`.
         self.tier1_defense_priority = w.tier1_defense_priority
         self.tier1_repeat_kill = w.tier1_repeat_kill
         self.tier1_shared_credit = w.tier1_shared_credit
         self.tier1_no_stay_penalty = w.tier1_no_stay_penalty
         self.tier1_predictive_walk = w.tier1_predictive_walk
-        # Offensive bomb-LANDING timing. The `BOMB_TIMER=3` constant is the
-        # conservative own-bomb ESCAPE window (kept short on purpose; the placer
-        # takes zero self-damage on its own tile anyway). But a freshly placed
-        # bomb actually detonates ~5 of OUR decision-steps later (dataclass
-        # timer=4 + Bomb.__post_init__ +1; probe `training/ae/probe_bomb_timer.py`).
-        # Use this separate, longer constant ONLY for reasoning about WHEN our
-        # bomb lands on a kill cell (respawn-camp `detonation_step` windows), so
-        # we don't mis-time offensive bombs by ~2 ticks. Never used for escape.
+        # BOMB_TIMER=3 is the conservative own-bomb ESCAPE window, but a placed
+        # bomb actually detonates ~5 decision-steps later (timer=4 +
+        # Bomb.__post_init__ +1). Use BOMB_DETONATE_STEPS only for reasoning
+        # about WHEN a bomb lands on a kill cell (respawn-camp timing); never
+        # for escape.
         self.BOMB_DETONATE_STEPS = w.bomb_detonate_steps
-        # Tier-1 #1: load the offline playbook if present. The lookup is a
-        # cheap dict access so we hit it on every tick before falling
-        # through to the heuristic. Disabled in two cases: env var set, or
-        # no .npz on disk. Import is local so heuristic-only paths never
-        # pay for a playbook load.
+        # Offline playbook override, if present; disabled via env var or missing .npz.
         try:
             from playbook import get_playbook  # noqa: WPS433
             self.playbook = get_playbook()
         except Exception as exc:  # noqa: BLE001
             print(f"[AEManager] playbook import failed: {exc}", flush=True)
             self.playbook = None
-        # Tier-2 #8: load opponent model if present so predictive-walk
-        # credit reflects measured opponent behavior instead of a hand-tuned
-        # constant. The model is a single scalar (mean walk distance per
-        # step) — the manager scales its predictive-walk hit probabilities
-        # by min(1, walk_distance / 0.5) so values <0.5 (less mobile
-        # opponents) get downweighted and >0.5 (more mobile) get upweighted.
+        # Opponent model (if present): scales predictive-walk hit probabilities
+        # by min(1, walk_distance / 0.5) relative to the 0.5 cells/step default.
         self.opponent_walk_scale = self._load_opponent_walk_scale()
         self.BASE_DEFENSE_HEALTH = w.base_defense_health
         self.BASE_DEFENSE_RADIUS = w.base_defense_radius
@@ -227,13 +197,11 @@ class AEManager:
         self.PATH_THREAT_PENALTY = w.path_threat_penalty
         self.ENEMY_CHASE_VALUE = w.enemy_chase_value
         self.ENEMY_CHASE_RADIUS = w.enemy_chase_radius
-        # Forward-sim plan re-score (default OFF). Re-ranks only the top-K
-        # static target candidates by a short self-plan projection on the known
-        # map (items collected en route + whether a bomb actually lands on a
-        # target base + a time tax), in real env reward units. Opponent-light:
-        # no opponent rollout, no safety veto. The confidence signal stays in
-        # static units (see _choose_target), so the confidence_policy_hybrid
-        # gate is unperturbed; only the *executed* target can change.
+        # Forward-sim plan re-score (default OFF). Re-ranks the top-K static
+        # target candidates by a short self-plan projection (items en route +
+        # whether a bomb actually lands on a target base + a time tax), in
+        # real env reward units. Confidence signal stays in static units (see
+        # _choose_target) so the confidence_policy_hybrid gate is unperturbed.
         self.plan_rescore_enabled = w.plan_rescore_enabled
         self.plan_rescore_k = w.plan_rescore_k
         self.plan_rescore_margin = w.plan_rescore_margin
@@ -241,59 +209,42 @@ class AEManager:
         self.plan_rescore_base_w = w.plan_rescore_base_w
         # Asymmetric (default): projection may DEMOTE a static-winner phantom
         # base toward a realizable alternative, but may never PROMOTE a base
-        # above a static non-base winner. The promotion half is the documented
-        # over-aggression failure mode (chases landable bases at the expense of
-        # steady item income); the demotion half is curry's real benefit
-        # ("discount a base to ~0 when the bomb won't land").
+        # above a static non-base winner.
         self.plan_rescore_demote_only = w.plan_rescore_demote_only
         # Contention-aware item valuation (AE_CONTENTION, default OFF). Discounts
-        # item targets an opponent will reach first, using free fixed-map spawn
-        # geometry + live viewcone sightings. Demote-only, item-vs-item; the
-        # confidence signal stays in static units (see _choose_target /
-        # _apply_contention) so the confidence_policy_hybrid gate is unperturbed.
+        # item targets an opponent will reach first. Demote-only, item-vs-item;
+        # confidence signal stays in static units so the confpol gate is unperturbed.
         self.contention_enabled = w.contention_enabled
         self.contention_scale = w.contention_scale
         self.contention_pfloor = w.contention_pfloor
         self.contention_topen = w.contention_topen
         self.contention_tfresh = w.contention_tfresh
-        # Time-layered danger map (AE_TIME_DANGER, default OFF). Builds
-        # per-tick lethality layers[t] from known_bombs with enemy-bomb chain
-        # resolution, so the danger set is chain-corrected and bomb-escape
-        # verification is chain/arrival-aware. OFF == byte-identical. Design
-        # spec 2026-06-08-ae-time-layered-danger-map-design (private archive).
+        # Time-layered danger map (AE_TIME_DANGER, default OFF). Per-tick
+        # lethality layers from known_bombs with enemy-bomb chain resolution;
+        # OFF == byte-identical. Design spec
+        # 2026-06-08-ae-time-layered-danger-map-design (private archive).
         self.time_danger_enabled = w.time_danger_enabled
         # Floor the horizon at BOMB_TIMER: the escape verifier checks arrival
         # ticks up to BOMB_TIMER, and _on_fire_at treats ticks beyond the last
-        # layer as safe, so a shorter horizon would silently blind the escape
-        # check to a timer==BOMB_TIMER bomb at its arrival tick.
+        # layer as safe.
         self.danger_horizon = max(self.BOMB_TIMER, w.danger_horizon)
         # No-self-damage bomb gating (AE_NO_SELF_DAMAGE, default OFF). The env
         # excludes same-team defenders from a bomb's blast (dynamics.py:695), so
-        # a bomb never damages its placer OR the placer's own base — verified
-        # end-to-end (training/ae/probe_bomb_timer.py: placer health stays 60
-        # standing on its own detonating bomb). OFF == byte-identical. When ON,
-        # we stop vetoing placement on two false premises (own base in blast; no
-        # self-escape); real enemy-danger / low-health / legality / team_bombs
-        # guards are untouched. Design spec
+        # a bomb never damages its placer or the placer's own base. OFF ==
+        # byte-identical. Design spec
         # 2026-06-09-ae-no-self-damage-bomb-gate-design (private archive).
         self.no_self_damage = w.no_self_damage
-        # Surgical variant (AE_BASEKILL_NOESCAPE, default OFF): relax the own-base
-        # and self-escape vetoes ONLY for a bomb whose blast contains an enemy
-        # base (the +50 kill, good in every regime); speculative bombs still need
-        # an escape. Narrower than AE_NO_SELF_DAMAGE (which relaxes all bombs).
-        # Design spec 2026-06-09-ae-basekill-noescape-design (private archive).
+        # Surgical variant (AE_BASEKILL_NOESCAPE, default OFF): relax the
+        # own-base/self-escape vetoes only for a bomb whose blast contains an
+        # enemy base. Design spec
+        # 2026-06-09-ae-basekill-noescape-design (private archive).
         self.basekill_noescape = w.basekill_noescape
-        # Stun tax (AE_STUN_TAX, default OFF). A freeze opportunity-cost penalty
-        # on farming-target paths: scales the existing path-threat penalty for
-        # ITEM kinds only, so we can ask "does the farming race want more
-        # freeze-aversion than the calibrated PATH_THREAT_PENALTY?" MULT=1.0 is
-        # a no-op. Phase A of the farming-race model.
+        # Stun tax (AE_STUN_TAX, default OFF). Scales PATH_THREAT_PENALTY for
+        # ITEM-kind targets only; MULT=1.0 is a no-op.
         self.stun_tax_enabled = w.stun_tax_enabled
         self.stun_tax_mult = w.stun_tax_mult
-        # Fortress posture (AE_FORTRESS, default OFF). A lead-gated farm<->fortress
-        # switch on observable signals only (game phase + base threat; NO
-        # "are-we-ahead" estimate -- we have no opponent scoreboard). Phase B of
-        # the farming-race model.
+        # Fortress posture (AE_FORTRESS, default OFF). Lead-gated farm<->fortress
+        # switch on observable signals only (game phase + base threat).
         self.fortress_enabled = w.fortress_enabled
         self.fortress_phase = w.fortress_phase
         self.fortress_base_mult = w.fortress_base_mult
@@ -308,56 +259,39 @@ class AEManager:
             "resource": self.item_resource_value,
             "recon": self.item_recon_value,
         }
-        # W2.1a: spawn-aware FIRST_TARGET_BY_OWN_BASE boost. Default OFF (the
-        # boost contribution is zero unless the env flag is set). When ON, we
-        # add `boost * decay**rank` to each enemy_base candidate's value where
-        # rank comes from spawn_first_targets.get_first_target_rank(). Three
-        # of six Novice spawn slots have explicit priorities; the other three
-        # see no change.
+        # Spawn-aware FIRST_TARGET_BY_OWN_BASE boost (default OFF). Adds
+        # `boost * decay**rank` to each enemy_base candidate's value, where
+        # rank comes from spawn_first_targets.get_first_target_rank(). Only
+        # 3 of 6 Novice spawn slots have explicit priorities.
         self.first_target_table_enabled = w.first_target_table_enabled
         self.first_target_boost = w.first_target_boost
         self.first_target_decay = w.first_target_decay
-        # W2.1b: enemy-bomb-only escape override. When ON, before any normal
-        # action selection we check whether a visible enemy bomb (own==False)
-        # with timer <= 2 has us in its blast cells. If yes, force an escape
-        # action chosen by the M5 scoring (leave danger first, max distance
-        # from bomb, more open neighbors, fewer turns). Default OFF.
+        # Enemy-bomb-only escape override (default OFF). If a visible enemy
+        # bomb (own==False) with timer <= 2 has us in its blast, force an
+        # escape action (leave danger, max distance from bomb, more open
+        # neighbors, fewer turns).
         self.enemy_bomb_escape_enabled = w.enemy_bomb_escape_enabled
         self.enemy_bomb_escape_turn_penalty = w.enemy_bomb_escape_turn_penalty
         self.enemy_bomb_escape_visit_penalty = w.enemy_bomb_escape_visit_penalty
-        # W2.1c: orientation-aware A* over (x, y, facing) states. Real per-tick
-        # cost includes LEFT/RIGHT turns (1.0 each). Existing Dijkstra treats
-        # turns as free, so paths with many turns get artificially short
-        # distances. Default OFF — enable with AE_ORIENTATION_AWARE_PATH=1.
-        # AE_ORIENTATION_AWARE_TURN_COST controls cost-per-turn (1.0 = real
-        # ticks; lower values bias toward shorter cell paths even when turny).
+        # Orientation-aware A* over (x, y, facing) states (default OFF). Plain
+        # Dijkstra treats LEFT/RIGHT turns as free; this counts each turn at
+        # turn_cost (1.0 = real ticks).
         self.orientation_aware_path_enabled = w.orientation_aware_path_enabled
         self.orientation_aware_turn_cost = w.orientation_aware_turn_cost
-        # ── Rationale-mining leads (29 May 2026). Each default OFF; gated by an
-        # env flag and validated via multi_seed_eval before any promotion.
-        # Lead ②: don't target an enemy base we can't destroy (team_bombs==0).
-        # The LLM annotations flagged 8 cases where the planner walked onto/up
-        # to an enemy base with no bomb in hand and had to turn away.
+        # Lead 2: don't target an enemy base we can't destroy (team_bombs==0).
         self.lead_bomb_gate_base = w.lead_bomb_gate_base
-        # Lead ①: base-health-conditioned distance tether. When our base is
-        # below AE_LEAD_TETHER_HEALTH, penalize candidate targets by their
-        # Manhattan distance *from our base*, pulling the agent home instead of
-        # ranging far while the base is destroyed (the #1 reward leak). Penalty
-        # scales with how damaged the base is.
+        # Lead 1: base-health-conditioned distance tether. Below
+        # AE_LEAD_TETHER_HEALTH, penalize targets by Manhattan distance from
+        # our base, scaled by how damaged the base is.
         self.lead_base_tether = w.lead_base_tether
         self.lead_tether_health = w.lead_tether_health
         self.lead_tether_weight = w.lead_tether_weight
-        # Lead ③: recon-item distance discount. Recon is only +1; the planner
-        # chased scattered recon into far corners and got cut off. Apply an
-        # extra distance penalty to recon targets so they're only grabbed when
-        # close. 18 backtrack/dead-end rationales clustered on this pattern.
+        # Lead 3: recon-item distance discount (recon is only worth +1).
         self.lead_recon_discount = w.lead_recon_discount
         self.lead_recon_dist_mult = w.lead_recon_dist_mult
         # Bomb safety module: blast geometry, chain-resolved danger, escape
-        # search and commit/rollback. Operates on this manager's belief
-        # blackboard; the *_bomb/_danger/_escape methods below are thin
-        # delegators kept under their historical names for internal call
-        # sites and tests.
+        # search and commit/rollback. The *_bomb/_danger/_escape methods below
+        # are thin delegators kept under historical names for call sites/tests.
         self.bomb_safety = BombSafety(self)
         self._reset_memory()
 
@@ -372,9 +306,8 @@ class AEManager:
         """Choose the next action for the controlled agent."""
 
         self.turn_counter += 1
-        # Per-tick record of a synthetic own-bomb commit (set by
-        # _should_place_bomb). Reset every tick so a stale commit from a prior
-        # tick can never be reverted by the confidence-policy wrapper.
+        # Reset every tick: a stale commit from a prior tick must never be
+        # reverted by the confidence-policy wrapper.
         self._tick_bomb_commit = None
         # Default sentinel: any early-return path (frozen, playbook, dominant,
         # tactical_lookahead, escape, etc.) is treated as high-confidence by
@@ -400,7 +333,6 @@ class AEManager:
         location = self._location(observation.get("location"))
         direction = self._as_int(observation.get("direction"), default=self.DIR_RIGHT) % 4
 
-        # If step is 0, check if this is the Novice fixed map
         if step == 0 and location is not None:
             base_loc = self._location(observation.get("base_location"))
             if base_loc is not None:
@@ -420,8 +352,7 @@ class AEManager:
                                 self.ENEMY_CHASE_VALUE = 0.0
                             if _env_int("AE_ENEMY_CHASE_RADIUS", -999) == -999:
                                 self.ENEMY_CHASE_RADIUS = 4
-                            
-                            # Pre-populate seen, walls, destructible, enemy bases, and static items
+
                             self.seen = {(x, y) for x in range(16) for y in range(16)}
                             self.walls = set(WALLS)
                             self.destructible = set(DESTRUCTIBLE)
@@ -451,18 +382,13 @@ class AEManager:
             self._count_decision("fallback_no_location")
             return self._fallback_action(observation, None, direction, None)
 
-        # Tier-1 #1: playbook override. After belief is updated and frozen-
-        # state is handled, before the heuristic does any planning, check
-        # whether we have a high-confidence pre-mined action for this
-        # (location, direction, step). Only used when the action is legal
-        # under the current mask.
+        # Playbook override: pre-mined action for this (location, direction,
+        # step), only if legal under the current mask.
         if self.playbook is not None:
             pb_action = self.playbook.lookup(location, direction, step)
             if pb_action is not None and self._legal(observation, pb_action):
-                # Bomb-via-playbook still needs a valid escape so we don't
-                # walk into a bomb we can't get out of (the offline trace
-                # learned an escape path on the same map; we re-verify here
-                # cheaply against current belief state).
+                # Bomb-via-playbook still needs a valid escape re-verified
+                # against current belief state.
                 if pb_action == self.PLACE_BOMB:
                     if self._as_int(observation.get("team_bombs"), default=0) <= 0:
                         pass
@@ -492,9 +418,8 @@ class AEManager:
         danger = self._danger_cells()
         low_health = self.health < self.LOW_HEALTH_THRESHOLD
 
-        # W2.1b enemy-bomb-only escape override. Default OFF. Fires before the
-        # dominant-action fast path because the M5 spec treats enemy-bomb
-        # escape as the highest-priority override.
+        # Enemy-bomb-only escape override (default OFF); fires before the
+        # dominant-action fast path as the highest-priority override.
         enemy_bomb_escape = self._enemy_bomb_only_escape(observation, location, direction)
         if enemy_bomb_escape is not None:
             self._count_decision("enemy_bomb_escape")
@@ -606,11 +531,9 @@ class AEManager:
         self._blast_cache: dict[tuple[int, int], frozenset[tuple[int, int]]] = {}
         # Per-turn cache for the time-layered danger map (rebuilt each ae()).
         self._danger_layers_cache: list[set[tuple[int, int]]] | None = None
-        # Tier-1 #3: track recent kills so we can plant a follow-up bomb
-        # timed for the enemy's respawn. (pos, unfreeze_step).
+        # Recent kills, for timing follow-up bombs at the enemy's respawn: (pos, unfreeze_step).
         self.recent_kills: list[tuple[tuple[int, int], int]] = []
-        # Tier-1 #2: per-step record of the last health value we saw on our
-        # base so we can detect "took damage this step" reliably.
+        # Last-seen base health, to detect "took damage this step".
         self.last_base_health: int = 100
         self.last_step = None
         self.is_fixed_novice_map = False
@@ -621,10 +544,9 @@ class AEManager:
         self.last_bomb_reason = "unknown"
         self.last_dominant_reason = "unknown"
         self.last_decision = "reset"
-        # Read by confidence-gated wrappers (ConfidencePolicyHybridAEManager).
-        # Default sentinel = high-confidence so wrappers don't override before
-        # ae() has been called. Updated each tick at the top of ae() and again
-        # inside _choose_target() with real top/runner-up scores.
+        # Read by confidence-gated wrappers (ConfidencePolicyHybridAEManager);
+        # default sentinel = high-confidence. Updated each tick in ae() and
+        # again in _choose_target() with real top/runner-up scores.
         self.last_decision_confidence: dict = {
             "top_score": float("inf"),
             "runner_up_score": float("-inf"),
@@ -634,11 +556,9 @@ class AEManager:
         }
         self.decision_counts: Counter[str] = Counter()
         self.dijkstra_bomb_cost = _env_float("AE_DIJKSTRA_BOMB_COST", 5.0)
-        # Hail-mary A* tie-breaker: when enabled, equal-cost paths in
-        # `_dijkstra_distance_map` get expanded toward enemy-base centroid
-        # first via a Manhattan-distance secondary key. Optimal distances
-        # are unchanged (proven equivalence) but path reconstruction shifts,
-        # which alters bomb placement / exposed tiles downstream.
+        # A* tie-breaker: equal-cost paths in `_dijkstra_distance_map` expand
+        # toward the enemy-base centroid first (Manhattan secondary key).
+        # Optimal distances unchanged; path reconstruction may shift.
         self.astar_tiebreak = _env_flag("AE_ASTAR_TIEBREAK", False)
 
     def _update_memory(
@@ -815,11 +735,9 @@ class AEManager:
         step = self.last_step if self.last_step is not None else 0
         posture = self._posture(step)
 
-        # Single multi-source BFS gives distance to every reachable cell at
-        # roughly the cost of one of the old per-target BFS calls.
-        # W2.1c: orientation-aware A* opt-in. Only available on fixed novice
-        # map (general-map BFS path stays untouched) AND requires a known
-        # direction. Falls back to plain Dijkstra otherwise.
+        # Single multi-source BFS gives distance to every reachable cell.
+        # Orientation-aware A* opt-in: fixed novice map + known direction only;
+        # falls back to plain Dijkstra otherwise.
         if (
             self.orientation_aware_path_enabled
             and getattr(self, "is_fixed_novice_map", False)
@@ -832,7 +750,6 @@ class AEManager:
             distance, parent = self._bfs_distance_map(start, danger)
 
         candidates: list[tuple[float, tuple[int, int], str]] = []
-        # Defensive emergency logic (disabled on fixed novice map, optional on general maps)
         defense_emergency = False
         if not getattr(self, "is_fixed_novice_map", False):
             if (
@@ -847,10 +764,8 @@ class AEManager:
                         defense_emergency = True
                         candidates.append((150.0, pos, "defense_emergency"))
 
-        # When health is low, avoid aggressive targets and stick to items/exploration
-        # Lead ②: skip enemy-base targeting when we hold no bombs — we can't
-        # destroy a base without one, so routing to it wastes the trip. Scoped
-        # to the enemy_bases loop only; base_defense/enemy_chase still apply.
+        # Lead 2: skip enemy-base targeting when we hold no bombs (can't
+        # destroy without one); base_defense/enemy_chase still apply.
         bomb_gate_skip_bases = self.lead_bomb_gate_base and int(getattr(self, "team_bombs", 0)) == 0
         if not low_health and not defense_emergency:
             for pos in (() if bomb_gate_skip_bases else self.enemy_bases):
@@ -860,9 +775,7 @@ class AEManager:
                     value = 35.0 if self.tier1_shared_credit else self.ENEMY_BASE_VALUE
                 if posture == "fortress":
                     value *= self.fortress_base_mult
-                # W2.1a spawn-aware first-target boost. Lazy import keeps the
-                # symbol off the hot path until enabled; the function is a
-                # ~5-line dict lookup. None rank -> 0.0 boost (no change).
+                # Lazy import: keeps the symbol off the hot path until enabled.
                 if self.first_target_table_enabled:
                     from spawn_first_targets import get_first_target_rank, rank_boost  # noqa: WPS433
                     rank = get_first_target_rank(self.base_location, pos)
@@ -909,13 +822,12 @@ class AEManager:
         best_target = None
         best_kind = "none"
         best_score = -inf
-        # Track the second-best score so wrappers can read the heuristic's
-        # decision confidence (margin = top - runner_up). Pure observation;
-        # no effect on best_target / best_kind / returned path.
+        # Second-best score, for confidence wrappers (margin = top - runner_up);
+        # pure observation, no effect on the chosen target/path.
         runner_up_score = -inf
         n_scored = 0
-        # Only materialised when the plan re-score is enabled, so the flag-off
-        # hot path is byte-identical to the legacy planner.
+        # Only materialised when plan re-score is enabled (flag-off hot path
+        # stays byte-identical to the legacy planner).
         scored: list[tuple[float, tuple[int, int], str]] = []
         for base_value, pos, kind in candidates:
             if pos == start or pos not in distance:
@@ -924,10 +836,8 @@ class AEManager:
             score = base_value - self.DIST_PENALTY * dist - 0.25 * self.visit_count.get(pos, 0)
             if pos in self.recent_locations[-4:]:
                 score -= 2.0
-            # Lead ①: base tether. When our base is hurt, penalize targets by
-            # their distance from base (scaled by base damage) so the agent
-            # stops ranging far while home is under attack. base_defense
-            # candidates (near base) are naturally favored by this term.
+            # Lead 1: base tether — penalize targets by distance from base,
+            # scaled by base damage, when our base is hurt.
             if (
                 self.lead_base_tether
                 and self.base_location is not None
@@ -936,18 +846,15 @@ class AEManager:
                 damage_frac = 1.0 - (self.base_health / max(1.0, self.lead_tether_health))
                 damage_frac = max(0.0, min(1.0, damage_frac))
                 score -= self.lead_tether_weight * damage_frac * self._manhattan(pos, self.base_location)
-            # Fortress posture tether: keep near home and farm safe. Phase-gated
-            # (independent of base_health, unlike lead_base_tether). Skips
-            # base_defense targets (we want those near base anyway).
+            # Fortress posture tether: phase-gated, independent of base_health.
             if (
                 posture == "fortress"
                 and self.base_location is not None
                 and kind != "base_defense"
             ):
                 score -= self.fortress_tether_w * self._manhattan(pos, self.base_location)
-            # Lead ③: recon distance discount. Recon is only +1, so only worth
-            # grabbing when close; add an extra distance penalty to recon
-            # targets to stop far-corner recon chasing.
+            # Lead 3: recon is only +1, so add extra distance penalty to stop
+            # far-corner recon chasing.
             if self.lead_recon_discount and kind in ("item_recon", "respawn_recon"):
                 score -= self.lead_recon_dist_mult * self.DIST_PENALTY * dist
             # Threats: penalize paths that brush near recently-seen enemies,
@@ -977,20 +884,17 @@ class AEManager:
             elif score > runner_up_score:
                 runner_up_score = score
 
-        # Forward-sim plan re-score (opt-in). Re-rank only the top-K static
-        # winners by projected realized reward; override the executed target
-        # only when a different candidate beats the static winner's projection
+        # Forward-sim plan re-score (opt-in): override the executed target only
+        # when a different top-K candidate beats the static winner's projection
         # by a margin. last_decision_confidence below stays in static units.
         if self.plan_rescore_enabled and best_target is not None and n_scored > 1:
             best_target, best_kind = self._rescore_top_k(
                 start, scored, parent, best_target, best_kind
             )
 
-        # Contention-aware item valuation (opt-in). Demote-only, item-vs-item:
-        # discount item targets an opponent reaches first and pick the best item
-        # we win the race to. Only the executed target changes; the
-        # last_decision_confidence set below stays in static units, so the
-        # confidence_policy_hybrid gate is unperturbed (as with plan-rescore).
+        # Contention-aware item valuation (opt-in), demote-only item-vs-item.
+        # Only the executed target changes; last_decision_confidence stays in
+        # static units, so the confidence_policy_hybrid gate is unperturbed.
         if (
             self.contention_enabled
             and best_target is not None
@@ -1015,9 +919,8 @@ class AEManager:
                 "decision_path": "target_none",
             }
             return None, None
-        # Margin is +inf when only one candidate scored (no runner-up exists).
-        # That signals to the wrapper "heuristic has only one option" and counts
-        # as high-confidence (no tie to break).
+        # Margin is +inf when only one candidate scored (no runner-up): signals
+        # high-confidence to the wrapper (no tie to break).
         if runner_up_score == -inf:
             margin = float("inf")
             runner_up_out = float(best_score)
@@ -1036,9 +939,7 @@ class AEManager:
         self.last_target_kind = best_kind
         return best_target, path
 
-    # Real env reward units (NOT the static ITEM_VALUES priority weights):
-    # the whole point of plan projection is to score in realized-reward units
-    # so a base only earns its reward when the bomb actually lands.
+    # Real env reward units (NOT the static ITEM_VALUES priority weights).
     _PLAN_ITEM_REWARD = {"mission": 5.0, "resource": 2.0, "recon": 1.0}
 
     def _project_plan_reward(
@@ -1123,7 +1024,7 @@ class AEManager:
         if static_proj is None or not projections:
             return static_target, static_kind
 
-        # Demote-only: a base may stay if it is the static winner, but may never
+        # Demote-only: a base may stay if it's the static winner, but may never
         # be promoted over a different (non-base) static winner.
         override_pool = projections
         if self.plan_rescore_demote_only:
@@ -1325,12 +1226,10 @@ class AEManager:
         distance: dict[tuple[int, int], float] = {start: 0.0}
         parent: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
 
-        # A* tie-breaker (opt-in via AE_ASTAR_TIEBREAK). Manhattan distance
-        # to the enemy-base centroid (or grid center fallback) is used as a
-        # SECONDARY heap key. Edge costs are unchanged → optimal distances
-        # are identical to pure Dijkstra; only `parent` reconstruction may
-        # diverge for tied-cost paths. Negative weights are *not* used —
-        # they'd produce negative cycles on a bidirectional grid.
+        # A* tie-breaker (opt-in via AE_ASTAR_TIEBREAK): Manhattan distance to
+        # the enemy-base centroid as a SECONDARY heap key. Edge costs unchanged
+        # -> optimal distances identical to pure Dijkstra; only `parent`
+        # reconstruction may diverge for tied-cost paths.
         if getattr(self, "astar_tiebreak", False):
             enemy_bases = list((getattr(self, "enemy_bases", None) or {}).keys())
             if enemy_bases:
@@ -1359,7 +1258,6 @@ class AEManager:
                 if nxt not in self.seen:
                     continue
 
-                # Check walls
                 if not self._edge_blocked(current, direction):
                     step_cost = 1.0
                 elif self._edge_destructible(current, direction):
@@ -1405,8 +1303,6 @@ class AEManager:
         danger = danger or set()
         turn_cost = float(self.orientation_aware_turn_cost)
 
-        # state_cost: (x, y, facing) -> min cost
-        # cell_distance / cell_parent: aggregated over best facing at each cell
         start_state = (start[0], start[1], int(start_facing))
         state_cost: dict[tuple[int, int, int], float] = {start_state: 0.0}
         cell_distance: dict[tuple[int, int], float] = {start: 0.0}
@@ -1427,10 +1323,8 @@ class AEManager:
                 if new_cost < state_cost.get(new_state, float("inf")):
                     state_cost[new_state] = new_cost
                     heapq.heappush(pq, (new_cost, cx, cy, new_facing))
-                    # Cell didn't change, no cell-level update needed.
 
-            # Move actions: FORWARD uses facing direction; BACKWARD uses
-            # opposite facing direction. Both leave facing unchanged.
+            # Move actions: FORWARD/BACKWARD use facing/opposite-facing direction.
             for move_dir in (cf, self.OPPOSITE[cf]):
                 dx, dy = self.DIR_DELTAS[move_dir]
                 nx, ny = cx + dx, cy + dy
@@ -1523,7 +1417,6 @@ class AEManager:
         - a mission tile is one step away through a clear edge → step toward it.
         """
 
-        # Hunting bombs are off when health is critically low.
         step = self.last_step if self.last_step is not None else 0
         if (not low_health
                 and self._legal(observation, self.PLACE_BOMB)
@@ -1534,10 +1427,8 @@ class AEManager:
             base_safe = not self._own_base_vetoes_bomb(base_loc, bomb_blast)
 
             enemy_base_hit = any(pos in bomb_blast for pos in self.enemy_bases)
-            # Fresh enemy_agent in blast — only this-step sightings to avoid
-            # speculative kills (random opponents wander; a 2-step-old sighting
-            # is no longer reliable). Stricter than the slow path's "step-1"
-            # tolerance because this is a *dominant-action* shortcut.
+            # Only this-step sightings count (stricter than the slow path's
+            # step-1 tolerance) to avoid speculative kills.
             enemy_agent_hit = any(
                 int(last_seen) == step and pos in bomb_blast
                 for pos, last_seen in self.enemy_agents.items()
@@ -1546,8 +1437,8 @@ class AEManager:
             if base_safe and (enemy_base_hit or enemy_agent_hit):
                 escape = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER)
                 if escape is not None or not self._escape_required_for_bomb(bomb_blast):
-                    # Mirror the side effects of _should_place_bomb so escape
-                    # mode kicks in next turn.
+                    # Mirror _should_place_bomb's side effects so escape mode
+                    # kicks in next turn.
                     self.known_bombs[location] = {
                         "timer": self.BOMB_TIMER,
                         "own": True,
@@ -1555,10 +1446,8 @@ class AEManager:
                     }
                     self.escape_target = escape
                     self.escape_until_step = (self.last_step or 0) + self.BOMB_TIMER
-                    # Tier-1 #3: log every enemy_agent currently inside the
-                    # blast as a likely kill. They'll respawn in place after
-                    # ENEMY_FREEZE_DURATION ticks; remember the cell so a
-                    # later bomb can be timed for it.
+                    # Log enemy_agents in the blast as likely kills; they
+                    # respawn in place after ENEMY_FREEZE_DURATION ticks.
                     if self.tier1_repeat_kill and enemy_agent_hit:
                         unfreeze = step + self.ENEMY_FREEZE_DURATION
                         for pos, last_seen in self.enemy_agents.items():
@@ -1567,8 +1456,8 @@ class AEManager:
                     self.last_dominant_reason = "bomb_enemy_base" if enemy_base_hit else "bomb_enemy_agent"
                     return self.PLACE_BOMB
 
-        # Adjacent mission grab — purely a speed optimization, not a behavior
-        # change; the slow path would pick the same move.
+        # Adjacent mission grab: a speed optimization only; the slow path
+        # would pick the same move.
         for d, (dx, dy) in self.DIR_DELTAS.items():
             nxt = (location[0] + dx, location[1] + dy)
             if nxt not in self.seen or nxt in danger:
@@ -1694,18 +1583,15 @@ class AEManager:
         if not self.mcts_enabled or self.health < self.LOW_HEALTH_THRESHOLD:
             return None
 
-        # v2: pre-flight gate. Don't pay the cost of building a beam search
-        # when there is nothing tactical within reach — the existing
-        # frontier/objective planner is already correct for exploration ticks.
-        # Expected fire rate ~20-25% of ticks → 4-5× drop in average per-call
-        # cost compared to "MCTS on every tick" (which is what timed out v1).
+        # Pre-flight gate: skip the beam search when nothing tactical is
+        # within reach (the frontier/objective planner already handles
+        # exploration ticks correctly).
         if not self._should_run_mcts(location):
             return None
 
-        # v2: hard latency budget. If we cross the deadline we bail out and
-        # return the best line found so far. Without this guard, depth 5
-        # width 96 ran 1.2-2.4 s/tick on cloud and got killed by the
-        # evaluator's wall-clock timeout (~600 ms/tick budget).
+        # Hard latency budget: bail out at the deadline and return the best
+        # line found so far (uncapped depth/width ran 1.2-2.4s/tick on cloud,
+        # over the ~600ms/tick evaluator budget).
         t0 = time.monotonic()
         deadline = t0 + self.mcts_time_budget_s
         timeout_hit = False
@@ -1740,10 +1626,7 @@ class AEManager:
         best: _LookaheadState | None = None
         best_tactical: _LookaheadState | None = None
         for _depth in range(self.mcts_depth):
-            # v2: outer-ply deadline check. Keeps per-ply work atomic but
-            # caps total wall-clock cost. With DEPTH=3 WIDTH=24 we expect
-            # to finish in 50-90ms, well under the 80ms budget; this guard
-            # is the safety net for the occasional slow tick.
+            # Outer-ply deadline check: caps total wall-clock cost per tick.
             if time.monotonic() > deadline:
                 timeout_hit = True
                 break
@@ -2003,11 +1886,8 @@ class AEManager:
         score = 0.0
         tactical = False
 
-        # Tier-1 #4: shared-credit-aware values. Under cloud's 6-team game
-        # the average kill / base-destroy is shared across ~2-3 contributors,
-        # so the realistic credit is well below the raw config values. Using
-        # the inflated values pulled the planner toward marginal long-range
-        # base attacks at the expense of close-range damage and items.
+        # Shared-credit-aware values: under cloud's 6-team game a kill/base-
+        # destroy is shared across ~2-3 contributors.
         base_value = (
             self.SHARED_CREDIT_BASE_VALUE if self.tier1_shared_credit else 55.0
         )
@@ -2030,15 +1910,10 @@ class AEManager:
                 score += 6.0
                 tactical = True
 
-        # Tier-1 #7: predictive walk credit. Even when no enemy is currently
-        # in the blast cone, a recently-seen enemy has nonzero probability of
-        # walking into it before detonation. Under a uniform random walker
-        # the per-step movement distribution is ~1/5 to each neighbour or
-        # STAY; the per-walk-step probability of hitting any specific cell
-        # is small but the union over 4 walk steps and 5-13 blast cells is
-        # not negligible. We approximate it cheaply: each fresh enemy within
-        # PREDICTIVE_WALK_HORIZON Manhattan steps of the blast contributes
-        # a small expected-damage term.
+        # Predictive walk credit: a recently-seen enemy within
+        # PREDICTIVE_WALK_HORIZON of the blast has nonzero probability of
+        # walking into it before detonation; approximate with a small
+        # expected-damage term.
         if self.tier1_predictive_walk:
             extended = self._extended_blast(blast, self.PREDICTIVE_WALK_HORIZON)
             for enemy, last_seen in self.enemy_agents.items():
@@ -2049,26 +1924,21 @@ class AEManager:
                 if enemy not in extended:
                     continue
                 d = self._manhattan(enemy, our_pos)
-                # Probability decays with distance — an enemy 4 steps away
-                # has lower P(hit blast) than one 1 step away. Cap at 0.30.
-                # Tier-2 #8: scale by measured opponent walk distance so this
-                # tracks the actual mobility of cloud opponents instead of
-                # the random-walk default.
+                # Probability decays with distance, capped at 0.30, scaled by
+                # measured opponent walk distance.
                 p_hit = max(0.0, 0.30 - 0.06 * d) * self.opponent_walk_scale
                 score += kill_value * p_hit
                 tactical = True
 
-        # Tier-1 #3: respawn-camp credit. If a kill cell from `recent_kills`
-        # is in our blast AND the enemy is still frozen / about to unfreeze
-        # within the bomb's effective window, count expected hit value.
+        # Respawn-camp credit: if a kill cell from `recent_kills` is in our
+        # blast and the enemy is frozen/about to unfreeze within the bomb's
+        # effective window, count expected hit value.
         if self.tier1_repeat_kill and self.recent_kills:
             for kpos, unfreeze in self.recent_kills:
                 if kpos not in blast:
                     continue
                 # Detonation arrives ~BOMB_DETONATE_STEPS ticks after placement
-                # (the true offensive landing time, not the short escape window).
-                # If the unfreeze step lands inside that window, the enemy is
-                # at the kill cell exactly when we explode there.
+                # (the true offensive landing time, not the escape window).
                 detonation_step = step + self.BOMB_DETONATE_STEPS
                 if abs(detonation_step - unfreeze) <= 1:
                     score += kill_value
@@ -2142,14 +2012,13 @@ class AEManager:
             else:
                 data["timer"] = timer
                 data["last_step"] = step
-        # Drop very stale enemy_agent records so old sightings stop being
-        # used as base-defense candidates 30+ ticks after the enemy moved on.
+        # Drop stale enemy_agent records so old sightings stop being used as
+        # base-defense candidates.
         for pos, last_seen in list(self.enemy_agents.items()):
             if step - int(last_seen) > self.ENEMY_AGENT_MEMORY_STEPS:
                 self.enemy_agents.pop(pos, None)
-        # Tier-1 #3: drop kill records whose respawn window has fully passed.
-        # We keep them through ENEMY_FREEZE_DURATION + a little slack for
-        # follow-up bomb timing.
+        # Drop kill records whose respawn window has passed (with slack for
+        # follow-up bomb timing).
         if self.recent_kills:
             self.recent_kills = [
                 (pos, unfreeze)
@@ -2158,8 +2027,7 @@ class AEManager:
             ]
 
     # Bomb-safety delegators: canonical implementations live in
-    # bomb_safety.BombSafety; these keep the historical names for the
-    # planner's internal call sites and the test suite.
+    # bomb_safety.BombSafety; names kept for internal call sites and tests.
     def _danger_layers(self) -> list[set[tuple[int, int]]]:
         return self.bomb_safety.danger_layers()
 
@@ -2225,8 +2093,7 @@ class AEManager:
         if not threat_bombs:
             return None
 
-        # Union of all current-threat blast cells; "leaving danger" means
-        # exiting this union.
+        # "Leaving danger" means exiting the union of current-threat blast cells.
         threat_cells: set[tuple[int, int]] = set()
         for _bp, blast in threat_bombs:
             threat_cells.update(blast)
@@ -2234,20 +2101,16 @@ class AEManager:
         def _nearest_bomb_dist(cell: tuple[int, int]) -> int:
             return min(self._manhattan(cell, bp) for bp, _ in threat_bombs)
 
-        # Evaluate every legal non-bomb action. STAY counts as a candidate
-        # but with no leave-danger bonus (we're already in the blast).
         best_action: int | None = None
         best_score = -inf
         for action in (self.FORWARD, self.BACKWARD, self.LEFT, self.RIGHT, self.STAY):
             if not self._legal(observation, action):
                 continue
             next_cell, next_dir = self._simulate_action(location, direction, action)
-            # Refuse to step onto a bomb cell (solid). next_cell can equal
-            # location for turns and STAY.
+            # Refuse to step onto a bomb cell. next_cell can equal location
+            # for turns and STAY.
             if next_cell != location and next_cell in self.known_bombs:
                 continue
-            # Refuse out-of-bounds moves (also caught by action_mask in
-            # practice, defensive).
             if not self._in_bounds(next_cell):
                 continue
             score = 0.0
@@ -2338,10 +2201,8 @@ class AEManager:
         if self._own_base_vetoes_bomb(base_location, bomb_blast):
             return False
 
-        # Predictive bombing: bomb when *multiple* enemies are immediately
-        # adjacent to the blast cone. Random opponents wander; betting one
-        # specific enemy walks into the blast is a coin-flip and a wasted bomb.
-        # Betting that one of N≥2 nearby enemies does is much better odds.
+        # Predictive bombing: bomb when N>=2 enemies are immediately adjacent
+        # to the blast cone (better odds than betting on one).
         if not tactical_target and len(self.enemy_agents) >= 2:
             extended = self._extended_blast(bomb_blast, self.PREDICTIVE_BOMB_RANGE)
             nearby = 0
@@ -2354,12 +2215,8 @@ class AEManager:
                 tactical_target = True
                 bomb_reason = "enemy_cluster"
 
-        # Tier-1 #7: predictive random-walk bomb. If there is at least one
-        # fresh enemy sighting within PREDICTIVE_WALK_HORIZON of the blast,
-        # the union probability of any one enemy walking into the blast over
-        # the bomb timer window is non-trivial. We use a conservative
-        # threshold (expected value >= 8 reward, ~one mission's worth) so
-        # this only fires on high-EV placements.
+        # Predictive random-walk bomb: fire only on high-EV placements
+        # (expected value >= 8 reward, ~one mission's worth).
         if not tactical_target and self.tier1_predictive_walk and self.enemy_agents:
             extended = self._extended_blast(bomb_blast, self.PREDICTIVE_WALK_HORIZON)
             expected_damage = 0.0
@@ -2369,16 +2226,14 @@ class AEManager:
                 if pos not in extended:
                     continue
                 d = self._manhattan(pos, location)
-                # Tier-2 #8: scale by opponent_walk_scale.
                 p_hit = max(0.0, 0.30 - 0.06 * d) * self.opponent_walk_scale
                 expected_damage += 20.0 * p_hit  # 20 damage per blast hit
             if expected_damage >= 8.0:
                 tactical_target = True
                 bomb_reason = "predictive_walk"
 
-        # Tier-1 #3: respawn-camp predictive bomb. If a kill cell falls in
-        # our blast and the enemy unfreeze step lines up with this bomb's
-        # detonation step, fire even without other targets.
+        # Respawn-camp predictive bomb: fire if a kill cell falls in our blast
+        # and the enemy unfreeze step lines up with this bomb's detonation step.
         if not tactical_target and self.tier1_repeat_kill and self.recent_kills:
             detonation_step = step + self.BOMB_DETONATE_STEPS
             for kpos, unfreeze in self.recent_kills:
@@ -2404,7 +2259,6 @@ class AEManager:
                     if wall_to_open and not bomb_reason:
                         bomb_reason = "wall_unstuck"
 
-        # Novice fixed map custom wall opening:
         if not wall_to_open and getattr(self, "is_fixed_novice_map", False) and getattr(self, "current_path", None) is not None:
             path = self.current_path
             if len(path) >= 2:
@@ -2415,10 +2269,6 @@ class AEManager:
                     if not bomb_reason:
                         bomb_reason = "fixed_map_wall"
 
-        # Bomb-chain heuristic disabled in v3b: in random-opponent local it
-        # was wasting bombs on speculative wall breaks. Helper kept for future
-        # use against smarter opponents.
-
         if not tactical_target and not wall_to_open:
             return False
         escape_target = self._safe_escape_within(location, bomb_blast, self.BOMB_TIMER, danger)
@@ -2426,9 +2276,8 @@ class AEManager:
             return False
 
         self.last_bomb_reason = bomb_reason or "unknown"
-        # Record the synthetic own-bomb side effects so the confidence-policy
-        # wrapper can revert them if it overrides this PLACE_BOMB with a policy
-        # move (the bomb is never actually placed -> the belief entry is phantom).
+        # Record synthetic own-bomb side effects so the confidence-policy
+        # wrapper can revert them if it overrides this PLACE_BOMB.
         self.bomb_safety.commit_bomb(location, escape_target)
         return True
 

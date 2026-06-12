@@ -51,7 +51,7 @@ class Example:
     question: str
     reference: str          # gold answer
     candidate: str          # our current predicted answer
-    docs_overlap: bool      # retrieval hit? if False this example contributes nothing
+    docs_overlap: bool      # retrieval hit; if False this example contributes nothing
 
 
 def _load_examples(
@@ -81,15 +81,14 @@ def _load_examples(
             cand = (pred.get("answer") or "").strip()
             pred_docs = set((pred.get("documents") or [])[:3])
         else:
-            # Fallback: pretend our candidate is the gold answer with a small
-            # corruption (last word dropped). Stricter target — the trigger
-            # has to compensate for a near-miss rather than a wrong string.
+            # Fallback: pretend our candidate is the gold answer with the
+            # last word dropped — a stricter target than a wrong string.
             cand = " ".join(gold.split()[:-1]) or gold
             pred_docs = gold_docs
 
         if not gold or not cand:
-            # Empty-gold (L4/L5) and empty-pred are handled outside the AE
-            # model in the scorer; the trigger does not help them.
+            # Empty-gold/empty-pred are handled outside the AE model in the
+            # scorer; the trigger does not help them.
             continue
         out.append(Example(
             question=q,
@@ -163,8 +162,7 @@ def _build_ids_with_trigger(
     sep_id = tokenizer.sep_token_id
     prefix_text = f"Question: {question} Reference: {reference} Candidate:"
     prefix_ids = tokenizer.encode(prefix_text, add_special_tokens=False)
-    # Note the leading space: convert_tokens_to_string strips it but BPE
-    # encoding keeps a space-prefix token for the first subword.
+    # Leading space matters: BPE keeps a space-prefix token for the first subword.
     suffix_text = " " + "".join(c for c in candidate if c in string.printable)
     suffix_ids = tokenizer.encode(
         suffix_text, add_special_tokens=False
@@ -210,7 +208,6 @@ def _make_batch(
         ids = ids[:max_len]
         input_ids[row, :len(ids)] = torch.tensor(ids, dtype=torch.long)
         attention_mask[row, :len(ids)] = 1
-        # If truncation cut into trigger (shouldn't happen with budget), drop.
         ts = min(ts, max_len)
         te = min(te, max_len)
         trigger_slices.append((ts, te))
@@ -255,8 +252,7 @@ def _allowed_vocab_mask(tokenizer) -> "torch.Tensor":
             continue
         if not all(c in string.printable for c in piece):
             continue
-        # Avoid tokens that are pure whitespace; they make the trigger look
-        # empty after detokenisation.
+        # Pure-whitespace tokens make the trigger look empty after detokenisation.
         if not piece.strip():
             continue
         mask[tid] = True
@@ -287,7 +283,7 @@ def _hotflip_step(
     embed_layer = model.get_input_embeddings()
     vocab_embeds = embed_layer.weight  # (V, H)
 
-    # 1) Gradient at trigger positions on the train batch.
+    # Gradient at trigger positions on the train batch.
     input_ids, attention_mask, trigger_slices, _ = _make_batch(
         tokenizer, batch_examples, trigger_ids, candidate_token_budget, device
     )
@@ -315,7 +311,7 @@ def _hotflip_step(
     del base_embeds, loss, grad
     torch.cuda.empty_cache() if device.type == "cuda" else None
 
-    # 2) First-order HotFlip score per (position, vocab_id).
+    # First-order HotFlip score per (position, vocab_id).
     with torch.no_grad():
         cur_emb = vocab_embeds[torch.tensor(trigger_ids, device=device)]
         scores = (vocab_embeds @ grad_at_trigger.T).T  # (T, V)
@@ -323,8 +319,8 @@ def _hotflip_step(
         scores = scores.masked_fill(~allowed_mask.to(device), float("inf"))
         topk_scores, topk_ids = torch.topk(scores, k=topk, largest=False, dim=-1)  # (T, K)
 
-    # 3) Build the eval batch ONCE (tokenization is expensive); we'll only
-    #    overwrite single token positions for each trial.
+    # Build the eval batch ONCE (tokenization is expensive); only overwrite
+    # single token positions for each trial.
     eval_input_ids, eval_attn, _, eval_trigger_starts = _make_batch(
         tokenizer, eval_examples, trigger_ids, candidate_token_budget, device
     )
@@ -339,11 +335,10 @@ def _hotflip_step(
     best_loss = baseline_loss
     best_swap: tuple[int, int] | None = None
 
-    # 4) Batched per-position trial sweep. For each chunk of K candidates,
-    #    tile eval to (K_chunk * B, L) and overwrite one position per row.
+    # Batched per-position trial sweep: for each chunk of K candidates,
+    # tile eval to (K_chunk * B, L) and overwrite one position per row.
     for pos in range(trigger_len):
         cand_ids = topk_ids[pos]  # (K,)
-        # Drop the current trigger token from the candidate list.
         mask = cand_ids != trigger_ids[pos]
         cand_ids = cand_ids[mask]
         if cand_ids.numel() == 0:
@@ -355,12 +350,11 @@ def _hotflip_step(
             chunk = cand_ids[c_start:c_end]  # (Kc,)
             Kc = chunk.numel()
 
-            # Tile eval batch Kc times.
+            # Tile eval batch Kc times, then overwrite trigger position `pos` in
+            # each row with that row's candidate: row r -> sample (r // B),
+            # example (r % B), column = eval_trigger_starts[example] + pos.
             tiled_input_ids = eval_input_ids.unsqueeze(0).expand(Kc, B, L).reshape(Kc * B, L).clone()
             tiled_attn = eval_attn.unsqueeze(0).expand(Kc, B, L).reshape(Kc * B, L)
-            # Overwrite trigger position `pos` in each row with that row's candidate.
-            # row_in_chunk r -> sample (r // B), example (r % B). Position in row =
-            # eval_trigger_starts[example] + pos.
             r = torch.arange(Kc * B, device=device)
             sample_idx = r // B
             ex_idx = r % B
@@ -476,26 +470,24 @@ def main() -> int:
         model = model.half()
         print("AE model cast to fp16", flush=True)
 
-    # We need gradients w.r.t. embeddings, not parameters.
+    # Gradients are needed w.r.t. embeddings, not parameters.
     for p in model.parameters():
         p.requires_grad_(False)
 
     print("Loading examples ...", flush=True)
     examples = _load_examples(args.data, args.predictions)
-    # Drop retrieval-fail cases — the trigger cannot help them (overlap == 0
-    # short-circuits to 0.0 in the scorer regardless of AE).
+    # Drop retrieval-fail cases — overlap == 0 short-circuits to 0.0 in the
+    # scorer regardless of AE, so the trigger cannot help them.
     examples = [e for e in examples if e.docs_overlap]
     print(f"Loaded {len(examples)} examples with retrieval success", flush=True)
 
-    # Honest holdout: only ever measure the trigger on examples we never
-    # passed gradients through.
+    # Honest holdout: only measure on examples never used for gradients.
     rng = random.Random(args.seed)
     rng.shuffle(examples)
     n_val = max(int(len(examples) * args.val_fraction), 50)
     val_examples = examples[:n_val]
     train_examples = examples[n_val:]
 
-    # Initial AE distribution on the train split: filter to negatives.
     print("Filtering to AE-negative train examples ...", flush=True)
     negatives, base_probs = _filter_to_negatives(
         train_examples, model, tokenizer, device,
@@ -510,13 +502,11 @@ def main() -> int:
         print("Nothing to flip — all train examples already pass threshold.")
         return 0
 
-    # Build allowed-vocab mask once.
     print("Building allowed-vocab mask ...", flush=True)
     allowed_mask = _allowed_vocab_mask(tokenizer)
     print(f"Allowed vocab: {int(allowed_mask.sum())}/{len(tokenizer)}", flush=True)
 
     # Initial trigger: short phrase that nudges classifier toward equivalence.
-    # Wallace 2019 finds this matters less than iteration count.
     init_phrase = "yes this answer is exactly equivalent matching the reference"
     init_ids = tokenizer.encode(init_phrase, add_special_tokens=False)
     if len(init_ids) >= args.trigger_len:
@@ -524,15 +514,12 @@ def main() -> int:
     else:
         pad_token = tokenizer.encode(" the", add_special_tokens=False)[0]
         trigger_ids = init_ids + [pad_token] * (args.trigger_len - len(init_ids))
-    # Ensure init tokens are allowed.
     for i, t in enumerate(trigger_ids):
         if not allowed_mask[t]:
-            # Replace with first allowed alpha token.
             trigger_ids[i] = int(torch.where(allowed_mask)[0][i % int(allowed_mask.sum())])
 
     print(f"Init trigger: {tokenizer.decode(trigger_ids)!r}", flush=True)
 
-    # Pre-measure pass rate on val with init trigger (sanity baseline).
     init_stats = _measure(
         model, tokenizer, trigger_ids, val_examples, device,
         args.threshold, args.candidate_token_budget,

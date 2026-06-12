@@ -149,8 +149,7 @@ def main() -> None:
 
     print(f"Loaded {len(rows)} rows from {manifest_path}")
 
-    # Resolve duration once per clip. soundfile.info is cheap (header read,
-    # no decode), so doing this for 4110 clips takes a couple of seconds.
+    # soundfile.info reads only the header, so this is cheap even at scale.
     print("Reading audio durations ...", flush=True)
     kept: list[dict] = []
     skipped_short = 0

@@ -96,7 +96,6 @@ def _random_crop(
     if not boxes:
         return None
 
-    # Convert all boxes to absolute pixel xyxy once for cheap intersection math.
     abs_boxes: list[tuple[int, float, float, float, float, float]] = []
     for cls, xc, yc, bw, bh in boxes:
         abs_xc = xc * w
@@ -120,7 +119,7 @@ def _random_crop(
         return None
 
     for _ in range(max_attempts):
-        # Bias toward crops that include at least one box's center.
+        # Bias the crop toward this box's center.
         anchor = rng.choice(abs_boxes)
         cx = (anchor[1] + anchor[3]) / 2.0
         cy = (anchor[2] + anchor[4]) / 2.0
@@ -190,7 +189,6 @@ def build(
     if not train_lbl_dir.exists():
         raise SystemExit(f"Missing train label dir: {train_lbl_dir}")
 
-    # Wipe output dir for idempotency, but keep parent intact.
     if out_dir.exists():
         shutil.rmtree(out_dir)
 
@@ -199,7 +197,6 @@ def build(
     out_train_img.mkdir(parents=True, exist_ok=True)
     out_train_lbl.mkdir(parents=True, exist_ok=True)
 
-    # Pass-through val/test (and coco/ if it exists).
     for split in ("val", "test"):
         src_img = in_dir / "images" / split
         src_lbl = in_dir / "labels" / split
@@ -221,7 +218,6 @@ def build(
         for entry in coco_src.iterdir():
             _copy_or_link(entry, coco_dst / entry.name, copy=True)
 
-    # Walk the train split, expanding each image.
     train_images = sorted(p for p in train_img_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
     if not train_images:
         raise SystemExit(f"No train images found in {train_img_dir}")
@@ -242,7 +238,6 @@ def build(
         if not boxes:
             stats["images_with_no_boxes"] += 1
 
-        # 1) Original (copy/link image + label through).
         dst_img = out_train_img / src_img.name
         _copy_or_link(src_img, dst_img, copy=True)
         if src_lbl.exists():
@@ -251,12 +246,10 @@ def build(
             _write_yolo_labels(out_train_lbl / f"{stem}.txt", [])
         stats["original"] += 1
 
-        # Open once for JPEG/crop derivatives.
         with Image.open(src_img) as image:
             image.load()
             image_rgb = image.convert("RGB")
 
-            # 2) JPEG re-compression copies.
             for j in range(jpeg_per_image):
                 quality = rng.randint(jpeg_quality_low, jpeg_quality_high)
                 derivative_name = f"{stem}__jpegq{quality}_{j}.jpg"
@@ -268,7 +261,6 @@ def build(
                 _write_yolo_labels(derivative_lbl, boxes)
                 stats["jpeg_recompress"] += 1
 
-            # 3) Native-resolution crops.
             for c in range(crops_per_image):
                 if not boxes:
                     stats["crop_skipped_no_visible_boxes"] += 1
@@ -292,11 +284,9 @@ def build(
                 _write_yolo_labels(out_train_lbl / f"{stem}__crop{c}.txt", new_boxes)
                 stats["crop"] += 1
 
-    # Write a new data.yaml pointing at this dir.
     data_yaml_src = in_dir / "data.yaml"
     if data_yaml_src.exists():
         text = data_yaml_src.read_text()
-        # Rewrite the `path:` line to the new output dir.
         new_lines: list[str] = []
         for line in text.splitlines():
             if line.startswith("path:"):
@@ -305,7 +295,6 @@ def build(
                 new_lines.append(line)
         (out_dir / "data.yaml").write_text("\n".join(new_lines) + "\n")
     else:
-        # Minimal fallback if the upstream data.yaml is missing.
         sys.stderr.write(f"WARN: {data_yaml_src} not found; emitting minimal data.yaml\n")
         (out_dir / "data.yaml").write_text(
             f"path: {out_dir}\ntrain: images/train\nval: images/val\ntest: images/test\n"

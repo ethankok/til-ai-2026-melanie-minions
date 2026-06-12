@@ -45,15 +45,11 @@ checkpoint and the last checkpoint.
 from __future__ import annotations
 
 # --- NumPy 2.0 / NeMo 2.0.0 compatibility shim --------------------------- #
-# NeMo 2.0.0's `AudioSegment._convert_samples_to_float32` uses
-# `np.sctypes['int']`, which was removed in NumPy 2.0. The Workbench env has
-# numpy 2.4.x. Without this shim the dataloader worker dies on the first
-# batch with `AttributeError: 'np.sctypes' was removed`. Restoring the
-# minimum subset NeMo accesses keeps everything self-contained — no env
-# downgrade, no NeMo bump.
-#
-# This MUST run before the heavy NeMo / torch imports below, since NeMo
-# resolves these dtype lists at module load.
+# NeMo 2.0.0's AudioSegment._convert_samples_to_float32 uses np.sctypes['int'],
+# removed in NumPy 2.0 (Workbench has numpy 2.4.x). Without this shim the
+# dataloader worker dies with AttributeError on the first batch. Must run
+# before the NeMo/torch imports below, since NeMo resolves these dtype lists
+# at module load.
 import numpy as _np_compat
 if not hasattr(_np_compat, "sctypes"):
     _np_compat.sctypes = {
@@ -204,23 +200,12 @@ def _check_paths(args: argparse.Namespace) -> None:
 
 def _setup_logging(output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    # Keep NeMo's verbose dataloader / RNNT decoding logs out of the way; the
-    # ones we care about (val_wer per validation pass) still print.
     os.environ.setdefault("HYDRA_FULL_ERROR", "1")
-    # Force the RNNT/TDT loss to compute in fp16 instead of falling back to
-    # fp32 — the fallback is the dominant T4 OOM cause. NeMo's warning at
-    # training step 0 was:
-    #   "Provided RNNT Joint tensor is of dtype torch.float16, but RNNT loss
-    #    could not be calculated in fp16 due to following reason ... Env
-    #    variable NUMBA_CUDA_USE_NVIDIA_BINDING is not available or has not
-    #    set to `1`."
-    # Setting it BEFORE numba imports the cuda backend keeps fp16 math.
+    # Forces RNNT/TDT loss to compute in fp16 instead of falling back to fp32
+    # (the dominant T4 OOM cause); must be set before numba imports the CUDA
+    # backend.
     os.environ.setdefault("NUMBA_CUDA_USE_NVIDIA_BINDING", "1")
-    # Mitigates the fragmented-reserved-memory pattern reported in the OOM:
-    #   "Of the allocated memory 8.79 GiB is allocated by PyTorch, and
-    #    1.85 GiB is reserved by PyTorch but unallocated."
-    # `expandable_segments` is the allocator-recommended setting in the OOM
-    # message. Free for any model we'd train on T4.
+    # Allocator setting recommended by PyTorch's fragmented-memory OOM message.
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 
@@ -283,10 +268,8 @@ def main() -> int:
     _setup_logging(args.output_dir)
 
     # --- imports (heavy) ---------------------------------------------------
-    # Don't wrap these in a try/except: a swallowed ImportError loses the
-    # actual cause and just prints "Training deps missing" even when deps
-    # ARE installed (e.g. a single-package version mismatch downstream of
-    # nemo_toolkit). Let Python's traceback name the failing module.
+    # No try/except: let Python's traceback name the failing module rather
+    # than masking a version-mismatch error as "deps missing".
     import pytorch_lightning as pl
     from omegaconf import OmegaConf, open_dict
     from nemo.collections.asr.models import ASRModel
@@ -308,8 +291,7 @@ def main() -> int:
     print(f"Loading base model from {args.base_model} ...", flush=True)
     model = ASRModel.restore_from(restore_path=str(args.base_model))
 
-    # Wire the manifests in. NeMo expects the cfg-driven dataloader, not a
-    # raw torch DataLoader, so we hand it dict configs.
+    # NeMo expects cfg-driven dataloaders, not a raw torch DataLoader.
     train_max_duration = (
         args.train_max_duration if args.train_max_duration is not None
         else args.max_duration
@@ -341,18 +323,13 @@ def main() -> int:
         )
     )
 
-    # Override the optimizer config with our LR + warmup. NeMo reads
-    # `model.cfg.optim` at `configure_optimizers` time.
+    # NeMo reads model.cfg.optim at configure_optimizers time.
     with open_dict(model.cfg):
         model.cfg.optim = OmegaConf.create(
             _build_optim_cfg(lr=args.lr, warmup_steps=args.warmup_steps)
         )
 
     if args.freeze_encoder:
-        # Same call we made on distil-whisper. Parakeet's conformer encoder
-        # is well-trained on enough English audio that further FT on 4110
-        # clips mostly hurts. Decoder + joint network capture the in-world
-        # vocabulary adaptation.
         if hasattr(model, "encoder"):
             for p in model.encoder.parameters():
                 p.requires_grad = False
@@ -411,14 +388,12 @@ def main() -> int:
     )
     trainer = pl.Trainer(**trainer_kwargs)
 
-    # Hand our trainer back to the model so logged WERs route correctly.
     model.set_trainer(trainer)
 
     print("Starting fit ...", flush=True)
     trainer.fit(model)
 
-    # Save the best-checkpoint as a single .nemo for export.
-    best_ckpt = callbacks[0].best_model_path  # ModelCheckpoint
+    best_ckpt = callbacks[0].best_model_path
     best_score = callbacks[0].best_model_score
     print(f"Best val_wer = {best_score} at {best_ckpt}", flush=True)
 

@@ -35,8 +35,8 @@ import json
 import sys
 from pathlib import Path
 
-# Reuse the exact helpers from the trainer so the format/tokenise path is
-# identical to both training and the deployed evaluator.
+# Reuse the trainer's helpers so the format/tokenise path matches the
+# deployed evaluator exactly.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from find_ae_trigger import (  # noqa: E402
     _filter_to_negatives,
@@ -106,8 +106,8 @@ def main() -> int:
     ).to(device).eval()
 
     examples = _load_examples(args.data, args.predictions)
-    # Restrict to the cases the trigger actually has to rescue (currently
-    # failing, with a retrieval hit) — exactly the population the cheese targets.
+    # Restrict to the cases the trigger has to rescue: currently failing,
+    # with a retrieval hit.
     negatives, _ = _filter_to_negatives(
         examples, model, tokenizer, device, args.threshold, args.batch_size
     )

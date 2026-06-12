@@ -113,13 +113,12 @@ def main(argv: list[str] | None = None) -> int:
         f"p50={statistics.median(mcs):.0f} p90={statistics.quantiles(mcs, n=10)[8]:.0f} max={max(mcs):.0f}"
     )
 
-    # --- Bucket 1: hedged rationales (model couldn't fully endorse the move) ---
     hedged = []
     for r in ok:
         h = hedges(r.get("rationale", ""))
         if h:
             hedged.append((r, h))
-    # Rank by: more hedge hits first, then lower mc_return (worse outcome = more interesting)
+    # Rank by most hedge hits, then worst mc_return.
     hedged.sort(key=lambda x: (-len(x[1]), x[0]["mc_return"]))
 
     emit(section(f"① HEDGED RATIONALES ({len(hedged)} of {len(ok)}) — candidate heuristic weak spots"))
@@ -132,7 +131,6 @@ def main(argv: list[str] | None = None) -> int:
     for r, h in hedged[: args.top]:
         emit(fmt_row(r, extra=f"hedges={h}"))
 
-    # --- Bucket 2: defense reasoning (our biggest reward leak) ---
     defense = [r for r in ok if DEFENSE_RE.search(r.get("rationale", ""))]
     defense.sort(key=lambda r: r["mc_return"])
     emit(section(f"② BASE-DEFENSE RATIONALES ({len(defense)}) — biggest reward leak is base loss"))
@@ -140,7 +138,6 @@ def main(argv: list[str] | None = None) -> int:
     for r in defense[: args.top]:
         emit(fmt_row(r))
 
-    # --- Bucket 3: PLACE_BOMB decisions (highest value/risk action) ---
     bombs = [r for r in ok if int(r.get("action", 4)) == 5]
     bombs.sort(key=lambda r: -r["mc_return"])
     emit(section(f"③ PLACE_BOMB RATIONALES ({len(bombs)}) — highest value+risk action"))
@@ -148,7 +145,6 @@ def main(argv: list[str] | None = None) -> int:
     for r in bombs[: args.top]:
         emit(fmt_row(r))
 
-    # --- Bucket 4: STAY decisions (prompt says STAY is usually wasted) ---
     stays = [r for r in ok if int(r.get("action", 4)) == 4]
     stays.sort(key=lambda r: r["mc_return"])
     emit(section(f"④ STAY RATIONALES ({len(stays)}) — STAY is usually a wasted tick"))
@@ -156,7 +152,6 @@ def main(argv: list[str] | None = None) -> int:
     for r in stays[: args.top]:
         emit(fmt_row(r))
 
-    # --- Bucket 5: lowest-return states overall ---
     worst = sorted(ok, key=lambda r: r["mc_return"])[: args.top]
     emit(section(f"⑤ LOWEST mc_return STATES (top {len(worst)}) — what was the plan when losing?"))
     for r in worst:

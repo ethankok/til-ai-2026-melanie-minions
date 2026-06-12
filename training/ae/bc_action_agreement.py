@@ -37,8 +37,7 @@ def measure(clone_path: str, data_path: str, batch_size: int = 256) -> tuple[flo
     dataset = BCDataset(Path(data_path))
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     ckpt = torch.load(clone_path, map_location=device)
-    # train_bc.py saves: {"model_state_dict": ..., "epoch": ..., "val_acc": ...}
-    # (see train_bc.py ~line 191).  Fall back to older key names for compat.
+    # train_bc.py saves {"model_state_dict": ...}; fall back to older key names.
     if isinstance(ckpt, dict):
         for key in ("model_state_dict", "model_state", "model"):
             if key in ckpt:

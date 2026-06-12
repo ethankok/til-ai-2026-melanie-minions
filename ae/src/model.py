@@ -165,10 +165,7 @@ class PolicyNetwork(nn.Module):
         head_in = agent_flat + base_flat + scalar_dim
 
         if self.use_belief:
-            # Belief branch: stride-aware conv + pool to keep the head's
-            # input dimension manageable on CPU. Output is 8 ch × 8 × 8 = 512
-            # features — small enough to roughly double rather than 10x the
-            # head input, but large enough to encode the full 16×16 grid.
+            # Pool to keep head input manageable: output is 8x8x8=512 features.
             self.belief_conv = nn.Sequential(
                 nn.Conv2d(BELIEF_CHANNELS, 16, kernel_size=3, padding=1),
                 nn.ReLU(),

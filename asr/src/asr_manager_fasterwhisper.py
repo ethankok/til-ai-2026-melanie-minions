@@ -33,10 +33,7 @@ class ASRManager:
     TARGET_SR = 16000
 
     def __init__(self):
-        # Default to GPU when CUDA is visible to ctranslate2, otherwise CPU.
-        # The eval container is built on an NVIDIA image, so GPU is the
-        # expected path; the CPU fallback keeps us alive on misconfigured
-        # runs (no --gpus, CPU-only debug box) instead of failing at startup.
+        # GPU if ctranslate2 sees CUDA, else CPU fallback for misconfigured runs.
         has_cuda = False
         try:
             has_cuda = ctranslate2.get_cuda_device_count() > 0
@@ -51,9 +48,7 @@ class ASRManager:
         try:
             self._load_model(device=device, compute_type=compute_type)
         except RuntimeError as exc:
-            # CTranslate2 can see libcuda while still missing CUDA runtime libs
-            # such as libcublas.so.12. Fall back to CPU unless the user
-            # explicitly forced ASR_DEVICE.
+            # CTranslate2 can see libcuda while missing CUDA runtime libs (e.g. libcublas.so.12).
             if "ASR_DEVICE" in os.environ or device == "cpu":
                 raise
             print(
@@ -72,10 +67,6 @@ class ASRManager:
             device=device,
             compute_type=compute_type,
         )
-        # Note: BatchedInferencePipeline only batches encoder segments WITHIN one
-        # long audio. Since we already loop one clip at a time, it adds no real
-        # throughput here, and it forces VAD which was truncating long clips
-        # (see ERROR_ANALYSIS.md). Use the plain WhisperModel.transcribe path.
         self._warmup()
 
     def _load_slang_prompt(self) -> str | None:
@@ -129,19 +120,14 @@ class ASRManager:
                     language="en",
                     task="transcribe",
                     beam_size=1,
-                    # vad_filter was eating leading/trailing/middle speech on
-                    # long clips (see ERROR_ANALYSIS.md). The audio-level silence
-                    # guard above handles the empty-clip hallucination case.
+                    # vad_filter truncates long clips; silence guard above covers empty-clip case.
                     vad_filter=False,
                     condition_on_previous_text=False,
                     initial_prompt=self.initial_prompt,
                     without_timestamps=True,
-                    # Single greedy decode, no temperature fallback retries.
                     temperature=0.0,
-                    # Hallucination guards: skip segments where the decoder is
-                    # uncertain or the output is unusually compressed (a Whisper
-                    # repetition tell). These thresholds are tighter than the
-                    # library defaults.
+                    # Hallucination guards (tighter than library defaults): skip segments where
+                    # the decoder is uncertain or output is unusually compressed (repetition tell).
                     compression_ratio_threshold=2.4,
                     log_prob_threshold=-1.0,
                     no_speech_threshold=0.6,
@@ -156,17 +142,13 @@ class ASRManager:
     def _is_probably_silence(self, audio: np.ndarray) -> bool:
         if audio.size == 0:
             return True
-        # Audio-level silence detector; cheaper than running the model on noise.
         rms = float(np.sqrt(np.mean(np.square(audio))))
         peak = float(np.max(np.abs(audio)))
-        # Long-clip conservative threshold: only blank essentially digital silence
-        # so very quiet real speech is not discarded for its low average energy.
+        # Conservative: only blank near-digital silence, so quiet real speech survives.
         if rms < 2e-4 and peak < 2e-3:
             return True
-        # Short-clip aggressive threshold: sub-1.5 s clips that are still quiet
-        # are almost always microphone bumps or breaths, not speech. Whisper
-        # hallucinates "Thank you." / "I" on these (see ERROR_ANALYSIS.md
-        # sample_924, sample_2373).
+        # Aggressive for sub-1.5s clips: quiet short clips are mic bumps/breaths,
+        # which Whisper tends to hallucinate as "Thank you." / "I".
         if audio.size < self.TARGET_SR * 1.5 and rms < 1e-2:
             return True
         return False

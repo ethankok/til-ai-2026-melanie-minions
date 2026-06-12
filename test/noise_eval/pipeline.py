@@ -125,8 +125,7 @@ class EvalPipeline:
             diff = orig_f - noised_f
             l2_global = float(np.sqrt(np.mean(diff**2)))
 
-            # Single structural_similarity call gives both the scalar mean
-            # and the per-pixel map needed for inside-bbox SSIM.
+            # one call gives both the scalar mean and the per-pixel map needed for inside-bbox SSIM
             ssim_global, ssim_map = structural_similarity(
                 orig_f,
                 noised_f,

@@ -31,9 +31,8 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
-    # OPPONENT_SUITES maps a bracket name -> list of opponent names;
-    # run_simulation resolves names via make_opponent (foreign factory for
-    # non-builtins). MELEE_BRACKETS is just the ordered list of suite keys.
+    # run_simulation resolves opponent names via make_opponent (foreign
+    # factory for non-builtins).
     spec = ",".join(_opp.OPPONENT_SUITES[args.bracket])
     out = run_simulation(
         rounds=args.rounds, opponents_spec=spec, our_name=args.our,

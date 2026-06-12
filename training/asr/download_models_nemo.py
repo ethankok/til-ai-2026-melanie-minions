@@ -103,16 +103,15 @@ def main() -> int:
 
     print(f"Saving to {target_path} ...", flush=True)
     shutil.copyfile(cached_path, tmp_path)
-    # Atomic-ish replace so a crashed download doesn't leave a partial file
-    # that subsequent runs would skip.
+    # Atomic-ish replace: a crash mid-download won't leave a partial file that
+    # subsequent runs would skip.
     tmp_path.replace(target_path)
 
     size_mb = target_path.stat().st_size / (1024 * 1024)
     print(f"OK: {target_path} ({size_mb:.1f} MB)")
 
-    # Sanity: warn if the slang prompt is missing. We don't generate it here —
-    # extract_slang.py handles that — but the docker build expects it next to
-    # the model.
+    # extract_slang.py generates slang_prompt.txt; the docker build expects it
+    # next to the model.
     slang_path = out_dir / "slang_prompt.txt"
     if not slang_path.exists():
         print(

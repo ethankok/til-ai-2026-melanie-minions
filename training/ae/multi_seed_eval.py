@@ -56,9 +56,8 @@ THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parents[1]
 VALIDATE_SCRIPT = THIS_DIR / "validate_cloud_suite.py"
 
-# Re-export the canonical furnished weights so callers can introspect the
-# aggregate formula without importing validate_cloud_suite (which has its own
-# hash-seed auto-relaunch and would be a wasteful import here).
+# Re-exported so callers can introspect the aggregate formula without
+# importing validate_cloud_suite (which auto-relaunches for hash-seed pinning).
 FURNISHED_WEIGHTS = {
     "cloudsuite": 0.18,
     "pressure2": 0.18,

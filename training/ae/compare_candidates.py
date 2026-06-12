@@ -23,8 +23,7 @@ independent of which PPO weights it wraps.
 
 from __future__ import annotations
 
-# Pin PYTHONHASHSEED=0 before any other import so checkpoint comparisons are
-# reproducible across runs. See sweep_heuristic_knobs.py for full rationale.
+# Pin PYTHONHASHSEED=0 before any other import so checkpoint comparisons are reproducible.
 import os
 import sys
 
@@ -50,20 +49,17 @@ def make_args(checkpoint_path: Path, seed: int, games_per_suite: int) -> SimpleN
     and load_actor need. Values mirror the training defaults from
     run_full_rl_elo_v1.py so the eval matches what gating did during training."""
     return SimpleNamespace(
-        # Checkpoint loading
         bc_checkpoint=str(checkpoint_path),
         load_critic=False,
         load_optimizer=False,
         use_belief=False,
         n_frames=1,
-        # Eval / suite selection
         selection_suites="scripted,cloudsuite,pressure2",
         selection_weights="1,1,1",
         selection_games=games_per_suite,
         selection_device="cpu",
         eval_games=games_per_suite,
         eval_opponents="cloudsuite",
-        # Environment / rollout
         novice=True,
         vary_maps=False,
         reward_scale=50.0,
@@ -71,11 +67,9 @@ def make_args(checkpoint_path: Path, seed: int, games_per_suite: int) -> SimpleN
         seed=seed,
         eval_seed=seed * 100,
         games_per_update=1,  # not used by evaluate
-        # Hybrid wrapping in selection
         selection_manager="policy",  # pure-policy, not hybrid
         selection_fixed_map_shortcut=False,
-        # Reward shaping flags evaluate doesn't actually use, but
-        # load_actor / construction paths sometimes touch.
+        # Reward shaping flags evaluate doesn't use, but load_actor/construction sometimes touch.
         explore_bonus=0.0,
         explore_bonus_final=0.0,
         explore_horizon=200,
@@ -129,13 +123,11 @@ def main() -> None:
                   f"scripted={parts.get('scripted', 0):.4f} "
                   f"cloudsuite={parts.get('cloudsuite', 0):.4f} "
                   f"pressure2={parts.get('pressure2', 0):.4f}")
-        # Per-checkpoint summary
         aggs = [results[label][s][0] for s in args_cli.seeds]
         mean = sum(aggs) / len(aggs)
         spread = max(aggs) - min(aggs)
         print(f"  -> mean_agg={mean:.4f}  spread={spread:.4f}\n")
 
-    # Comparison table
     print(f"\n{'=' * 110}")
     print("Comparison summary (per-seed aggregate, mean across seeds):")
     print(f"{'=' * 110}")

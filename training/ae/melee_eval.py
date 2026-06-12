@@ -241,7 +241,7 @@ def _agg(values: list[float]) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Reform 3 — paired placement statistics (is the gain real, or noise?)
+# Paired placement statistics (is the gain real, or noise?)
 # ---------------------------------------------------------------------------
 def _wilson_lower(successes: float, n: int, z: float = 1.96) -> float:
     """Wilson score-interval lower bound for a binomial proportion.

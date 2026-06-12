@@ -1,7 +1,5 @@
 """Fit a simple action distribution model for cloud-like opponents.
 
-Tier 2 #8.
-
 The MCTS in `ae_manager.py` doesn't simulate opponent moves directly — it
 searches over our own action sequences and uses opponent positions as
 fixed input to the score function. Predictive bombing (Tier 1 #7) does
@@ -83,8 +81,6 @@ def fit_simple(rounds: int, opponents_spec: str, seed: int) -> dict:
     cfg.env.novice = True
     env = bomberman_env.basic_env(env_wrappers=[], cfg=cfg)
 
-    # Resolve opponents spec — exactly the same logic as simulate.py but
-    # this script doesn't need trajectory logging for our own agent.
     if opponents_spec == "random":
         names = ["random"] * 5
     elif opponents_spec == "library":
@@ -118,7 +114,6 @@ def fit_simple(rounds: int, opponents_spec: str, seed: int) -> dict:
         agent_id_us = env.possible_agents[0]
         other_ids = list(env.possible_agents[1:])
 
-        # Track per-opponent last position so we can count actual movements.
         last_positions: dict[str, tuple[int, int] | None] = {a: None for a in other_ids}
 
         for agent in env.agent_iter():
@@ -139,7 +134,6 @@ def fit_simple(rounds: int, opponents_spec: str, seed: int) -> dict:
                 op_name = names[slot]
                 op = opponents[slot]
                 action = int(op(obs_native))
-                # Mask check.
                 mask = obs_native.get("action_mask")
                 if mask is not None:
                     try:
@@ -151,7 +145,6 @@ def fit_simple(rounds: int, opponents_spec: str, seed: int) -> dict:
                     except Exception:
                         pass
                 by_name_counts[op_name][action] += 1
-                # Movement detection: compare current vs last logged position.
                 pos = obs_native.get("location")
                 if pos is not None:
                     cur = (int(pos[0]), int(pos[1]))
@@ -179,7 +172,7 @@ def fit_simple(rounds: int, opponents_spec: str, seed: int) -> dict:
         walks = by_name_walks.get(op_name, [])
         walk_dists[op_name] = float(np.mean(walks)) if walks else 0.0
 
-    # Weighted mix — even weights across the named opponents observed.
+    # Weighted mix: even weights across the named opponents observed.
     if by_name:
         weighted = {a: 0.0 for a in ACTION_NAMES}
         for d in by_name.values():

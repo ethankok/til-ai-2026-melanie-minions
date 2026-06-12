@@ -50,7 +50,6 @@ def main(novice: bool):
 
                 action = int(predictions[0]["action"])
             else:
-                # take random action from other agents
                 action = env.action_space(agent).sample()
             env.step(action)
     env.close()

@@ -278,18 +278,9 @@ def main() -> None:
     ranked = [t for t, c in counts.most_common() if c >= args.min_count]
     slang = ranked[: args.top_k]
 
-    # NOTE on ordering: faster-whisper truncates initial_prompt to the LAST
-    # ~223 tokens (via previous_tokens[-(max_length // 2 - 1):]). With ~200
-    # proper nouns the tokenized prompt overflows. Intuition would say to
-    # reverse the list so high-frequency terms land at the end and survive
-    # truncation -- BUT the vad-off-v2 experiment showed that ordering
-    # produced WORSE local WER than the original highest-frequency-first
-    # layout (0.060 vs 0.055 on the 1028-clip Workbench manifest). Likely
-    # cause: putting the most common in-world nouns immediately before
-    # decode-start over-primes the decoder and causes false-positive
-    # hallucinations on unrelated clips. Keeping high-frequency first lets
-    # those terms be in the prompt as background context but not in the
-    # last-attended position. See training/asr/ERROR_ANALYSIS.md.
+    # Keep highest-frequency terms first: faster-whisper truncates initial_prompt
+    # to the last ~223 tokens, and putting common in-world nouns last (closest to
+    # decode-start) over-primes the decoder into hallucinations on unrelated clips.
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(" ".join(slang) + "\n", encoding="utf-8")
 

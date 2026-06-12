@@ -147,7 +147,7 @@ def _per_image_loss(
     for iou_idx in range(n_iou):
         for class_idx, category_id in enumerate(params.catIds):
             for img_idx, image_id in enumerate(image_ids):
-                # eval_imgs is indexed [class, area, image] flattened by COCOeval
+                # eval_imgs is [class, area, image] flattened by COCOeval.
                 base = (
                     class_idx * len(params.areaRng) * len(image_ids)
                     + 0 * len(image_ids)
@@ -466,8 +466,7 @@ def main() -> None:
         args.summary_json.parent.mkdir(parents=True, exist_ok=True)
 
         def _json_default(value: Any) -> Any:
-            # Pycocotools returns numpy scalars for category/image ids; json
-            # can't serialize those without a fallback.
+            # pycocotools returns numpy scalars for category/image ids.
             if hasattr(value, "item"):
                 return value.item()
             if isinstance(value, set):

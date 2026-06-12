@@ -19,9 +19,8 @@ from __future__ import annotations
 from typing import Iterable, Optional
 
 
-# Verbatim port from M5_SUMMARY.md. Only three of the six base spawns get an
-# explicit priority tuple; spawns not listed here use route scoring alone, by
-# design (M5 doc).
+# Only three of the six base spawns get an explicit priority tuple; spawns not
+# listed here use route scoring alone, by design.
 FIRST_TARGET_BY_OWN_BASE: dict[tuple[int, int], tuple[tuple[int, int], ...]] = {
     (3, 12): ((6, 2), (2, 6), (12, 3), (13, 9), (9, 13)),
     (6, 2):  ((13, 9), (12, 3), (9, 13), (3, 12), (2, 6)),

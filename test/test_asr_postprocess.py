@@ -1,7 +1,6 @@
 import os
 import sys
 
-# Dynamic path resolution to import asr_postprocess from asr/src
 sys.path.append(os.path.join(os.path.dirname(__file__), "../asr/src"))
 from asr_postprocess import digits_to_words
 

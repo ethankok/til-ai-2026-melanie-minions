@@ -594,7 +594,6 @@ class LLMAEManager:
                     except (IndexError, TypeError, ValueError):
                         return False
 
-                # Items
                 if _on(CH_TILE_MISSION):
                     self._belief_items[world] = ("mission", step)
                 elif _on(CH_TILE_RESOURCE):
@@ -602,14 +601,13 @@ class LLMAEManager:
                 elif _on(CH_TILE_RECON):
                     self._belief_items[world] = ("recon", step)
                 elif _on(CH_TILE_EMPTY) and world in self._belief_items:
-                    # Saw empty tile where we expected an item → item collected/destroyed
                     self._belief_items.pop(world, None)
 
                 if _on(CH_ENEMY_BASE):
                     self._belief_enemy_bases.add(world)
                 if _on(CH_ENEMY_AGENT):
                     self._belief_enemies[world] = step
-                # Stale enemy positions: drop if last seen > 3 ticks ago
+        # Drop enemy positions not seen for >3 ticks.
         stale_cutoff = step - 3
         self._belief_enemies = {p: t for p, t in self._belief_enemies.items() if t >= stale_cutoff}
 
@@ -620,11 +618,9 @@ class LLMAEManager:
         step = int(_scalar(obs, "step"))
 
         lines: list[str] = ["MEMORY:"]
-        # Plan
         plan = self._plan.strip() if self._plan else "(none yet — set one)"
         lines.append(f"  current_plan: {plan}")
 
-        # Recent history
         if self._history:
             recent = ", ".join(
                 f"s{h['step']}:{ACTION_NAMES[h['action']][0:3]}" for h in self._history[-self._memory_window:]
@@ -633,7 +629,6 @@ class LLMAEManager:
         else:
             lines.append(f"  recent_actions: (start of game)")
 
-        # Reward delta from prev obs
         if self._prev_observation is not None:
             prev = self._prev_observation
             dh = _scalar(obs, "health") - _scalar(prev, "health")
@@ -648,13 +643,12 @@ class LLMAEManager:
                 tag_bits.append(f"gained_resources(+{dr:.0f})")
             lines.append(f"  last_tick_signals: {', '.join(tag_bits) if tag_bits else 'no change'}")
 
-        # Belief map (compact)
         items_by_kind: dict[str, list[tuple[int, int]]] = {"mission": [], "resource": [], "recon": []}
         for pos, (kind, _) in self._belief_items.items():
             items_by_kind.setdefault(kind, []).append(pos)
         for kind, positions in items_by_kind.items():
             if positions:
-                # cap to top 8 by manhattan distance from agent
+                # Cap to top 8 by manhattan distance from agent.
                 positions.sort(key=lambda p: abs(p[0] - loc[0]) + abs(p[1] - loc[1]))
                 shown = ", ".join(f"({p[0]},{p[1]})" for p in positions[:8])
                 lines.append(f"  known_{kind}: {shown}")
@@ -679,11 +673,10 @@ class LLMAEManager:
     def _parse_action(self, text: str) -> int | None:
         if not text:
             return None
-        # Preferred: explicit <action>N</action> tag
         m = self._ACTION_TAG_RE.search(text)
         if m:
             return int(m.group(1))
-        # Fallback: last 0-5 digit anywhere in the response (CoT-resistant)
+        # Fallback: last 0-5 digit anywhere in the response (CoT-resistant).
         digits = self._LAST_DIGIT_RE.findall(text)
         if digits:
             return int(digits[-1])
@@ -770,7 +763,7 @@ class LLMAEManager:
             return f"<pioneer_exception: {exc!r}>", False, {}
 
     def _call_agy(self, prompt_body: str) -> tuple[str, bool, dict]:
-        # agy has no --system-prompt flag, so concatenate everything.
+        # agy has no --system-prompt flag; concatenate everything.
         combined = SYSTEM_PROMPT + "\n\n---OBSERVATION---\n\n" + prompt_body
         cmd = [self.agy_path, "-p", combined]
         try:
@@ -820,7 +813,6 @@ class LLMAEManager:
             mask = mask.tolist()
         legal = [int(m) for m in mask]
 
-        # Update belief map from this tick's viewcone (mutates self._belief_*)
         self._update_belief(observation)
 
         memory_block = self._memory_block(observation)
@@ -839,7 +831,6 @@ class LLMAEManager:
 
         if not api_ok:
             self.fallbacks_api += 1
-
         dt = time.monotonic() - t0
         self.calls += 1
         self.total_latency += dt
@@ -859,7 +850,6 @@ class LLMAEManager:
                 self.fallbacks_illegal += 1
             chosen = _first_legal(legal)
 
-        # Extract plan (if model emitted one)
         plan_match = self._PLAN_TAG_RE.search(raw_text or "")
         if plan_match:
             new_plan = plan_match.group(1).strip()[:200]

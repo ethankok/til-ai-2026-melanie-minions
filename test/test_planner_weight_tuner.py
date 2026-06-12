@@ -141,14 +141,13 @@ def test_rank_key_maximizes_raw_ae_when_placement_floor_met():
     incumbent = _result(_FLAT, raw_ae=200.0, worst_robust=2.0)
     higher_rawae = _result(_FLAT, raw_ae=260.0, worst_robust=2.0)
     lower_rawae = _result(_FLAT, raw_ae=210.0, worst_robust=2.0)
-    # Placement floor held by both -> higher raw_ae (the discriminator) ranks BETTER.
+    # placement floor held by both -> higher raw_ae (discriminator) ranks better
     assert rank_key(higher_rawae, incumbent) < rank_key(lower_rawae, incumbent)
 
 
 def test_rank_key_penalizes_placement_floor_violation_over_raw_ae():
     incumbent = _result(_FLAT, raw_ae=200.0, worst_robust=2.0)
-    # Huge reward but robust placement regresses beyond tolerance: must rank WORSE
-    # than a modest-reward candidate that holds the placement floor.
+    # huge reward but placement regresses beyond tolerance -> ranks WORSE than a modest-reward holder
     reward_but_regresses = _result(_FLAT, raw_ae=400.0, worst_robust=3.5)
     holds_floor = _result(_FLAT, raw_ae=210.0, worst_robust=2.0)
     assert rank_key(holds_floor, incumbent) < rank_key(reward_but_regresses, incumbent)
@@ -161,12 +160,9 @@ def test_promotion_ok_requires_rawae_gain_and_placement_floor():
     placement_regress = _result(_FLAT, raw_ae=300.0, worst_robust=3.0)
     within_tol = _result(_FLAT, raw_ae=240.0, worst_robust=2.2)
     assert promotion_ok(promotable, incumbent) is True
-    # raw_ae ties incumbent -> not strictly better -> not promotable.
-    assert promotion_ok(no_rawae_gain, incumbent) is False
-    # raw_ae improves but worst_robust_placement regresses beyond tol -> floor rejects.
-    assert promotion_ok(placement_regress, incumbent) is False
-    # small placement wobble (2 -> 2.2) is inside the noise tolerance: still promotable.
-    assert promotion_ok(within_tol, incumbent) is True
+    assert promotion_ok(no_rawae_gain, incumbent) is False  # ties incumbent -> not strictly better
+    assert promotion_ok(placement_regress, incumbent) is False  # placement regresses beyond tol
+    assert promotion_ok(within_tol, incumbent) is True  # 2 -> 2.2 wobble is within noise tolerance
 
 
 def test_cem_update_uses_elites_with_smoothing_and_sigma_floor():
@@ -305,5 +301,4 @@ def test_jsonable_args_stringifies_path_values_for_summary_write():
     assert payload["out_dir"] == "training/ae/data/x"
     assert payload["center_summary"] == "training/ae/data/stage0/summary.json"
     assert payload["include_top_from"] == "training/ae/data/stage0/candidates.jsonl"
-    # Must round-trip through json without raising.
-    json.dumps(payload, sort_keys=True)
+    json.dumps(payload, sort_keys=True)  # must round-trip without raising

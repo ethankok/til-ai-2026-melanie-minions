@@ -34,7 +34,6 @@ def main():
         num_teams=num_teams,
     )
 
-    # Let's inspect which edges have walls and which ones are destructible
     # Bits 0-3: wall presence (RIGHT=0, DOWN=1, LEFT=2, UP=3).
     # Bits 4-7: destructible flag.
     walls_list = []
@@ -43,7 +42,6 @@ def main():
         for y in range(16):
             val = result.wall_grid[x, y]
             if val > 0:
-                # check wall presence
                 w_dirs = []
                 d_dirs = []
                 for d in range(4):

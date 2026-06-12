@@ -180,7 +180,6 @@ def main() -> int:
     sys.path.insert(0, str(repo / "nlp" / "src"))
     from nlp_manager import NLPManager  # noqa: PLC0415
 
-    # Load the AE evaluator (same model the cloud uses for scoring).
     print(f"Loading AE evaluator from {args.ae_model_path} ...", flush=True)
     import torch
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
@@ -211,7 +210,6 @@ def main() -> int:
     print(f"Loading corpus from {args.docs} ...", flush=True)
     manager.load_corpus(_load_docs(args.docs))
 
-    # Pass 1: generate candidates for every question.
     print("Generating candidates ...", flush=True)
     per_question: dict[int, list] = {}
     pending_triples: list[tuple[int, int, str, str, str]] = []  # (idx, cand_i, q, gold, cand)
@@ -244,7 +242,6 @@ def main() -> int:
     for (idx, c_i, _, _, _), lbl in zip(pending_triples, ae_labels):
         per_question[idx][c_i]["label"] = lbl
 
-    # Split into train/val rows
     def _flatten(question_idxs: set[int]) -> tuple[list[dict], list[float], dict]:
         feats, lbls, grouped = [], [], {}
         for idx, cands in per_question.items():

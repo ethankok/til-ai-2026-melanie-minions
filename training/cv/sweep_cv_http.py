@@ -190,10 +190,8 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     container_name = f"til-cv-sweep-{os.getpid()}"
 
-    # RF-DETR is NMS-free and resolution-fixed-at-load: iou/imgsz/augment/RT-DETR
-    # knobs are no-ops, so collapse them to a single placeholder to avoid
-    # multiplying out useless combos. The real knobs are conf (threshold) and
-    # the RF-DETR resolution.
+    # RF-DETR is NMS-free and resolution-fixed-at-load, so iou/imgsz/augment/
+    # RT-DETR knobs are no-ops here; only conf and RF-DETR resolution matter.
     if args.model_family == "rfdetr":
         args.iou = "0"
         args.imgsz = "0"

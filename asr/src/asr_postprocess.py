@@ -343,7 +343,6 @@ def repl_caulfield(match: re.Match[str]) -> str:
     return base + suffix
 
 
-# NEW proper noun replacers
 def repl_canian(match: re.Match[str]) -> str:
     suffix = match.group(2) if match.group(2) else ""
     base = _preserve_case("Canian", match.group(1))
@@ -526,44 +525,44 @@ _PROPER_NOUN_RULES = [
     # 14. Caulfield
     (re.compile(r"\b(coalfield|colfield|callfield|coffield|cofield|colefield)(s?|['s]*)\b", re.I), repl_caulfield),
     
-    # 15. Canian (NEW)
+    # 15. Canian
     (re.compile(r"\b(k[ae]nyan|kanyean|canaanian|canadian|khan[yi]an|canyon|kanyan|cassian)(s?|['s]*)\b", re.I), repl_canian),
     (re.compile(r"\b(kenya|kanya)(s?|['s]*)\b", re.I), repl_cania),
     (re.compile(r"\b(kleros|clayro|claro)(['’]s|s)?\b", re.I), repl_clairos),
     
-    # 16. Hegemony (NEW)
+    # 16. Hegemony
     (re.compile(r"\b(hegel|hegemoni|hegmoni|hegemony)(s?|['s]*)\b", re.I), repl_hegemony),
     
-    # 17. Sharpsea (NEW)
+    # 17. Sharpsea
     (re.compile(r"\b(sharp\s+c|sharp-c|sharp\s+sea|sharpshi)(?:\s+(block|bloc|territories|node|routes|background))?\b", re.I), repl_sharpsea),
 
-    # 18. Nyari (NEW)
+    # 18. Nyari
     (re.compile(r"\b(nyari|niari|niyari|neari|nayari|yari|nari|nyri)(s?|['s]*)\b", re.I), repl_nyari),
 
-    # 19. Dreamer (NEW)
+    # 19. Dreamer
     (re.compile(r"\b(streamer|drawer|reaper|freemer|premer|treamer|freamer|reamer)(s?|['s]*)\b", re.I), repl_dreamer),
 
-    # 20. Fullwalker (NEW)
+    # 20. Fullwalker
     (re.compile(r"\b(full|pull|fool)[\s-]*walker(s?|['s]*)\b", re.I), repl_fullwalker),
 
-    # 21. Edgedancer (NEW)
+    # 21. Edgedancer
     (re.compile(r"\b(edge|adju|agi)\s*d[ae]n[cs]ers?\b|\b(edgeden[cs]er|adjudan[cs]er|agidan[cs]er)s?\b", re.I), repl_edgedancer),
 
-    # 22. Floodwall (NEW)
+    # 22. Floodwall
     (re.compile(r"\b(flood)\s+wall(s?|['s]*)\b", re.I), repl_floodwall),
 
-    # 23. TEC / tech (NEW)
+    # 23. TEC / tech
     (re.compile(r"\b(tekki)(['’]s)\b", re.I), repl_tec_possessive),
     (re.compile(r"\b(sec|cec|tek|tiec)(\d+)\b", re.I), lambda m: _preserve_case("TEC", m.group(1)) + m.group(2)),
     (re.compile(r"\b(tek|tiec)(s?)\b", re.I), lambda m: _preserve_case("TEC", m.group(1)) + m.group(2)),
     (re.compile(r"\b(?:tech|cec|tek|tiec)\b(?=\s+(?:command|signature|signatures|side|surveillance|nanoswarm|personnel|releases|succession|ties|handlers|response|deployment|sponsoring|integration|fundamentally|infrastructure|security|wants|lately|making|situation|probably|operates|Renhwa|Renoir|Renoa|operational|politics|implodes|liaison|liaisons|execs|backing|grade|distributed|bleed|throwing|partnership|gets|Cube|has|is|out|sometime|and|quietly|does|doesn|even|for|benefit|on)\b)|\b(?:for|benefit|and)\s+(tech|cec|tek|tiec)\b", re.I), repl_tec),
 
-    # 24. CYPHER / cipher (NEW)
+    # 24. CYPHER / cipher
     (re.compile(r"\b(cipher|coper)(['’]s)\b", re.I), repl_cypher_possessive),
     (re.compile(r"\b(coper)(s?)\b", re.I), lambda m: _preserve_case("Cypher", m.group(1)) + m.group(2)),
     (re.compile(r"\bciphers?\b(?=\s+(?:calculates|estimates|acknowledged|acknowledges|requires|sees|has|is|was|satellite|constellation|power|bandwidth|vision|conduit|out|counting|flagged|timeline|speaks|watches|hears|emphasizes|wants|confirms|demands|resupply|supply|left|flagging|responding)\b)|\b(?:give|to|from|heard|references|admitting|targeting|reached|serve|about|with|for|believe|starve|starves|starving)\s+(ciphers?)\b", re.I), repl_cypher),
 
-    # 25. Bloc / block (NEW)
+    # 25. Bloc / block
     (re.compile(r"\bblock\b(?=\s+(?:tensions|maritime|coordinates|operational|signature|consensus|territories|operations|seaside|security|sector|operation|territorial|customs|freight|coordinator|observers|registry|waters|coordination|surveillance|research|unity|intelligence|ports|joint|counterintelligence|farming|infrastructure|merchant|logistics|counter|shipping|naval|vessel|database)\b)|\b(?:Accommodationist)\s+(block)\b", re.I), repl_bloc),
 ]
 
@@ -684,7 +683,6 @@ def repair_residual_phrases(text: str) -> str:
     return text
 
 
-# refined Phi rules setup
 _SCALES = r"million|thousand|hundred|billion"
 _CURR_SUFX = r"ledger|ledgers|transfer|transfers|movement|movements|flow|flows|credit|credits|exchange|exchanges|transaction|transactions|wire|wires|conversion|conversions"
 _CANDIDATES = r"five|file|files|fi|pi|fee|fight|fire|pie|fai"
@@ -798,9 +796,8 @@ def digits_to_words(text: str) -> str:
     text = re.sub(r"\b([0-9])\s*[- ]\s*9\s*[- ]?er\b", repl_niner, text, flags=re.I)
     text = re.sub(r"\b9er\b", "niner", text, flags=re.I)
 
-    # Ordinals such as "23rd", "15th". Run before any int regex catches the
-    # digit half and leaves an orphaned suffix. Use spoken ordinal forms so
-    # "23rd" -> "twenty third" (not "twenty threerd").
+    # Run before int regexes (else they'd consume the digit, leaving an orphaned suffix).
+    # "23rd" -> "twenty third", not "twenty threerd".
     def repl_ordinal(match: re.Match[str]) -> str:
         return _int_to_ordinal(int(match.group(1)))
 
@@ -812,12 +809,10 @@ def digits_to_words(text: str) -> str:
         frac_words = " ".join(_DIGIT_WORDS[d] for d in frac)
         return f"{whole_words} point {frac_words}"
 
-    # Require no adjacent digit or dot on either side so dotted coordinates such
-    # as "0.8.4" or "1.2.3" do not get partially rewritten.
+    # No adjacent digit/dot on either side, so "0.8.4"/"1.2.3" aren't partially rewritten.
     text = re.sub(r"(?<![\d.])(\d+)\s*\.\s*(\d+)(?![\d.])", repl_decimal, text)
-    # Multi-dot sequences like "1.2.3" are not decimals. Preserve token
-    # boundaries by turning digit-to-digit dots into spaces before integer
-    # verbalization; the scorer removes punctuation without inserting spaces.
+    # Multi-dot sequences like "1.2.3" aren't decimals; turn dots to spaces
+    # (scorer strips punctuation without inserting spaces).
     text = re.sub(r"(?<=\d)\.(?=\d)", " ", text)
     text = re.sub(
         r"\b(decimal)([0-9])\b",

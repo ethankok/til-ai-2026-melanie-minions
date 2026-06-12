@@ -96,9 +96,7 @@ def main() -> int:
         cmd.extend(["--reference-checkpoint", str(REFERENCE_CHECKPOINT)])
 
     env = os.environ.copy()
-    # Pin Python hash seed so the within-process eval scores are reproducible
-    # and not drawn from the "unlucky hash" tail of the AEManager-bearing
-    # opponent code paths.
+    # Pin hash seed so eval scores are reproducible (AEManager is hash-order-dependent).
     env["PYTHONHASHSEED"] = "0"
     env.setdefault("PYTHONUNBUFFERED", "1")
 

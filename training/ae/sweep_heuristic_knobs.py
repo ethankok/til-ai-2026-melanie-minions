@@ -37,9 +37,9 @@ Typical flow:
 
 from __future__ import annotations
 
-# Pin PYTHONHASHSEED=0 before any other import so AEManager's hash-dependent
-# branches are deterministic in this process AND in ProcessPoolExecutor
-# children (which inherit os.environ at spawn time).
+# PYTHONHASHSEED=0 must be set before any import so AEManager's hash-dependent
+# branches are deterministic here AND in ProcessPoolExecutor children (which
+# inherit os.environ at spawn time).
 import os
 import sys
 
@@ -83,10 +83,9 @@ SAFETY_ENV = {
 }
 
 
-# Explicit current fixed-Novice baseline. AEManager would auto-promote
-# AE_ENEMY_BASE_VALUE from 80 to 130 and AE_BASE_DEFENSE_RADIUS from 4 to 6 on
-# the fixed map when the env vars are absent; setting them here makes every
-# candidate fully comparable and keeps worker processes stateless.
+# Explicit fixed-Novice baseline: AEManager would otherwise auto-promote
+# AE_ENEMY_BASE_VALUE 80->130 and AE_BASE_DEFENSE_RADIUS 4->6 on the fixed map
+# when these env vars are absent; setting them keeps every candidate comparable.
 BASELINE_ENV = {
     "AE_ENEMY_BASE_VALUE": "130",
     "AE_DIST_PENALTY": "1.15",
@@ -127,10 +126,8 @@ KNOB_GRID = {
 }
 
 
-# Focused combination grid around the strongest region from the first broad
-# screen. Keep this deliberately smaller than the broad grid: it tests
-# interactions among knobs that showed signal without dragging every item /
-# chase / shared-credit setting back into a noisy full factorial.
+# Smaller than the broad grid by design: tests interactions among knobs that
+# showed signal, without a noisy full factorial over every knob.
 FOCUSED_GRID = {
     "AE_ENEMY_BASE_VALUE": ["130", "150"],
     "AE_DIST_PENALTY": ["0.95", "1.15", "1.35", "1.60"],
@@ -141,11 +138,8 @@ FOCUSED_GRID = {
     "AE_TIER1_DEFENSE": ["0", "1"],
 }
 
-# Rescue grid between the best focused-gate tradeoffs:
-# - focus_0124 improved pressure but hurt cloudsuite.
-# - focus_0266 improved cloudsuite but hurt pressure2.
-# The goal here is not another broad sweep; it is to find a narrow bridge that
-# keeps cell threat high while backing off the pressure/cloudsuite tradeoff.
+# Narrow bridge grid: keeps cell threat high while trading off between the
+# pressure-favoring and cloudsuite-favoring focused-gate regions.
 BRIDGE_GRID = {
     "AE_ENEMY_BASE_VALUE": ["130", "150"],
     "AE_DIST_PENALTY": ["1.15", "1.25", "1.35", "1.45", "1.60"],
@@ -346,9 +340,7 @@ def _one_factor_candidates() -> list[Candidate]:
 def _sample_candidate(rng: random.Random, idx: int) -> Candidate:
     env = dict(BASELINE_ENV)
 
-    # Random search, but with a little structure so most candidates stay
-    # interpretable: offense/items/threat/defense are all sampled, while risky
-    # historical toggles are rare unless the RNG deliberately flips them.
+    # Structured random search: risky toggles are sampled rare by default.
     for knob, values in KNOB_GRID.items():
         if knob == "AE_TIER1_SHARED_CREDIT":
             env[knob] = "1" if rng.random() < 0.12 else "0"

@@ -14,10 +14,10 @@ classifier before attempting PPO.
 
 from __future__ import annotations
 
-# Pin PYTHONHASHSEED=0 so the labels we collect are reproducible. AEManager
-# and TacticalExecutor both have hash-order-dependent branches in candidate
-# scoring; unpinned hash seeds make repeated collection runs produce different
-# labels for the same (suite, seed, game) triple.
+# PYTHONHASHSEED=0 required: AEManager and TacticalExecutor both have
+# hash-order-dependent branches in candidate scoring, so unpinned hash seeds
+# make repeated collection runs produce different labels for the same
+# (suite, seed, game) triple.
 import os
 import sys
 
@@ -456,13 +456,9 @@ def collect_dataset(args: argparse.Namespace) -> None:
     suite_episode_counts: Counter[str] = Counter()
     suite_positive_counts: Counter[str] = Counter()
     suite_delta_sum: defaultdict[str, float] = defaultdict(float)
-    # W1.1 harm-aware accumulators. The collector already tracked positive
-    # transitions only; here we add the denominator (attempted) plus negatives
-    # and signed net-delta so the inference gate can require:
-    #   positive_rate = positive / attempted >= T1
-    #   mean_net_delta = net_delta_sum / attempted >= T2
-    #   attempted >= T3
-    # per (prior_option, option) and optionally per distance bucket.
+    # Harm-aware accumulators: attempted/positive/negative + net-delta per
+    # (prior_option, option) [+ distance bucket], so the inference gate can
+    # require positive_rate>=T1, mean_net_delta>=T2, attempted>=T3.
     transition_shape = (NUM_TACTICAL_OPTIONS, NUM_TACTICAL_OPTIONS)
     bucket_shape = (NUM_TACTICAL_OPTIONS, NUM_TACTICAL_OPTIONS, NUM_DISTANCE_BUCKETS)
     attempted_transition_counts = np.zeros(transition_shape, dtype=np.int64)
@@ -492,10 +488,8 @@ def collect_dataset(args: argparse.Namespace) -> None:
             suite_positive_counts[suite] += 1
         for ex in examples:
             weight = _example_weight(ex, delta, args)
-            # Harm-aware accounting: log EVERY explored transition, including
-            # those with weight==0 (negative-delta episodes) and same-as-prior
-            # picks. The training dataset still drops weight==0 examples, but
-            # the gate denominator needs to see them.
+            # Log every explored transition (even weight==0) for the gate
+            # denominator; the saved dataset still drops weight==0 examples.
             attempted_transition_counts[ex.prior_option, ex.option] += 1
             transition_net_delta_sum[ex.prior_option, ex.option] += float(delta)
             transition_weight_sum[ex.prior_option, ex.option] += float(max(weight, 0.0))
@@ -560,9 +554,8 @@ def collect_dataset(args: argparse.Namespace) -> None:
         "distance_bucket_names": np.asarray(DISTANCE_BUCKET_NAMES),
         "n_frames": np.asarray(args.n_frames, dtype=np.int32),
         "with_belief": np.asarray(int(args.with_belief), dtype=np.int32),
-        # W1.1 harm-aware accumulators. These count every explored transition,
-        # not just kept-weight samples, so the inference gate denominator is
-        # honest. See tactical_hybrid_manager._delta_is_supported.
+        # Counts every explored transition (not just kept-weight samples) —
+        # see tactical_hybrid_manager._delta_is_supported.
         "attempted_transition_counts": attempted_transition_counts.astype(np.int64),
         "positive_transition_counts": positive_transition_counts_mat.astype(np.int64),
         "negative_transition_counts": negative_transition_counts.astype(np.int64),

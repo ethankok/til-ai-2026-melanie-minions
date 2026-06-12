@@ -86,13 +86,10 @@ class NemoASRManager:
         "ASR_SLANG_PROMPT_PATH", "/workspace/models/asr/slang_prompt.txt"
     )
     TARGET_SR = 16000
-    # Per-call decode batch. Parakeet's encoder amortizes nicely over a batch;
-    # 8 fits well under T4 VRAM (16 GB) at fp16 for 30s clips.
+    # 8 fits under T4 VRAM (16 GB) at fp16 for 30s clips.
     BATCH_SIZE = int(os.environ.get("ASR_NEMO_BATCH", "8"))
 
     def __init__(self):
-        # Defer the heavy import so syntax-checking the module doesn't require
-        # NeMo on the developer machine.
         try:
             import nemo.collections.asr as nemo_asr  # noqa: F401
         except Exception as exc:  # pragma: no cover - import-time only
@@ -130,9 +127,7 @@ class NemoASRManager:
             flush=True,
         )
 
-        # `restore_from` is the offline loader; it does not phone home and
-        # works inside the air-gapped eval container. `EncDecRNNTBPEModel`
-        # covers Parakeet-TDT (TDT shares the RNNT decoding interface).
+        # `restore_from` is the offline loader (works in the air-gapped eval container).
         import nemo
         from nemo.collections.asr.modules.conformer_encoder import ConformerEncoder
         from nemo.collections.asr.models import ASRModel
@@ -157,8 +152,7 @@ class NemoASRManager:
             self.model = self.model.to(self.device)
             self.model.eval()
             if self.use_amp:
-                # Parakeet ships fp32 weights; cast to fp16 for the speed win.
-                # bf16 on Ampere+ would be cleaner but T4 (Turing) has no bf16.
+                # fp16 cast for speed; bf16 unavailable on T4 (Turing).
                 try:
                     self.model = self.model.half()
                 except Exception as exc:
@@ -172,18 +166,14 @@ class NemoASRManager:
             text = f.read().strip()
         if not text:
             return []
-        # Slang prompt is a single line of space-separated terms,
-        # highest-frequency first.
+        # Single line of space-separated terms, highest-frequency first.
         return [t for t in text.split() if t]
 
     def _configure_biasing(self) -> None:
         """Wire the slang word list into the decoder if the NeMo API supports it.
 
-        NeMo's transducer/TDT decoders support context biasing on newer
-        releases (`set_decoding_strategy` + `boosting_words`). Older releases
-        don't, in which case we silently skip — the model still benefits from
-        being fine-tuned, and Parakeet has decent zero-shot proper-noun recall
-        on its own. We never crash on an unsupported NeMo version.
+        Silently skips on NeMo versions without context-biasing support;
+        never crashes on an unsupported NeMo version.
         """
         if not self.slang_terms:
             return
@@ -196,7 +186,6 @@ class NemoASRManager:
             if decoding_cfg is not None:
                 cfg = OmegaConf.to_container(decoding_cfg, resolve=True)
                 if isinstance(cfg, dict):
-                    # Newer NeMo: TDT/RNNT decoder accepts a context list.
                     cfg.setdefault("strategy", "greedy_batch")
                     cfg["preserve_alignments"] = False
                     cfg["compute_timestamps"] = False
@@ -208,10 +197,7 @@ class NemoASRManager:
                 flush=True,
             )
 
-        # Best-effort: if the model has a `set_context_biasing` / similar API,
-        # use it. We try several known method names and stop on the first one
-        # that accepts the slang list. None of these are required to ship; the
-        # initial submission can land without biasing.
+        # Best-effort: try known biasing APIs, stop at the first that accepts the slang list.
         for method_name in (
             "set_context_biasing",
             "set_boosting_words",
@@ -243,20 +229,13 @@ class NemoASRManager:
     def _configure_lm_fusion(self) -> None:
         """Enable NGPU-LM n-gram shallow fusion if an LM path is configured.
 
-        Default-OFF: when ``ASR_NGRAM_LM`` is unset the decoder is left exactly
-        as ``_configure_biasing`` left it (greedy), so the shipped image is
-        behaviourally identical to nemo-ft-v3 until the env is set.
-
-        Mirrors the ``_configure_biasing`` safety contract: any failure (NGPU-LM
-        unavailable on this NeMo build, bad config, missing LM file) is logged
-        and the decoder stays on its current strategy — we never crash. The
-        ``.ARPA`` emitted alongside the LM keeps the classic ``maes`` strategy
-        available as a manual fallback.
+        Default-OFF: when ``ASR_NGRAM_LM`` is unset, decoder stays as
+        ``_configure_biasing`` left it (greedy). Any failure (NGPU-LM
+        unavailable, bad config, missing LM file) is logged and the decoder
+        stays on its current strategy — never crashes.
         """
-        # Runtime-fallback bookkeeping. If the fused (malsd_batch) decode raises
-        # at inference time on the eval GPU, we revert to greedy instead of
-        # returning empty transcripts (which score exactly 0.000). Initialised
-        # here so the attrs always exist, even when fusion is OFF.
+        # Bookkeeping for runtime fallback to greedy if fused decode fails on the eval GPU
+        # (empty transcripts would score 0.000). Set here so attrs exist even when fusion is OFF.
         self._lm_fusion_active = False
         self._greedy_decoding_cfg = None
 
@@ -283,10 +262,7 @@ class NemoASRManager:
             base = OmegaConf.to_container(decoding_cfg, resolve=True) if decoding_cfg is not None else {}
             if not isinstance(base, dict):
                 base = {}
-            # Snapshot the current greedy strategy BEFORE switching, so a
-            # malsd_batch runtime failure can revert to it (see
-            # _fallback_to_greedy). _build_lm_decoding_cfg copies base, so this
-            # snapshot is unaffected by the switch.
+            # Snapshot greedy strategy before switching, for _fallback_to_greedy.
             self._greedy_decoding_cfg = dict(base)
             cfg = _build_lm_decoding_cfg(
                 base,
@@ -311,19 +287,12 @@ class NemoASRManager:
             )
 
     def _fallback_to_greedy(self, reason: str) -> bool:
-        """Revert from fused (malsd_batch) decoding to greedy after a runtime
-        failure on the serving GPU.
+        """Revert from fused (malsd_batch) decoding to greedy after a runtime failure.
 
-        malsd_batch decodes correctly on the Workbench T4 but the cloud eval
-        runs different hardware where the CUDA-graph beam path can raise for
-        every batch. The old behaviour swallowed that into empty transcripts
-        (cloud score 0.000). Now the first failure permanently reverts the
-        decoder to the greedy strategy captured in `_configure_lm_fusion`, so the
-        worst case is greedy accuracy, never blank output.
-
+        malsd_batch can work on one GPU but raise on every batch on another
+        (CUDA-graph beam path); reverting avoids shipping empty transcripts
+        (score 0.000). One-shot: permanently reverts for the rest of the process.
         Returns True if the decoder is now greedy and the caller may retry.
-        One-shot: once malsd_batch fails on this hardware it will keep failing,
-        so we stop attempting it for the rest of the process.
         """
         if not self._lm_fusion_active or self._greedy_decoding_cfg is None:
             return False
@@ -353,8 +322,7 @@ class NemoASRManager:
             self._transcribe_batch([silence])
         except Exception as exc:
             print(f"[NemoASRManager] warmup transcribe failed: {exc}", flush=True)
-            # A warmup failure under fusion means malsd_batch is broken on this
-            # GPU; revert now so request #1 already serves on greedy.
+            # Fusion broken on this GPU; revert now so request #1 serves on greedy.
             if self._fallback_to_greedy(f"warmup: {exc}"):
                 try:
                     self._transcribe_batch([silence])
@@ -396,25 +364,18 @@ class NemoASRManager:
     # Inference                                                            #
     # ------------------------------------------------------------------ #
     def _transcribe_batch(self, audios: list[np.ndarray]) -> list[str]:
-        """Run NeMo `model.transcribe()` on a batch of float32 arrays.
-
-        NeMo accepts either a list of file paths or a list of numpy arrays
-        (newer versions). We pass arrays directly to avoid round-tripping to
-        disk inside the request handler.
-        """
+        """Run NeMo `model.transcribe()` on a batch of float32 arrays."""
         if not audios:
             return []
 
         kwargs: dict[str, Any] = {"batch_size": min(len(audios), self.BATCH_SIZE)}
-        # Some NeMo versions accept `verbose=False` to suppress per-batch
-        # tqdm; tolerate the param being unknown.
+        # Tolerate NeMo versions that don't accept verbose=
         try:
             outputs = self.model.transcribe(audios, verbose=False, **kwargs)
         except TypeError:
             outputs = self.model.transcribe(audios, **kwargs)
 
-        # NeMo can return either a flat list of strings or a tuple of
-        # (best_hyps, all_hyps). Normalize both.
+        # NeMo returns either a flat list of strings or (best_hyps, all_hyps).
         if isinstance(outputs, tuple) and len(outputs) >= 1:
             outputs = outputs[0]
 
@@ -442,9 +403,8 @@ class NemoASRManager:
             except Exception:
                 audios.append(None)
 
-        # Build the subset that actually goes into the model; carry indices so
-        # we can reassemble in input order with empty strings for silences and
-        # decode failures.
+        # Carry indices so we can reassemble in input order, with empty
+        # strings for silences and decode failures.
         results: list[str] = [""] * len(audios)
         idx_to_run: list[int] = []
         audios_to_run: list[np.ndarray] = []
@@ -463,8 +423,7 @@ class NemoASRManager:
             transcripts = self._transcribe_batch(audios_to_run)
         except Exception as exc:
             print(f"[NemoASRManager] batch transcribe failed: {exc}", flush=True)
-            # Never ship empty transcripts (they score 0). If fused decoding
-            # broke on this GPU, revert to greedy and retry this batch once.
+            # Never ship empty transcripts (score 0); retry once on greedy if fusion broke.
             if self._fallback_to_greedy(str(exc)):
                 try:
                     transcripts = self._transcribe_batch(audios_to_run)
@@ -481,16 +440,12 @@ class NemoASRManager:
         return results
 
     def _postprocess_transcript(self, text: str) -> str:
-        # Parakeet emits spelled-out numbers natively, so this is mostly a
-        # safety net. Cheap to run; keeps the two backends behaviorally aligned
-        # on edge cases.
+        # Safety net: Parakeet emits spelled-out numbers natively.
         return _digits_to_words(text)
 
     def asr(self, audio_bytes: bytes) -> str:
         return self.asr_batch([audio_bytes])[0]
 
 
-# Public alias so `asr_server` can construct either backend by name. The
-# faster-whisper backend exposes `ASRManager` from `asr_manager_fasterwhisper`;
-# this alias keeps the import shape uniform for the (now default) NeMo path.
+# Alias so asr_server can construct either backend uniformly by name.
 ASRManager = NemoASRManager

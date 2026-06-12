@@ -64,8 +64,7 @@ def generate(
                     cand["position_weight"] = pw
                     pool.append(cand)
 
-        # Dedup by action sequence; rank by reward then shorter horizon (faster
-        # to reach the same value is better), keep top_k.
+        # Dedup by action sequence; rank by reward then shorter horizon.
         seen: set[tuple] = set()
         ranked = sorted(pool, key=lambda c: (c["reward"], -c["horizon"]), reverse=True)
         shortlist: list[dict] = []

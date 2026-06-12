@@ -100,15 +100,9 @@ DEFAULT_OWLV2_PROMPTS: list[tuple[int, str]] = [
 ]
 
 
-# Ultralytics COCO class index -> TIL CV category_id.
-# The Workbench annotations use a custom label space:
-# 0 cargo aircraft, 1 commercial aircraft, 2 drone, 3 fighter jet,
-# 4 fighter plane, 5 helicopter, 6 light aircraft, 7 missile, 8 truck,
-# 9 car, 10 tank, 11 bus, 12 van, 13 cargo ship, 14 yacht,
-# 15 cruise ship, 16 warship, 17 sailboat.
-#
-# Pretrained COCO YOLO only has broad overlapping classes. Keep this mapping
-# sparse so unrelated COCO detections are ignored instead of mislabeled.
+# Ultralytics COCO class index -> TIL CV category_id (custom label space, see
+# TIL_CATEGORY_NAMES). Sparse on purpose: pretrained COCO YOLO only has broad
+# overlapping classes, so unrelated COCO detections are ignored rather than mislabeled.
 DEFAULT_TIL_CATEGORY_MAP = {
     2: 9,    # car -> car
     4: 1,    # airplane -> commercial aircraft (best single broad aircraft bucket)
@@ -190,9 +184,8 @@ class CVManager:
         self.rtdetr_eval_idx = _env_optional_int("CV_RTDETR_EVAL_IDX")
         self.rtdetr_num_queries = _env_optional_int("CV_RTDETR_NUM_QUERIES")
 
-        # RF-DETR settings. CV_CONF is reused as the predict threshold; CV_IOU is
-        # ignored because RF-DETR is NMS-free (DETR set prediction). Resolution
-        # must be divisible by 56 and is snapped to the nearest valid multiple.
+        # CV_CONF reused as predict threshold; CV_IOU ignored (RF-DETR is NMS-free).
+        # Resolution must be divisible by 56, snapped to nearest valid multiple.
         rfdetr_variant = os.environ.get("CV_RFDETR_VARIANT", "base").strip().lower()
         if rfdetr_variant not in ("base", "large"):
             print(
@@ -234,9 +227,8 @@ class CVManager:
         self.tile_full_pass = _env_bool("CV_TILE_FULL_PASS", default=True)
         self.tile_augment = _env_bool("CV_TILE_AUGMENT", default=False)
 
-        # Accuracy-first rescue pass. The second pass is deliberately
-        # down-weighted so it can add high-IoU alternates without polluting the
-        # top of the precision-recall curve.
+        # Second pass is down-weighted so it adds alternates without polluting
+        # the top of the precision-recall curve.
         self.second_pass = _env_bool("CV_SECOND_PASS", default=False)
         self.second_conf = _env_float("CV_SECOND_CONF", self.conf)
         self.second_iou = _env_float("CV_SECOND_IOU", self.iou)
@@ -252,8 +244,7 @@ class CVManager:
         self.purify_blur_sigma = _env_float("CV_PURIFY_BLUR_SIGMA", 0.5)
         self.purify_min_scale = _env_float("CV_PURIFY_MIN_SCALE", 1.0)
 
-        # OWLv2 zero-shot settings. CV_CONF is reused as the text-conditioned
-        # detection threshold so sweeps can compare YOLO/OWLv2 with one knob.
+        # CV_CONF doubles as the OWLv2 text-conditioned detection threshold.
         self.owlv2_model_id = os.environ.get("CV_OWLV2_MODEL_ID")
         if not self.owlv2_model_id:
             self.owlv2_model_id = "google/owlv2-base-patch16-ensemble"
@@ -785,7 +776,6 @@ class CVManager:
         scale_x, scale_y = 1.0, 1.0
         
         try:
-            # 1. Random Resizing
             if self.purify_min_scale < 1.0:
                 import random
                 scale = random.uniform(self.purify_min_scale, 1.0)
@@ -798,19 +788,18 @@ class CVManager:
                 img = img.resize((new_w, new_h), resample=resample_filter)
                 scale_x = new_w / orig_w
                 scale_y = new_h / orig_h
-                
-            # 2. Gaussian Blur
+
             if self.purify_blur_sigma > 0.0:
                 from PIL import ImageFilter
                 img = img.filter(ImageFilter.GaussianBlur(radius=self.purify_blur_sigma))
-                
-            # 3. JPEG Re-encoding (compresses high-frequency noise)
+
+            # JPEG re-encoding compresses high-frequency adversarial noise.
             if 0 < self.purify_jpeg_quality <= 100:
                 buf = io.BytesIO()
                 img.save(buf, format="JPEG", quality=self.purify_jpeg_quality)
                 buf.seek(0)
                 img = Image.open(buf)
-                img.load()  # Force loading the image data so the stream can close
+                img.load()  # force read so the buffer can close
         except Exception as exc:
             print(f"[CVManager] purification failed: {exc}, returning original", flush=True)
             return img, 1.0, 1.0
@@ -838,10 +827,8 @@ class CVManager:
         all_cls: list[int] = []
         all_conf: list[float] = []
 
-        # Tile passes: collect detections inside each tile and offset back to
-        # the full image. Drop boxes that hug an internal tile edge — they are
-        # almost certainly clipped objects and the full-image pass (or an
-        # overlapping tile) should provide a clean detection.
+        # Drop boxes hugging an internal tile edge (likely clipped); the
+        # full-image pass or an overlapping tile should give a clean detection.
         for rect in self._tile_offsets(width, height):
             x1, y1, x2, y2 = rect
             tile = img.crop(rect)
@@ -1024,10 +1011,8 @@ class CVManager:
         cls = np.asarray(cls_list, dtype=np.int64)
         conf = np.asarray(conf_list, dtype=np.float32)
 
-        # NMS only needed when tiling or the rescue pass produced overlapping
-        # candidates from multiple sources. Single-pass (off-mode) detections
-        # already came from Ultralytics' built-in NMS, so skipping here keeps
-        # that path a bit-for-bit no-op.
+        # Single-pass (off-mode) detections already went through Ultralytics'
+        # built-in NMS, so this is skipped there to keep that path a no-op.
         if self.loaded_model_family == "owlv2":
             survivors = self._class_aware_nms(xyxy, cls, conf, self.owlv2_nms_iou)
             xyxy = xyxy[survivors]
@@ -1044,10 +1029,8 @@ class CVManager:
             cls = cls[survivors]
             conf = conf[survivors]
 
-        # Some tuned checkpoints emit near-identical boxes with different fine
-        # subclasses (e.g. fighter jet/fighter plane or cargo ship/warship).
-        # A very high class-agnostic threshold removes only duplicates that are
-        # effectively the same object while leaving normal overlaps intact.
+        # High class-agnostic threshold removes near-identical boxes across fine
+        # subclasses (e.g. fighter jet/plane, cargo ship/warship) without touching normal overlaps.
         if self.cross_class_nms_iou > 0.0:
             survivors = self._class_agnostic_nms(
                 xyxy, cls, conf, self.cross_class_nms_iou
@@ -1056,7 +1039,6 @@ class CVManager:
             cls = cls[survivors]
             conf = conf[survivors]
 
-        # Optional one-time log so we can verify the configured path fired.
         if self._inference_count == 0:
             print(
                 f"[CVManager] first inference: family={self.loaded_model_family} "
@@ -1076,14 +1058,12 @@ class CVManager:
                 continue
 
             x1, y1, x2, y2 = (float(v) for v in box)
-            
-            # Map back to original image scale
+
             x1 = x1 / scale_x
             y1 = y1 / scale_y
             x2 = x2 / scale_x
             y2 = y2 / scale_y
-            
-            # Clamp to original image size
+
             x1 = max(0.0, min(x1, float(orig_w)))
             y1 = max(0.0, min(y1, float(orig_h)))
             x2 = max(0.0, min(x2, float(orig_w)))

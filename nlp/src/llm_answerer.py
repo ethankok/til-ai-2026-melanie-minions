@@ -1,20 +1,10 @@
-"""v14-llm-rag: vLLM-backed answerer using Qwen2.5-7B-Instruct-AWQ.
+"""vLLM-backed answerer using Qwen2.5-7B-Instruct-AWQ.
 
-Replaces the v9 extractive RoBERTa head. Retrieval and rerank are unchanged
-upstream — this module only takes (question, ordered list of chunks) tuples
-and returns a short answer string per question.
-
-Why this exists: v9's extractive head is structurally capped by the corpus —
-481/883 local gold answers are not literal source substrings, and v13a's
-oracle showed the candidate pool has +0.10 of headroom we couldn't pick.
-A strong instruction-tuned LLM can return canonical answer forms (dates,
-codenames, units) that the ModernBERT AE @ 0.9 evaluator accepts.
-
-Why this is not v8a-genqa: v8a used Flan-T5-base (250M params), which both
-paraphrased away from source phrasing and lacked the instruction-following
-needed to obey 'quote the exact wording'. Qwen2.5-7B-Instruct-AWQ is a
-different model class — 7B params, AWQ-quantised to ~5 GB, with strong
-multi-turn instruction following.
+Retrieval and rerank happen upstream — this module only takes
+(question, ordered list of chunks) tuples and returns a short answer string
+per question. A strong instruction-tuned LLM can return canonical answer
+forms (dates, codenames, units) that the ModernBERT AE @ 0.9 evaluator accepts,
+unlike a structurally-capped extractive head.
 
 Speed notes:
 - vLLM's continuous batching is the speed lever. The server batches all
@@ -137,8 +127,7 @@ def _clip_words(text: str, limit: int = _MAX_ANSWER_TOKENS) -> str:
 
 def _strip_boilerplate(text: str) -> str:
     """Light post-processing for the LLM's raw output. Keep this minimal —
-    over-aggressive normalisation has historically regressed cloud AE @ 0.9
-    (see v11-canonical-answer in NOTES). All we do here:
+    over-aggressive normalisation regresses cloud AE @ 0.9. All we do here:
       - Strip a single leading "Answer:" / "The answer is" prefix
       - Strip matched surrounding quotes/parens
       - Strip a single trailing period if the body has no internal period
@@ -185,11 +174,9 @@ _DEFAULT_SYSTEM_PROMPT = (
 class LLMAnswerer:
     """vLLM wrapper for an instruction-tuned chat model (Qwen2.5/Qwen3/etc).
 
-    Default expectation as of v14c is Qwen3-4B-Instruct-2507 (AWQ-4bit) —
-    the "2507" suffix is the non-thinking instruct release, so the chat
-    template doesn't emit <think>...</think> blocks. apply_chat_template
-    is called with enable_thinking=False as a defensive belt-and-braces
-    measure; tokenizers that don't know the kwarg ignore it silently.
+    Expects a non-thinking instruct release (no <think>...</think> blocks).
+    apply_chat_template is called with enable_thinking=False as a defensive
+    belt-and-braces measure; tokenizers that don't know the kwarg ignore it silently.
     """
 
     def __init__(
@@ -213,9 +200,8 @@ class LLMAnswerer:
         max_model_len = int(os.getenv("NLP_LLM_MAX_MODEL_LEN", str(max_model_len)))
         self.max_lora_rank = max_lora_rank
 
-        # v15-lora: detect a bundled adapter. If NLP_LLM_LORA_DIR is set and
-        # points at a directory with adapter_config.json, we'll enable LoRA in
-        # the vLLM engine and apply this adapter to every generate call.
+        # If NLP_LLM_LORA_DIR points at a directory with adapter_config.json,
+        # enable LoRA in the vLLM engine and apply this adapter to every generate call.
         if lora_dir is None:
             lora_dir = os.getenv("NLP_LLM_LORA_DIR", "")
         self.lora_dir: str | None = (
@@ -261,16 +247,12 @@ class LLMAnswerer:
             if gpu_memory_utilization is not None
             else float(os.getenv("NLP_LLM_GPU_MEM_FRACTION", "0.78"))
         )
-        # Quantization kernel selection. Official Qwen AWQ checkpoints need
-        # "awq"; llm-compressor W4A16 outputs are usually saved as
-        # compressed-tensors. NLP_LLM_QUANT remains an explicit override.
+        # Official Qwen AWQ checkpoints need "awq"; llm-compressor W4A16 outputs
+        # are usually saved as compressed-tensors. NLP_LLM_QUANT is an explicit override.
         quant = _detect_quantization(self.model_dir)
-        # CUDA-graph capture (~60-120s for a 7B on T4) is the dominant
-        # corpus-load cost. enforce_eager=True skips capture entirely; we
-        # pay ~10-20% per-token latency in exchange. With 700 questions and
-        # 48-token outputs, eager is still well inside the speed budget.
-        # Override with NLP_LLM_ENFORCE_EAGER=0 to enable graph capture once
-        # we know the rest of the pipeline boots.
+        # CUDA-graph capture (~60-120s for a 7B on T4) dominates corpus-load cost.
+        # enforce_eager=True skips it for ~10-20% per-token latency, which is
+        # still within budget for 700 questions x 48-token outputs.
         enforce_eager = os.getenv("NLP_LLM_ENFORCE_EAGER", "1").lower() not in {
             "0",
             "false",
@@ -286,10 +268,8 @@ class LLMAnswerer:
             f"[llm_answerer] model provenance: {_describe_model_dir(self.model_dir)}",
             flush=True,
         )
-        # v15-lora: enable LoRA in the engine if we have an adapter on disk.
-        # max_loras=1 + max_lora_rank=16 matches our QLoRA training config.
-        # Enabling LoRA adds a small per-request overhead (~5-10%) on every
-        # request — only do it if we actually have an adapter.
+        # max_loras=1 + max_lora_rank=16 matches the QLoRA training config.
+        # LoRA adds ~5-10% per-request overhead, so only enable with an adapter present.
         llm_kwargs: dict = dict(
             model=self.model_dir,
             quantization=quant,
@@ -309,9 +289,7 @@ class LLMAnswerer:
         self.llm = _LLM(**llm_kwargs)  # type: ignore[misc]
         self.tokenizer = self.llm.get_tokenizer()
 
-        # Pre-build the LoRARequest once. Numeric ID is arbitrary but must
-        # be stable across calls. vLLM caches loaded adapters by ID so this
-        # path-load cost is amortised.
+        # Numeric ID must stay stable across calls; vLLM caches loaded adapters by ID.
         self._lora_request = None
         if self.lora_dir:
             self._lora_request = _LoRARequest(  # type: ignore[misc]
@@ -319,8 +297,7 @@ class LLMAnswerer:
                 lora_int_id=1,
                 lora_path=self.lora_dir,
             )
-        # Greedy decoding + short cap is what prevents paraphrase past the
-        # ModernBERT AE 0.9 threshold (the v8a failure mode).
+        # Greedy decoding + short cap prevents paraphrase past the ModernBERT AE 0.9 threshold.
         self.sampling = _SamplingParams(  # type: ignore[misc]
             temperature=0.0,
             top_p=1.0,
@@ -357,10 +334,8 @@ class LLMAnswerer:
 
     def _build_prompt(self, question: str, chunks: Sequence[str]) -> str:
         messages = self._build_messages(question, chunks)
-        # enable_thinking=False is a Qwen3-specific kwarg that suppresses
-        # the <think>...</think> reasoning trace. Models that don't know
-        # the kwarg silently ignore it. Belt-and-braces in case a future
-        # repo flip puts us on a thinking-by-default variant.
+        # enable_thinking=False suppresses Qwen3 <think>...</think> traces;
+        # other tokenizers silently ignore the unknown kwarg.
         try:
             return self.tokenizer.apply_chat_template(  # type: ignore[no-any-return]
                 messages,
@@ -387,8 +362,6 @@ class LLMAnswerer:
             self._build_prompt(q, c)
             for q, c in zip(questions, chunks_per_question)
         ]
-        # vLLM continuously batches whatever we hand it. Pass the LoRA
-        # adapter (if any) so the engine applies it to every prompt.
         gen_kwargs: dict = {"use_tqdm": False}
         if self._lora_request is not None:
             gen_kwargs["lora_request"] = self._lora_request

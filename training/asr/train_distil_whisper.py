@@ -92,7 +92,6 @@ def _load_audio_from_example(audio_info, target_sr: int = 16000) -> np.ndarray:
         else:
             data, sr = sf.read(audio_info["path"], dtype="float32", always_2d=False)
     else:
-        # Plain path string (e.g. if prepare_data.py skipped the Audio cast).
         data, sr = sf.read(str(audio_info), dtype="float32", always_2d=False)
     if data.ndim == 2:
         data = data.mean(axis=1)
@@ -196,9 +195,7 @@ def main() -> None:
     )
     ap.add_argument("--output-dir", type=Path, required=True)
     ap.add_argument("--epochs", type=int, default=3)
-    # Default tuned for Tesla T4 (16 GB). distil-large-v3 + LoRA + gradient
-    # checkpointing fits at batch 8 with headroom; batch 16 occasionally OOMs
-    # depending on clip lengths in the batch. Override on bigger GPUs.
+    # Tuned for Tesla T4 (16 GB); batch 16 occasionally OOMs. Override on bigger GPUs.
     ap.add_argument("--per-device-batch-size", type=int, default=8)
     ap.add_argument("--grad-accum", type=int, default=2)
     ap.add_argument("--lr", type=float, default=1e-4)
@@ -223,10 +220,8 @@ def main() -> None:
 
     print(f"Loading dataset from {args.data_dir}")
     ds: DatasetDict = load_from_disk(str(args.data_dir))
-    # Disable HF Audio decoding; we load with soundfile in the collator. This
-    # sidesteps torchcodec / FFmpeg shared-lib requirements that the Workbench
-    # base image doesn't satisfy. Works for both Audio-cast and string-path
-    # columns produced by prepare_data.py.
+    # Disable HF Audio decoding (collator loads via soundfile instead) to avoid
+    # the torchcodec/FFmpeg shared-lib requirements the Workbench image lacks.
     for split in ds:
         if "audio" in ds[split].features:
             try:
@@ -245,30 +240,26 @@ def main() -> None:
     feature_extractor.mask_time_prob = 0.05
     feature_extractor.mask_feature_prob = 0.05
 
-    # Load base in fp32; let the Trainer's fp16/bf16 flag handle mixed precision.
-    # Loading directly in fp16 + PEFT + gradient checkpointing on T4 is fragile
-    # (dtype mismatch on backward); the autocast path is more stable.
+    # Load in fp32 and let the Trainer's fp16/bf16 flag handle mixed precision —
+    # loading directly in fp16 + PEFT + gradient checkpointing is fragile on T4.
     model = WhisperForConditionalGeneration.from_pretrained(args.model_name)
     model.generation_config.language = "en"
     model.generation_config.task = "transcribe"
     model.generation_config.forced_decoder_ids = None
     model.config.suppress_tokens = []
 
-    # Freeze encoder; LoRA the decoder attention.
     for p in model.model.encoder.parameters():
         p.requires_grad = False
 
-    # Required for PEFT + gradient checkpointing: without this you get
-    # "RuntimeError: element 0 of tensors does not require grad" at the first
-    # backward pass, because input embeddings are frozen and gradient
-    # checkpointing breaks the autograd chain. Must be called BEFORE
+    # Required for PEFT + gradient checkpointing, else "element 0 of tensors
+    # does not require grad" on the first backward. Must run BEFORE
     # get_peft_model so the hook attaches to the base embeddings.
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
 
-    # No task_type: PeftModelForSeq2SeqLM.forward injects input_ids=None into
-    # the base model call, which transformers >= 4.57 rejects on Whisper
-    # (input_features-based forward). Plain LoraModel passes kwargs through.
+    # No task_type: PeftModelForSeq2SeqLM.forward injects input_ids=None,
+    # which transformers >= 4.57 rejects on Whisper's input_features-based
+    # forward. Plain LoraModel passes kwargs through.
     lora_config = LoraConfig(
         r=args.lora_rank,
         lora_alpha=args.lora_alpha,
@@ -317,8 +308,7 @@ def main() -> None:
         fp16=not bf16_ok,
         predict_with_generate=True,
         generation_max_length=225,
-        # `evaluation_strategy` was renamed to `eval_strategy` in transformers
-        # >= 4.46; the old name now raises TypeError instead of warning.
+        # `evaluation_strategy` was renamed `eval_strategy` in transformers >= 4.46.
         eval_strategy="steps",
         eval_steps=args.eval_steps,
         save_strategy="steps",
@@ -340,8 +330,7 @@ def main() -> None:
         eval_dataset=ds["validation"],
         data_collator=collator,
         compute_metrics=_build_compute_metrics(processor),
-        # `tokenizer=` was renamed to `processing_class=` in transformers
-        # >= 4.46; the old kwarg raises TypeError instead of warning.
+        # `tokenizer=` was renamed `processing_class=` in transformers >= 4.46.
         processing_class=processor.feature_extractor,
     )
 

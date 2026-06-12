@@ -2,11 +2,8 @@
 # Deep CV backbone training sweep entrypoint.
 #
 # Purpose:
-#   Try larger/deeper supervised detectors after OWLv2 zero-shot failed to move
-#   hidden score beyond ry-v2. Default candidate is YOLO11-L because it is a
-#   deeper trainable detector with a better COCO accuracy/latency tradeoff than
-#   the older YOLOv11m run in cv/NOTES.md. Override MODEL for YOLO11-X,
-#   YOLOv8-X, or RT-DETR-X.
+#   Train larger/deeper supervised detectors. Default candidate is YOLO11-L.
+#   Override MODEL for YOLO11-X, YOLOv8-X, or RT-DETR-X.
 #
 # Expected input:
 #   /home/jupyter/cv_yolo_dataset_plusval/data.yaml

@@ -64,8 +64,8 @@ class BCDataset(Dataset):
             self.n_frames = int(data["n_frames"])
         else:
             self.n_frames = max(1, int(self.agent_views.shape[1] // 25))
-        # Belief tensors (NEW): present when collect_bc was run with
-        # --no-belief NOT set. Falls back to "no belief" for old datasets.
+        # Belief tensors present when collect_bc ran without --no-belief; falls
+        # back to "no belief" for old datasets.
         if "beliefs" in data.files:
             self.beliefs = torch.from_numpy(data["beliefs"]).float()
             self.has_belief = True
@@ -187,10 +187,9 @@ def train(args: argparse.Namespace) -> None:
     if not data_path.exists():
         raise SystemExit(f"Dataset not found at {data_path}. Run collect_bc.py first.")
     dataset = BCDataset(data_path)
-    # On a small-RAM machine a huge mmap dataset is I/O-bound (random reads
-    # cache-miss) and pressures memory. --max-samples caps to the first N rows
-    # (games are i.i.d. random draws, so the prefix is a valid subset) so the
-    # working set fits the page cache: fast + stable, even with num_workers=0.
+    # --max-samples caps to the first N rows (games are i.i.d. random draws, so
+    # the prefix is a valid subset) so the working set fits the page cache on
+    # small-RAM machines, even with num_workers=0.
     n_total = len(dataset)
     n_use = min(args.max_samples, n_total) if args.max_samples > 0 else n_total
     split_source = dataset if n_use == n_total else Subset(dataset, range(n_use))

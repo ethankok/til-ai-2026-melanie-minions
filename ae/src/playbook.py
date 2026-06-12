@@ -70,8 +70,7 @@ class Playbook:
         data = np.load(path, allow_pickle=False)
         keys = data["keys"]
         actions = data["actions"]
-        # Convert to a dict for the simplest possible inference path.
-        # The expected size is < 200K so the memory cost is tiny.
+        # Dict lookup; expected size is < 200K so memory cost is tiny.
         self._table: dict[int, int] = {
             int(k): int(a) for k, a in zip(keys, actions)
         }
@@ -90,13 +89,9 @@ class Playbook:
         action = self._table.get(key)
         if action is None:
             return None
-        # Tier-1 #1 mitigation (17 May): movement-action lookups regressed
-        # locally because the (x, y, dir, step) key is too coarse — different
-        # belief states share the same key. Bomb decisions are more
-        # structurally tied to map geometry (this cell + this map = good
-        # bomb spot regardless of belief) so filter the playbook to bomb
-        # actions only by default. Override with AE_PLAYBOOK_FILTER=all to
-        # disable the filter.
+        # The (x, y, dir, step) key is too coarse for movement actions — different
+        # belief states share the same key. Bomb spots are map-geometry-tied
+        # regardless of belief, so default to bomb-only. AE_PLAYBOOK_FILTER=all disables this.
         filter_mode = os.environ.get("AE_PLAYBOOK_FILTER", "bomb_only").strip().lower()
         if filter_mode == "all":
             return action

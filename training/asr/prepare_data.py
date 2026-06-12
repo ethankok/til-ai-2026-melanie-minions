@@ -102,7 +102,6 @@ def main() -> None:
         raise SystemExit(f"Manifest not found: {manifest_path}")
 
     rows = _load_jsonl(manifest_path)
-    # Filter to rows that have a transcript and an audio relpath.
     rows = [
         r
         for r in rows

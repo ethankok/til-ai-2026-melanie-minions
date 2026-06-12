@@ -81,7 +81,7 @@ class NoiseManager:
             indexing="ij",
         )
 
-        # Multiple phases survive common detector strides better than a single checkerboard.
+        # Multiple phases survive common detector strides better than one checkerboard.
         p2 = ((xx + yy) % 2).float().mul(2.0).sub(1.0)
         p4 = (((xx // 2) + (yy // 2)) % 2).float().mul(2.0).sub(1.0)
         p8 = (((xx // 4) - (yy // 4)) % 2).float().mul(2.0).sub(1.0)

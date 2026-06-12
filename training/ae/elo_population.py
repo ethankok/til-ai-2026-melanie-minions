@@ -143,7 +143,6 @@ class EloPopulation:
             return
         ratings = sorted(e.rating for e in self._entries)
         median = ratings[len(ratings) // 2]
-        # Find oldest (lowest added_at_update) entry with rating < median.
         candidates = [
             i for i, e in enumerate(self._entries) if e.rating < median
         ]
@@ -247,16 +246,12 @@ class EloPopulation:
         path.write_text(json.dumps(data, indent=2))
 
 
-# ---------------------------------------------------------------------------
-# Self-test: small sanity exercise of the Elo math + matchmaking.
-# Run with: python training/ae/elo_population.py
-# ---------------------------------------------------------------------------
+# Self-test: run with `python training/ae/elo_population.py`
 if __name__ == "__main__":
     random.seed(0)
     pool = EloPopulation(max_size=4, sigma=150.0)
     live = LiveRating(rating=1200.0)
 
-    # Add 4 mock snapshots at varying skill levels.
     for i, elo in enumerate([1000.0, 1100.0, 1200.0, 1400.0]):
         sid = pool.add(snapshot=f"snap_{i}", initial_elo=elo, at_update=i * 10)
         print(f"added snap_{i} id={sid} elo={elo}")
@@ -264,7 +259,6 @@ if __name__ == "__main__":
     print(f"\npool stats: {pool.stats()}")
     print(f"live elo: {live.rating:.1f}\n")
 
-    # Matchmake 20 times around live elo; tally which snapshots got picked.
     picks: dict[int, int] = {}
     for _ in range(20):
         snap, sid = pool.sample_matched(live.rating)
@@ -274,15 +268,12 @@ if __name__ == "__main__":
         idx = pool._find(sid)
         print(f"  id={sid} elo={pool._entries[idx].rating:.1f}: {n}/20")
 
-    # Simulate 50 games where live policy actually IS rated ~1300
-    # (i.e. it should win most matches vs sub-1200 snapshots and lose
-    # most vs the 1400 snapshot). Show Elo convergence.
+    # 50 games where live policy actually IS rated ~1300; shows Elo convergence.
     print("\n50 simulated games, live actual skill ~1300:")
     live = LiveRating(rating=1200.0)
     for game in range(50):
         snap, sid = pool.sample_matched(live.rating)
         opp_elo = pool._entries[pool._find(sid)].rating
-        # Truthful outcome: live wins with probability based on a true 1300 skill.
         true_p = _expected_score(1300.0, opp_elo)
         actual = 1.0 if random.random() < true_p else 0.0
         pool.update(sid, live, actual)

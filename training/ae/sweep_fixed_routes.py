@@ -34,8 +34,7 @@ from pathlib import Path
 from simulate import run_simulation
 
 
-# Force the same safety baseline as the Docker image. Individual profiles can
-# still override manager attributes through kwargs below.
+# Matches the Docker image's safety baseline; profiles can override via kwargs below.
 BASE_ENV = {
     "AE_USE_PLAYBOOK": "0",
     "AE_USE_OPPONENT_MODEL": "0",

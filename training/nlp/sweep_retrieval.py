@@ -7,10 +7,6 @@ import numpy as np
 import torch
 from tqdm import tqdm, trange
 
-# Set PyTorch to use multiple CPU threads for parallel processing
-# torch.set_num_threads(8)
-
-# Add NLP src to path
 sys.path.extend(['nlp/src'])
 from nlp_manager import NLPManager, _bm25_tokenize, _zscore
 
@@ -54,8 +50,7 @@ def get_candidate_passages_pool(manager, question: str, max_k: int = 45):
     dense_scores = (manager.passage_embeds @ q_embed).numpy().astype(np.float32)
     
     union_set = set()
-    
-    # 1. Default hybrid
+
     passage_hybrid = _zscore(bm25_scores) + _zscore(dense_scores)
     
     doc_idxs = []
@@ -77,8 +72,7 @@ def get_candidate_passages_pool(manager, question: str, max_k: int = 45):
         union_set.update(manager._top_indices(hybrid_with_prior, max_k))
         
     union_set.update(manager._top_indices(passage_hybrid, max_k))
-    
-    # Seed doc best passages
+
     for didx in doc_idxs[:4]:
         candidates = (
             manager.doc_passage_idxs[didx]
@@ -146,7 +140,6 @@ def main():
     manager.load_corpus(doc_contents)
     print("Corpus loaded successfully.")
     
-    # Step 1: Pre-collect candidate pools and run batch reranking once to populate cache
     print("Building candidate passage pool and pre-scoring via reranker...")
     
     all_pairs = []
@@ -160,8 +153,7 @@ def main():
             all_pairs.append((q_idx, pidx, q, manager.passages[pidx]))
             
     print(f"Total pairs to score: {len(all_pairs)}")
-    
-    # Score in batches
+
     rerank_cache = {}
     
     with torch.no_grad():
@@ -190,7 +182,6 @@ def main():
                 
     print("Cached reranker scores.")
 
-    # Step 2: Pre-compute retrieval scores for all questions
     print("Pre-computing retrieval scores...")
     questions = [inst["question"] for inst in instances]
     q_tokens_list = [_bm25_tokenize(q) or [q.lower()] for q in questions]
@@ -211,16 +202,14 @@ def main():
         doc_dense_scores_matrix = (q_embeds @ manager.doc_embeds.T).numpy().astype(np.float32)
     
     print("Pre-computation of retrieval scores complete.")
-    
-    # Step 3: Evaluation function using cache
+
     def evaluate_with_cache(doc_prior_weight, top_k_retrieve, bm25_weight=1.0, dense_weight=1.0, top_k_doc_retrieve=8, top_k_doc_seed=4):
         hits = 0
         total = len(instances)
         
         for q_idx, instance in enumerate(instances):
             gt_docs = set(instance["source_docs"])
-            
-            # Retrieve using custom settings from pre-computed scores
+
             bm_scores = bm25_scores_matrix[q_idx]
             de_scores = dense_scores_matrix[q_idx]
             doc_bm_scores = doc_bm25_scores_matrix[q_idx] if doc_bm25_scores_matrix is not None else None
@@ -231,7 +220,6 @@ def main():
                 top_k_retrieve, doc_prior_weight, bm25_weight, dense_weight, top_k_doc_retrieve, top_k_doc_seed
             )
             
-            # Rerank retrieved passages using cached scores
             scores = [rerank_cache.get((q_idx, pidx), -999.0) for pidx in retrieved]
             order = sorted(range(len(retrieved)), key=lambda idx: -scores[idx])
             reranked = [retrieved[idx] for idx in order]
@@ -252,14 +240,12 @@ def main():
     
     best_hr = hr
     best_params = (0.35, 30, 1.0, 1.0)
-    
-    # Define sweep grid
+
     doc_prior_weights = [0.1, 0.25, 0.35, 0.45, 0.6]
     top_k_retrieves = [15, 20, 25, 30]
     bm25_weights = [0.5, 0.8, 1.0, 1.2, 1.5]
     dense_weights = [0.5, 0.8, 1.0, 1.2, 1.5]
-    
-    # Run a quick sweep over prior weights and retrieve K
+
     print("\nSweeping doc_prior_weight and top_k_retrieve...")
     for dpw in doc_prior_weights:
         for tkr in top_k_retrieves:
@@ -269,7 +255,6 @@ def main():
                 best_hr = hr
                 best_params = (dpw, tkr, 1.0, 1.0)
                 
-    # Sweep bm25/dense weights using the best dpw/tkr found
     dpw, tkr, _, _ = best_params
     print(f"\nSweeping lexical vs dense weights with dpw={dpw}, tkr={tkr}...")
     for bw in bm25_weights:

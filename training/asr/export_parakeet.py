@@ -77,11 +77,8 @@ def main() -> int:
     if not args.trained_nemo.exists():
         raise SystemExit(f"Trained .nemo not found at {args.trained_nemo}")
 
-    # Refuse to copy the zero-shot base over itself: that would silently
-    # produce a "ft-v1" image bit-identical to nemo-zs and waste a
-    # submission slot. The training script may have crashed before
-    # writing best.nemo, in which case --trained-nemo points to the
-    # base file (or doesn't exist at all).
+    # Refuse to copy the zero-shot base over itself (would produce an image
+    # bit-identical to nemo-zs and waste a submission slot).
     target = args.output_dir / args.filename
     if args.trained_nemo.resolve() == target.resolve():
         raise SystemExit(
@@ -91,8 +88,8 @@ def main() -> int:
             "...' before re-running this export."
         )
     if args.trained_nemo.stat().st_size < 100 * 1024 * 1024:
-        # Real Parakeet .nemo is ~2.4 GB. Anything under 100 MB is almost
-        # certainly an empty / partial / wrong file.
+        # Real Parakeet .nemo is ~2.4 GB; under 100 MB is almost certainly
+        # an empty/partial/wrong file.
         raise SystemExit(
             f"Trained .nemo at {args.trained_nemo} is only "
             f"{args.trained_nemo.stat().st_size / (1024*1024):.1f} MB. "
@@ -102,8 +99,8 @@ def main() -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Buffer slang prompt if it's about to be inside the same dir we're
-    # writing into. Mirror of the whisper export gotcha.
+    # Buffer the slang prompt if it lives inside output_dir (same gotcha as
+    # the whisper export).
     slang_bytes: bytes | None = None
     slang_target: Path | None = None
     if args.slang_file.exists():
@@ -117,7 +114,6 @@ def main() -> int:
                 flush=True,
             )
         except ValueError:
-            # Slang file is outside output-dir; safe to leave alone.
             pass
 
     print(f"Copying {args.trained_nemo} -> {target} ...", flush=True)

@@ -18,7 +18,7 @@ from measure_disruption import build_coco_gt, dets_to_coco, eval_map  # noqa: E4
 
 
 def _toy_annotations():
-    # Two images, one box each (category 3), on a 100x100 canvas.
+    # two images, one box each (category 3), 100x100 canvas
     return {
         "info": {},
         "licenses": [],

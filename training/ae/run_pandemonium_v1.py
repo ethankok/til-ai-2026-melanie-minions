@@ -57,11 +57,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CKPT_DIR = REPO_ROOT / "training" / "ae" / "checkpoints"
 TRAIN = REPO_ROOT / "training" / "ae" / "train_ppo.py"
 
-# Calibrated from the from-scratch smoke (3 updates x 6 games, full-rl mix).
-# One "game" is one full Novice episode; STEPS_PER_GAME is the number of OUR
-# agent's acted timesteps per game (the PPO transitions, ~ episode_len). Updates
-# needed for a step target = target_steps / (games_per_update * STEPS_PER_GAME).
-STEPS_PER_GAME = 533  # calibrated 29 May 2026 from-scratch smoke: 3200 samples / 6 games
+# STEPS_PER_GAME = OUR agent's acted timesteps per Novice episode (~episode_len).
+# Updates needed for a step target = target_steps / (games_per_update * STEPS_PER_GAME).
+STEPS_PER_GAME = 533
 
 PHASE1_TARGET_STEPS = 10_000_000
 PHASE2_TARGET_STEPS = 5_000_000
@@ -74,7 +72,7 @@ def updates_for(target_steps: int, games_per_update: int) -> int:
 def run(cmd: list[str], log: Path) -> None:
     env = dict(os.environ)
     env.setdefault("PYTHONHASHSEED", "0")
-    env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")  # orthogonal-init QR on CPU
+    env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     print("\n$ " + " ".join(cmd) + f"\n  (log -> {log})\n", flush=True)
     with open(log, "a") as fh:
         proc = subprocess.run(cmd, env=env, stdout=fh, stderr=subprocess.STDOUT)

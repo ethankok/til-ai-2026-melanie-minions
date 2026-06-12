@@ -114,11 +114,9 @@ def _make_manager():
         return AEManager()
 
     if mode == "opening_hybrid":
-        # Divergence-gated Novice opening prefix in front of a planner. The inner
-        # planner is selected by AE_OPENING_PLANNER (default confidence_policy_hybrid
-        # so the combined opening+confpol build ships; degrades to the heuristic if
-        # the policy checkpoint is absent). The opening only fires on the spawns
-        # locked in openings_gate.json; all other spawns run the planner from tick 0.
+        # Divergence-gated Novice opening prefix in front of a planner (AE_OPENING_PLANNER,
+        # default confidence_policy_hybrid). Only fires on spawns locked in openings_gate.json;
+        # other spawns run the planner from tick 0.
         try:
             from opening_hybrid_manager import OpeningHybridManager  # noqa: WPS433
             inner_name = os.environ.get("AE_OPENING_PLANNER", "confidence_policy_hybrid").strip().lower()
@@ -163,10 +161,9 @@ async def ae(request: Request) -> dict[str, list[dict[str, int]]] | dict[str, st
         return {"message": "reset ok"}
 
     predictions = []
-    # each is a dict with one key "observation" and the value as a dictionary observation
     for instance in input_json.get("instances", []):
         observation = instance["observation"]
-        # reset environment on a new round
+        # Reset on step 0 — start of a new round.
         if observation.get("step") == 0:
             await reset(request)
         predictions.append({"action": manager.ae(observation)})
@@ -176,12 +173,11 @@ async def ae(request: Request) -> dict[str, list[dict[str, int]]] | dict[str, st
 @app.post("/reset")
 @app.get("/reset")
 async def reset(_: Request) -> None:
-    """Resets the `AEManager` for a new round."""
+    """Resets the `AEManager` for a new round.
 
-    # The Docker container is not restarted between rounds (during Qualifiers).
-    # Your model is reset via this endpoint by creating a new instance. You
-    # should avoid storing persistent state information outside your
-    # `AEManager` instance; but if you must, you should also reset it here.
+    The container is not restarted between rounds, so all persistent state
+    must live in `AEManager` and be recreated here.
+    """
 
     global manager  # pylint: disable=global-statement
     manager = _make_manager()

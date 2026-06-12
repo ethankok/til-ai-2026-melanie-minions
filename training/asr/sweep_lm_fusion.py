@@ -41,7 +41,7 @@ def _load_val_slice(asr_jsonl: Path, frac: float) -> list[dict]:
             if line:
                 rows.append(json.loads(line))
     n_val = max(1, int(len(rows) * frac))
-    return rows[-n_val:]  # deterministic last-N slice
+    return rows[-n_val:]
 
 
 def main() -> None:
@@ -79,7 +79,6 @@ def main() -> None:
     if not isinstance(base, dict):
         base = {}
 
-    # Greedy baseline for reference (no LM).
     def _run() -> tuple[float, float]:
         t0 = time.time()
         out = model.transcribe(audio_paths, batch_size=args.batch_size, verbose=False)

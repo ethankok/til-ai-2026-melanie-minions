@@ -56,7 +56,7 @@ from PIL import Image
 from tqdm import tqdm
 
 # Reuse the existing scoring path so numbers are directly comparable to
-# the shipped eval_cv_http.py output (tier1 baseline 0.8947).
+# eval_cv_http.py output.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from eval_cv_http import (  # noqa: E402
     _clean_detection,
@@ -208,7 +208,6 @@ def _interpret(rows: list[dict[str, Any]], baseline_map: float | None) -> None:
     print()
     print("Verdict:")
 
-    # JPEG quality axis: pick the largest drop among jpeg-* transforms.
     jpeg_drops = []
     for name in ("jpeg-q70", "jpeg-q50", "jpeg-q30"):
         if name in by_name:
@@ -221,7 +220,6 @@ def _interpret(rows: list[dict[str, Any]], baseline_map: float | None) -> None:
         )
         print(f"  JPEG (worst: {worst_jpeg[0]}, drop {worst_jpeg[1]:+.4f}) -> {verdict}")
 
-    # Resolution axis.
     res_drops = []
     for name in ("downsample-2x", "downsample-3x"):
         if name in by_name:
@@ -234,7 +232,6 @@ def _interpret(rows: list[dict[str, Any]], baseline_map: float | None) -> None:
         )
         print(f"  Resolution (worst: {worst_res[0]}, drop {worst_res[1]:+.4f}) -> {verdict}")
 
-    # Combined.
     if "jpeg50-down2" in by_name:
         combined_drop = baseline_map - by_name["jpeg50-down2"]["map"]
         verdict = (
@@ -306,7 +303,6 @@ def main() -> None:
         rows.append(row)
         if name == "baseline":
             baseline_map = summary["map"]
-        # Stream per-transform summary so the user sees progress mid-run.
         print(
             f"  {name:<14}  mAP={summary['map']:.4f}  "
             f"small={summary['per_area'].get('small') or 0:.4f}  "

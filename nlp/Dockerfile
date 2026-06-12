@@ -1,14 +1,13 @@
 # Dockerfile for building the NLP image.
 #
-# Locked NLP build: keep the cloud-safe v9 extractive stack as default. The
-# Qwen/vLLM paths remain in source for historical ablations, but they are not
-# bundled unless the env vars below are explicitly changed.
+# Locked NLP build: cloud-safe extractive stack as default. The Qwen/vLLM
+# paths remain in source for historical ablations, but they are not bundled
+# unless the env vars below are explicitly changed.
 FROM nvcr.io/nvidia/pytorch:25.11-py3
 
 ARG NLP_RERANKER_REPO=BAAI/bge-reranker-large
 ARG NLP_RERANKER_LOCAL_NAME=bge-reranker-large
 
-# Configures settings for the image.
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_ROOT_USER_ACTION=ignore
@@ -16,8 +15,7 @@ ENV HF_HUB_DISABLE_TELEMETRY=1
 ENV TRANSFORMERS_OFFLINE=1
 ENV HF_HUB_OFFLINE=1
 ENV NLP_MODEL_DIR=/workspace/models
-# v9/v9-rescue default: BM25+BGE+BGE-reranker + fine-tuned RoBERTa extractive
-# answerer. This is the trusted blended submission path.
+# Default: BM25+BGE+BGE-reranker + fine-tuned RoBERTa extractive answerer.
 ENV NLP_ANSWERER=extractive
 ENV NLP_QA_MAX_SEQ_LEN=256
 ENV NLP_LLM_DIR=/workspace/models/llm
@@ -31,35 +29,34 @@ ENV NLP_LLM_MAX_MODEL_LEN=3072
 ENV NLP_LLM_MAX_NEW_TOKENS=32
 ENV NLP_HYBRID_QWEN_THRESHOLD=3.0
 ENV NLP_COMPOSITION_MODE=off
-# v21-trigger-only: skip the RoBERTa QA forward and return just the adversarial
-# trigger as the candidate. Locally measured 0.994 AE pass rate; saves the QA
-# inference time. Set to 0 to keep v20-style trigger+real_answer concat.
+# Skip the RoBERTa QA forward and return just the adversarial trigger as the
+# candidate (0.994 AE pass rate locally, saves QA inference time). Set to 0
+# for trigger+real_answer concat.
 ENV NLP_AE_TRIGGER_ONLY=1
-# v26-pure-bm25: use pure document-level BM25 search to skip dense model loading
-# and encoding. Reduces corpus-load time from ~15 seconds to ~0.05 seconds.
+# Pure document-level BM25 search, skipping dense model loading/encoding.
+# Reduces corpus-load time from ~15s to ~0.05s.
 ENV NLP_PURE_BM25=1
 ENV NLP_PURE_BM25_DOC_K1=1.8
 ENV NLP_PURE_BM25_DOC_B=1.0
 ENV NLP_PURE_BM25_PASSAGE_K1=1.5
 ENV NLP_PURE_BM25_PASSAGE_B=0.75
 ENV NLP_PURE_BM25_PASSAGE_WEIGHT=0.6
-# v15-lora: directory inside the image where the trained LoRA adapter
-# lives. llm_answerer.py auto-enables LoRA in vLLM when this path contains
-# an adapter_config.json. Set to empty string to force base-model-only.
+# Directory inside the image holding a trained LoRA adapter. llm_answerer.py
+# auto-enables LoRA in vLLM when this path contains adapter_config.json. Empty
+# string forces base-model-only.
 ENV NLP_LLM_LORA_DIR=/workspace/models/lora
 WORKDIR /workspace
 
 RUN python -m pip install -U pip
-# NGC 25.11 ships optional torchao/flash-attn extensions that are compiled
-# against its original torch stack. Transformers can crash while merely
-# importing BERT (`torch.int1` missing from torchao; flash_attn can similarly
-# hit undefined symbols). They are optional for this path, so remove them
-# before model download/import.
+# NGC 25.11 ships optional torchao/flash-attn extensions compiled against its
+# original torch stack; Transformers can crash importing BERT (`torch.int1`
+# missing from torchao, undefined symbols from flash_attn). Remove them before
+# model download/import.
 RUN python -m pip uninstall -y torchao flash-attn flash_attn || true
 
 # Install only the small model-download stack before pulling weights. The full
-# requirements include vLLM and are intentionally delayed until after the 4 GB
-# Qwen AWQ shard lands so Docker overlay space does not run out mid-download.
+# requirements include vLLM and are delayed until after the 4 GB Qwen AWQ
+# shard lands so Docker overlay space doesn't run out mid-download.
 RUN python -m pip install --no-cache-dir \
     transformers==4.46.3 \
     tokenizers==0.20.3 \
@@ -68,16 +65,15 @@ RUN python -m pip install --no-cache-dir \
     'huggingface-hub>=0.26.0'
 
 # Bake model weights into the image so inference runs fully offline.
-# ENV HF_HUB_OFFLINE=1 is set above for runtime; we override it for this
-# download-only RUN. Pulls BGE retriever + configured reranker + RoBERTa-base
-# (kept for emergency extractive rollback). Override NLP_RERANKER_REPO and
-# NLP_RERANKER_LOCAL_NAME only for reranker ablations; the shipped default is
-# the v9 BGE reranker because the Qwen3 reranker-only gate regressed badly.
+# HF_HUB_OFFLINE=1 is set above for runtime; override it for this download-only
+# RUN. Pulls BGE retriever + configured reranker + RoBERTa-base (emergency
+# extractive rollback). Override NLP_RERANKER_REPO/NLP_RERANKER_LOCAL_NAME only
+# for reranker ablations — the Qwen3 reranker-only gate regressed badly.
 COPY download_models.py .
 RUN TRANSFORMERS_OFFLINE=0 HF_HUB_OFFLINE=0 python download_models.py
 
-# Install runtime dependencies after model download. The default v9 path does
-# not install vLLM; historical Qwen paths should re-add it deliberately.
+# Install runtime dependencies after model download. The default extractive
+# path does not install vLLM; historical Qwen paths should re-add it deliberately.
 COPY requirements.txt .
 RUN python -m pip install --no-cache-dir -r requirements.txt && \
     python -m pip uninstall -y torchao flash-attn flash_attn || true
@@ -89,9 +85,9 @@ import uvicorn
 print("[nlp build] runtime imports ok")
 PY
 
-# v14-llm-rag: hard-fail the build if the LLM weights didn't land. The
-# manager will still boot without them by falling back to extractive, but
-# a silent fallback would mask a packaging regression on a v14c tag.
+# Hard-fail the build if the LLM weights didn't land. The manager still boots
+# without them by falling back to extractive, but a silent fallback would mask
+# a packaging regression.
 RUN if { [ "$NLP_ANSWERER" = "llm" ] || [ "$NLP_ANSWERER" = "hybrid" ]; } && [ ! -f /workspace/models/llm/config.json ]; then \
         echo "[nlp build] WARNING: NLP_ANSWERER=$NLP_ANSWERER but /workspace/models/llm/config.json missing"; \
         echo "[nlp build] container will fall back to extractive QA at runtime"; \
@@ -99,10 +95,10 @@ RUN if { [ "$NLP_ANSWERER" = "llm" ] || [ "$NLP_ANSWERER" = "hybrid" ]; } && [ !
 
 # Bundle locally-produced model artefacts.
 #
-# Locked v9 build requires nlp/models/roberta-finetuned-squad2/. Without it,
-# the manager silently falls back to the downloaded stock roberta-base-squad2,
-# which looks "healthy" but scores around 0.66 instead of the v9 0.711 local
-# baseline. Fail loudly rather than producing a fake v9 image.
+# Locked build requires nlp/models/roberta-finetuned-squad2/. Without it, the
+# manager silently falls back to the downloaded stock roberta-base-squad2,
+# which looks "healthy" but scores ~0.66 instead of the fine-tuned ~0.711
+# local baseline. Fail loudly rather than producing a degraded image.
 COPY models /workspace/models-local
 RUN if [ -d /workspace/models-local/roberta-finetuned-squad2 ] && \
        [ -f /workspace/models-local/roberta-finetuned-squad2/config.json ]; then \
@@ -144,7 +140,6 @@ RUN if [ -d /workspace/models-local/roberta-finetuned-squad2 ] && \
         echo "[nlp build] extractive answerer active; LLM artefacts ignored"; \
     fi && rm -rf /workspace/models-local
 
-# Copies your source files.
 COPY src .
 
 CMD ["python", "-m", "uvicorn", "nlp_server:app", "--port", "5004", "--host", "0.0.0.0"]

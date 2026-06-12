@@ -31,7 +31,7 @@ def _make_shaper(health_coef: float = 0.01, base_coef: float = 0.03) -> Adaptive
 
 def test_first_health_observation_sets_baseline_no_bonus():
     shaper = _make_shaper()
-    # last_health is None on the first tick -> baseline only, no bonus.
+    # last_health is None on first tick -> baseline only
     assert shaper._health_delta_bonus({"health": 100}) == 0.0
 
 

@@ -47,8 +47,6 @@ from pathlib import Path
 # same corpus text the slang prompt was mined from.
 from extract_slang import _collect_strings, _iter_text_chunks
 
-# Split on sentence-final punctuation so n-gram stats aren't dominated by whole
-# mega-documents. Keep it dumb and deterministic.
 _SENT_SPLIT_RE = re.compile(r"[.!?]+")
 
 
@@ -190,10 +188,8 @@ def main() -> None:
     text_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Collected {len(lines)} unique lines -> {text_path}", flush=True)
 
-    # Resolve train_kenlm.py: explicit --train-kenlm wins, else derive from
-    # --nemo-root. train_kenlm.py is NOT standalone — it imports
-    # scripts.asr_language_modeling.ngram_lm.kenlm_utils, so the NeMo repo root
-    # must be on PYTHONPATH (that's the `No module named 'scripts'` error).
+    # train_kenlm.py imports scripts.asr_language_modeling.ngram_lm.kenlm_utils,
+    # so the NeMo repo root must be on PYTHONPATH (else `No module named 'scripts'`).
     train_kenlm = args.train_kenlm
     if train_kenlm is None and args.nemo_root is not None:
         train_kenlm = args.nemo_root / "scripts" / "asr_language_modeling" / "ngram_lm" / "train_kenlm.py"
@@ -213,8 +209,6 @@ def main() -> None:
     if args.kenlm_bin is not None:
         cmd.append(f"kenlm_bin_path={args.kenlm_bin}")
 
-    # Subprocess env: put the NeMo repo root on PYTHONPATH so `from scripts...`
-    # resolves. Without this train_kenlm.py dies with ModuleNotFoundError.
     env = os.environ.copy()
     if args.nemo_root is not None:
         nemo_root = str(args.nemo_root.resolve())
@@ -232,9 +226,8 @@ def main() -> None:
     print("Running (PYTHONPATH=%s): %s" % (env.get("PYTHONPATH", ""), " ".join(cmd)), flush=True)
     subprocess.run(cmd, check=True, env=env)
 
-    # train_kenlm names outputs off kenlm_model_file (binary) + a sibling .arpa
-    # when preserve_arpa=true; exact suffixes vary by NeMo version. Report what
-    # actually landed so you know which path to set ASR_NGRAM_LM to.
+    # train_kenlm names outputs off kenlm_model_file plus a sibling .arpa when
+    # preserve_arpa=true; exact suffixes vary by NeMo version.
     produced = sorted(args.out.parent.glob(args.out.name + "*"))
     print("\nProduced files:", flush=True)
     for p in produced:

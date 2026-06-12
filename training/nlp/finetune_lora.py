@@ -59,11 +59,8 @@ CHUNK_OVERLAP = 1
 MAX_CONTEXT_CHUNKS = 3
 MAX_SEQ_LEN = 2048
 
-# System prompt MUST match llm_answerer._DEFAULT_SYSTEM_PROMPT exactly, so
-# the model sees the same prompt structure at train time and inference time.
-# Drift here silently destroys the fine-tune. (Single source of truth would
-# be cleaner; keeping it duplicated for now to avoid importing torch-heavy
-# llm_answerer module just for a string.)
+# Must match llm_answerer._DEFAULT_SYSTEM_PROMPT exactly — drift here
+# silently destroys the fine-tune (train/inference prompt mismatch).
 SYSTEM_PROMPT = (
     "You are an extractive question-answering assistant for the world of "
     "Clairos.\n"
@@ -281,7 +278,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Heavy imports here so --help is fast.
     import torch
     from datasets import Dataset
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
@@ -321,9 +317,8 @@ def main() -> None:
         flush=True,
     )
 
-    # QLoRA: load base in 4-bit nf4. Compute dtype bf16 for T4 (sm_75 supports
-    # bf16 ops via emulation; native fp16 is slightly faster — change to
-    # torch.float16 if needed). Double quant saves another ~0.4 bits/param.
+    # 4-bit nf4 load; bf16 compute dtype works on T4 (sm_75) via emulation.
+    # Double quant saves another ~0.4 bits/param.
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_compute_dtype=torch.bfloat16,
@@ -351,23 +346,15 @@ def main() -> None:
         lora_dropout=args.lora_dropout,
         bias="none",
         task_type="CAUSAL_LM",
-        # All four attention proj matrices. Adding MLP projections (gate_proj,
-        # up_proj, down_proj) would raise capacity but doubles VRAM cost; can
-        # try if r=16 underfits.
+        # Attention projections only; adding MLP projections raises capacity
+        # but doubles VRAM cost.
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
     )
     model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
 
-    # trl 1.x messages-format path: each row in the dataset has a `messages`
-    # field (list of {role, content} dicts). The trainer auto-applies the
-    # tokenizer's chat template AND knows how to mask the loss to the
-    # assistant turn — so we get completion_only_loss behaviour for free
-    # without defining a formatting_func. (trl 1.x refused to accept both
-    # `formatting_func` and `completion_only_loss=True` at the same time.)
-    #
-    # Strip the extra `question` / `answer` columns we added for debugging
-    # so the trainer doesn't try to interpret them as text fields.
+    # Strip the extra `question` / `answer` debug columns so the trainer
+    # doesn't try to interpret them as text fields.
     split["train"] = split["train"].remove_columns(
         [c for c in ("question", "answer") if c in split["train"].column_names]
     )
@@ -402,10 +389,8 @@ def main() -> None:
         report_to="none",
         max_length=MAX_SEQ_LEN,
         packing=False,
-        # trl 1.x: when the dataset has a `messages` field, the trainer
-        # auto-formats with the tokenizer's chat template and masks loss
-        # to the assistant turn when completion_only_loss=True. No
-        # formatting_func or dataset_text_field needed.
+        # With a `messages`-format dataset, trl auto-applies the chat template
+        # and masks loss to the assistant turn.
         completion_only_loss=True,
         seed=args.seed,
     )

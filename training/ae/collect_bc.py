@@ -37,10 +37,6 @@ from encoder import FrameStacker, rasterize_belief  # noqa: E402
 from opponents import MixedOpponent, OpponentFn, make_opponent  # noqa: E402
 
 
-# ---------------------------------------------------------------------------
-# Streaming writer
-# ---------------------------------------------------------------------------
-
 class _MemmapWriter:
     """Pre-allocated memmap writer for streaming BC collection.
 
@@ -79,18 +75,16 @@ class _MemmapWriter:
         else:
             self._mm_belief = None
 
-        # Fields metadata for meta.json
         self._agent_shape  = agent_shape
         self._base_shape   = base_shape
         self._belief_shape = belief_shape
         self._scalar_shape = scalar_shape
         self._out_dir = out_dir
 
-        # Incremental action counter for histogram
         self._action_counts = np.zeros(6, dtype=np.int64)
 
     def write(self, agent_view, base_view, scalar, action_mask, action,
-              belief=None) -> None:  # belief may be passed positionally or as keyword
+              belief=None) -> None:
         """Write one sample directly to disk.  Counts and reports dropped overflow samples."""
         if self._i >= self._n_max:
             if self._skipped == 0:
@@ -218,8 +212,8 @@ def _run_game_loop(
             env.reset(seed=seed + game)
         else:
             env.reset()
-        # Per-game reset for opponents that need it (Mixed picks a fresh
-        # archetype each game; AEManager-based opponents zero their belief).
+        # Mixed picks a fresh archetype each game; AEManager-based opponents
+        # zero their belief.
         for op in opponents:
             if hasattr(op, "reset_for_game"):
                 op.reset_for_game()
@@ -238,8 +232,7 @@ def _run_game_loop(
                 if obs_py.get("step") == 0:
                     planner = AEManager()
                     stacker.reset()
-                # Run the planner — this updates planner.* belief state
-                # AND picks the action we'll BC against.
+                # Updates planner.* belief state AND picks the action we BC against.
                 action = planner.ae(obs_py)
                 belief = rasterize_belief(planner, obs_py) if with_belief else None
                 stacked = stacker.observe(obs_py, belief_map=belief)
@@ -260,8 +253,7 @@ def _run_game_loop(
                     action = int(op(obs_py))
                 except Exception:
                     action = env.action_space(agent).sample()
-                # Safety: if the opponent returned an illegal action, fall
-                # back to the first legal one (mirrors simulate.py).
+                # Fall back to first legal action (mirrors simulate.py).
                 mask = obs_py.get("action_mask")
                 if mask is not None:
                     try:
@@ -324,7 +316,7 @@ def collect_dataset(
         f"opponents_spec={opponents_spec} -> {names}"
     )
 
-    # In-RAM accumulators (legacy path — unchanged behavior)
+    # In-RAM accumulators (legacy path)
     agent_views: list[np.ndarray] = []
     base_views: list[np.ndarray] = []
     scalars_list: list[np.ndarray] = []
@@ -403,7 +395,7 @@ def collect_dataset_streaming(
           actions.npy       int8     (games*200,)
           meta.json
     """
-    # C2: refuse to silently clobber an existing stream dir unless --overwrite is set.
+    # Refuse to silently clobber an existing stream dir unless --overwrite is set.
     _existing = stream_dir.is_dir() and (
         list(stream_dir.glob("*.npy")) or (stream_dir / "meta.json").exists()
     )
@@ -440,8 +432,7 @@ def collect_dataset_streaming(
           f"{_MemmapWriter.SAMPLES_PER_GAME} samples = "
           f"{games * _MemmapWriter.SAMPLES_PER_GAME:,} rows)")
 
-    # We need concrete per-sample shapes to pre-allocate.
-    # Run a single dummy reset to get them from the first stacked observation.
+    # Probe a single dummy reset to get concrete per-sample shapes for pre-allocation.
     _config2 = default_config()
     _config2.env.novice = novice
     _probe_env = bomberman_env.basic_env(env_wrappers=[], cfg=_config2)
@@ -541,7 +532,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.stream_dir is not None:
-        # --- Streaming memmap path ---
+        # Streaming memmap path
         stream_dir = Path(args.stream_dir)
         if not stream_dir.is_absolute():
             stream_dir = REPO_ROOT / stream_dir
@@ -556,7 +547,7 @@ def main() -> None:
             overwrite=args.overwrite,
         )
     else:
-        # --- Legacy npz path (default) ---
+        # Legacy npz path (default)
         raw_out = args.out if args.out is not None else "training/ae/data/bc.npz"
         out_path = Path(raw_out)
         if not out_path.is_absolute():

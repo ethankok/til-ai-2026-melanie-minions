@@ -40,9 +40,8 @@ def test_blast_cells_matches_delegator_and_caches():
     blast = bs.blast_cells((8, 8))
     assert blast == m._blast_cells((8, 8))
     assert (8, 8) in blast
-    # Chebyshev radius bound holds for every blast cell.
     assert all(max(abs(x - 8), abs(y - 8)) <= m.BOMB_RADIUS for x, y in blast)
-    # Cache lives on the host blackboard and is shared with the delegator.
+    # cache lives on the host blackboard, shared with the delegator
     assert (8, 8) in m._blast_cache
 
 
@@ -62,8 +61,7 @@ def test_danger_layers_resolve_chain_to_earliest_trigger():
     m = _open_grid_manager()
     m.time_danger_enabled = True
     bs = m.bomb_safety
-    # Bomb B sits inside bomb A's blast; A fires at t=1, so B chains to t=1
-    # even though its own timer says t=3.
+    # B sits inside A's blast; A fires at t=1, so B chains to t=1 despite its own timer=3
     m.known_bombs = {
         (8, 8): {"timer": 1, "own": False, "last_step": 5},
         (8, 9): {"timer": 3, "own": False, "last_step": 5},
@@ -71,8 +69,7 @@ def test_danger_layers_resolve_chain_to_earliest_trigger():
     layers = bs.danger_layers()
     assert (8, 9) in layers[1]
     assert bs.on_fire_at((8, 9), 1)
-    # Beyond the horizon is treated as safe.
-    assert not bs.on_fire_at((8, 9), len(layers) + 1)
+    assert not bs.on_fire_at((8, 9), len(layers) + 1)  # beyond horizon -> safe
 
 
 def test_safe_escape_within_escapes_blast():
@@ -99,8 +96,7 @@ def test_commit_and_revert_round_trip():
     assert (8, 8) not in m.known_bombs
     assert m.escape_target == prior_escape
     assert m._tick_bomb_commit is None
-    # Second revert is a no-op.
-    assert bs.revert_commit() is False
+    assert bs.revert_commit() is False  # second revert is a no-op
 
 
 def test_escape_required_respects_no_self_damage(monkeypatch):

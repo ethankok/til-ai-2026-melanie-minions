@@ -45,15 +45,11 @@ import sys
 from math import inf
 from pathlib import Path
 
-# Curry runs Python-only here (correctness over speed): no numba JIT, no parallel
-# worker pool, and EXPERIMENTAL_VARIANT left unset so C.VARIANT stays "balanced"
-# (hunter/variant-gated paths off; we pin personas via set_persona instead).
+# Curry: Python-only (no numba/parallel goals); EXPERIMENTAL_VARIANT left unset so
+# C.VARIANT stays "balanced" — personas are pinned via set_persona instead.
 os.environ.setdefault("EXP_DISABLE_NUMBA", "1")
 os.environ.setdefault("USE_PARALLEL_GOALS", "0")
 
-# --------------------------------------------------------------------------
-# Paths
-# --------------------------------------------------------------------------
 THIS_DIR = Path(__file__).resolve().parent           # training/ae
 REPO_ROOT = THIS_DIR.parents[1]
 AE_SRC = REPO_ROOT / "ae" / "src"
@@ -69,9 +65,7 @@ for _p in (str(AE_SRC), str(THIS_DIR), str(TIL_AE), str(CURRY_PATH), str(PEROXID
 from ae_manager import AEManager  # noqa: E402
 
 
-# --------------------------------------------------------------------------
 # Train / eval opponent split — enforced by train_ppo.py's sampler.
-# --------------------------------------------------------------------------
 FOREIGN_TRAIN_OK = ["curry_aggro", "self_policy", "self_heuristic", "evbot"]
 FOREIGN_EVAL_ONLY = ["curry_fortress", "self_tactical",
                      "aggressive_proxy", "anti_aggro_exploiter",
@@ -79,9 +73,7 @@ FOREIGN_EVAL_ONLY = ["curry_fortress", "self_tactical",
 FOREIGN_NAMES = tuple(FOREIGN_TRAIN_OK + FOREIGN_EVAL_ONLY)
 
 
-# --------------------------------------------------------------------------
 # Checkpoint defaults (env-overridable). Local training layout, not container.
-# --------------------------------------------------------------------------
 def _self_policy_checkpoint() -> Path:
     override = os.environ.get("AE_SELF_POLICY_CHECKPOINT")
     if override:
@@ -144,13 +136,9 @@ class _EnvOverride:
         return False
 
 
-# --------------------------------------------------------------------------
-# Purpose-built non-mirror bots. Each subclasses AEManager for *infrastructure*
-# (belief / BFS / blast / escape) but overrides _choose_target with its own
-# objective function. The bomb decision (_should_place_bomb) and movement stay
-# AEManager's — reusing the bomb-safety machinery is fine; the objective is what
-# must differ to be non-mirror.
-# --------------------------------------------------------------------------
+# Purpose-built non-mirror bots: subclass AEManager for infrastructure (belief /
+# BFS / blast / escape) but override _choose_target with a different objective.
+# Bomb decision and movement stay AEManager's.
 
 def _strip_learned_artifacts(m: AEManager) -> None:
     """Keep the bot a pure standalone policy: no playbook / opponent model."""
@@ -237,8 +225,7 @@ class AggressiveProxy(AEManager):
     def __init__(self) -> None:
         super().__init__()
         _strip_learned_artifacts(self)
-        # Walk into threats — over-commit. Low threat penalties on the planner's
-        # own movement scoring (used by _action_for_path / fallback).
+        # Low threat penalties -> walks into threats / over-commits.
         self.PATH_THREAT_PENALTY = 0.25
         self.CELL_THREAT_PENALTY = 1.0
 
@@ -283,7 +270,7 @@ class AntiAggroExploiter(AEManager):
     def __init__(self) -> None:
         super().__init__()
         _strip_learned_artifacts(self)
-        # Survive: brush threats hard on the planner's movement scoring.
+        # High threat penalties -> survives by avoiding danger.
         self.PATH_THREAT_PENALTY = 6.0
         self.CELL_THREAT_PENALTY = 14.0
 
@@ -294,8 +281,7 @@ class AntiAggroExploiter(AEManager):
         distance, parent = _distance_map(self, start, danger)
         fresh = _fresh_enemies(self, max(4, self.ENEMY_STALENESS))
 
-        # Punish: an aggressor inside our base radius becomes a high-value
-        # intercept target (bait/punish), overriding the farming objective.
+        # An aggressor inside our base radius overrides the farming objective.
         if self.base_location is not None:
             near_base = [p for p in fresh
                          if self._manhattan(p, self.base_location) <= max(6, self.BASE_DEFENSE_RADIUS + 2)]
@@ -307,7 +293,7 @@ class AntiAggroExploiter(AEManager):
                     self.current_path = path
                     return target, path
 
-        # Farm: items, scored by value, distance, AND proximity to aggressors.
+        # Otherwise farm items, penalized by proximity to aggressors.
         best, best_score, best_kind = None, -inf, "none"
         for pos, (kind, _step) in self.last_seen_items.items():
             if pos == start or pos not in distance:
@@ -328,8 +314,6 @@ class AntiAggroExploiter(AEManager):
         return best, path
 
 
-# --------------------------------------------------------------------------
-# Vendored competitor heuristic (curry / royal-recruits).
 # --------------------------------------------------------------------------
 class CurryOpponent:
     """Adapter around the vendored ``ExperimentalHeuristicAgent``.
@@ -357,18 +341,14 @@ class CurryOpponent:
         return agent
 
     def reset_for_game(self) -> None:
-        # Full per-game reset: clears belief, persona-FSM, round/opening state.
         self._agent = self._new_agent()
 
     def __call__(self, obs: dict) -> int:
-        # act() self-detects round boundaries via the step==0 transition and
-        # already handles frozen_ticks + action masking internally.
+        # act() self-detects round boundaries via step==0 and handles
+        # frozen_ticks + action masking internally.
         return int(self._agent.act(obs))
 
 
-# --------------------------------------------------------------------------
-# Vendored competitor heuristic #2 (team peroxide-dev).
-# --------------------------------------------------------------------------
 class PeroxideOpponent:
     """Adapter around the vendored peroxide-dev planner: an orientation-aware
     A* over (x,y,facing) state with partial-map memory, time-layered danger
@@ -399,9 +379,6 @@ class PeroxideOpponent:
         return int(self._agent.ae(obs))
 
 
-# --------------------------------------------------------------------------
-# Self-policy opponents (our learned checkpoints, run as full-control players).
-# --------------------------------------------------------------------------
 def _load_isolated_policy(checkpoint: Path):
     """Construct a PolicyAEManager bound to ``checkpoint`` WITHOUT polluting the
     process-global model cache. policy_manager caches the first model loaded
@@ -453,10 +430,9 @@ class SelfTacticalOpponent:
         self._mgr = self._new()
 
     def _new(self):
-        # AE_CONTENTION is OUR deployed agent's experimental flag; an opponent
-        # proxy must never inherit it (it would confound a contention A/B by
-        # buffing the opponent too). Forced off here so it holds across the
-        # per-round rebuilds in reset_for_game().
+        # AE_CONTENTION is OUR deployed agent's flag; an opponent proxy must never
+        # inherit it (would confound a contention A/B). Forced off here so it
+        # holds across reset_for_game() rebuilds.
         with _EnvOverride({"AE_TACTICAL_POLICY_CHECKPOINT": str(self._checkpoint),
                            "AE_CONTENTION": "0", "AE_STUN_TAX": "0",
                            "AE_FORTRESS": "0"}):
@@ -478,8 +454,7 @@ class SelfHeuristicOpponent:
         self._mgr = self._new()
 
     def _new(self) -> AEManager:
-        # Never let an opponent proxy inherit OUR AE_CONTENTION flag (see
-        # SelfTacticalOpponent._new for the rationale).
+        # See SelfTacticalOpponent._new: never inherit OUR AE_CONTENTION flag.
         with _EnvOverride({**CBOMB7_ENV, "AE_CONTENTION": "0",
                            "AE_STUN_TAX": "0", "AE_FORTRESS": "0"}):
             return AEManager()
@@ -491,9 +466,6 @@ class SelfHeuristicOpponent:
         return int(self._mgr.ae(obs))
 
 
-# --------------------------------------------------------------------------
-# Public factory
-# --------------------------------------------------------------------------
 def make_foreign_opponent(name: str, seed: int | None = None):
     """Construct one foreign opponent by name. ``seed`` is used by the stochastic
     / RNG-seeded constructions (curry, self_policy); the heuristic/tactical bots

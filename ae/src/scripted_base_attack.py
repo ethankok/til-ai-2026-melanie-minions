@@ -1,16 +1,16 @@
-"""W2.2 ScriptedBaseAttackPolicy — port of M5's primary scripted policy.
+"""ScriptedBaseAttackPolicy — scripted attack-route decision policy.
 
-Decision flow (per M5_SUMMARY.md):
+Decision flow:
 
   1. Parse location, facing, step, team_bombs (delegated to AEManager).
   2. Sync own/enemy bases (delegated).
   3. Update visible memory from agent view and base view (delegated).
-  4. Detect loop/stuck state (W2.2e — TBD).
-  5. Escape enemy bomb danger if needed (W2.1b — reuse).
+  4. Detect loop/stuck state.
+  5. Escape enemy bomb danger if needed.
   6. If no bomb stock, decline to BC/heuristic.
   7. If at planned attack square and blast reaches target base, bomb.
-  8. Try tactical visible-enemy bombing (W2.2d — TBD).
-  9. Try own-base defense (W2.2f — TBD).
+  8. Try tactical visible-enemy bombing.
+  9. Try own-base defense.
   10. Continue committed attack route.
   11. If no committed route, choose a new attack plan.
   12. If no confident attack plan, decline to BC/heuristic.
@@ -20,7 +20,6 @@ already-synced state. AEManager's `ae(obs)` method does all the heavy lifting
 of observation parsing, bomb tracking, etc. The scripted policy adds:
   - target_base / attack_square commitment
   - orientation-aware route + bomb-from-attack-square decision
-  - (incremental layers W2.2d-W2.2f added as separate methods)
 
 Return contract: `act(obs) -> int | None`. None means "decline → fallback".
 """
@@ -34,7 +33,6 @@ if TYPE_CHECKING:
     from ae_manager import AEManager
 
 
-# M5 constants
 MAX_ATTACK_TARGET_AGE = 90
 MAX_BASE_DEFENSE_ROUTE_COST = 7.5
 TACTICAL_AGENT_BOMB_MIN_TARGETS = 2
@@ -46,7 +44,7 @@ class ScriptedBaseAttackPolicy:
 
     Reads observation-derived state from a host AEManager (call
     `host.ae(obs)` first OR ensure host._sync_step has been called). Selects
-    an action based on the M5 decision tree.
+    an action based on the decision tree above.
     """
 
     def __init__(self, host: "AEManager") -> None:
@@ -56,7 +54,7 @@ class ScriptedBaseAttackPolicy:
         self.attack_square: tuple[int, int] | None = None
         self.attack_target_age: int = 0
         self.last_plan_step: int | None = None
-        # W2.2e loop/stuck detection state
+        # Loop/stuck detection state
         self.recent_locations: list[tuple[int, int]] = []
         self.loop_escape_active: bool = False
         # Diagnostics
@@ -81,45 +79,40 @@ class ScriptedBaseAttackPolicy:
             return self._decline("no_location")
         direction = host._as_int(observation.get("direction"), default=0) % 4
 
-        # M5 step 4: update loop/stuck state.
         self._update_loop_state(location)
         team_bombs = host._as_int(observation.get("team_bombs"), default=0)
 
-        # M5 step 5: enemy-bomb escape override (W2.1b — reuse host helper).
-        # Even when the heuristic flag is off, the M5 spec requires escape to
-        # supersede normal action selection for scripted policy.
+        # Enemy-bomb escape supersedes normal action selection, even with the
+        # global heuristic flag off.
         escape_action = self._enemy_bomb_escape(observation, location, direction)
         if escape_action is not None:
             self._record("enemy_bomb_escape")
             return escape_action
 
-        # M5 step 7: bomb from attack square if we're committed and at target.
+        # Bomb from attack square if we're committed and at target.
         if self._at_attack_square(location):
             if self._bomb_reaches_target(location) and host._legal(observation, host.PLACE_BOMB):
                 if self._bomb_has_escape(location):
                     self._record("bomb_attack_square")
                     return host.PLACE_BOMB
 
-        # M5 step 8: tactical cluster bombing (W2.2d).
         cluster_action = self._cluster_bomb_action(observation, location)
         if cluster_action is not None:
             self._record("cluster_bomb")
             return cluster_action
 
-        # M5 step 8 (single-blocker subcase, W2.2e): bomb a single visible
-        # enemy if we're stuck/looping and they're in our blast.
+        # Bomb a single visible enemy if we're stuck/looping and they're in our blast.
         single_blocker = self._single_blocker_bomb(observation, location)
         if single_blocker is not None:
             self._record("single_blocker_bomb")
             return single_blocker
 
-        # M5 step 9: own-base defense (W2.2f).
         defense_action = self._own_base_defense(observation, location, direction)
         if defense_action is not None:
             self._record("own_base_defense")
             return defense_action
 
-        # M5 steps 10/11: continue or pick a new attack plan.
+        # Continue or pick a new attack plan.
         self._maybe_clear_stale_plan(location, step)
         if self.target_base is None or self.attack_square is None:
             self._pick_attack_plan(location, direction, observation, step)
@@ -127,8 +120,6 @@ class ScriptedBaseAttackPolicy:
         if self.target_base is None or self.attack_square is None:
             return self._decline("no_attack_plan")
         if team_bombs <= 0 and not self._at_attack_square(location):
-            # Without bombs, even arriving at the square is pointless — let
-            # heuristic handle item collection / defense.
             return self._decline("no_bomb_stock")
 
         action = self._route_step(location, direction, observation)
@@ -147,7 +138,7 @@ class ScriptedBaseAttackPolicy:
         self.loop_escape_active = False
 
     # ------------------------------------------------------------------
-    # W2.1b enemy-bomb escape integration
+    # Enemy-bomb escape integration
     # ------------------------------------------------------------------
     def _enemy_bomb_escape(
         self,
@@ -155,13 +146,12 @@ class ScriptedBaseAttackPolicy:
         location: tuple[int, int],
         direction: int,
     ) -> int | None:
-        """M5 step 5: enemy bomb (own==False) with timer<=2 in our blast.
+        """Enemy bomb (own==False) with timer<=2 in our blast.
 
         Reuse the host AEManager's _enemy_bomb_only_escape helper, but force
         the flag on for the scripted path even if the global env var is off.
         """
         host = self.host
-        # Save and force-enable so the helper computes regardless of env.
         prev = host.enemy_bomb_escape_enabled
         host.enemy_bomb_escape_enabled = True
         try:
@@ -170,7 +160,7 @@ class ScriptedBaseAttackPolicy:
             host.enemy_bomb_escape_enabled = prev
 
     # ------------------------------------------------------------------
-    # W2.2d tactical cluster bombing
+    # Tactical cluster bombing
     # ------------------------------------------------------------------
     def _bomb_has_escape(self, location: tuple[int, int]) -> bool:
         """Does PLACE_BOMB at `location` leave us with a non-blast safe cell?"""
@@ -236,7 +226,7 @@ class ScriptedBaseAttackPolicy:
         return host.PLACE_BOMB
 
     # ------------------------------------------------------------------
-    # W2.2e loop / stuck detection + single-blocker bombing
+    # Loop / stuck detection + single-blocker bombing
     # ------------------------------------------------------------------
     def _update_loop_state(self, location: tuple[int, int]) -> None:
         self.recent_locations.append(location)
@@ -244,7 +234,7 @@ class ScriptedBaseAttackPolicy:
             del self.recent_locations[: len(self.recent_locations) - 12]
 
     def _is_stuck_or_looping(self, location: tuple[int, int]) -> bool:
-        """M5 stuck/loop triggers.
+        """Stuck/loop triggers.
 
         - currently in loop escape mode; OR
         - recent tail of 4 locations is all the current location; OR
@@ -303,7 +293,7 @@ class ScriptedBaseAttackPolicy:
         return host.PLACE_BOMB
 
     # ------------------------------------------------------------------
-    # W2.2f own-base defense
+    # Own-base defense
     # ------------------------------------------------------------------
     def _enemy_base_threats(self) -> list[tuple[int, int]]:
         """Visible enemy agents whose blast (if they bomb in place) reaches our base."""
@@ -392,7 +382,6 @@ class ScriptedBaseAttackPolicy:
         if self.target_base is None:
             return
         host = self.host
-        # Target no longer active (destroyed or never seen).
         if self.target_base not in host.enemy_bases:
             self.reset_plan()
             self._note_decline("target_inactive")
@@ -401,7 +390,6 @@ class ScriptedBaseAttackPolicy:
             self.reset_plan()
             self._note_decline("plan_age_exceeded")
             return
-        # Attack square inactive (e.g. now a danger cell that blocks routing).
         if self.attack_square is None:
             self.reset_plan()
 
@@ -422,7 +410,6 @@ class ScriptedBaseAttackPolicy:
         host = self.host
         if not host.enemy_bases:
             return
-        # Compute one distance map from current state.
         danger = host._danger_cells()
         if (
             getattr(host, "orientation_aware_path_enabled", False)
@@ -445,8 +432,7 @@ class ScriptedBaseAttackPolicy:
         for enemy_base in host.enemy_bases:
             rank = get_first_target_rank(host.base_location, enemy_base)
             rank_penalty = 0.0 if rank is None else 2.0 * float(rank)
-            # Enumerate attack squares: every reachable cell whose blast
-            # contains this enemy base.
+            # Enumerate every reachable cell whose blast contains this enemy base.
             for cell in distance:
                 if cell == enemy_base:
                     continue
@@ -458,10 +444,8 @@ class ScriptedBaseAttackPolicy:
                 route_cost = float(distance[cell])
                 if not math.isfinite(route_cost):
                     continue
-                # Target cost: revisited attack square + small base-distance bias.
+                # Revisited attack square + slight preference for attack squares closer to own base.
                 target_cost = 0.25 * float(host.visit_count.get(cell, 0))
-                # Slight preference for closer-to-own-base attack squares to
-                # cut tempo overhead (matches M5 doc).
                 if host.base_location is not None:
                     target_cost += 0.05 * float(host._manhattan(cell, host.base_location))
                 score = route_cost + rank_penalty + target_cost
@@ -500,9 +484,6 @@ class ScriptedBaseAttackPolicy:
         else:
             _dist, parent = host._bfs_distance_map(location, danger)
         if self.attack_square not in parent:
-            # Try without danger as a last resort; M5 doc has loop-escape
-            # cells that can mark routes bad, but at the skeleton level we
-            # accept declining to heuristic.
             return None
         path = host._reconstruct_path(parent, location, self.attack_square)
         if path is None:

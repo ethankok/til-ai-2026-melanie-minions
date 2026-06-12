@@ -92,8 +92,7 @@ def build_oracle_table(
             continue
         sorted_means = sorted(means.items(), key=lambda kv: -kv[1])
         best_action, best_v = sorted_means[0]
-        # If the gap between the best and second-best is small, the table
-        # is making noise into policy. Skip.
+        # Skip if best vs second-best gap is too small (would inject noise).
         runner_v = sorted_means[1][1] if len(sorted_means) > 1 else -1e9
         if best_v - runner_v < min_action_diff:
             continue

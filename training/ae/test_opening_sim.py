@@ -50,7 +50,7 @@ def test_initial_state_per_slot():
 def test_left_right_turn_in_place():
     """LEFT/RIGHT rotate facing (dir+3 / dir+1 mod 4); position unchanged."""
     sim = OpeningSim()
-    st = sim.initial_state((13, 9))  # pos (14,9), dir 0
+    st = sim.initial_state((13, 9))
     r = sim.step(st, RIGHT)
     assert r.pos == st.pos and r.dir == (st.dir + 1) % 4
     l = sim.step(st, LEFT)
@@ -60,7 +60,6 @@ def test_left_right_turn_in_place():
 def test_wall_blocks_forward():
     """FORWARD into a known blocking edge does not change position."""
     sim = OpeningSim()
-    # Find a cell with a blocking edge and an in-bounds neighbour behind it.
     (x, y, d) = next(iter(sim.blocking_edges))
     from opening_sim import State
     st = State(pos=(x, y), dir=d, collected=frozenset(), reward=0.0, tick=0)
@@ -72,7 +71,6 @@ def test_item_pickup_once():
     """Entering an item tile collects it once; revisiting does not re-score."""
     sim = OpeningSim()
     from opening_sim import State
-    # Pick an item with a free (non-blocked, in-bounds) neighbour to step from.
     for (ix, iy), kind in sim.items.items():
         for d, (dx, dy) in enumerate(sim.DELTAS):
             nx, ny = ix - dx, iy - dy
@@ -82,7 +80,6 @@ def test_item_pickup_once():
             # step would legitimately collect it and confound the check.
             if (nx, ny) in sim.items:
                 continue
-            # step from (nx,ny) facing d should land on (ix,iy)
             st = State(pos=(nx, ny), dir=d, collected=frozenset(), reward=0.0, tick=0)
             if sim._blocked((nx, ny), d):
                 continue
@@ -91,7 +88,6 @@ def test_item_pickup_once():
                 continue
             assert (ix, iy) in after.collected
             assert after.reward == ITEM_VALUE[kind]
-            # revisit: step back and forth, reward must not increase again
             back = sim.step(after, BACKWARD)
             again = sim.step(back, FORWARD)
             assert again.reward == after.reward
@@ -116,7 +112,6 @@ def test_parity_with_env():
         env.reset(seed=1000 + trial)
 
         sim = OpeningSim()
-        # one OpeningSim state per agent, advanced when that agent acts
         sim_state = {}
         cum_env_reward = {f"agent_{i}": 0.0 for i in range(6)}
         turn_idx = {f"agent_{i}": 0 for i in range(6)}
@@ -132,7 +127,6 @@ def test_parity_with_env():
                 sim_state[agent] = sim.initial_state(base)
             cum_env_reward[agent] += float(reward)
             k = turn_idx[agent]
-            # Compare BEFORE applying this turn's action: env obs == sim state.
             ss = sim_state[agent]
             assert tuple(n["location"]) == ss.pos, (
                 f"trial{trial} {agent} turn{k}: env pos {tuple(n['location'])} != sim {ss.pos}")
@@ -166,7 +160,6 @@ def test_beam_finds_reachable_reward():
     sim = OpeningSim()
     cands = beam_search(sim, (13, 9), horizon=20, beam_width=500, top_k=3)
     assert cands[0]["reward"] > 0.0
-    # ranked descending by reward
     rewards = [c["reward"] for c in cands]
     assert rewards == sorted(rewards, reverse=True)
 
@@ -213,7 +206,7 @@ def _env_replay_reward(base_idx: int, base: tuple, seq: list[int]) -> float:
 
     Drives agent_<base_idx> with `seq` (others STAY) and returns its cumulative
     reward, bagging the final move's reward by running one extra turn (AEC
-    rewards land on the agent's NEXT turn — the source of an earlier false alarm).
+    rewards land on the agent's NEXT turn).
     """
     from til_environment import bomberman_env
     from til_environment.config import default_config
@@ -235,7 +228,7 @@ def _env_replay_reward(base_idx: int, base: tuple, seq: list[int]) -> float:
             if taken < len(seq):
                 env.step(seq[taken]); taken += 1
             elif not extra_done:
-                extra_done = True  # this turn bagged the final move's reward
+                extra_done = True
                 break
             else:
                 env.step(STAY)
@@ -247,9 +240,8 @@ def _env_replay_reward(base_idx: int, base: tuple, seq: list[int]) -> float:
 def test_generated_openings_reproduce_in_env():
     """Dense generated openings reproduce their claimed reward in the real env.
 
-    Regression for the reward-bagging false alarm: the sparse random-walk parity
-    test rarely lands on items, so this stresses the dense item-collection path
-    end-to-end against the official env.
+    The sparse random-walk parity test rarely lands on items, so this stresses
+    the dense item-collection path end-to-end against the official env.
     """
     from gen_openings import generate
     bases = list(SLOT_TABLE.keys())

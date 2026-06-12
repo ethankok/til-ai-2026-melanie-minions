@@ -51,7 +51,7 @@ def test_clamps_apply_on_every_construction_path():
 
 
 def test_manager_accepts_direct_profile_without_env(monkeypatch):
-    # Env says one thing; the explicit profile must win.
+    # env says one thing; the explicit profile must win
     monkeypatch.setenv("AE_ENEMY_BASE_VALUE", "999")
     m = AEManager(weights=PlannerWeights(enemy_base_value=42.0,
                                          item_mission_value=7.0))

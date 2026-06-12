@@ -86,23 +86,19 @@ def main() -> None:
     name = os.environ.get("NAME", f"rfdetr-{variant}-{resolution}-v1")
     dataset_dir = os.environ.get("RFDETR_DATASET", "/home/jupyter/cv_rfdetr_dataset")
     output_dir = os.environ.get("OUTPUT_DIR", f"/home/jupyter/cv_runs/{name}")
-    # 30-epoch cap with early stopping: the first full run (29 May) converged by
-    # ~epoch 12 and peaked at epoch 16 (hard-held-out mAP50-95 0.912 / EMA 0.928),
-    # so 30 is a ceiling early-stopping never reaches.
+    # 30-epoch cap with early stopping; convergence happens well before this.
     epochs = _env_int("EPOCHS", 30)
-    # T4-safe defaults (15GB). The original OOM was the multi-scale ~1008px
-    # upsample, NOT batch size; with MULTI_SCALE off (below) batch=4 fits at 728.
-    # Activation memory scales ~resolution^2, so above ~840px drop to batch=2 to
-    # avoid OOM; grad_accum auto-scales to hold the effective batch at 16. Both
-    # overridable via BATCH / GRAD_ACCUM.
+    # T4-safe defaults (15GB). With MULTI_SCALE off, batch=4 fits at <=840px;
+    # activation memory scales ~resolution^2 so drop to batch=2 above that.
+    # grad_accum auto-scales to hold the effective batch at 16.
     default_batch = 4 if resolution <= 840 else 2
     batch = _env_int("BATCH", default_batch)
     grad_accum = _env_int("GRAD_ACCUM", max(1, 16 // batch))
     lr = _env_float("LR", 1e-4)
     # Memory knobs (only passed if the installed train() accepts them):
     #   GRAD_CHECKPOINT (default on): trade compute for activation memory.
-    #   MULTI_SCALE (default off): upstream default upsamples to ~1008px, which
-    #     is what produced the 11GB allocation; off keeps everything at resolution.
+    #   MULTI_SCALE (default off): upstream default upsamples to ~1008px,
+    #     which can OOM on T4; off keeps everything at `resolution`.
     grad_checkpoint = _env_bool("GRAD_CHECKPOINT", True)
     multi_scale = _env_bool("MULTI_SCALE", False)
     num_workers = _env_int("NUM_WORKERS", 2)
@@ -128,7 +124,7 @@ def main() -> None:
         "output_dir": output_dir,
         "early_stopping": True,
         "num_workers": num_workers,
-        # candidate names for the same knobs across rfdetr versions:
+        # candidate names for the same knobs across rfdetr versions
         "gradient_checkpointing": grad_checkpoint,
         "grad_checkpoint": grad_checkpoint,
         "multi_scale": multi_scale,
@@ -136,9 +132,9 @@ def main() -> None:
     }
     model.train(**_filter_train_kwargs(model.train, desired))
 
-    # rfdetr 1.7.x (Lightning) writes checkpoint_best_ema.pth (EMA weights, best
-    # generalization) and checkpoint_best_regular.pth — NOT checkpoint_best_total.pth.
-    # Prefer EMA; fall back to regular, then any legacy name.
+    # rfdetr 1.7.x (Lightning) writes checkpoint_best_ema.pth and
+    # checkpoint_best_regular.pth, not checkpoint_best_total.pth. Prefer EMA;
+    # fall back to regular, then the legacy name.
     out = Path(output_dir)
     candidates = [
         out / "checkpoint_best_ema.pth",

@@ -1,9 +1,5 @@
 """Runs the adversarial noising server."""
 
-# Unless you want to do something special with the server, you shouldn't need
-# to change anything in this file.
-
-
 import base64
 
 from fastapi import FastAPI, Request
@@ -31,11 +27,7 @@ async def noise(request: Request) -> dict[str, list[str]]:
 
     predictions = []
     for instance in inputs_json["instances"]:
-
-        # Reads the base-64 encoded image and decodes it into bytes.
         image_bytes = base64.b64decode(instance["b64"])
-
-        # Performs adversarial noising and appends the result.
         noised_image = manager.noise(image_bytes)
         predictions.append(noised_image)
 

@@ -44,7 +44,6 @@ def test_detonate_steps_default_is_five():
 
 
 def test_escape_bomb_timer_unchanged():
-    # The conservative escape/survival window must stay at 3.
     assert AEManager().BOMB_TIMER == 3
 
 

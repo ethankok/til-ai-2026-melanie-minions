@@ -66,10 +66,10 @@ def test_revert_pops_synthetic_entry_and_nulls_escape():
     assert m.escape_target is not None
 
     assert m.revert_bomb_commit() is True
-    assert (0, 0) not in m.known_bombs       # synthetic entry removed
-    assert m.escape_target is None           # escape commit reverted
+    assert (0, 0) not in m.known_bombs
+    assert m.escape_target is None
     assert m.escape_until_step is None
-    assert m._tick_bomb_commit is None        # record consumed
+    assert m._tick_bomb_commit is None
 
 
 def test_revert_restores_prior_observed_bomb():
@@ -80,27 +80,25 @@ def test_revert_restores_prior_observed_bomb():
     m.base_location = (15, 15)
     obs = {"team_bombs": 1, "action_mask": [1, 1, 1, 1, 1, 1]}
     assert m._should_place_bomb(obs, (0, 0), None, set()) is True
-    # commit overwrote the prior entry with an own-bomb
-    assert m.known_bombs[(0, 0)]["own"] is True
+    assert m.known_bombs[(0, 0)]["own"] is True  # commit overwrote prior entry
 
     assert m.revert_bomb_commit() is True
-    assert m.known_bombs[(0, 0)] == prior     # prior restored, not popped
+    assert m.known_bombs[(0, 0)] == prior  # prior restored, not popped
 
 
 def test_revert_noop_without_commit():
     m = _open_grid_manager()
     m.known_bombs[(3, 3)] = {"timer": 2, "own": False, "last_step": 4}
     assert m._tick_bomb_commit is None
-    assert m.revert_bomb_commit() is False    # nothing to revert
-    assert (3, 3) in m.known_bombs            # untouched
+    assert m.revert_bomb_commit() is False
+    assert (3, 3) in m.known_bombs
 
 
 def test_ae_resets_tick_commit_each_tick():
     m = _open_grid_manager()
     m._tick_bomb_commit = {"cell": (9, 9), "prior_bomb": None,
                            "prior_escape_target": None, "prior_escape_until_step": None}
-    # A plain non-bomb tick on an empty open grid should not commit a bomb,
-    # so the stale record must be cleared at the top of ae().
+    # plain non-bomb tick on empty grid commits nothing -> stale record must clear at top of ae()
     obs = {"step": 6, "location": [0, 0], "direction": 0,
            "team_bombs": 0, "action_mask": [1, 1, 1, 1, 1, 0]}
     m.ae(obs)

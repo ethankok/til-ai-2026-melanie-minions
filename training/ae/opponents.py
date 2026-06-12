@@ -48,8 +48,7 @@ from typing import Callable
 
 import numpy as np
 
-# Reuse the planner's belief-map machinery for the scripted opponents.
-# `AEManager` is already battle-tested for this; we just wrap it with
+# Reuse AEManager's belief-map machinery for the scripted opponents; wrap with
 # different behavior policies.
 _AE_SRC = str(Path(__file__).resolve().parents[2] / "ae" / "src")
 if _AE_SRC not in sys.path:
@@ -72,9 +71,7 @@ def _strip_aimanager_smarts(m: AEManager) -> None:
     """
     m.playbook = None
     m.opponent_walk_scale = 1.0
-    # Also disable the tier-1 opt-ins so opponents play the original v3b
-    # heuristic and don't shift the rollout distribution. (Tier-1 toggles
-    # were chosen to help OUR policy; we don't want opponents getting them.)
+    # Disable tier-1 opt-ins so opponents play the original v3b heuristic, unshifted.
     m.tier1_defense_priority = False
     m.tier1_repeat_kill = False
     m.tier1_shared_credit = False
@@ -113,10 +110,8 @@ def _sample_random_action(obs: dict, rng: random.Random) -> int:
 
 # ---------------------------------------------------------------------------
 # Wrapped behaviors — each subclasses AEManager and overrides ae() to alter
-# behavior at the right level. We keep the belief-map and BFS infrastructure
-# from the parent so opponent decisions stay in-distribution with cloud-
-# observed enemy behavior (i.e., they aren't random-walkers; they're at
-# least somewhat coherent).
+# behavior, keeping the belief-map/BFS infrastructure so opponents stay
+# in-distribution with cloud-observed enemy behavior (not random-walkers).
 # ---------------------------------------------------------------------------
 
 
@@ -152,8 +147,6 @@ class GreedyCollector(AEManager):
 
     def ae(self, observation: dict) -> int:
         action = super().ae(observation)
-        # Strip place-bomb actions for this opponent — but only when there's
-        # a legal alternative.
         if action == self.PLACE_BOMB:
             for alt in (self.FORWARD, self.LEFT, self.RIGHT, self.BACKWARD, self.STAY):
                 if self._legal(observation, alt):
@@ -212,23 +205,21 @@ class Defender(AEManager):
 
     def __init__(self) -> None:
         super().__init__()
-        # Defender doesn't care about distant enemy bases.
         self.tier1_shared_credit = True
         _strip_aimanager_smarts(self)
-        # Re-enable shared-credit since this opponent should treat its base
-        # offense as low-value (so it stays home defending).
+        # _strip_aimanager_smarts resets tier1_shared_credit to False; re-enable so
+        # this opponent treats base offense as low-value and stays home defending.
         self.tier1_shared_credit = True
 
     def __call__(self, obs: dict) -> int:
         return self.ae(obs)
 
     def _choose_target(self, start, danger, low_health=False, direction=None):
-        # Override target selection: prefer cells near our base.
         target_pos, path = super()._choose_target(start, danger, low_health, direction=direction)
         if self.base_location is None:
             return target_pos, path
-        # Stay close — if heuristic chose a far target, override with
-        # nearest visible cell within DEFEND_RADIUS.
+        # If the heuristic chose a far target, override with the nearest visible
+        # cell within DEFEND_RADIUS.
         if target_pos is None or self._manhattan(target_pos, self.base_location) > self.DEFEND_RADIUS:
             best = None
             best_dist = None
@@ -741,14 +732,9 @@ OPPONENT_SUITES = {
         "defender",
         "safe_base_bomber",
     ],
-    # 28 May 2026: compound stress mix specifically for data collection that
-    # exposes heuristic mistakes against the strongest opponents. Mixes
-    # base-siege/base-bomb/scripted-M5/counter-defender/cluster-hunt — these
-    # are the opponent archetypes the heuristic struggles against the most
-    # (see ae/NOTES.md "harm-aware analysis: 800-game harm-aware data shows
-    # ZERO positive-EV transitions in random exploration"). Used by
-    # collect_tactical_outcome.py to grow the positive-advantage BC pool
-    # against tougher distributions than the default cloudsuite mix.
+    # Compound stress mix: the opponent archetypes the heuristic struggles against
+    # most (see ae/NOTES.md "harm-aware analysis"). Used by collect_tactical_outcome.py
+    # to grow the positive-advantage BC pool against tougher distributions.
     "strong_compound": [
         "our_base_sieger",
         "safe_base_bomber",
@@ -756,15 +742,11 @@ OPPONENT_SUITES = {
         "counter_defender",
         "cluster_hunter",
     ],
-    # ---------------------------------------------------------------------
-    # Semifinals melee brackets (1 Jun 2026). Each is the 5 opponent slots of
-    # one 6-team melee, filled with the FOREIGN (non-mirror) pool from
-    # foreign_opponents.py — see design spec 2026-06-01-ae-semis-eval-design
-    # (private archive).
-    # These deliberately MIX train-ok and eval-only foreign opponents so the
-    # melee gate always sees held-out opponents; the train/eval split only
-    # constrains Stage-B training, not these eval brackets.
-    # ---------------------------------------------------------------------
+    # Semifinals melee brackets: each is the 5 opponent slots of one 6-team melee,
+    # from the FOREIGN (non-mirror) pool in foreign_opponents.py. Design spec:
+    # 2026-06-01-ae-semis-eval-design (private archive). These deliberately mix
+    # train-ok and eval-only foreign opponents so the melee gate always sees
+    # held-out opponents; the train/eval split only constrains Stage-B training.
     "semis_mixed": [
         "curry_aggro", "self_policy", "evbot", "anti_aggro_exploiter", "self_heuristic",
     ],
@@ -777,28 +759,22 @@ OPPONENT_SUITES = {
     "adversarial": [
         "aggressive_proxy", "curry_aggro", "anti_aggro_exploiter", "curry_fortress", "self_policy",
     ],
-    # Mixed-strength field weighted toward the two REAL vendored competitors we
-    # have (curry = strong/0.715 semifinalist; peroxide = weak/0.443 non-semi).
-    # The most "real Novice bracket"-like spread (we are seeded 15th of a mixed
-    # field). Added 2 Jun; the 4 brackets above are unchanged so the earlier
-    # weakness map stays comparable.
+    # Mixed-strength field weighted toward the two real vendored competitors
+    # (curry = strong/0.715 semifinalist; peroxide = weak/0.443 non-semi) — the
+    # most "real Novice bracket"-like spread.
     "real_field": [
         "curry_aggro", "peroxide_astar", "self_policy", "anti_aggro_exploiter", "self_heuristic",
     ],
 }
 
-# The melee brackets, in report order (worst-case probe `adversarial`, then the
-# realistic mixed-strength `real_field`).
+# In report order: worst-case probe `adversarial`, then realistic `real_field`.
 MELEE_BRACKETS = ["semis_mixed", "all_aggressive", "all_farmer", "adversarial", "real_field"]
 
-# Frozen held-out compositions for the standing transfer/overfit gate (Reform 4 of
-# the 2026-06-07 finals-aligned eval redesign; supersedes the ad-hoc
-# data/_cem_transfer_test.py). Real-competitor-weighted (curry = strong, peroxide =
-# weak), and disjoint from every MELEE_BRACKETS composition above. NEVER tuned
-# against — consumed only by `melee_eval --heldout` to compute the train-vs-heldout
-# placement GAP as an overfit alarm. CAVEAT: both real teams already appear in tune
-# brackets in OTHER mixes, so this is held-out COMPOSITION of SEEN opponents — the
-# honest claim is "less overfit", NOT "will transfer" (we have only 2 real teams).
+# Frozen held-out compositions, disjoint from every MELEE_BRACKETS composition above.
+# NEVER tuned against — consumed only by `melee_eval --heldout` to compute the
+# train-vs-heldout placement GAP as an overfit alarm. CAVEAT: both real teams (curry,
+# peroxide) already appear in tune brackets in other mixes, so this is held-out
+# COMPOSITION of seen opponents — "less overfit", not "will transfer".
 # Values are comma-joined opponent specs (resolved directly by run_simulation).
 HELDOUT_COMPOSITIONS = {
     "curry_pure":     "curry_aggro,curry_aggro,curry_fortress,curry_fortress,curry_aggro",
@@ -880,9 +856,8 @@ def make_opponent(name: str, seed: int | None = None) -> OpponentFn:
         return StrongMixedOpponent(seed)
     if name == "mixed":
         return MixedOpponent(seed)
-    # Delegate unknown names to the foreign (non-mirror) pool so named brackets
-    # and `validate_cloud_suite.py --suites semis_mixed` "just work" through the
-    # existing harness. make_pool seeds each foreign instance independently.
+    # Delegate unknown names to the foreign (non-mirror) pool, so named brackets
+    # "just work" through the existing harness.
     from foreign_opponents import FOREIGN_NAMES, make_foreign_opponent
     if name in FOREIGN_NAMES:
         return make_foreign_opponent(name, seed=seed)

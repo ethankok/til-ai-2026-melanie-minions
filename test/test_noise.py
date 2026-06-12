@@ -37,12 +37,9 @@ FAIRNESS_CONFIG = Path(__file__).parent / "noise_eval" / "eval_thresholds_v2.yam
 
 
 def convert_to_np_hwc(b64: str) -> np.ndarray:
-    # Decode base64 string
     img_bytes = base64.b64decode(b64)
-
-    # Convert to numpy HWC uint8 array
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    img_array = np.array(img, dtype=np.uint8)  # Shape: (H, W, C)
+    img_array = np.array(img, dtype=np.uint8)
     return img_array
 
 
@@ -73,8 +70,7 @@ def score_noise(
         for instance in instances
     ]
 
-    # Build per-image bbox lists from COCO annotations.
-    # instances are paths like data_dir/filename, so parent is data_dir.
+    # instances are paths like data_dir/images/filename, so parent.parent is data_dir.
     data_dir = instances[0].parent.parent
     with open(data_dir / "annotations.json") as f:
         annotations = json.load(f)
@@ -119,7 +115,6 @@ def main():
     results_dir = Path(f"/home/jupyter/{TEAM_NAME}")
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    # load images
     with open(data_dir / "annotations.json", "r") as f:
         annotations = json.load(f)
     instances = annotations["images"][:500]  # limit to 500 images for testing

@@ -11,7 +11,6 @@ from multiprocessing import Pool
 from pathlib import Path
 import numpy as np
 
-# Add repo directories to path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TIL_AE = REPO_ROOT / "til-26-ae"
 AE_SRC = REPO_ROOT / "ae" / "src"
@@ -27,7 +26,6 @@ from til_environment.config import default_config
 from simulate import run_one_round
 
 CONFIGS = [
-    # 0. Baseline (equivalent to restored fixed-map-v3)
     {
         "name": "0_baseline",
         "dijkstra_no_bomb_cost": 5.0,
@@ -36,7 +34,6 @@ CONFIGS = [
         "low_ammo_resource_value": 25.0,
         "base_health_panic_threshold": 0.0,
     },
-    # 1. Winning Config against Library (Config 4 from previous sweep)
     {
         "name": "4_low_ammo_base_80_res_40",
         "dijkstra_no_bomb_cost": 99.0,
@@ -46,7 +43,6 @@ CONFIGS = [
         "base_defense_panic_radius": 12,
         "base_defense_panic_value": 150.0,
     },
-    # 2. Moderate Combo (Config 9 from previous sweep)
     {
         "name": "9_combo_moderate",
         "dijkstra_no_bomb_cost": 20.0,
@@ -58,7 +54,6 @@ CONFIGS = [
         "ENEMY_CHASE_VALUE": 20.0,
         "ENEMY_CHASE_RADIUS": 3,
     },
-    # 3. Optimal Combo (fine-tuned hybrid)
     {
         "name": "optimal_combo",
         "dijkstra_no_bomb_cost": 25.0,
@@ -78,11 +73,9 @@ def run_worker(args):
     cfg.env.novice = novice
     env = bomberman_env.basic_env(env_wrappers=[], cfg=cfg)
     
-    # Extract name and strip from config kwargs
     config_overrides = {k: v for k, v in config.items() if k != "name"}
     our_agent = AEManager(**config_overrides)
-    
-    # Resolve opponents spec
+
     if opponents_spec == "random":
         names = ["random"] * 5
     elif opponents_spec == "mixed":
@@ -98,7 +91,6 @@ def run_worker(args):
     scores = []
     
     for r in range(rounds):
-        # We pass seed_start + r to ensure different deterministic seeds per round
         res = run_one_round(env, our_agent, opponents, log_traj=False, seed=None)
         scores.append(res["score"])
         
@@ -126,7 +118,6 @@ def main():
 
     t0 = time.monotonic()
     
-    # Run in parallel using a process Pool
     with Pool() as pool:
         results = pool.map(run_worker, tasks)
 
