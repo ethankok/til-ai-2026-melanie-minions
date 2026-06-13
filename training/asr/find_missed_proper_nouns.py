@@ -1,7 +1,7 @@
 import json
 import re
 
-preds_path = "/Users/ethankok/projects/TIL/asr_results.json"
+preds_path = "asr_results.json"
 try:
     with open(preds_path, "r", encoding="utf-8") as f:
         preds = json.load(f)

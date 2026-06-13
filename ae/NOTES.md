@@ -1276,7 +1276,7 @@ historical ~1M steps), from-scratch init, and their hyperparams.
   plans per tick; the NN is trivial, MPS barely helps). Phase1 ~60h, phase2 ~30h.
 - Launch (run manually so it owns the machine):
   ```bash
-  cd /Users/ethankok/projects/TIL
+  cd ~/til
   PYTHONHASHSEED=0 PYTORCH_ENABLE_MPS_FALLBACK=1 \
     nohup caffeinate -is .venv/bin/python -u training/ae/run_pandemonium_v1.py \
     --tag pandemonium-v1 --games-per-update 12 --eval-every 20 \

@@ -786,7 +786,7 @@ Run it on the Mac, which benchmarked faster than Workbench for this rollout
 loop (`~3:52` vs `~7:51` for the same 3-update v1 checkpoint benchmark):
 
 ```bash
-cd /Users/ethankok/projects/TIL
+cd ~/til
 .venv/bin/python -u training/ae/run_full_rl_v1.py
 ```
 
@@ -842,7 +842,7 @@ hybrid, and shortcut-on hybrid.
 Continue from the log, not from memory:
 
 ```bash
-cd /Users/ethankok/projects/TIL
+cd ~/til
 tail -n 80 training/ae/checkpoints/ppo-full-rl-v1.log
 ls -lh training/ae/checkpoints/ppo-full-rl-v1.pt \
        training/ae/checkpoints/ppo-full-rl-v1-latest.pt
