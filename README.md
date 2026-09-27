@@ -28,7 +28,7 @@ This repo is a public showcase of the engineering: what we shipped, what we trie
 
 ## The team - 5 NTU Students
 
-- [@kushmics](https://github.com/kushmics)
+- [@ethankok](https://github.com/ethankok) (technical lead)
 - [@crispie-bit](https://github.com/crispie-bit)
 - [@daaavidsim](https://github.com/daaavidsim)
 - [@GeeRuiYang](https://github.com/GeeRuiYang)
